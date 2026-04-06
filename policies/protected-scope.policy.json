@@ -1,0 +1,5 @@
+{
+  "protected_services": [],
+  "protected_segments": ["strategic_accounts"],
+  "escalate_on_protected_scope": true
+}

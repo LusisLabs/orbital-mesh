@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/trigger.schema.json",
+  "title": "Trigger",
+  "type": "object",
+  "required": [
+    "trigger_id",
+    "trigger_type",
+    "triggered_at",
+    "scope",
+    "symptoms",
+    "dedupe_key"
+  ],
+  "properties": {
+    "trigger_id": {
+      "type": "string"
+    },
+    "trigger_type": {
+      "type": "string",
+      "enum": [
+        "performance_regression",
+        "reliability_incident",
+        "dependency_degradation",
+        "customer_distress_signal",
+        "churn_risk_increase"
+      ]
+    },
+    "triggered_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "environment"
+      ],
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "service": {
+          "type": "string"
+        },
+        "endpoint": {
+          "type": "string"
+        },
+        "segment": {
+          "type": "string"
+        },
+        "account_cohort": {
+          "type": "string"
+        },
+        "dependency": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "symptoms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "metric",
+          "observed"
+        ],
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "baseline": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "observed": {
+            "type": "number"
+          },
+          "delta_pct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "anomaly_score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "related_changes": {
+      "type": "object",
+      "properties": {
+        "release_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "flag_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "config_changes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_quality": {
+      "type": "object",
+      "properties": {
+        "sample_size": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "trace_coverage_pct": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "log_coverage_pct": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "dedupe_key": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/feedback-record.schema.json",
+  "title": "FeedbackRecord",
+  "type": "object",
+  "required": [
+    "feedback_id",
+    "trigger_id",
+    "plan_id",
+    "execution_id",
+    "measured_at",
+    "window",
+    "outcome",
+    "metric_comparison",
+    "diagnosis_accuracy",
+    "plan_effectiveness",
+    "world_model_updates"
+  ],
+  "properties": {
+    "feedback_id": {
+      "type": "string"
+    },
+    "trigger_id": {
+      "type": "string"
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "execution_id": {
+      "type": "string"
+    },
+    "measured_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "window": {
+      "type": "string"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "successful",
+        "partial",
+        "failed",
+        "escalated"
+      ]
+    },
+    "metric_comparison": {
+      "type": "object"
+    },
+    "diagnosis_accuracy": {
+      "type": "object"
+    },
+    "plan_effectiveness": {
+      "type": "object"
+    },
+    "recommended_follow_up": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "world_model_updates": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": false
+}

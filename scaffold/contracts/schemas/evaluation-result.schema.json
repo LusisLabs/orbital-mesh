@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/evaluation-result.schema.json",
+  "title": "EvaluationResult",
+  "type": "object",
+  "required": [
+    "evaluation_id",
+    "plan_id",
+    "passed",
+    "final_recommendation",
+    "plan_results",
+    "step_results",
+    "blocking_reasons"
+  ],
+  "properties": {
+    "evaluation_id": {
+      "type": "string"
+    },
+    "plan_id": {
+      "type": "string"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "final_recommendation": {
+      "type": "string",
+      "enum": [
+        "execute_stepwise",
+        "human_review",
+        "reject"
+      ]
+    },
+    "plan_results": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "step_results": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object"
+      }
+    },
+    "blocking_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "review_route": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

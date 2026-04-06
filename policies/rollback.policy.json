@@ -1,0 +1,11 @@
+{
+  "required_checkpoint_windows": {
+    "feature_flag_change": "10m",
+    "traffic_shift": "10m",
+    "incident_open": "0m"
+  },
+  "require_rollback_for_categories": [
+    "feature_flag_change",
+    "traffic_shift"
+  ]
+}

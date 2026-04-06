@@ -1,0 +1,41 @@
+{
+  "plan_id": "plan_high_risk",
+  "trigger_id": "trg_high_risk",
+  "diagnosis_id": "diag_high_risk",
+  "plan_type": "single_step_remediation",
+  "autonomy_tier": "approval_required",
+  "goal": "Mitigate a protected-scope incident.",
+  "primary_hypothesis_id": "hyp_1",
+  "confidence": 0.9,
+  "risk": {
+    "level": "high",
+    "blast_radius": "protected_segment",
+    "customer_impact_if_wrong": "strategic account outage"
+  },
+  "steps": [
+    {
+      "step_id": "step_1",
+      "category": "feature_flag_change",
+      "description": "Reduce rollout for protected accounts.",
+      "system": "feature_flag_service",
+      "action": "set_rollout",
+      "parameters": {
+        "flag_key": "semantic_search_v2",
+        "environment": "production",
+        "segment": "strategic_accounts",
+        "rollout_pct": 0
+      },
+      "success_checkpoint": {
+        "type": "metric_window",
+        "window": "10m",
+        "target": "p95_latency_ms <= 500"
+      },
+      "rollback": {
+        "type": "restore_previous_value",
+        "value": 50
+      }
+    }
+  ],
+  "stop_conditions": ["protected scope impacted"],
+  "human_handoff_conditions": ["high risk"]
+}

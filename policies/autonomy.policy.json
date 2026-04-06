@@ -1,0 +1,9 @@
+{
+  "autonomous_risk_levels": ["low", "medium"],
+  "approval_required_risk_levels": ["high"],
+  "allowed_step_categories": [
+    "feature_flag_change",
+    "incident_open",
+    "traffic_shift"
+  ]
+}
