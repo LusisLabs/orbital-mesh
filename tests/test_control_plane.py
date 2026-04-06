@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 from urllib.parse import urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from control_plane_server import start_server_in_thread
@@ -125,6 +126,36 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertFalse(readiness["goose"]["ready"])
         self.assertEqual(readiness["state_path"], self.temp_dir.name)
         self.assertEqual(readiness["vault_path"], str(Path(self.temp_dir.name) / "vault"))
+
+    def test_rejects_oversized_json_payload(self) -> None:
+        limited = RuntimeConfig(
+            state_directory=self.temp_dir.name,
+            vault_path=str(Path(self.temp_dir.name) / "vault"),
+            integrations_config_path=str(Path(self.temp_dir.name) / "integrations.json"),
+            server_host="127.0.0.1",
+            server_port=0,
+            max_json_body_bytes=32,
+            promptfoo_command="/missing/promptfoo",
+            goose_command="/missing/goose",
+            gitnexus_sidecar_url="http://127.0.0.1:65535",
+        )
+        server, thread = start_server_in_thread(limited, start_sidecar=False)
+        try:
+            base = f"http://127.0.0.1:{server.server_address[1]}"
+            payload = {"title": "x" * 200}
+            request = Request(
+                f"{base}/api/goals",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with self.assertRaises(HTTPError) as ctx:
+                urlopen(request, timeout=10)
+            self.assertEqual(ctx.exception.code, 413)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
     def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 10.0) -> dict:
         deadline = time.monotonic() + timeout_seconds

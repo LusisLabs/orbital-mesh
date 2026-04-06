@@ -69,11 +69,15 @@ CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge
 
 ```text
 mesh-intelligence/
+├── Dockerfile                       # production image (Vite UI + Python server)
+├── docker-compose.yml               # persisted state volume + health checks
+├── .env.example                     # configuration template
 ├── control_plane_server.py          # local HTTP + SSE server
 ├── run_server.py                    # browser control-plane entrypoint
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
 ├── setup_integrations.py            # bootstrap Promptfoo / Goose / GitNexus config
+├── swarmclaw/                       # optional Next.js operator stack (separate surface)
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
 │   ├── runtime.py                   # shared stage primitives used by pipeline + coordinator
@@ -327,6 +331,59 @@ Supported configuration variables:
 - `MESH_GOOSE_COMMAND`
 - `MESH_GITNEXUS_SIDECAR_URL`
 - `MESH_GITNEXUS_SIDECAR_COMMAND`
+- `MESH_GITNEXUS_DISABLE_AUTOSTART` — when `1`/`true`, never infer a local GitNexus CLI command from the filesystem (recommended in containers unless you mount a GitNexus tree).
+- `MESH_MAX_JSON_BODY_BYTES` — max `Content-Length` for JSON `POST` bodies (default `1048576`; use `0` to disable the limit).
+- `MESH_SECURITY_HEADERS` — when `true` (default), sends `X-Content-Type-Options` and `Referrer-Policy` on HTTP responses.
+- `MESH_ACCESS_LOG` — when `1`/`true`, enables access logging via Python’s logging module (configure handlers as needed for your environment).
+
+See [`.env.example`](./.env.example) for a ready-to-copy template.
+
+## Production deployment
+
+The mesh control plane is an **HTTP server without built-in authentication**. Put it behind a reverse proxy or private network, terminate TLS at the edge, and enforce auth at that layer before exposing it publicly.
+
+### Container (recommended)
+
+Build and run with Compose. The default stack starts:
+
+1. **`gitnexus`** — GitNexus HTTP sidecar (`gitnexus serve` on port **4747**), built from `Dockerfile.gitnexus` on **Ubuntu 24.04** so bundled native modules get a recent enough `libstdc++` (Debian Bookworm–based Node images can fail at runtime on arm64). Used for `/api/readiness` and code-graph features. Indexes and registry live in the `gitnexus_home` volume (`~/.gitnexus` in the container). The [GitNexus npm package](https://www.npmjs.com/package/gitnexus) is **PolyForm Noncommercial**; review the license if you use it in production.
+2. **`mesh`** — control plane on **8787**, with **Promptfoo** pre-installed in the image so the `promptfoo` integration can report ready without extra setup.
+
+```bash
+docker compose up --build -d
+```
+
+Persistence:
+
+- **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
+- **GitNexus** registry and indexes: volume `gitnexus_home` → `/root/.gitnexus`
+
+Override ports if needed:
+
+```bash
+MESH_PUBLISH_PORT=18080 GITNEXUS_PUBLISH_PORT=14747 docker compose up --build -d
+```
+
+**Goose** is not installed in the default image. To enable it, install the Block Goose CLI on a custom image or on the host and set `MESH_GOOSE_COMMAND`, or add a companion service to Compose.
+
+Run **only** the control plane (no GitNexus sidecar), for example behind an existing GitNexus URL:
+
+```bash
+docker compose up --no-deps -d mesh
+```
+
+…and set `MESH_GITNEXUS_SIDECAR_URL` to that server.
+
+Health: `GET /api/health` on mesh; GitNexus exposes `GET /api/info` for quick probes (Docker Compose uses this). `GET /api/heartbeat` is Server-Sent Events and is not suitable for typical HTTP health checks.
+
+**Native GitNexus beside native Python:** in one terminal `npx -y gitnexus@latest serve` (or `gitnexus serve` if installed globally), in another set `MESH_GITNEXUS_SIDECAR_URL=http://127.0.0.1:4747` and run `python3 run_server.py`.
+
+### Bare metal
+
+1. Build the browser bundle: `cd web && npm ci && npm run build`.
+2. Set `MESH_WEB_ASSET_PATH` to the absolute path of `web/dist` if it is not adjacent to the Python tree.
+3. Bind `MESH_SERVER_HOST` to `0.0.0.0` only on trusted networks; otherwise keep the default loopback binding and front with a reverse proxy on the same host.
+4. Enable access logs in production if desired: `MESH_ACCESS_LOG=1` (Python logging; ensure your process supervisor captures stdout/stderr).
 
 ## Development Commands
 
@@ -362,7 +419,5 @@ The stable local path is:
 
 ## Supporting Docs
 
-- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-web-control-plane.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-web-control-plane.md)
-- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-operator-console.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-operator-console.md)
-- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/architecture.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/architecture.md)
-- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/data-flows.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/data-flows.md)
+- [architecture.md](./architecture.md)
+- [data-flows.md](./data-flows.md)

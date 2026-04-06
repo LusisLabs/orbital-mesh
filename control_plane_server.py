@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import threading
@@ -13,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
 from shared.mesh_runtime import RuntimeConfig
+
+_LOG = logging.getLogger("mesh.control_plane")
 
 
 class MeshControlPlaneServer(ThreadingHTTPServer):
@@ -111,7 +114,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        payload = self._read_json_body()
+        if not self._request_body_within_limit():
+            self._send_json(
+                {"error": "payload too large"},
+                status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+            )
+            return
+        try:
+            payload = self._read_json_body()
+        except json.JSONDecodeError:
+            self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
@@ -135,7 +148,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: Any) -> None:
-        return
+        if not self.server.config.access_log_enabled:
+            return
+        try:
+            client_host = self.client_address[0] if self.client_address else "-"
+        except Exception:  # pragma: no cover - defensive for malformed handler state
+            client_host = "-"
+        _LOG.info("%s - %s", client_host, format % args)
 
     def _serve_static(self, path: str, head_only: bool = False) -> None:
         assets_root = Path(self.server.config.web_asset_path)
@@ -155,6 +174,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         content_type, _ = mimetypes.guess_type(str(candidate))
         raw = candidate.read_bytes()
         self.send_response(HTTPStatus.OK)
+        self._add_security_headers()
         self.send_header("Content-Type", content_type or "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -163,6 +183,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def _stream_run(self, run_id: str) -> None:
         self.send_response(HTTPStatus.OK)
+        self._add_security_headers()
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
@@ -195,6 +216,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def _stream_system(self) -> None:
         self.send_response(HTTPStatus.OK)
+        self._add_security_headers()
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "keep-alive")
@@ -227,9 +249,28 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         raw = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        self._add_security_headers()
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
         self.wfile.write(raw)
+
+    def _request_body_within_limit(self) -> bool:
+        limit = self.server.config.max_json_body_bytes
+        if limit <= 0:
+            return True
+        raw_length = self.headers.get("Content-Length", "0")
+        try:
+            length = int(raw_length)
+        except ValueError:
+            return True
+        return length <= limit
+
+    def _add_security_headers(self) -> None:
+        if not self.server.config.security_headers_enabled:
+            return
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
 
     def _read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
