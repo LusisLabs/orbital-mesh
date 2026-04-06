@@ -1,9 +1,29 @@
 {
-  "autonomous_risk_levels": ["low", "medium"],
-  "approval_required_risk_levels": ["high"],
-  "allowed_step_categories": [
-    "feature_flag_change",
-    "incident_open",
-    "traffic_shift"
+  "allowed_decision_types": [
+    "no_action",
+    "reduce_rollout",
+    "disable_flag",
+    "escalate"
+  ],
+  "allowed_execution_systems": [
+    "feature_flag_service",
+    "incident_service",
+    "audit_log_sink"
+  ],
+  "allowed_execution_actions": {
+    "feature_flag_service": [
+      "set_rollout"
+    ],
+    "incident_service": [
+      "open_incident"
+    ],
+    "audit_log_sink": [
+      "record_no_action"
+    ]
+  },
+  "idempotent_actions": [
+    "set_rollout",
+    "open_incident",
+    "record_no_action"
   ]
 }

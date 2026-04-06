@@ -1,11 +1,17 @@
-"""Promptfoo integration boundary with mock and CLI-backed modes."""
+"""Promptfoo integration boundary with native and CLI-backed modes."""
 
 from __future__ import annotations
 
-import shutil
+import json
+import shlex
+import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
-from shared.mesh_runtime import RemediationPlan
+from shared.mesh_runtime import Decision, Trigger
+
+
+MESH_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -17,34 +23,94 @@ class PromptfooResult:
 
 
 class PromptfooAdapter:
-    def evaluate_plan(self, plan: RemediationPlan) -> PromptfooResult:
+    def evaluate_decision(self, trigger: Trigger, decision: Decision) -> PromptfooResult:
         raise NotImplementedError
 
 
-class MockPromptfooAdapter(PromptfooAdapter):
-    def evaluate_plan(self, plan: RemediationPlan) -> PromptfooResult:
-        passed = plan.confidence >= 0.75 and plan.risk["level"] != "high"
-        return PromptfooResult(
-            passed=passed,
-            score=0.93 if passed else 0.42,
-            notes=["mock promptfoo evaluation completed"],
-            mode="mock",
-        )
+class NativePromptfooAdapter(PromptfooAdapter):
+    def evaluate_decision(self, trigger: Trigger, decision: Decision) -> PromptfooResult:
+        return evaluate_decision_contract(trigger, decision, mode="native")
 
 
 class PromptfooCliAdapter(PromptfooAdapter):
-    def evaluate_plan(self, plan: RemediationPlan) -> PromptfooResult:
-        if shutil.which("promptfoo") is None:
+    def __init__(self, command: str | None = None):
+        self.command = command
+
+    def evaluate_decision(self, trigger: Trigger, decision: Decision) -> PromptfooResult:
+        payload = json.dumps({"trigger": trigger.to_dict(), "decision": decision.to_dict()})
+        command = self._resolve_command()
+        try:
+            completed = subprocess.run(
+                command,
+                input=payload,
+                capture_output=True,
+                text=True,
+                cwd=MESH_ROOT,
+                check=False,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
             return PromptfooResult(
                 passed=False,
                 score=0.0,
-                notes=["promptfoo CLI not found on PATH"],
-                mode="cli_unavailable",
+                notes=[f"promptfoo subprocess failed: {exc}"],
+                mode="cli_error",
+            )
+
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip() or "promptfoo subprocess returned a non-zero exit code"
+            return PromptfooResult(
+                passed=False,
+                score=0.0,
+                notes=[stderr],
+                mode="cli_error",
+            )
+
+        try:
+            result = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            return PromptfooResult(
+                passed=False,
+                score=0.0,
+                notes=[f"promptfoo subprocess returned invalid JSON: {exc}"],
+                mode="cli_error",
             )
 
         return PromptfooResult(
-            passed=True,
-            score=0.9,
-            notes=["promptfoo CLI integration placeholder"],
-            mode="cli",
+            passed=bool(result["passed"]),
+            score=float(result["score"]),
+            notes=list(result["notes"]),
+            mode=result.get("mode", "cli"),
         )
+
+    def _resolve_command(self) -> list[str]:
+        if not self.command:
+            raise OSError("promptfoo command is not configured")
+        return shlex.split(self.command)
+
+
+def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) -> PromptfooResult:
+    notes: list[str] = []
+    passed = True
+    if decision.confidence < 0.75:
+        passed = False
+        notes.append("confidence is below the minimum threshold")
+    if decision.risk["level"] == "high":
+        passed = False
+        notes.append("risk is too high for automated execution")
+    if trigger.metrics["observed_p95_latency_ms"] <= trigger.metrics["baseline_p95_latency_ms"]:
+        passed = False
+        notes.append("reasoning is not grounded in an observed regression")
+    else:
+        notes.append("reasoning references observed metrics")
+    if decision.execution_plan["action"] not in {"set_rollout", "open_incident", "record_no_action"}:
+        passed = False
+        notes.append("action falls outside the allowed contract")
+    else:
+        notes.append("action matches allowed contract")
+    return PromptfooResult(
+        passed=passed,
+        score=0.93 if passed else 0.42,
+        notes=notes,
+        mode=mode,
+    )

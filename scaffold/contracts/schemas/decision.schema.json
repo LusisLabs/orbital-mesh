@@ -1,0 +1,168 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/decision.schema.json",
+  "title": "Decision",
+  "type": "object",
+  "required": [
+    "decision_id",
+    "trigger_id",
+    "decision_type",
+    "autonomy_tier",
+    "summary",
+    "reasoning",
+    "expected_outcome",
+    "risk",
+    "confidence",
+    "execution_plan"
+  ],
+  "properties": {
+    "decision_id": {
+      "type": "string"
+    },
+    "trigger_id": {
+      "type": "string"
+    },
+    "decision_type": {
+      "type": "string",
+      "enum": [
+        "no_action",
+        "reduce_rollout",
+        "disable_flag",
+        "escalate"
+      ]
+    },
+    "autonomy_tier": {
+      "type": "string",
+      "enum": [
+        "autonomous",
+        "approval_required",
+        "escalated"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "reasoning": {
+      "type": "object",
+      "required": [
+        "primary_hypothesis",
+        "evidence",
+        "alternatives_considered"
+      ],
+      "properties": {
+        "primary_hypothesis": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "alternatives_considered": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "expected_outcome": {
+      "type": "object",
+      "required": [
+        "target_metrics",
+        "time_to_effect"
+      ],
+      "properties": {
+        "target_metrics": {
+          "type": "object",
+          "required": [
+            "p95_latency_ms",
+            "error_rate"
+          ],
+          "properties": {
+            "p95_latency_ms": {
+              "type": "string"
+            },
+            "error_rate": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "time_to_effect": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "risk": {
+      "type": "object",
+      "required": [
+        "level",
+        "blast_radius",
+        "customer_impact_if_wrong"
+      ],
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "blast_radius": {
+          "type": "string"
+        },
+        "customer_impact_if_wrong": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "execution_plan": {
+      "type": "object",
+      "required": [
+        "system",
+        "action",
+        "parameters",
+        "rollback_plan"
+      ],
+      "properties": {
+        "system": {
+          "type": "string",
+          "enum": [
+            "feature_flag_service",
+            "incident_service",
+            "audit_log_sink"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "set_rollout",
+            "open_incident",
+            "record_no_action"
+          ]
+        },
+        "parameters": {
+          "type": "object"
+        },
+        "rollback_plan": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

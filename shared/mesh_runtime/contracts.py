@@ -30,50 +30,40 @@ class Trigger(ContractModel):
     trigger_id: str
     trigger_type: str
     triggered_at: str
-    scope: dict[str, Any]
-    symptoms: list[dict[str, Any]]
-    dedupe_key: str
-    related_changes: dict[str, Any] | None = None
-    evidence_quality: dict[str, Any] | None = None
+    environment: str
+    service: str
+    endpoint: str
+    flag_key: str
+    current_rollout_pct: int
+    comparison_window: dict[str, str]
+    segment: dict[str, Any]
+    metrics: dict[str, Any]
+    related_context: dict[str, Any]
 
 
 @dataclass
-class Diagnosis(ContractModel):
-    schema_name: ClassVar[str] = "diagnosis.schema.json"
-    diagnosis_id: str
+class Decision(ContractModel):
+    schema_name: ClassVar[str] = "decision.schema.json"
+    decision_id: str
     trigger_id: str
     summary: str
-    affected_scope: dict[str, Any]
-    hypotheses: list[dict[str, Any]]
-    candidate_remediations: list[str]
-
-
-@dataclass
-class RemediationPlan(ContractModel):
-    schema_name: ClassVar[str] = "remediation-plan.schema.json"
-    plan_id: str
-    trigger_id: str
-    diagnosis_id: str
-    plan_type: str
+    decision_type: str
     autonomy_tier: str
-    goal: str
-    confidence: float
+    reasoning: dict[str, Any]
+    expected_outcome: dict[str, Any]
     risk: dict[str, Any]
-    steps: list[dict[str, Any]]
-    stop_conditions: list[str]
-    human_handoff_conditions: list[str]
-    primary_hypothesis_id: str | None = None
+    confidence: float
+    execution_plan: dict[str, Any]
 
 
 @dataclass
 class EvaluationResult(ContractModel):
     schema_name: ClassVar[str] = "evaluation-result.schema.json"
     evaluation_id: str
-    plan_id: str
+    decision_id: str
     passed: bool
     final_recommendation: str
-    plan_results: dict[str, Any]
-    step_results: dict[str, Any]
+    stage_results: dict[str, Any]
     blocking_reasons: list[str]
     review_route: str | None = None
 
@@ -82,12 +72,14 @@ class EvaluationResult(ContractModel):
 class ExecutionRecord(ContractModel):
     schema_name: ClassVar[str] = "execution-record.schema.json"
     execution_id: str
-    plan_id: str
-    status: str
+    decision_id: str
     started_at: str
+    completed_at: str
     executor: str
-    step_history: list[dict[str, Any]]
-    completed_at: str | None = None
+    status: str
+    idempotency_key: str
+    applied_action: dict[str, Any]
+    external_refs: dict[str, Any]
     failure: dict[str, Any] | None = None
 
 
@@ -95,14 +87,13 @@ class ExecutionRecord(ContractModel):
 class FeedbackRecord(ContractModel):
     schema_name: ClassVar[str] = "feedback-record.schema.json"
     feedback_id: str
-    trigger_id: str
-    plan_id: str
+    decision_id: str
     execution_id: str
     measured_at: str
     window: str
     outcome: str
     metric_comparison: dict[str, Any]
-    diagnosis_accuracy: dict[str, Any]
-    plan_effectiveness: dict[str, Any]
+    prediction_accuracy: dict[str, Any]
+    side_effects: list[dict[str, Any] | str]
     world_model_updates: dict[str, Any]
     recommended_follow_up: str | None = None

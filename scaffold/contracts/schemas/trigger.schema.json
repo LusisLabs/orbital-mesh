@@ -7,9 +7,15 @@
     "trigger_id",
     "trigger_type",
     "triggered_at",
-    "scope",
-    "symptoms",
-    "dedupe_key"
+    "environment",
+    "service",
+    "endpoint",
+    "flag_key",
+    "current_rollout_pct",
+    "comparison_window",
+    "segment",
+    "metrics",
+    "related_context"
   ],
   "properties": {
     "trigger_id": {
@@ -18,84 +24,107 @@
     "trigger_type": {
       "type": "string",
       "enum": [
-        "performance_regression",
-        "reliability_incident",
-        "dependency_degradation",
-        "customer_distress_signal",
-        "churn_risk_increase"
+        "feature_flag_performance_regression"
       ]
     },
     "triggered_at": {
       "type": "string",
       "format": "date-time"
     },
-    "scope": {
+    "environment": {
+      "type": "string"
+    },
+    "service": {
+      "type": "string"
+    },
+    "endpoint": {
+      "type": "string"
+    },
+    "flag_key": {
+      "type": "string"
+    },
+    "current_rollout_pct": {
+      "type": "integer"
+    },
+    "comparison_window": {
       "type": "object",
       "required": [
-        "environment"
+        "baseline",
+        "observed"
       ],
       "properties": {
-        "environment": {
+        "baseline": {
           "type": "string"
         },
-        "service": {
-          "type": "string"
-        },
-        "endpoint": {
-          "type": "string"
-        },
-        "segment": {
-          "type": "string"
-        },
-        "account_cohort": {
-          "type": "string"
-        },
-        "dependency": {
+        "observed": {
           "type": "string"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
-    "symptoms": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "required": [
-          "metric",
-          "observed"
-        ],
-        "properties": {
-          "metric": {
-            "type": "string"
-          },
-          "baseline": {
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "observed": {
-            "type": "number"
-          },
-          "delta_pct": {
-            "type": [
-              "number",
-              "null"
-            ]
-          },
-          "anomaly_score": {
-            "type": [
-              "number",
-              "null"
-            ]
-          }
-        },
-        "additionalProperties": true
-      }
-    },
-    "related_changes": {
+    "segment": {
       "type": "object",
+      "required": [
+        "customer_tier",
+        "region"
+      ],
+      "properties": {
+        "customer_tier": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "baseline_p95_latency_ms",
+        "observed_p95_latency_ms",
+        "baseline_error_rate",
+        "observed_error_rate",
+        "sample_size"
+      ],
+      "properties": {
+        "baseline_p95_latency_ms": {
+          "type": "number"
+        },
+        "observed_p95_latency_ms": {
+          "type": "number"
+        },
+        "baseline_error_rate": {
+          "type": "number"
+        },
+        "observed_error_rate": {
+          "type": "number"
+        },
+        "baseline_timeout_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "observed_timeout_rate": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sample_size": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "related_context": {
+      "type": "object",
+      "required": [
+        "release_id",
+        "active_incidents",
+        "similar_prior_cases"
+      ],
       "properties": {
         "release_id": {
           "type": [
@@ -103,47 +132,20 @@
             "null"
           ]
         },
-        "flag_changes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "active_incidents": {
+          "type": "integer"
         },
-        "config_changes": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
+        "similar_prior_cases": {
+          "type": "integer"
+        },
+        "rollbacks_last_24h": {
+          "type": "integer"
+        },
+        "regressions_last_7d": {
+          "type": "integer"
         }
       },
       "additionalProperties": true
-    },
-    "evidence_quality": {
-      "type": "object",
-      "properties": {
-        "sample_size": {
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "trace_coverage_pct": {
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "log_coverage_pct": {
-          "type": [
-            "number",
-            "null"
-          ]
-        }
-      },
-      "additionalProperties": true
-    },
-    "dedupe_key": {
-      "type": "string"
     }
   },
   "additionalProperties": false

@@ -1,0 +1,368 @@
+# Mesh Intelligence
+
+`mesh-intelligence` is a local agentic operations control plane for bounded closed-loop remediation. It ingests infrastructure signals, decides on a remediation path, evaluates the decision against policy and quality gates, pauses for operator steering before actuation by default, executes through a bounded orchestration layer, records feedback, persists run memory into an Obsidian-compatible vault, and exposes continuous Merkle roots and proofs for the run log.
+
+The system now ships with two operator surfaces:
+
+- Browser-first control plane served by `run_server.py`
+- Curses TUI served by `run_tui.py` for terminal-native inspection
+
+The browser UI is the primary interface.
+
+## What It Does
+
+- Runs the existing feature-flag remediation loop end to end
+- Streams stage-by-stage run updates through HTTP + SSE
+- Pauses at the approval gate before execution by default
+- Supports bounded steering commands while a run is in progress
+- Persists goals, runs, notes, and artifact state in structured runtime storage
+- Mirrors that memory into a fixed Obsidian-compatible vault layout
+- Computes Merkle roots for canonical run events and returns proofs per event
+- Integrates with a managed local GitNexus sidecar for code/process context
+- Supports three runtime modes:
+  - `native`
+  - `promptfoo`
+  - `goose`
+
+## Runtime Model
+
+Each run advances through explicit stages:
+
+1. `queued`
+2. `ingesting`
+3. `trigger_ready` or `no_trigger`
+4. `decision_ready`
+5. `evaluation_ready`
+6. `awaiting_operator`
+7. `executing`
+8. `feedback_ready`
+9. `completed`, `failed`, or `cancelled`
+
+Steering is bounded. Supported commands are:
+
+- `approve`
+- `cancel`
+- `pause_after_stage`
+- `resume`
+- `set_auto_mode`
+- `override_decision`
+- `override_execution_parameters`
+- `attach_note`
+
+Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
+
+## Runtime Modes
+
+### `native`
+
+Default local mode. Uses in-process adapters with real local persistence and audit semantics. This is the mode that works immediately without external CLIs.
+
+### `promptfoo`
+
+CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the mesh evaluation contract. Readiness is reported explicitly through the API and UI.
+
+### `goose`
+
+CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Goose review step before bounded local actuation. When Ollama is installed, the bootstrap path prefers the first working local model, starting with `qwen2.5:0.5b`. Readiness is reported explicitly through the API and UI.
+
+## Repository Layout
+
+```text
+mesh-intelligence/
+├── control_plane_server.py          # local HTTP + SSE server
+├── run_server.py                    # browser control-plane entrypoint
+├── run_first_slice.py               # synchronous stdin/stdout loop runner
+├── run_tui.py                       # terminal UI entrypoint
+├── setup_integrations.py            # bootstrap Promptfoo / Goose / GitNexus config
+├── services/
+│   ├── control_plane.py             # long-lived coordinator and steering logic
+│   ├── runtime.py                   # shared stage primitives used by pipeline + coordinator
+│   ├── pipeline.py                  # synchronous convenience wrapper
+│   ├── evaluation/
+│   ├── orchestrator/
+│   ├── feedback/
+│   ├── decision/
+│   ├── trigger/
+│   └── ingest/
+├── shared/mesh_runtime/
+│   ├── config.py
+│   ├── control_plane_models.py
+│   ├── control_plane_state.py
+│   ├── integrations.py
+│   ├── merkle.py
+│   ├── vault.py
+│   └── state.py
+├── web/                             # React/Vite browser control plane
+├── fixtures/
+├── policies/
+└── tests/
+```
+
+## Quick Start
+
+### 1. Install and verify integrations
+
+```bash
+python3 setup_integrations.py
+```
+
+Optional install attempt for supported dependencies:
+
+```bash
+python3 setup_integrations.py --install-missing
+```
+
+This writes integration configuration to:
+
+```text
+.mesh-runtime-state/integrations.json
+```
+
+The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo and Goose CLIs.
+
+### 2. Install the browser UI dependencies
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+```
+
+### 3. Start the local control plane
+
+```bash
+python3 run_server.py
+```
+
+Default server address:
+
+```text
+http://127.0.0.1:8787
+```
+
+### 4. Open the browser
+
+Point the browser at:
+
+```text
+http://127.0.0.1:8787
+```
+
+### 5. Launch a run
+
+Use the left rail to:
+
+- select or create a goal
+- choose a fixture scenario or paste a raw signal JSON payload
+- select `native`, `promptfoo`, or `goose`
+- choose `approval_gate` or `interruptible_auto`
+
+## Web Control Plane
+
+The browser UI is a React/Vite application under [`web/`](./web) using:
+
+- a dense operator shell and graph-driven center stage inspired by `mesh-llm`
+- server connection, status, and side-panel patterns inspired by `GitNexus`
+
+The layout is:
+
+- Left rail
+  - goals
+  - scenarios
+  - integration readiness
+  - run queue
+- Center
+  - active goal
+  - live run graph
+  - steering console
+  - timeline
+- Right inspector
+  - overview
+  - evidence
+  - policy
+  - execution
+  - feedback
+  - vault preview
+  - Merkle proof
+  - GitNexus-backed code/process context
+
+The active run is preserved in URL state with `?run=<run_id>`.
+
+## HTTP API
+
+Implemented routes:
+
+- `GET /api/health`
+- `GET /api/readiness`
+- `GET /api/scenarios`
+- `GET /api/goals`
+- `POST /api/goals`
+- `GET /api/runs`
+- `POST /api/runs`
+- `GET /api/runs/:id`
+- `POST /api/runs/:id/steer`
+- `GET /api/runs/:id/events`
+- `GET /api/runs/:id/merkle`
+- `GET /api/runs/:id/merkle/proof/:event_id`
+- `GET /api/stream/runs/:id`
+- `GET /api/stream/system`
+- `GET /api/vault/tree`
+- `GET /api/vault/document`
+
+### Create Goal
+
+```json
+{
+  "title": "Protect search latency",
+  "objective": "Pause every risky remediation before execution.",
+  "success_criteria": ["approval gate pauses", "vault notes written"]
+}
+```
+
+### Create Run
+
+```json
+{
+  "goal_id": "goal_default",
+  "scenario_key": "search_latency_regression",
+  "evaluation_mode": "native",
+  "orchestration_mode": "native",
+  "steering_mode": "approval_gate"
+}
+```
+
+Raw signal payloads are also supported:
+
+```json
+{
+  "goal_id": "goal_default",
+  "signal_payload": {
+    "...": "full signal payload"
+  },
+  "evaluation_mode": "native",
+  "orchestration_mode": "native",
+  "steering_mode": "interruptible_auto",
+  "pause_points": []
+}
+```
+
+### Steering Command
+
+```json
+{
+  "command": "override_execution_parameters",
+  "parameters": {
+    "rollout_pct": 5
+  }
+}
+```
+
+## Vault Layout
+
+Run and goal memory are mirrored to:
+
+```text
+.mesh-runtime-state/vault/
+```
+
+Fixed directories:
+
+- `Goals/`
+- `Runs/`
+- `Decisions/`
+- `Evaluations/`
+- `Executions/`
+- `Feedback/`
+- `Merkle/`
+- `Notes/`
+
+Each run writes:
+
+- a run note linking the goal and stage artifacts
+- JSON-backed artifact notes for decision, evaluation, execution, and feedback
+- operator notes
+- a Merkle note containing the current root and event IDs
+
+## Merkle Event Ledger
+
+Every canonical run event is hashed as a leaf. The server recomputes the root whenever a new event is appended. The API exposes:
+
+- current root and event list
+- per-event proofs for decision, evaluation, execution, and feedback events
+
+This is intended for run inspection and auditability, not blockchain settlement.
+
+## TUI
+
+The TUI remains available as a local terminal companion:
+
+```bash
+python3 run_tui.py
+```
+
+Mode toggles now use:
+
+- `native` / `promptfoo`
+- `native` / `goose`
+
+The TUI is no longer the primary operator interface.
+
+## Environment Variables
+
+Supported configuration variables:
+
+- `MESH_ENVIRONMENT`
+- `MESH_EVALUATION_MODE`
+- `MESH_ORCHESTRATION_MODE`
+- `MESH_STATE_DIRECTORY`
+- `MESH_SERVER_HOST`
+- `MESH_SERVER_PORT`
+- `MESH_WEB_ASSET_PATH`
+- `MESH_VAULT_PATH`
+- `MESH_INTEGRATIONS_CONFIG_PATH`
+- `MESH_DEFAULT_STEERING_MODE`
+- `MESH_DEFAULT_OPERATOR_PAUSE_POINT`
+- `MESH_PROMPTFOO_COMMAND`
+- `MESH_GOOSE_COMMAND`
+- `MESH_GITNEXUS_SIDECAR_URL`
+- `MESH_GITNEXUS_SIDECAR_COMMAND`
+
+## Development Commands
+
+### Python
+
+```bash
+python3 -m unittest discover -s tests
+python3 run_first_slice.py < fixtures/signals/search_latency_regression.json
+```
+
+### Web
+
+```bash
+cd web
+npm test
+npm run build
+```
+
+## Verification Status
+
+The current implementation is verified by:
+
+- Python unit and integration coverage across pipeline behavior and HTTP control-plane flows
+- frontend unit tests for run graph generation
+- production frontend build
+
+The stable local path is:
+
+1. `native` evaluation + `native` orchestration
+2. browser operator approval gate
+3. vault and Merkle inspection
+4. optional Promptfoo / Goose CLI enablement through `setup_integrations.py`
+
+## Supporting Docs
+
+- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-web-control-plane.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-web-control-plane.md)
+- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-operator-console.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/docs/mesh-intelligence-operator-console.md)
+- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/architecture.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/architecture.md)
+- [`/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/data-flows.md`](/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/mesh-intelligence/data-flows.md)

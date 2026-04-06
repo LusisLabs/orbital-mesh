@@ -1,0 +1,50 @@
+{
+  "goals": [
+    {
+      "created_at": "2026-04-06T19:22:54.371659+00:00",
+      "goal_id": "goal_20260406192254_3",
+      "note_path": "Goals/goal_20260406192254_3.md",
+      "objective": "Observe and steer every run before execution.",
+      "status": "active",
+      "success_criteria": [
+        "Approval gate works",
+        "Vault notes exist"
+      ],
+      "tags": [],
+      "title": "Production control visibility",
+      "updated_at": "2026-04-06T19:22:54.371659+00:00"
+    },
+    {
+      "created_at": "2026-04-06T19:21:42.388575+00:00",
+      "goal_id": "goal_20260406192142_2",
+      "note_path": "Goals/goal_20260406192142_2.md",
+      "objective": "Observe and steer every run before execution.",
+      "status": "active",
+      "success_criteria": [
+        "Approval gate works",
+        "Vault notes exist"
+      ],
+      "tags": [],
+      "title": "Production control visibility",
+      "updated_at": "2026-04-06T19:21:42.388575+00:00"
+    },
+    {
+      "created_at": "2026-04-06T19:21:21.741086+00:00",
+      "goal_id": "goal_default",
+      "note_path": "Goals/goal_default.md",
+      "objective": "Keep the feature-flag remediation system observable, steerable, and reversible while capturing durable operator memory for each run.",
+      "status": "active",
+      "success_criteria": [
+        "Every run streams stage transitions live.",
+        "Execution never bypasses evaluation or operator policy.",
+        "Run history is mirrored into the local vault with Merkle roots."
+      ],
+      "tags": [
+        "operations",
+        "control-plane"
+      ],
+      "title": "Operate the mesh remediation loop with continuous visibility",
+      "updated_at": "2026-04-06T19:21:21.741086+00:00"
+    }
+  ]
+}
