@@ -22,6 +22,29 @@ class IncidentAdapter:
         }
 
 
+class KubernetesAdapter:
+    def rollback_deployment(self, parameters: dict) -> dict:
+        deployment_name = parameters["deployment_name"]
+        revision = parameters.get("revision") or "previous"
+        return {
+            "status": "succeeded",
+            "external_refs": {
+                "rollout_change_id": f"k8srollback_{deployment_name}_{revision}",
+                "rollout_action": "rollback_deployment",
+            },
+        }
+
+    def restart_deployment(self, parameters: dict) -> dict:
+        deployment_name = parameters["deployment_name"]
+        return {
+            "status": "succeeded",
+            "external_refs": {
+                "rollout_change_id": f"k8srestart_{deployment_name}",
+                "rollout_action": "restart_deployment",
+            },
+        }
+
+
 class AuditLogAdapter:
     def write_record(self, decision: Decision, idempotency_key: str) -> dict:
         return {

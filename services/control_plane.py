@@ -99,19 +99,29 @@ class RunCoordinator:
         scenarios: list[dict[str, Any]] = []
         for path in sorted(fixtures_root.glob("*.json")):
             payload = json.loads(path.read_text())
-            observed = payload["request_telemetry"]["observed"]
-            baseline = payload["request_telemetry"]["baseline"]
+            if payload.get("signal_type") == "kubernetes_deployment_issue":
+                deployment = payload["deployment"]
+                summary = {
+                    "service": payload["service"],
+                    "endpoint": f"deployment/{deployment['name']}",
+                    "flag_key": deployment["revision"],
+                    "latency_delta_ms": sum(int(pod.get("restarts", 0)) for pod in payload["pods"]),
+                }
+            else:
+                observed = payload["request_telemetry"]["observed"]
+                baseline = payload["request_telemetry"]["baseline"]
+                summary = {
+                    "service": payload["service"],
+                    "endpoint": payload["endpoint"],
+                    "flag_key": payload["feature_flag"]["flag_key"],
+                    "latency_delta_ms": observed["p95_latency_ms"] - baseline["p95_latency_ms"],
+                }
             scenarios.append(
                 {
                     "key": path.stem,
                     "title": path.stem.replace("_", " ").title(),
                     "file": path.name,
-                    "summary": {
-                        "service": payload["service"],
-                        "endpoint": payload["endpoint"],
-                        "flag_key": payload["feature_flag"]["flag_key"],
-                        "latency_delta_ms": observed["p95_latency_ms"] - baseline["p95_latency_ms"],
-                    },
+                    "summary": summary,
                 }
             )
         return scenarios

@@ -7,6 +7,8 @@ from shared.mesh_runtime import Decision, Trigger, load_policy
 
 class DecisionService:
     def decide(self, trigger: Trigger) -> Decision:
+        if trigger.trigger_type == "kubernetes_deployment_unhealthy":
+            return self._decide_kubernetes(trigger)
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -128,6 +130,99 @@ class DecisionService:
         decision.validate()
         return decision
 
+    def _decide_kubernetes(self, trigger: Trigger) -> Decision:
+        error_signatures = list(trigger.related_context.get("error_signatures", []))
+        event_reasons = list(trigger.related_context.get("event_reasons", []))
+        rollout_status = str(trigger.related_context.get("rollout_status", "degraded"))
+        deployment_name = str(trigger.related_context.get("deployment_name", trigger.service))
+        namespace = str(trigger.related_context.get("namespace", "default"))
+        cluster = str(trigger.related_context.get("cluster", "unknown"))
+        image = str(trigger.related_context.get("deployment_image", "unknown"))
+        likely_layer = str(trigger.related_context.get("likely_layer", "unknown"))
+        code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
+        repo_path = trigger.related_context.get("repo_path")
+        suspected_file = trigger.related_context.get("suspected_file")
+        allowed_paths = list(trigger.related_context.get("allowed_paths", []))
+        test_commands = list(trigger.related_context.get("test_commands", []))
+        patch_template = trigger.related_context.get("patch_template")
+        repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
+
+        if (
+            code_remediation_candidate
+            and "application_error" in error_signatures
+            and repo_path
+            and suspected_file
+            and allowed_paths
+            and test_commands
+            and isinstance(patch_template, dict)
+        ):
+            decision_type = "investigate_and_patch"
+            confidence = 0.81
+            risk_level = "medium"
+            autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+            blast_radius = "single_repo_single_file"
+        elif "image_pull_failure" in error_signatures or rollout_status == "failed":
+            decision_type = "rollback_deployment"
+            confidence = 0.9
+            risk_level = "medium"
+            autonomy_tier = "autonomous"
+            blast_radius = "single_deployment"
+        elif "crash_loop" in error_signatures or "probe_failure" in error_signatures or "oom_killed" in error_signatures:
+            decision_type = "restart_deployment"
+            confidence = 0.78
+            risk_level = "medium"
+            autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+            blast_radius = "single_deployment"
+        else:
+            decision_type = "escalate"
+            confidence = 0.65
+            risk_level = "high"
+            autonomy_tier = "escalated"
+            blast_radius = "single_deployment"
+
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type=decision_type,
+            autonomy_tier=autonomy_tier,
+            summary=_summary(trigger, decision_type, 0),
+            reasoning={
+                "primary_hypothesis": (
+                    f"Deployment {deployment_name} in {namespace} is unhealthy due to {', '.join(error_signatures or ['unknown runtime symptoms'])}."
+                ),
+                "evidence": [
+                    f"rollout status is {rollout_status}",
+                    f"likely failure layer is {likely_layer}",
+                    f"event reasons: {', '.join(event_reasons or ['none captured'])}",
+                    f"image under analysis: {image}",
+                ],
+                "evidence_pack": {
+                    "error_signatures": error_signatures,
+                    "event_reasons": event_reasons,
+                    "cluster": cluster,
+                    "namespace": namespace,
+                    "deployment_name": deployment_name,
+                },
+                "alternatives_considered": _alternatives(decision_type),
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= unavailable for kubernetes rollout signals",
+                    "error_rate": "<= rollout healthy with zero new critical events",
+                },
+                "time_to_effect": "15m",
+            },
+            risk={
+                "level": risk_level,
+                "blast_radius": blast_radius,
+                "customer_impact_if_wrong": _customer_impact_if_wrong(decision_type),
+            },
+            confidence=confidence,
+            execution_plan=_execution_plan(trigger, decision_type, 0),
+        )
+        decision.validate()
+        return decision
+
 
 def _delta_pct(baseline: float, observed: float) -> float:
     if baseline == 0:
@@ -142,6 +237,29 @@ def _ratio(baseline: float, observed: float) -> float:
 
 
 def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -> dict[str, object]:
+    if decision_type == "rollback_deployment":
+        return {
+            "system": "kubernetes_service",
+            "action": "rollback_deployment",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "revision": trigger.related_context.get("release_id"),
+            },
+            "rollback_plan": "reapply the unhealthy revision only after human review confirms the rollback was incorrect",
+        }
+    if decision_type == "restart_deployment":
+        return {
+            "system": "kubernetes_service",
+            "action": "restart_deployment",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+            },
+            "rollback_plan": "rollback deployment to the previous stable revision if restart does not restore readiness",
+        }
     if decision_type == "investigate_and_patch":
         patch_template = trigger.related_context.get("patch_template", {})
         return {
@@ -213,6 +331,16 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
 
 
 def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
+    if decision_type == "rollback_deployment":
+        return (
+            f"Rollback Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
+            f"{trigger.related_context.get('namespace', 'default')} because the current rollout is unhealthy."
+        )
+    if decision_type == "restart_deployment":
+        return (
+            f"Restart Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
+            f"{trigger.related_context.get('namespace', 'default')} to clear the unhealthy rollout state."
+        )
     if decision_type == "investigate_and_patch":
         return (
             f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
@@ -254,6 +382,18 @@ def _evidence(trigger: Trigger, latency_delta_pct: float, error_multiplier: floa
 
 
 def _alternatives(decision_type: str) -> list[str]:
+    if decision_type == "rollback_deployment":
+        return [
+            "restart deployment",
+            "open incident",
+            "rollback deployment to previous stable revision",
+        ]
+    if decision_type == "restart_deployment":
+        return [
+            "rollback deployment",
+            "open incident",
+            "restart the current deployment revision",
+        ]
     if decision_type == "investigate_and_patch":
         return [
             "continue with no change",
@@ -274,6 +414,8 @@ def _alternatives(decision_type: str) -> list[str]:
 
 
 def _customer_impact_if_wrong(decision_type: str) -> str:
+    if decision_type in {"rollback_deployment", "restart_deployment"}:
+        return "temporary deployment churn or additional recovery time"
     if decision_type == "investigate_and_patch":
         return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":

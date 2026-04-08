@@ -82,7 +82,7 @@ class EvaluationService:
         protected_tier = trigger.segment["customer_tier"] in protected_scope_policy["approval_required_customer_tiers"]
         repeated_rollback = trigger.related_context.get("rollbacks_last_24h", 0) > 0
         cooldown_conflict = repeated_rollback and decision.autonomy_tier == "autonomous"
-        multi_service = decision.risk["blast_radius"] != "single_flag_single_service"
+        multi_service = str(decision.risk["blast_radius"]).startswith("multi_")
         business_notes: list[str] = []
         if decision.autonomy_tier == "autonomous" and (protected_tier or repeated_rollback or multi_service):
             business_notes.append("scope requires approval before execution")
@@ -202,10 +202,13 @@ class EvaluationService:
             "audit_logging_available",
             self.config.audit_logging_available,
         )
+        cluster_access_available = trigger.related_context.get("cluster_access_available", True)
         if system == "feature_flag_service":
             return feature_flag_credentials and audit_logging_available
         if system == "incident_service":
             return incident_credentials and audit_logging_available
+        if system == "kubernetes_service":
+            return bool(cluster_access_available) and audit_logging_available
         return audit_logging_available
 
     def _repo_patch_ready(self, decision: Decision) -> tuple[bool, list[str]]:

@@ -15,6 +15,8 @@ class FeedbackService:
         execution: ExecutionRecord,
         normalized_event: EventEnvelope,
     ) -> FeedbackRecord:
+        if trigger.trigger_type == "kubernetes_deployment_unhealthy":
+            return self._record_kubernetes_feedback(trigger, decision, execution, normalized_event)
         observations = normalized_event.payload.get("post_action_observations", {})
         check_10m = observations.get("10m", {})
         check_30m = observations.get("30m", {})
@@ -86,8 +88,69 @@ class FeedbackService:
         feedback.validate()
         return feedback
 
+    def _record_kubernetes_feedback(
+        self,
+        trigger: Trigger,
+        decision: Decision,
+        execution: ExecutionRecord,
+        normalized_event: EventEnvelope,
+    ) -> FeedbackRecord:
+        observations = normalized_event.payload.get("post_action_observations", {})
+        check_30m = observations.get("30m", {})
+        goose_review = execution.external_refs.get("goose_review", {}) if isinstance(execution.external_refs, dict) else {}
+        desired = int(check_30m.get("desired_replicas", trigger.metrics.get("desired_replicas") or 0))
+        ready = int(check_30m.get("ready_replicas", 0))
+        restart_delta = int(check_30m.get("restart_delta", trigger.metrics.get("restart_count_total") or 0))
+        rollout_status = check_30m.get("rollout_status", "unknown")
+        new_error_signatures = list(check_30m.get("new_error_signatures", []))
+        successful = (
+            execution.status == "succeeded"
+            and rollout_status == "healthy"
+            and ready >= desired
+            and restart_delta == 0
+            and not new_error_signatures
+        )
+        outcome = "successful" if successful else "escalated"
+        recommended_follow_up = "record_rollout_recovery" if successful else "human_review"
+        feedback = FeedbackRecord(
+            feedback_id=f"fb_{decision.decision_id}",
+            decision_id=decision.decision_id,
+            execution_id=execution.execution_id,
+            measured_at=check_30m.get("measured_at", datetime.now(timezone.utc).isoformat()),
+            window="30m",
+            outcome=outcome,
+            metric_comparison={
+                "desired_replicas": desired,
+                "ready_replicas": ready,
+                "restart_delta": restart_delta,
+                "rollout_status": rollout_status,
+            },
+            prediction_accuracy={
+                "expected_time_to_effect": decision.expected_outcome["time_to_effect"],
+                "observed_time_to_effect": check_30m.get("observed_time_to_effect", "not_achieved"),
+            },
+            side_effects=new_error_signatures
+            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else []),
+            world_model_updates={
+                "cluster_recovery_pattern": _service_recovery_pattern(decision.decision_type, successful),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "namespace": trigger.related_context.get("namespace"),
+                "integration_signals": {
+                    "executor": execution.executor,
+                    "goose_review_summary": goose_review.get("summary"),
+                },
+            },
+            recommended_follow_up=recommended_follow_up,
+        )
+        feedback.validate()
+        return feedback
+
 
 def _service_recovery_pattern(decision_type: str, successful: bool) -> str:
+    if decision_type == "rollback_deployment":
+        return "deployment_rollback_restores_health" if successful else "deployment_rollback_insufficient"
+    if decision_type == "restart_deployment":
+        return "deployment_restart_restores_health" if successful else "deployment_restart_insufficient"
     if decision_type == "investigate_and_patch":
         return "bounded_code_patch_restores_latency" if successful else "bounded_code_patch_insufficient"
     if decision_type == "disable_flag":

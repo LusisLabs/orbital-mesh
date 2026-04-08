@@ -24,7 +24,8 @@
     "trigger_type": {
       "type": "string",
       "enum": [
-        "feature_flag_performance_regression"
+        "feature_flag_performance_regression",
+        "kubernetes_deployment_unhealthy"
       ]
     },
     "triggered_at": {
@@ -41,13 +42,22 @@
       "type": "string"
     },
     "flag_key": {
-      "type": "string"
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "current_rollout_pct": {
-      "type": "integer"
+      "type": [
+        "integer",
+        "null"
+      ]
     },
     "comparison_window": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "required": [
         "baseline",
         "observed"
@@ -64,10 +74,6 @@
     },
     "segment": {
       "type": "object",
-      "required": [
-        "customer_tier",
-        "region"
-      ],
       "properties": {
         "customer_tier": {
           "type": "string"
@@ -89,16 +95,28 @@
       ],
       "properties": {
         "baseline_p95_latency_ms": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "observed_p95_latency_ms": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "baseline_error_rate": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "observed_error_rate": {
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "baseline_timeout_rate": {
           "type": [
@@ -113,7 +131,28 @@
           ]
         },
         "sample_size": {
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "restart_count_total": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "desired_replicas": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "available_replicas": {
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "additionalProperties": false

@@ -283,9 +283,15 @@ def _decision(output):
 ASSERT_REGRESSION = ASSERT_HELPERS + """
 def get_assert(output, context):
     trigger = _trigger(output)
-    baseline = trigger["metrics"]["baseline_p95_latency_ms"]
-    observed = trigger["metrics"]["observed_p95_latency_ms"]
-    passed = observed > baseline
+    if trigger["trigger_type"] == "kubernetes_deployment_unhealthy":
+        error_signatures = trigger["related_context"].get("error_signatures", [])
+        rollout_status = trigger["related_context"].get("rollout_status")
+        restarts = trigger["metrics"].get("restart_count_total", 0) or 0
+        passed = rollout_status in {"degraded", "failed"} or bool(error_signatures) or restarts > 0
+    else:
+        baseline = trigger["metrics"]["baseline_p95_latency_ms"]
+        observed = trigger["metrics"]["observed_p95_latency_ms"]
+        passed = observed > baseline
     return {
         "pass": passed,
         "score": 1.0 if passed else 0.0,
@@ -309,7 +315,14 @@ def get_assert(output, context):
 ASSERT_ACTION = ASSERT_HELPERS + """
 def get_assert(output, context):
     decision = _decision(output)
-    passed = decision["execution_plan"]["action"] in {"set_rollout", "open_incident", "record_no_action", "investigate_and_patch"}
+    passed = decision["execution_plan"]["action"] in {
+        "set_rollout",
+        "open_incident",
+        "record_no_action",
+        "investigate_and_patch",
+        "rollback_deployment",
+        "restart_deployment",
+    }
     return {
         "pass": passed,
         "score": 1.0 if passed else 0.0,

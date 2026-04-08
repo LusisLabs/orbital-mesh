@@ -1,0 +1,97 @@
+{
+  "signal_type": "kubernetes_deployment_issue",
+  "signal_id": "sig_k8s_crashloop_001",
+  "observed_at": "2026-04-08T12:00:00Z",
+  "environment": "production",
+  "cluster": "prod-us-east-1",
+  "namespace": "search",
+  "service": "semantic-search",
+  "deployment": {
+    "name": "semantic-search",
+    "revision": "42",
+    "image": "registry.local/semantic-search:42",
+    "rollout_started_at": "2026-04-08T11:54:00Z",
+    "rollout_status": "degraded",
+    "desired_replicas": 3,
+    "updated_replicas": 3,
+    "available_replicas": 1
+  },
+  "pods": [
+    {
+      "name": "semantic-search-7c98f6d5d6-abcd1",
+      "phase": "Running",
+      "ready": false,
+      "restarts": 4,
+      "container_status": "CrashLoopBackOff",
+      "last_state_reason": "Error"
+    },
+    {
+      "name": "semantic-search-7c98f6d5d6-abcd2",
+      "phase": "Running",
+      "ready": true,
+      "restarts": 0,
+      "container_status": "Running",
+      "last_state_reason": null
+    }
+  ],
+  "events": [
+    {
+      "reason": "BackOff",
+      "message": "Back-off restarting failed container",
+      "count": 7,
+      "type": "Warning"
+    },
+    {
+      "reason": "Unhealthy",
+      "message": "Readiness probe failed: HTTP probe failed with statuscode: 500",
+      "count": 3,
+      "type": "Warning"
+    }
+  ],
+  "logs": [
+    {
+      "pod": "semantic-search-7c98f6d5d6-abcd1",
+      "container": "app",
+      "stream": "stderr",
+      "message": "ModuleNotFoundError: No module named 'search.semantic_query_parser'"
+    },
+    {
+      "pod": "semantic-search-7c98f6d5d6-abcd1",
+      "container": "app",
+      "stream": "stderr",
+      "message": "Traceback (most recent call last): ..."
+    }
+  ],
+  "related_context": {
+    "active_incidents": 0,
+    "similar_prior_cases": 2,
+    "rollbacks_last_24h": 0,
+    "cluster_access_available": true,
+    "audit_logging_available": true,
+    "code_remediation_candidate": true,
+    "repo_path": "__FIXTURE_REPO__",
+    "suspected_file": "app/search.py",
+    "allowed_paths": [
+      "app/search.py"
+    ],
+    "test_commands": [
+      "python3 -m unittest discover -s tests"
+    ],
+    "patch_template": {
+      "target_file": "app/search.py",
+      "find": "PARSE_TIMEOUT_MS = 250",
+      "replace": "PARSE_TIMEOUT_MS = 100"
+    }
+  },
+  "post_action_observations": {
+    "30m": {
+      "measured_at": "2026-04-08T12:30:00Z",
+      "rollout_status": "healthy",
+      "desired_replicas": 3,
+      "ready_replicas": 3,
+      "restart_delta": 0,
+      "new_error_signatures": [],
+      "observed_time_to_effect": "9m"
+    }
+  }
+}

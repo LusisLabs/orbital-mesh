@@ -8,6 +8,10 @@ from shared.mesh_runtime import Decision, Trigger, load_fixture, load_schema, va
 
 
 class ContractValidationTests(unittest.TestCase):
+    def test_kubernetes_signal_schema_is_loadable(self) -> None:
+        schema = load_schema("kubernetes-signal.schema.json")
+        self.assertEqual(schema["title"], "KubernetesDeploymentSignal")
+
     def test_trigger_schema_is_loadable(self) -> None:
         schema = load_schema("trigger.schema.json")
         self.assertEqual(schema["title"], "Trigger")
@@ -48,6 +52,10 @@ class ContractValidationTests(unittest.TestCase):
         payload = load_fixture("decisions", "high_risk_decision.json")
         decision = Decision.from_dict(payload)
         self.assertEqual(decision.risk["level"], "high")
+
+    def test_kubernetes_signal_payload_validates(self) -> None:
+        payload = load_fixture("signals", "kubernetes_crashloop_patch.json")
+        validate_payload("kubernetes-signal.schema.json", payload)
 
     def test_code_patch_decision_is_a_valid_contract(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

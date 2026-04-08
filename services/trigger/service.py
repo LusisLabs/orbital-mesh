@@ -10,6 +10,12 @@ from shared.mesh_runtime import EventEnvelope, Trigger
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
+        if payload.get("signal_type") == "kubernetes_deployment_issue":
+            return self._detect_kubernetes_trigger(envelope)
+        return self._detect_feature_flag_trigger(envelope)
+
+    def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
         feature_flag = payload["feature_flag"]
         telemetry = payload["request_telemetry"]
         baseline = telemetry["baseline"]
@@ -83,6 +89,68 @@ class TriggerService:
                 "sample_size": telemetry["sample_size"],
             },
             related_context=trigger_context,
+        )
+        trigger.validate()
+        return trigger
+
+    def _detect_kubernetes_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
+        deployment = payload["deployment"]
+        related_context = payload["related_context"]
+        log_summary = payload["log_summary"]
+        pods = payload["pods"]
+
+        suppressed = (
+            related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        )
+        rollout_unhealthy = deployment["rollout_status"] in {"degraded", "failed"}
+        failing_pods = [pod for pod in pods if not pod.get("ready", False) or int(pod.get("restarts", 0)) > 0]
+        if suppressed or (not rollout_unhealthy and not failing_pods):
+            return None
+
+        trigger_signals = list(log_summary.get("error_signatures", []))
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="kubernetes_deployment_unhealthy",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=f"deployment/{deployment['name']}",
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=payload.get("comparison_window"),
+            segment=payload["segment"],
+            metrics={
+                "baseline_p95_latency_ms": None,
+                "observed_p95_latency_ms": None,
+                "baseline_error_rate": None,
+                "observed_error_rate": None,
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": None,
+                "restart_count_total": log_summary.get("restart_count_total", 0),
+                "desired_replicas": deployment["desired_replicas"],
+                "available_replicas": deployment["available_replicas"],
+            },
+            related_context={
+                "release_id": deployment["revision"],
+                "active_incidents": related_context.get("active_incidents", 0),
+                "similar_prior_cases": related_context.get("similar_prior_cases", 0),
+                "rollbacks_last_24h": related_context.get("rollbacks_last_24h", 0),
+                "cluster": payload["cluster"],
+                "namespace": payload["namespace"],
+                "deployment_name": deployment["name"],
+                "deployment_image": deployment["image"],
+                "rollout_status": deployment["rollout_status"],
+                "error_signatures": trigger_signals,
+                "likely_layer": log_summary.get("likely_layer"),
+                "event_reasons": log_summary.get("event_reasons", []),
+                "primary_symptom": log_summary.get("primary_symptom"),
+                "log_summary": log_summary,
+                **related_context,
+            },
         )
         trigger.validate()
         return trigger

@@ -18,6 +18,10 @@ def base_signal() -> dict:
     return copy.deepcopy(load_fixture("signals", "search_latency_regression.json"))
 
 
+def base_kubernetes_signal() -> dict:
+    return copy.deepcopy(load_fixture("signals", "kubernetes_crashloop_patch.json"))
+
+
 def approved_evaluation(decision_id: str) -> EvaluationResult:
     return EvaluationResult(
         evaluation_id=f"eval_{decision_id}",
@@ -378,6 +382,82 @@ class LoopBehaviorTests(unittest.TestCase):
             test_results = result["execution"]["external_refs"]["test_results"]
             self.assertEqual(test_results[0]["returncode"], 0)
             self.assertEqual(result["feedback"]["outcome"], "successful")
+
+    def test_kubernetes_signal_can_drive_bounded_patch_flow(self) -> None:
+        signal = base_kubernetes_signal()
+        fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "search_service"
+            shutil.copytree(fixture_repo, repo_path)
+            signal["related_context"]["repo_path"] = str(repo_path)
+            config = RuntimeConfig(
+                evaluation_mode="promptfoo",
+                orchestration_mode="goose",
+                state_directory=temp_dir,
+                promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
+                goose_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+            )
+
+            result = FirstSlicePipeline(config=config).run(signal)
+
+            self.assertEqual(result["trigger"]["trigger_type"], "kubernetes_deployment_unhealthy")
+            self.assertEqual(result["decision"]["decision_type"], "investigate_and_patch")
+            self.assertEqual(result["execution"]["status"], "succeeded")
+            self.assertEqual(result["execution"]["applied_action"]["system"], "repo_patch_service")
+            self.assertEqual(result["feedback"]["outcome"], "successful")
+            self.assertIn("PARSE_TIMEOUT_MS = 100", (repo_path / "app" / "search.py").read_text())
+
+    def test_kubernetes_image_pull_failure_prefers_rollback(self) -> None:
+        signal = base_kubernetes_signal()
+        signal["deployment"]["rollout_status"] = "failed"
+        signal["logs"] = []
+        signal["events"] = [
+            {
+                "reason": "ErrImagePull",
+                "message": "Failed to pull image registry.local/semantic-search:42",
+                "count": 4,
+                "type": "Warning",
+            }
+        ]
+        signal["related_context"]["code_remediation_candidate"] = False
+        signal["related_context"].pop("repo_path", None)
+        config = RuntimeConfig(
+            evaluation_mode="native",
+            orchestration_mode="native",
+            state_directory=self.temp_dir.name,
+        )
+
+        result = FirstSlicePipeline(config=config).run(signal)
+
+        self.assertEqual(result["decision"]["decision_type"], "rollback_deployment")
+        self.assertEqual(result["execution"]["applied_action"]["system"], "kubernetes_service")
+        self.assertEqual(result["execution"]["applied_action"]["action"], "rollback_deployment")
+
+    def test_kubernetes_probe_failure_prefers_restart(self) -> None:
+        signal = base_kubernetes_signal()
+        signal["logs"] = []
+        signal["events"] = [
+            {
+                "reason": "Unhealthy",
+                "message": "Liveness probe failed: HTTP probe failed with statuscode: 503",
+                "count": 5,
+                "type": "Warning",
+            }
+        ]
+        signal["pods"][0]["container_status"] = "Running"
+        signal["pods"][0]["restarts"] = 1
+        signal["related_context"]["code_remediation_candidate"] = False
+        signal["related_context"].pop("repo_path", None)
+        config = RuntimeConfig(
+            evaluation_mode="native",
+            orchestration_mode="native",
+            state_directory=self.temp_dir.name,
+        )
+
+        result = FirstSlicePipeline(config=config).run(signal)
+
+        self.assertEqual(result["decision"]["decision_type"], "restart_deployment")
+        self.assertEqual(result["execution"]["applied_action"]["action"], "restart_deployment")
 
 
 if __name__ == "__main__":

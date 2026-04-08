@@ -2,7 +2,9 @@
   "require_rollback_plan_for_decision_types": [
     "reduce_rollout",
     "disable_flag",
-    "investigate_and_patch"
+    "investigate_and_patch",
+    "rollback_deployment",
+    "restart_deployment"
   ],
   "minimum_confidence": 0.75,
   "cooldown_hours_after_rollback": 24

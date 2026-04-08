@@ -29,7 +29,9 @@
         "reduce_rollout",
         "disable_flag",
         "escalate",
-        "investigate_and_patch"
+        "investigate_and_patch",
+        "rollback_deployment",
+        "restart_deployment"
       ]
     },
     "autonomy_tier": {
@@ -148,7 +150,8 @@
             "feature_flag_service",
             "incident_service",
             "audit_log_sink",
-            "repo_patch_service"
+            "repo_patch_service",
+            "kubernetes_service"
           ]
         },
         "action": {
@@ -157,7 +160,9 @@
             "set_rollout",
             "open_incident",
             "record_no_action",
-            "investigate_and_patch"
+            "investigate_and_patch",
+            "rollback_deployment",
+            "restart_deployment"
           ]
         },
         "parameters": {

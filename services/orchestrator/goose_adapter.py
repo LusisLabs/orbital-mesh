@@ -8,7 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
+from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from services.actuators.repo_patch import RepoPatchAdapter
 from shared.mesh_runtime import Decision
 
@@ -36,6 +36,7 @@ class NativeGooseAdapter(GooseAdapter):
     def __init__(self) -> None:
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
+        self.kubernetes = KubernetesAdapter()
         self.audit_logs = AuditLogAdapter()
         self.repo_patch = RepoPatchAdapter()
 
@@ -60,6 +61,11 @@ class NativeGooseAdapter(GooseAdapter):
             result = self.feature_flags.set_rollout(execution_plan["parameters"])
         elif execution_plan["system"] == "incident_service":
             result = self.incidents.open_incident(execution_plan["parameters"])
+        elif execution_plan["system"] == "kubernetes_service":
+            if execution_plan["action"] == "rollback_deployment":
+                result = self.kubernetes.rollback_deployment(execution_plan["parameters"])
+            else:
+                result = self.kubernetes.restart_deployment(execution_plan["parameters"])
         elif execution_plan["system"] == "repo_patch_service":
             result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:

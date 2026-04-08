@@ -120,13 +120,21 @@ def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) 
     )
     add_check(
         "grounded_regression",
-        trigger.metrics["observed_p95_latency_ms"] > trigger.metrics["baseline_p95_latency_ms"],
+        _grounded_regression(trigger),
         "reasoning references observed metrics",
         "reasoning is not grounded in an observed regression",
     )
     add_check(
         "allowed_action",
-        decision.execution_plan["action"] in {"set_rollout", "open_incident", "record_no_action", "investigate_and_patch"},
+        decision.execution_plan["action"]
+        in {
+            "set_rollout",
+            "open_incident",
+            "record_no_action",
+            "investigate_and_patch",
+            "rollback_deployment",
+            "restart_deployment",
+        },
         "action matches allowed contract",
         "action falls outside the allowed contract",
     )
@@ -140,3 +148,16 @@ def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) 
             "provider": mode,
         },
     )
+
+
+def _grounded_regression(trigger: Trigger) -> bool:
+    if trigger.trigger_type == "kubernetes_deployment_unhealthy":
+        error_signatures = trigger.related_context.get("error_signatures", [])
+        rollout_status = trigger.related_context.get("rollout_status")
+        restarts = trigger.metrics.get("restart_count_total") or 0
+        return rollout_status in {"degraded", "failed"} or bool(error_signatures) or restarts > 0
+    baseline = trigger.metrics["baseline_p95_latency_ms"]
+    observed = trigger.metrics["observed_p95_latency_ms"]
+    if baseline is None or observed is None:
+        return False
+    return observed > baseline

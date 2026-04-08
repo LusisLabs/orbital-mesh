@@ -4,7 +4,7 @@ import json
 import sys
 
 from services.actuators.repo_patch import RepoPatchAdapter
-from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
+from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision
 
 
@@ -14,6 +14,7 @@ def main() -> None:
     decision = Decision.from_dict(payload["decision"])
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
+    kubernetes = KubernetesAdapter()
     audit_logs = AuditLogAdapter()
     repo_patch = RepoPatchAdapter()
 
@@ -76,6 +77,11 @@ def main() -> None:
         result = feature_flags.set_rollout(execution_plan["parameters"])
     elif execution_plan["system"] == "incident_service":
         result = incidents.open_incident(execution_plan["parameters"])
+    elif execution_plan["system"] == "kubernetes_service":
+        if execution_plan["action"] == "rollback_deployment":
+            result = kubernetes.rollback_deployment(execution_plan["parameters"])
+        else:
+            result = kubernetes.restart_deployment(execution_plan["parameters"])
     elif execution_plan["system"] == "repo_patch_service":
         result = repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
     else:

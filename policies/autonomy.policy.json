@@ -4,13 +4,16 @@
     "reduce_rollout",
     "disable_flag",
     "escalate",
-    "investigate_and_patch"
+    "investigate_and_patch",
+    "rollback_deployment",
+    "restart_deployment"
   ],
   "allowed_execution_systems": [
     "feature_flag_service",
     "incident_service",
     "audit_log_sink",
-    "repo_patch_service"
+    "repo_patch_service",
+    "kubernetes_service"
   ],
   "allowed_execution_actions": {
     "feature_flag_service": [
@@ -24,12 +27,18 @@
     ],
     "repo_patch_service": [
       "investigate_and_patch"
+    ],
+    "kubernetes_service": [
+      "rollback_deployment",
+      "restart_deployment"
     ]
   },
   "idempotent_actions": [
     "set_rollout",
     "open_incident",
     "record_no_action",
-    "investigate_and_patch"
+    "investigate_and_patch",
+    "rollback_deployment",
+    "restart_deployment"
   ]
 }

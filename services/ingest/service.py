@@ -2,11 +2,61 @@
 
 from __future__ import annotations
 
-from shared.mesh_runtime import EventEnvelope
+from shared.mesh_runtime import EventEnvelope, validate_payload
+
+from .kubernetes_summary import summarize_kubernetes_logs
 
 
 class IngestService:
     def normalize_signal(self, raw_signal: dict) -> EventEnvelope:
+        if raw_signal.get("signal_type") == "kubernetes_deployment_issue":
+            validate_payload("kubernetes-signal.schema.json", raw_signal)
+            related_context = {
+                "active_suppression": False,
+                "incident_owned_by_human": False,
+                "known_upstream_outage": False,
+                "active_incidents": 0,
+                "similar_prior_cases": 0,
+                "rollbacks_last_24h": 0,
+                "cluster_access_available": True,
+            }
+            related_context.update(raw_signal.get("related_context", {}))
+            deployment = raw_signal["deployment"]
+            log_summary = summarize_kubernetes_logs(raw_signal["logs"], raw_signal["events"], raw_signal["pods"])
+            return EventEnvelope(
+                event_type="normalized_signal",
+                object_id=raw_signal["signal_id"],
+                schema_version="v1",
+                emitted_at=raw_signal["observed_at"],
+                payload={
+                    "signal_type": "kubernetes_deployment_issue",
+                    "environment": raw_signal["environment"],
+                    "service": raw_signal["service"],
+                    "endpoint": f"deployment/{deployment['name']}",
+                    "cluster": raw_signal["cluster"],
+                    "namespace": raw_signal["namespace"],
+                    "comparison_window": {
+                        "baseline": f"revision:{deployment['revision']}-1",
+                        "observed": f"revision:{deployment['revision']}",
+                    },
+                    "segment": {
+                        "customer_tier": "system",
+                        "region": raw_signal["cluster"],
+                    },
+                    "deployment": deployment,
+                    "pods": raw_signal["pods"],
+                    "events": raw_signal["events"],
+                    "logs": raw_signal["logs"],
+                    "log_summary": log_summary,
+                    "related_context": related_context,
+                    "post_action_observations": raw_signal.get("post_action_observations", {}),
+                },
+                summary={
+                    "service": raw_signal["service"],
+                    "endpoint": f"deployment/{deployment['name']}",
+                    "deployment": deployment["name"],
+                },
+            )
         feature_flag = raw_signal["feature_flag"]
         request_telemetry = raw_signal["request_telemetry"]
         related_context = {
