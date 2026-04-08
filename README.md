@@ -420,4 +420,5 @@ The stable local path is:
 ## Supporting Docs
 
 - [architecture.md](./architecture.md)
-- [data-flows.md](./data-flows.md)
+- [first-closed-loop-contract.md](./first-closed-loop-contract.md)
+- [docs/CODEX_RUN_SUMMARY.md](./docs/CODEX_RUN_SUMMARY.md)

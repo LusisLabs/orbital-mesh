@@ -309,7 +309,7 @@ def get_assert(output, context):
 ASSERT_ACTION = ASSERT_HELPERS + """
 def get_assert(output, context):
     decision = _decision(output)
-    passed = decision["execution_plan"]["action"] in {"set_rollout", "open_incident", "record_no_action"}
+    passed = decision["execution_plan"]["action"] in {"set_rollout", "open_incident", "record_no_action", "investigate_and_patch"}
     return {
         "pass": passed,
         "score": 1.0 if passed else 0.0,

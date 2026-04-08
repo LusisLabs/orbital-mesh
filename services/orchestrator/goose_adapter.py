@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
+from services.actuators.repo_patch import RepoPatchAdapter
 from shared.mesh_runtime import Decision
 
 
@@ -36,6 +37,7 @@ class NativeGooseAdapter(GooseAdapter):
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
         self.audit_logs = AuditLogAdapter()
+        self.repo_patch = RepoPatchAdapter()
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
         audit_result = self.audit_logs.write_record(decision, idempotency_key)
@@ -58,6 +60,8 @@ class NativeGooseAdapter(GooseAdapter):
             result = self.feature_flags.set_rollout(execution_plan["parameters"])
         elif execution_plan["system"] == "incident_service":
             result = self.incidents.open_incident(execution_plan["parameters"])
+        elif execution_plan["system"] == "repo_patch_service":
+            result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:
             result = {"status": "succeeded", "external_refs": {}}
 

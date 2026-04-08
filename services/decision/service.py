@@ -27,13 +27,30 @@ class DecisionService:
         similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
         trigger_signals = list(trigger.related_context.get("trigger_signals", []))
         feature_flag_credentials_available = bool(trigger.related_context.get("feature_flag_credentials_available", True))
+        code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
+        repo_path = trigger.related_context.get("repo_path")
+        suspected_file = trigger.related_context.get("suspected_file")
+        allowed_paths = list(trigger.related_context.get("allowed_paths", []))
+        test_commands = list(trigger.related_context.get("test_commands", []))
+        patch_template = trigger.related_context.get("patch_template")
 
         decision_type = "reduce_rollout"
         confidence = 0.82
         risk_level = "medium"
         blast_radius = "single_flag_single_service" if not multi_service_impact else "multi_service"
 
-        if conflicting_signals or high_business_impact:
+        if (
+            code_remediation_candidate
+            and repo_path
+            and suspected_file
+            and allowed_paths
+            and test_commands
+            and isinstance(patch_template, dict)
+        ):
+            decision_type = "investigate_and_patch"
+            confidence = 0.78
+            risk_level = "medium"
+        elif conflicting_signals or high_business_impact:
             decision_type = "escalate"
             confidence = 0.64
             risk_level = "high" if high_business_impact else "medium"
@@ -125,6 +142,25 @@ def _ratio(baseline: float, observed: float) -> float:
 
 
 def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -> dict[str, object]:
+    if decision_type == "investigate_and_patch":
+        patch_template = trigger.related_context.get("patch_template", {})
+        return {
+            "system": "repo_patch_service",
+            "action": "investigate_and_patch",
+            "parameters": {
+                "repo_path": trigger.related_context.get("repo_path"),
+                "allowed_paths": list(trigger.related_context.get("allowed_paths", [])),
+                "suspected_file": trigger.related_context.get("suspected_file"),
+                "symptom": "search latency regression after semantic rollout change",
+                "test_commands": list(trigger.related_context.get("test_commands", [])),
+                "patch_template": {
+                    "target_file": patch_template.get("target_file"),
+                    "find": patch_template.get("find"),
+                    "replace": patch_template.get("replace"),
+                },
+            },
+            "rollback_plan": "restore the previous file contents from the saved backup and rerun the bounded verification commands",
+        }
     if decision_type == "disable_flag":
         return {
             "system": "feature_flag_service",
@@ -177,6 +213,11 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
 
 
 def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
+    if decision_type == "investigate_and_patch":
+        return (
+            f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
+            f"scope to reduce the regression on {trigger.endpoint}."
+        )
     if decision_type == "disable_flag":
         return (
             f"Disable {trigger.flag_key} for {trigger.environment} due to sustained latency and error regression "
@@ -213,6 +254,12 @@ def _evidence(trigger: Trigger, latency_delta_pct: float, error_multiplier: floa
 
 
 def _alternatives(decision_type: str) -> list[str]:
+    if decision_type == "investigate_and_patch":
+        return [
+            "continue with no change",
+            "reduce rollout to 10%",
+            "apply a bounded code patch and rerun verification",
+        ]
     if decision_type == "escalate":
         return [
             "continue with no change",
@@ -227,6 +274,8 @@ def _alternatives(decision_type: str) -> list[str]:
 
 
 def _customer_impact_if_wrong(decision_type: str) -> str:
+    if decision_type == "investigate_and_patch":
+        return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":
         return "temporary feature unavailability"
     if decision_type == "reduce_rollout":

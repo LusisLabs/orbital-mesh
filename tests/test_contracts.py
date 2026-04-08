@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 from shared.mesh_runtime import Decision, Trigger, load_fixture, load_schema, validate_payload
 
@@ -46,6 +48,54 @@ class ContractValidationTests(unittest.TestCase):
         payload = load_fixture("decisions", "high_risk_decision.json")
         decision = Decision.from_dict(payload)
         self.assertEqual(decision.risk["level"], "high")
+
+    def test_code_patch_decision_is_a_valid_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir)
+            payload = {
+                "decision_id": "dec_patch_test",
+                "trigger_id": "trg_patch_test",
+                "decision_type": "investigate_and_patch",
+                "autonomy_tier": "autonomous",
+                "summary": "Apply a bounded patch to the search parser.",
+                "reasoning": {
+                    "primary_hypothesis": "A parser timeout constant is forcing the degraded path.",
+                    "evidence": ["p95 latency and timeout rate regressed after rollout"],
+                    "evidence_pack": {"suspected_file": "app/search.py"},
+                    "alternatives_considered": ["reduce rollout to 10%", "disable feature flag fully"],
+                },
+                "expected_outcome": {
+                    "target_metrics": {
+                        "p95_latency_ms": "<= 470",
+                        "error_rate": "<= 0.015",
+                    },
+                    "time_to_effect": "10m",
+                },
+                "risk": {
+                    "level": "medium",
+                    "blast_radius": "single_repo_single_file",
+                    "customer_impact_if_wrong": "temporary service instability from an incorrect bounded patch",
+                },
+                "confidence": 0.78,
+                "execution_plan": {
+                    "system": "repo_patch_service",
+                    "action": "investigate_and_patch",
+                    "parameters": {
+                        "repo_path": str(repo_path),
+                        "allowed_paths": ["app/search.py"],
+                        "suspected_file": "app/search.py",
+                        "test_commands": ["python3 -m unittest discover -s tests"],
+                        "patch_template": {
+                            "target_file": "app/search.py",
+                            "find": "old",
+                            "replace": "new",
+                        },
+                    },
+                    "rollback_plan": "restore previous file contents from backup",
+                },
+            }
+            decision = Decision.from_dict(payload)
+        self.assertEqual(decision.execution_plan["system"], "repo_patch_service")
 
 
 if __name__ == "__main__":
