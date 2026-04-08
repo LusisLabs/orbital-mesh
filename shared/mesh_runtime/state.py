@@ -32,6 +32,8 @@ class RunRecord:
     evaluation_mode: str
     orchestration_mode: str
     trigger_emitted: bool
+    stage_event_count: int = 0
+    integration_artifact_count: int = 0
 
 
 class RuntimeStateStore:
@@ -87,6 +89,18 @@ class RuntimeStateStore:
             evaluation_mode=evaluation_mode,
             orchestration_mode=orchestration_mode,
             trigger_emitted=bool(result.get("trigger")),
+            stage_event_count=len(result.get("run_events", [])) if isinstance(result.get("run_events"), list) else 0,
+            integration_artifact_count=(
+                len(
+                    [
+                        event
+                        for event in result.get("run_events", [])
+                        if isinstance(event, dict) and event.get("integration_name")
+                    ]
+                )
+                if isinstance(result.get("run_events"), list)
+                else 0
+            ),
         )
         snapshot_path = Path(run_record.snapshot_path)
         snapshot_payload = deepcopy(result)

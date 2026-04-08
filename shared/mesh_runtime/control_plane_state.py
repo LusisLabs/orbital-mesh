@@ -142,6 +142,9 @@ class ControlPlaneStateStore:
         event_type: str,
         payload: dict[str, Any],
         summary: dict[str, Any] | None = None,
+        artifact_key: str | None = None,
+        integration_name: str | None = None,
+        status: str | None = None,
     ) -> RunEvent:
         event_path = self._run_events_dir / f"{run_id}.json"
         with _locked_json(event_path) as event_payload:
@@ -156,6 +159,9 @@ class ControlPlaneStateStore:
                 recorded_at=_timestamp(),
                 payload=deepcopy(payload),
                 summary=deepcopy(summary),
+                artifact_key=artifact_key,
+                integration_name=integration_name,
+                status=status,
             )
             event.merkle_leaf_hash = leaf_hash_for_payload(event.canonical_payload())
             existing_events.append(event)

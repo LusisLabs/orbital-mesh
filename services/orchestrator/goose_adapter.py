@@ -18,7 +18,7 @@ MESH_ROOT = Path(__file__).resolve().parents[2]
 @dataclass
 class GooseExecutionResult:
     status: str
-    external_refs: dict[str, str]
+    external_refs: dict[str, object]
     failure: dict | None = None
     retryable: bool = False
 
@@ -48,6 +48,12 @@ class NativeGooseAdapter(GooseAdapter):
 
         execution_plan = decision.execution_plan
         external_refs = {"audit_log_id": audit_result["audit_log_id"]}
+        external_refs["goose_review"] = {
+            "mode": "native",
+            "approved": True,
+            "summary": "native bounded execution path approved locally",
+            "risk_flags": [],
+        }
         if execution_plan["system"] == "feature_flag_service":
             result = self.feature_flags.set_rollout(execution_plan["parameters"])
         elif execution_plan["system"] == "incident_service":

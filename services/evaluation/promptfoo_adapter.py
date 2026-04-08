@@ -20,6 +20,7 @@ class PromptfooResult:
     score: float
     notes: list[str]
     mode: str
+    artifacts: dict | None = None
 
 
 class PromptfooAdapter:
@@ -81,6 +82,7 @@ class PromptfooCliAdapter(PromptfooAdapter):
             score=float(result["score"]),
             notes=list(result["notes"]),
             mode=result.get("mode", "cli"),
+            artifacts=result.get("artifacts"),
         )
 
     def _resolve_command(self) -> list[str]:
@@ -91,26 +93,50 @@ class PromptfooCliAdapter(PromptfooAdapter):
 
 def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) -> PromptfooResult:
     notes: list[str] = []
+    assertion_results: list[dict[str, object]] = []
     passed = True
-    if decision.confidence < 0.75:
-        passed = False
-        notes.append("confidence is below the minimum threshold")
-    if decision.risk["level"] == "high":
-        passed = False
-        notes.append("risk is too high for automated execution")
-    if trigger.metrics["observed_p95_latency_ms"] <= trigger.metrics["baseline_p95_latency_ms"]:
-        passed = False
-        notes.append("reasoning is not grounded in an observed regression")
-    else:
-        notes.append("reasoning references observed metrics")
-    if decision.execution_plan["action"] not in {"set_rollout", "open_incident", "record_no_action"}:
-        passed = False
-        notes.append("action falls outside the allowed contract")
-    else:
-        notes.append("action matches allowed contract")
+
+    def add_check(name: str, condition: bool, success_reason: str, failure_reason: str) -> None:
+        nonlocal passed
+        if condition:
+            notes.append(success_reason)
+            assertion_results.append({"name": name, "passed": True, "reason": success_reason, "score": 1.0})
+        else:
+            passed = False
+            notes.append(failure_reason)
+            assertion_results.append({"name": name, "passed": False, "reason": failure_reason, "score": 0.0})
+
+    add_check(
+        "confidence_threshold",
+        decision.confidence >= 0.75,
+        "confidence meets the minimum threshold",
+        "confidence is below the minimum threshold",
+    )
+    add_check(
+        "risk_threshold",
+        decision.risk["level"] != "high",
+        "risk remains inside the automated boundary",
+        "risk is too high for automated execution",
+    )
+    add_check(
+        "grounded_regression",
+        trigger.metrics["observed_p95_latency_ms"] > trigger.metrics["baseline_p95_latency_ms"],
+        "reasoning references observed metrics",
+        "reasoning is not grounded in an observed regression",
+    )
+    add_check(
+        "allowed_action",
+        decision.execution_plan["action"] in {"set_rollout", "open_incident", "record_no_action"},
+        "action matches allowed contract",
+        "action falls outside the allowed contract",
+    )
     return PromptfooResult(
         passed=passed,
         score=0.93 if passed else 0.42,
         notes=notes,
         mode=mode,
+        artifacts={
+            "assertion_results": assertion_results,
+            "provider": mode,
+        },
     )

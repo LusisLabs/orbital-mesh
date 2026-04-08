@@ -60,6 +60,9 @@
           },
           "minItems": 1
         },
+        "evidence_pack": {
+          "type": "object"
+        },
         "alternatives_considered": {
           "type": "array",
           "items": {

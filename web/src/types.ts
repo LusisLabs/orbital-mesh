@@ -37,6 +37,9 @@ export interface RunEventRecord {
   payload: Record<string, unknown>;
   summary?: Record<string, unknown> | null;
   merkle_leaf_hash?: string | null;
+  artifact_key?: string | null;
+  integration_name?: string | null;
+  status?: string | null;
 }
 
 export interface RunSessionRecord {

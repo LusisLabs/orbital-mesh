@@ -34,6 +34,9 @@ class RunEvent(JsonModel):
     payload: dict[str, Any]
     summary: dict[str, Any] | None = None
     merkle_leaf_hash: str | None = None
+    artifact_key: str | None = None
+    integration_name: str | None = None
+    status: str | None = None
 
     def canonical_payload(self) -> dict[str, Any]:
         return {
@@ -45,6 +48,9 @@ class RunEvent(JsonModel):
             "recorded_at": self.recorded_at,
             "payload": self.payload,
             "summary": self.summary,
+            "artifact_key": self.artifact_key,
+            "integration_name": self.integration_name,
+            "status": self.status,
         }
 
 

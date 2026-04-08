@@ -28,6 +28,7 @@ class FeedbackService:
             check_10m.get("p95_latency_ms", observed_latency) < observed_latency
             and check_10m.get("error_rate", observed_error) < observed_error
         )
+        goose_review = execution.external_refs.get("goose_review", {}) if isinstance(execution.external_refs, dict) else {}
         successful_30m = (
             execution.status == "succeeded"
             and post_latency <= baseline_latency * 1.10
@@ -69,12 +70,17 @@ class FeedbackService:
                 "expected_time_to_effect": decision.expected_outcome["time_to_effect"],
                 "observed_time_to_effect": check_30m.get("observed_time_to_effect", "not_achieved"),
             },
-            side_effects=check_30m.get("side_effects", []),
+            side_effects=check_30m.get("side_effects", [])
+            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else []),
             recommended_follow_up=recommended_follow_up,
             world_model_updates={
                 "causal_link_strength": 0.82 if successful_30m else 0.38,
                 "flag_risk_score_delta": 0.15 if decision.decision_type == "disable_flag" else 0.08,
                 "service_recovery_pattern": _service_recovery_pattern(decision.decision_type, successful_30m),
+                "integration_signals": {
+                    "evaluation_mode": execution.executor if execution.executor else "unknown",
+                    "goose_review_summary": goose_review.get("summary"),
+                },
             },
         )
         feedback.validate()

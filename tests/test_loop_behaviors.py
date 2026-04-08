@@ -308,8 +308,32 @@ class LoopBehaviorTests(unittest.TestCase):
             result = FirstSlicePipeline(config=config).run(signal)
 
         self.assertEqual(result["evaluation"]["stage_results"]["promptfoo_quality"]["passed"], True)
+        self.assertIn("artifacts", result["evaluation"]["stage_results"]["promptfoo_quality"])
+        self.assertIn("assertion_results", result["evaluation"]["stage_results"]["promptfoo_quality"]["artifacts"])
         self.assertEqual(result["execution"]["status"], "succeeded")
         self.assertIn("audit_log_id", result["execution"]["external_refs"])
+        self.assertTrue(result["execution"]["external_refs"]["goose_review"]["approved"])
+
+    def test_runtime_records_typed_stage_events_and_integration_artifacts(self) -> None:
+        signal = base_signal()
+        with tempfile.TemporaryDirectory() as state_dir:
+            config = RuntimeConfig(
+                evaluation_mode="promptfoo",
+                orchestration_mode="goose",
+                state_directory=state_dir,
+                promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
+                goose_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+            )
+            result = FirstSlicePipeline(config=config).run(signal)
+
+        event_types = [event["event_type"] for event in result["run_events"]]
+        self.assertIn("evaluation_ready", event_types)
+        self.assertIn("execution_recorded", event_types)
+        integration_events = [event for event in result["run_events"] if event.get("integration_name")]
+        self.assertTrue(any(event["integration_name"] == "promptfoo" for event in integration_events))
+        self.assertTrue(any(event["integration_name"] == "goose" for event in integration_events))
+        self.assertGreater(result["run_metadata"]["stage_event_count"], 0)
+        self.assertGreaterEqual(result["run_metadata"]["integration_artifact_count"], 2)
 
 
 if __name__ == "__main__":

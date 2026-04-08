@@ -11,7 +11,28 @@ from typing import Any
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
-from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, load_fixture
+from shared.mesh_runtime import (
+    APPROVAL_BLOCKED,
+    DECISION_READY,
+    EVALUATION_READY,
+    EXECUTION_RECORDED,
+    FEEDBACK_RECORDED,
+    INTEGRATION_ARTIFACT_RECORDED,
+    INTEGRATION_READINESS_RECORDED,
+    NORMALIZED_EVENT,
+    NO_TRIGGER,
+    RUN_CANCELLED,
+    RUN_COMPLETED,
+    RUN_FAILED,
+    RUN_QUEUED,
+    RuntimeConfig,
+    STEERING_COMMAND,
+    TRIGGER_READY,
+    Decision,
+    EvaluationResult,
+    Trigger,
+    load_fixture,
+)
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
@@ -138,6 +159,7 @@ class RunCoordinator:
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
+        readiness_snapshot = build_readiness(run_config).to_dict()
         session = self.state_store.create_run_session(
             goal_id=goal_id,
             scenario_key=scenario_key,
@@ -146,13 +168,13 @@ class RunCoordinator:
             pause_points=pause_points,
             evaluation_mode=run_config.evaluation_mode,
             orchestration_mode=run_config.orchestration_mode,
-            artifacts={"input_signal": signal_payload},
+            artifacts={"input_signal": signal_payload, "integration_readiness": readiness_snapshot},
         )
         self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
-            event_type="run_queued",
+            event_type=RUN_QUEUED,
             payload={
                 "scenario_key": scenario_key,
                 "goal_id": goal_id,
@@ -160,6 +182,19 @@ class RunCoordinator:
                 "pause_points": pause_points,
             },
             summary={"status": "queued"},
+            status="queued",
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=INTEGRATION_READINESS_RECORDED,
+            payload=readiness_snapshot,
+            summary={
+                "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
+                "goose_ready": readiness_snapshot["goose"]["ready"],
+            },
+            artifact_key="integration_readiness",
+            status="captured",
         )
         worker = threading.Thread(
             target=self._execute_run,
@@ -188,9 +223,11 @@ class RunCoordinator:
         self.state_store.append_run_event(
             run_id,
             stage=session.stage,
-            event_type="steering_command",
+            event_type=STEERING_COMMAND,
             payload=command.to_dict(),
             summary={"command": command_type},
+            artifact_key="operator_command",
+            status="received",
         )
         if command_type == "attach_note" and command.payload.get("note"):
             session.operator_notes.append(command.payload["note"])
@@ -219,9 +256,11 @@ class RunCoordinator:
             self.state_store.append_run_event(
                 run_id,
                 stage="ingesting",
-                event_type="normalized_event",
+                event_type=NORMALIZED_EVENT,
                 payload=normalized_event.to_dict(),
                 summary=normalized_event.summary,
+                artifact_key="normalized_event",
+                status="recorded",
             )
 
             trigger = engine.trigger.detect(normalized_event)
@@ -230,9 +269,10 @@ class RunCoordinator:
                 self.state_store.append_run_event(
                     run_id,
                     stage="no_trigger",
-                    event_type="no_trigger",
+                    event_type=NO_TRIGGER,
                     payload={"reason": "signal did not satisfy trigger thresholds"},
                     summary={"status": "completed"},
+                    status="completed",
                 )
                 self._update_session(run_id, stage="completed", status="completed")
                 return
@@ -242,9 +282,11 @@ class RunCoordinator:
             self.state_store.append_run_event(
                 run_id,
                 stage="trigger_ready",
-                event_type="trigger_ready",
+                event_type=TRIGGER_READY,
                 payload=trigger.to_dict(),
                 summary={"trigger_type": trigger.trigger_type},
+                artifact_key="trigger",
+                status="recorded",
             )
             self._wait_if_needed(run_id, "trigger_ready", trigger=trigger, decision=None, evaluation=None)
 
@@ -260,9 +302,10 @@ class RunCoordinator:
                     self.state_store.append_run_event(
                         run_id,
                         stage="cancelled",
-                        event_type="run_cancelled",
+                        event_type=RUN_CANCELLED,
                         payload={"reason": "operator_cancelled"},
                         summary={"status": "cancelled"},
+                        status="cancelled",
                     )
                     return
                 if outcome["action"] == "override":
@@ -282,10 +325,25 @@ class RunCoordinator:
             self.state_store.append_run_event(
                 run_id,
                 stage="executing",
-                event_type="execution_recorded",
+                event_type=EXECUTION_RECORDED,
                 payload=execution.to_dict(),
                 summary={"status": execution.status},
+                artifact_key="execution",
+                integration_name=run_config.orchestration_mode if run_config.orchestration_mode != "native" else None,
+                status=execution.status,
             )
+            if execution.external_refs.get("goose_review"):
+                self._set_artifact(run_id, "goose_review", execution.external_refs["goose_review"])
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="executing",
+                    event_type=INTEGRATION_ARTIFACT_RECORDED,
+                    payload=execution.external_refs["goose_review"],
+                    summary={"approved": execution.external_refs["goose_review"].get("approved")},
+                    artifact_key="goose_review",
+                    integration_name="goose",
+                    status="recorded",
+                )
 
             feedback = engine.feedback.record(trigger, decision, execution, normalized_event)
             self._set_artifact(run_id, "feedback", feedback.to_dict())
@@ -293,9 +351,11 @@ class RunCoordinator:
             self.state_store.append_run_event(
                 run_id,
                 stage="feedback_ready",
-                event_type="feedback_recorded",
+                event_type=FEEDBACK_RECORDED,
                 payload=feedback.to_dict(),
                 summary={"outcome": feedback.outcome},
+                artifact_key="feedback",
+                status=feedback.outcome,
             )
             wait_feedback = self._wait_if_needed(
                 run_id,
@@ -311,18 +371,20 @@ class RunCoordinator:
             self.state_store.append_run_event(
                 run_id,
                 stage="completed",
-                event_type="run_completed",
+                event_type=RUN_COMPLETED,
                 payload={"execution_status": execution.status, "feedback_outcome": feedback.outcome},
                 summary={"status": "completed"},
+                status="completed",
             )
         except Exception as exc:
             self._update_session(run_id, stage="failed", status="failed", error=str(exc))
             self.state_store.append_run_event(
                 run_id,
                 stage="failed",
-                event_type="run_failed",
+                event_type=RUN_FAILED,
                 payload={"error": str(exc)},
                 summary={"status": "failed"},
+                status="failed",
             )
 
     def _record_decision_and_evaluation(
@@ -338,9 +400,11 @@ class RunCoordinator:
         self.state_store.append_run_event(
             run_id,
             stage="decision_ready",
-            event_type="decision_ready",
+            event_type=DECISION_READY,
             payload=decision.to_dict(),
             summary={"decision_type": decision.decision_type, "autonomy_tier": decision.autonomy_tier},
+            artifact_key="decision",
+            status="recorded",
         )
         evaluation = engine.evaluation.evaluate(
             trigger,
@@ -352,13 +416,29 @@ class RunCoordinator:
         self.state_store.append_run_event(
             run_id,
             stage="evaluation_ready",
-            event_type="evaluation_ready",
+            event_type=EVALUATION_READY,
             payload=evaluation.to_dict(),
             summary={
                 "recommendation": evaluation.final_recommendation,
                 "passed": evaluation.passed,
             },
+            artifact_key="evaluation",
+            integration_name=engine.config.evaluation_mode if engine.config.evaluation_mode != "native" else None,
+            status=evaluation.final_recommendation,
         )
+        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts")
+        if promptfoo_artifact:
+            self._set_artifact(run_id, "promptfoo_artifact", promptfoo_artifact)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=promptfoo_artifact,
+                summary={"passed": evaluation.stage_results["promptfoo_quality"]["passed"]},
+                artifact_key="promptfoo_artifact",
+                integration_name="promptfoo",
+                status="recorded",
+            )
         return evaluation
 
     def _wait_if_needed(
@@ -423,9 +503,10 @@ class RunCoordinator:
                         self.state_store.append_run_event(
                             run_id,
                             stage="awaiting_operator",
-                            event_type="approval_blocked",
+                            event_type=APPROVAL_BLOCKED,
                             payload={"reason": "evaluation did not pass"},
                             summary={"status": "blocked"},
+                            status="blocked",
                         )
                         continue
                     self._update_session(run_id, stage=stage, status="running", pending_pause_stage=None)

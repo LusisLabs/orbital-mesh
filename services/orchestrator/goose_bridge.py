@@ -7,11 +7,15 @@ import sys
 from pathlib import Path
 
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
-from shared.mesh_runtime import Decision
+from shared.mesh_runtime import Decision, log_runtime_event
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
-GOOSE_SYSTEM_PROMPT = "Reply with only ACK or REJECT. Do not add punctuation, markdown, or explanation."
+GOOSE_SYSTEM_PROMPT = (
+    "Reply with only compact JSON matching this shape: "
+    '{"approved": boolean, "summary": string, "risk_flags": string[], "next_action": string}. '
+    "Do not include markdown."
+)
 
 
 def main() -> None:
@@ -31,11 +35,11 @@ def main() -> None:
         raise SystemExit(_passthrough(args, ["--version"]))
 
     if args.healthcheck:
-        ok, detail = _acknowledged(args, "Reply with ACK.")
-        if ok:
-            print(detail)
+        review = _review(args, "Reply with a compact approval JSON object.")
+        if review["approved"]:
+            print(review["summary"])
             return
-        raise SystemExit(detail)
+        raise SystemExit(review["summary"])
 
     payload = json.load(sys.stdin)
     mode = payload["mode"]
@@ -45,16 +49,26 @@ def main() -> None:
     audit_logs = AuditLogAdapter()
 
     if mode == "incident":
-        ok, detail = _acknowledged(
+        review = _review(
             args,
             (
-                "Review this bounded incident request and reply with ACK if it is coherent.\n\n"
+                "Review this bounded incident request and return a compact approval JSON object.\n\n"
                 f"Decision: {json.dumps(decision.to_dict(), sort_keys=True)}\n"
                 f"Failure reason: {payload['failure_reason']}"
             ),
         )
-        if not ok:
-            raise SystemExit(detail)
+        if not review["approved"]:
+            log_runtime_event("goose_bridge_incident_rejected", review=review)
+            json.dump(
+                {
+                    "external_refs": {"goose_review": review},
+                    "failure": {"reason": "goose_rejected_incident_request", "goose_review": review},
+                },
+                sys.stdout,
+                indent=2,
+            )
+            sys.stdout.write("\n")
+            return
         result = incidents.open_incident(
             {
                 "decision_id": decision.decision_id,
@@ -63,20 +77,42 @@ def main() -> None:
                 "reason": payload["failure_reason"],
             }
         )
-        json.dump({"external_refs": result.get("external_refs", {})}, sys.stdout, indent=2)
+        json.dump(
+            {
+                "external_refs": {
+                    **result.get("external_refs", {}),
+                    "goose_review": review,
+                }
+            },
+            sys.stdout,
+            indent=2,
+        )
         sys.stdout.write("\n")
+        log_runtime_event("goose_bridge_incident_completed", review=review)
         return
 
-    ok, detail = _acknowledged(
+    review = _review(
         args,
         (
-            "Review this bounded execution request and reply with ACK if it should proceed.\n\n"
+            "Review this bounded execution request and return a compact approval JSON object.\n\n"
             f"Idempotency key: {payload['idempotency_key']}\n"
             f"Decision: {json.dumps(decision.to_dict(), sort_keys=True)}"
         ),
     )
-    if not ok:
-        raise SystemExit(detail)
+    if not review["approved"]:
+        log_runtime_event("goose_bridge_execution_rejected", review=review)
+        json.dump(
+            {
+                "status": "failed",
+                "external_refs": {"goose_review": review},
+                "failure": {"reason": "goose_rejected_execution_request", "goose_review": review},
+                "retryable": False,
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write("\n")
+        return
 
     idempotency_key = payload["idempotency_key"]
     audit_result = audit_logs.write_record(decision, idempotency_key)
@@ -97,7 +133,7 @@ def main() -> None:
     execution_plan = decision.execution_plan
     external_refs = {
         "audit_log_id": audit_result["audit_log_id"],
-        "goose_review": detail,
+        "goose_review": review,
     }
     if execution_plan["system"] == "feature_flag_service":
         result = feature_flags.set_rollout(execution_plan["parameters"])
@@ -118,6 +154,7 @@ def main() -> None:
         indent=2,
     )
     sys.stdout.write("\n")
+    log_runtime_event("goose_bridge_execution_completed", status=result["status"], review=review)
 
 
 def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
@@ -130,7 +167,7 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
     return completed.returncode
 
 
-def _acknowledged(args: argparse.Namespace, prompt: str) -> tuple[bool, str]:
+def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
     command = [
         args.goose_bin,
         "run",
@@ -159,19 +196,72 @@ def _acknowledged(args: argparse.Namespace, prompt: str) -> tuple[bool, str]:
             timeout=60,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return False, f"goose subprocess failed: {exc}"
+        return {
+            "approved": False,
+            "summary": f"goose subprocess failed: {exc}",
+            "risk_flags": ["subprocess_error"],
+            "next_action": "human_review",
+        }
     if completed.returncode != 0:
-        return False, completed.stderr.strip() or completed.stdout.strip() or "goose run failed"
+        return {
+            "approved": False,
+            "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
+            "risk_flags": ["cli_error"],
+            "next_action": "human_review",
+        }
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
-        return False, f"goose subprocess returned invalid JSON: {exc}"
+        return {
+            "approved": False,
+            "summary": f"goose subprocess returned invalid JSON: {exc}",
+            "risk_flags": ["invalid_json"],
+            "next_action": "human_review",
+        }
     text = _assistant_text(payload)
     if not text:
-        return False, "goose did not return assistant text"
-    if text.lower().strip().startswith("ack"):
-        return True, text.strip()
-    return False, f"goose rejected the request: {text.strip()}"
+        return {
+            "approved": False,
+            "summary": "goose did not return assistant text",
+            "risk_flags": ["empty_response"],
+            "next_action": "human_review",
+        }
+    return _parse_review_text(text)
+
+
+def _parse_review_text(text: str) -> dict[str, object]:
+    cleaned = text.strip()
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError:
+        lowered = cleaned.lower()
+        if lowered.startswith("ack"):
+            return {
+                "approved": True,
+                "summary": cleaned,
+                "risk_flags": [],
+                "next_action": "proceed",
+            }
+        return {
+            "approved": False,
+            "summary": f"goose rejected the request: {cleaned}",
+            "risk_flags": ["model_rejection"],
+            "next_action": "human_review",
+        }
+
+    approved = bool(parsed.get("approved", False))
+    summary = str(parsed.get("summary", "goose review completed")).strip()
+    risk_flags = parsed.get("risk_flags") or []
+    if not isinstance(risk_flags, list):
+        risk_flags = [str(risk_flags)]
+    next_action = str(parsed.get("next_action", "proceed" if approved else "human_review"))
+    return {
+        "approved": approved,
+        "summary": summary,
+        "risk_flags": [str(item) for item in risk_flags],
+        "next_action": next_action,
+        "raw_text": cleaned,
+    }
 
 
 def _assistant_text(payload: dict) -> str:

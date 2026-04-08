@@ -28,6 +28,13 @@ class TriggerService:
         error_worse = baseline["error_rate"] > 0 and observed["error_rate"] >= baseline["error_rate"] * 1.5
         timeout_worse = observed.get("timeout_rate", 0.0) >= 0.02
         persistent = telemetry.get("persistent_windows", 0) >= 2
+        trigger_signals: list[str] = []
+        if latency_worse:
+            trigger_signals.append("latency_regression")
+        if error_worse:
+            trigger_signals.append("error_regression")
+        if timeout_worse:
+            trigger_signals.append("timeout_regression")
         suppressed = (
             feature_flag.get("under_rollback", False)
             or related_context.get("active_suppression", False)
@@ -48,6 +55,11 @@ class TriggerService:
             "rollbacks_last_24h": related_context.get("rollbacks_last_24h", 0),
             "regressions_last_7d": related_context.get("regressions_last_7d", 0),
             "minutes_since_flag_change": minutes_since_change,
+            "trigger_signals": trigger_signals,
+            "signal_quality": {
+                "sample_size_ok": sample_size_ok,
+                "persistent": persistent,
+            },
             **related_context,
         }
         trigger = Trigger(

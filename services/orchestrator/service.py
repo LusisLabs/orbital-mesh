@@ -11,6 +11,7 @@ from shared.mesh_runtime import (
     EvaluationResult,
     ExecutionRecord,
     RuntimeConfig,
+    log_runtime_event,
     resolve_integrations_config,
 )
 
@@ -40,12 +41,19 @@ class OrchestratorService:
         started_at = datetime.now(timezone.utc).isoformat()
         idempotency_key = f"{decision.decision_id}:{decision.execution_plan['action']}"
         if not evaluation.passed or evaluation.final_recommendation != "execute":
+            log_runtime_event(
+                "execution_rejected",
+                mode=self.config.orchestration_mode,
+                decision_id=decision.decision_id,
+                recommendation=evaluation.final_recommendation,
+                blocking_reasons=evaluation.blocking_reasons,
+            )
             record = ExecutionRecord(
                 execution_id=f"exe_{decision.decision_id}",
                 decision_id=decision.decision_id,
                 started_at=started_at,
                 completed_at=datetime.now(timezone.utc).isoformat(),
-                executor="goose",
+                executor=self.config.orchestration_mode,
                 status="rejected",
                 idempotency_key=idempotency_key,
                 applied_action={
@@ -54,7 +62,10 @@ class OrchestratorService:
                     "parameters": decision.execution_plan["parameters"],
                 },
                 external_refs={},
-                failure={"reason": evaluation.final_recommendation},
+                failure={
+                    "reason": evaluation.final_recommendation,
+                    "blocking_reasons": list(evaluation.blocking_reasons),
+                },
             )
             record.validate()
             return record
@@ -94,16 +105,17 @@ class OrchestratorService:
                 **(failure or {"reason": "transient_execution_failure"}),
                 "human_review_route": "human_review",
                 "attempts": attempts,
+                "orchestration_mode": self.config.orchestration_mode,
             }
         elif failure:
-            failure = {**failure, "attempts": attempts}
+            failure = {**failure, "attempts": attempts, "orchestration_mode": self.config.orchestration_mode}
 
         record = ExecutionRecord(
             execution_id=f"exe_{decision.decision_id}",
             decision_id=decision.decision_id,
             started_at=started_at,
             completed_at=datetime.now(timezone.utc).isoformat(),
-            executor="goose",
+            executor=self.config.orchestration_mode,
             status=result.status,
             idempotency_key=idempotency_key,
             applied_action={
@@ -115,4 +127,11 @@ class OrchestratorService:
             failure=failure,
         )
         record.validate()
+        log_runtime_event(
+            "execution_completed",
+            mode=self.config.orchestration_mode,
+            decision_id=decision.decision_id,
+            status=record.status,
+            attempts=(failure or {}).get("attempts", attempts),
+        )
         return record

@@ -8,6 +8,7 @@ from shared.mesh_runtime import (
     RuntimeConfig,
     RuntimeStateStore,
     Trigger,
+    log_runtime_event,
     load_policy,
     resolve_integrations_config,
 )
@@ -119,6 +120,14 @@ class EvaluationService:
             blocking_reasons.append("required credentials are unavailable")
 
         passed = not blocking_reasons
+        log_runtime_event(
+            "evaluation_completed",
+            mode=self.config.evaluation_mode,
+            decision_id=decision.decision_id,
+            passed=passed,
+            recommendation="reject" if reject else ("execute" if passed else "human_review"),
+            blocking_reasons=blocking_reasons,
+        )
         evaluation = EvaluationResult(
             evaluation_id=f"eval_{decision.decision_id}",
             decision_id=decision.decision_id,
@@ -137,6 +146,8 @@ class EvaluationService:
                     "passed": promptfoo_result.passed,
                     "score": promptfoo_result.score,
                     "notes": promptfoo_result.notes,
+                    "mode": promptfoo_result.mode,
+                    "artifacts": promptfoo_result.artifacts,
                 },
                 "business_rules": {
                     "passed": not business_notes,

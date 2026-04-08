@@ -19,6 +19,7 @@ def main() -> None:
             "score": result.score,
             "notes": result.notes,
             "mode": result.mode,
+            "artifacts": result.artifacts,
         },
         sys.stdout,
         indent=2,

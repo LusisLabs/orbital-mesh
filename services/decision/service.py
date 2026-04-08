@@ -23,6 +23,10 @@ class DecisionService:
         conflicting_signals = bool(trigger.related_context.get("conflicting_signals", False))
         high_business_impact = bool(trigger.related_context.get("high_business_impact", False))
         flag_causality_confidence = trigger.related_context.get("flag_causality_confidence")
+        active_incidents = int(trigger.related_context.get("active_incidents", 0))
+        similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
+        trigger_signals = list(trigger.related_context.get("trigger_signals", []))
+        feature_flag_credentials_available = bool(trigger.related_context.get("feature_flag_credentials_available", True))
 
         decision_type = "reduce_rollout"
         confidence = 0.82
@@ -45,6 +49,23 @@ class DecisionService:
             confidence = 0.77
             risk_level = "low"
 
+        if decision_type == "no_action" and active_incidents > 0 and (flag_causality_confidence or 0) >= 0.7:
+            decision_type = "reduce_rollout"
+            confidence = max(confidence, 0.8)
+            risk_level = "medium"
+
+        if decision_type in {"disable_flag", "reduce_rollout"} and not feature_flag_credentials_available:
+            decision_type = "escalate"
+            confidence = min(confidence, 0.7)
+            risk_level = "medium"
+
+        confidence = _adjust_confidence(
+            confidence,
+            similar_prior_cases=similar_prior_cases,
+            flag_causality_confidence=flag_causality_confidence,
+            trigger_signals=trigger_signals,
+        )
+
         autonomy_tier = "autonomous"
         if decision_type == "escalate":
             autonomy_tier = "escalated"
@@ -64,6 +85,12 @@ class DecisionService:
                     f"The {trigger.flag_key} feature path is increasing request latency and error rates on {trigger.endpoint}."
                 ),
                 "evidence": _evidence(trigger, latency_delta_pct, error_multiplier, timeout_rate),
+                "evidence_pack": {
+                    "trigger_signals": trigger_signals,
+                    "similar_prior_cases": similar_prior_cases,
+                    "active_incidents": active_incidents,
+                    "flag_causality_confidence": flag_causality_confidence,
+                },
                 "alternatives_considered": _alternatives(decision_type),
             },
             expected_outcome={
@@ -207,3 +234,20 @@ def _customer_impact_if_wrong(decision_type: str) -> str:
     if decision_type == "escalate":
         return "continued customer impact until a human operator intervenes"
     return "continued regression exposure"
+
+
+def _adjust_confidence(
+    base_confidence: float,
+    *,
+    similar_prior_cases: int,
+    flag_causality_confidence: float | None,
+    trigger_signals: list[str],
+) -> float:
+    adjusted = base_confidence
+    if similar_prior_cases > 0:
+        adjusted += min(similar_prior_cases, 3) * 0.01
+    if flag_causality_confidence is not None:
+        adjusted += max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1
+    if len(trigger_signals) >= 2:
+        adjusted += 0.01
+    return max(0.5, min(round(adjusted, 2), 0.95))
