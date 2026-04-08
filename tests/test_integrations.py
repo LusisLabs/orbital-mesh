@@ -116,12 +116,20 @@ class IntegrationsTests(unittest.TestCase):
                     "summary": "bounded execution looks safe",
                     "risk_flags": ["none"],
                     "next_action": "proceed",
+                    "patch": {
+                        "target_file": "app/search.py",
+                        "find": "old",
+                        "replace": "new",
+                    },
+                    "test_commands": ["python3 -m unittest discover -s tests"],
                 }
             )
         )
         self.assertTrue(review["approved"])
         self.assertEqual(review["summary"], "bounded execution looks safe")
         self.assertEqual(review["next_action"], "proceed")
+        self.assertEqual(review["patch"]["target_file"], "app/search.py")
+        self.assertEqual(review["test_commands"][0], "python3 -m unittest discover -s tests")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from shared.mesh_runtime import (
     Decision,
     EvaluationResult,
@@ -102,6 +104,7 @@ class EvaluationService:
         rollback_required = decision.decision_type in rollback_policy["require_rollback_plan_for_decision_types"]
         rollback_present = bool(decision.execution_plan.get("rollback_plan"))
         credentials_available = self._credentials_available(trigger, system)
+        repo_patch_ready, repo_patch_notes = self._repo_patch_ready(decision)
         readiness_notes: list[str] = []
         if decision.confidence < rollback_policy["minimum_confidence"]:
             readiness_notes.append("confidence below minimum threshold")
@@ -118,6 +121,9 @@ class EvaluationService:
         if not credentials_available:
             readiness_notes.append("required credentials are unavailable")
             blocking_reasons.append("required credentials are unavailable")
+        if not repo_patch_ready:
+            readiness_notes.extend(repo_patch_notes)
+            blocking_reasons.extend(repo_patch_notes)
 
         passed = not blocking_reasons
         log_runtime_event(
@@ -160,6 +166,7 @@ class EvaluationService:
                         and idempotent
                         and decision.confidence >= rollback_policy["minimum_confidence"]
                         and decision.risk["level"] != "high"
+                        and repo_patch_ready
                     ),
                     "notes": readiness_notes
                     or [
@@ -200,3 +207,26 @@ class EvaluationService:
         if system == "incident_service":
             return incident_credentials and audit_logging_available
         return audit_logging_available
+
+    def _repo_patch_ready(self, decision: Decision) -> tuple[bool, list[str]]:
+        if decision.execution_plan["system"] != "repo_patch_service":
+            return True, []
+        parameters = decision.execution_plan.get("parameters", {})
+        notes: list[str] = []
+        repo_path = parameters.get("repo_path")
+        allowed_paths = parameters.get("allowed_paths")
+        patch_template = parameters.get("patch_template")
+        test_commands = parameters.get("test_commands")
+        if not isinstance(repo_path, str) or not repo_path or not Path(repo_path).exists():
+            notes.append("repo path is missing or does not exist")
+        if not isinstance(allowed_paths, list) or not allowed_paths:
+            notes.append("allowed repo patch paths are missing")
+        if not isinstance(test_commands, list) or not test_commands:
+            notes.append("bounded test commands are missing")
+        if not isinstance(patch_template, dict):
+            notes.append("patch template is missing")
+        else:
+            for key in ("target_file", "find", "replace"):
+                if not isinstance(patch_template.get(key), str) or not patch_template.get(key):
+                    notes.append(f"patch template field `{key}` is missing")
+        return not notes, notes

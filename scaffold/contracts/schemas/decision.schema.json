@@ -28,7 +28,8 @@
         "no_action",
         "reduce_rollout",
         "disable_flag",
-        "escalate"
+        "escalate",
+        "investigate_and_patch"
       ]
     },
     "autonomy_tier": {
@@ -146,7 +147,8 @@
           "enum": [
             "feature_flag_service",
             "incident_service",
-            "audit_log_sink"
+            "audit_log_sink",
+            "repo_patch_service"
           ]
         },
         "action": {
@@ -154,7 +156,8 @@
           "enum": [
             "set_rollout",
             "open_incident",
-            "record_no_action"
+            "record_no_action",
+            "investigate_and_patch"
           ]
         },
         "parameters": {

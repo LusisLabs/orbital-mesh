@@ -88,6 +88,8 @@ class FeedbackService:
 
 
 def _service_recovery_pattern(decision_type: str, successful: bool) -> str:
+    if decision_type == "investigate_and_patch":
+        return "bounded_code_patch_restores_latency" if successful else "bounded_code_patch_insufficient"
     if decision_type == "disable_flag":
         return "flag_disable_restores_latency" if successful else "flag_disable_insufficient"
     if decision_type == "reduce_rollout":

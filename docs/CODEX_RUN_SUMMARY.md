@@ -39,7 +39,7 @@
 - Read lints for changed Python files and docs: no issues reported.
 
 ### Risks / Follow-ups
-- Promptfoo and Goose real production integrations are not implemented yet; only mock mode plus CLI-placeholder seams exist.
+- Promptfoo and Goose real production integrations are not implemented yet; only mock mode plus CLI-placeholder seams exist. Updated on 2026-04-08: superseded by the later real bridge foundation entry below.
 - Persistence, async messaging, world-model storage, and production observability remain TODOs.
 - Diagnosis, planning, and feedback logic are deterministic placeholders rather than learned or evidence-rich implementations.
 
@@ -85,3 +85,37 @@
 - Goose review is now structured, but it still relies on prompt discipline rather than a hard schema-enforced recipe path.
 - The event model is now bus-friendly, but there is still no external broker/database projection or durable world-model store yet.
 - Structured logs are opt-in through `MESH_STRUCTURED_LOGS`; centralized log shipping, metrics, and deployment manifests remain future work.
+
+## Run: 2026-04-08 06:10 (UTC)
+
+### Scope
+- Rewrote `architecture.md` so it matches the current bounded control-plane runtime instead of the older simplified MVP sketch, then performed conservative repository housekeeping by removing stale aspirational docs and clearing generated local runtime state from the tree.
+
+### Changes
+- Replaced `architecture.md` with a current-state architecture document covering the core loop, control plane, integration bridges, run lifecycle, persistence model, execution boundary, and what is or is not real today.
+- Updated `README.md` supporting-doc links to point at active docs instead of the removed early-vision flow document.
+- Removed stale aspirational docs: `data-flows.md` and `mesh-intelligence-context.md`.
+- Cleared generated local runtime artifacts under `.mesh-runtime-state/` so the repository reflects source instead of checked-in run output.
+- Marked the outdated 2026-04-06 Promptfoo/Goose risk note as superseded by the newer 2026-04-08 integration entry.
+
+### How It Works Now
+- `architecture.md` now documents the actual current shape: bounded remediation services feed into the control plane, Promptfoo/Goose bridges enrich evaluation and orchestration, and run state persists to the local event log plus vault/Merkle outputs.
+- The repo docs now center on active sources of truth: `README.md`, `architecture.md`, `first-closed-loop-contract.md`, and this run summary.
+- Generated local state is treated as disposable runtime output rather than repository content.
+
+### Files Touched
+- `architecture.md` with current runtime/control-plane architecture.
+- `README.md` with cleaned supporting-doc references.
+- `docs/CODEX_RUN_SUMMARY.md` with supersession note and this housekeeping entry.
+- Deleted `data-flows.md` and `mesh-intelligence-context.md` as stale aspirational docs.
+- Deleted generated files under `.mesh-runtime-state/`.
+
+### Validation
+- Ran `python3 -m unittest discover -s tests -v`: passed.
+- Searched for stale references to removed docs: none found.
+- Read lints for changed docs: no issues reported.
+
+### Risks / Follow-ups
+- `architecture.md` is now aligned with the current runtime, but future large behavior changes should update it in the same run to avoid drift.
+- Empty directories may still remain under `.mesh-runtime-state/`, which is acceptable because the path is ignored and repopulated at runtime.
+- Additional housekeeping could later remove or archive older scaffold-era documents, but those were intentionally kept because they still provide useful historical contract context.

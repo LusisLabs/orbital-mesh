@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
 from shared.mesh_runtime import Decision, log_runtime_event
 
@@ -14,6 +15,12 @@ MESH_ROOT = Path(__file__).resolve().parents[2]
 GOOSE_SYSTEM_PROMPT = (
     "Reply with only compact JSON matching this shape: "
     '{"approved": boolean, "summary": string, "risk_flags": string[], "next_action": string}. '
+    "Do not include markdown."
+)
+GOOSE_CODE_PATCH_SYSTEM_PROMPT = (
+    "Reply with only compact JSON matching this shape: "
+    '{"approved": boolean, "summary": string, "risk_flags": string[], "next_action": string, '
+    '"patch": {"target_file": string, "find": string, "replace": string}, "test_commands": string[]}. '
     "Do not include markdown."
 )
 
@@ -47,6 +54,7 @@ def main() -> None:
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
     audit_logs = AuditLogAdapter()
+    repo_patch = RepoPatchAdapter()
 
     if mode == "incident":
         review = _review(
@@ -91,14 +99,7 @@ def main() -> None:
         log_runtime_event("goose_bridge_incident_completed", review=review)
         return
 
-    review = _review(
-        args,
-        (
-            "Review this bounded execution request and return a compact approval JSON object.\n\n"
-            f"Idempotency key: {payload['idempotency_key']}\n"
-            f"Decision: {json.dumps(decision.to_dict(), sort_keys=True)}"
-        ),
-    )
+    review = _review_execution(args, payload["idempotency_key"], decision)
     if not review["approved"]:
         log_runtime_event("goose_bridge_execution_rejected", review=review)
         json.dump(
@@ -139,6 +140,9 @@ def main() -> None:
         result = feature_flags.set_rollout(execution_plan["parameters"])
     elif execution_plan["system"] == "incident_service":
         result = incidents.open_incident(execution_plan["parameters"])
+    elif execution_plan["system"] == "repo_patch_service":
+        patch_parameters = _resolved_patch_parameters(decision, review)
+        result = repo_patch.execute_patch(patch_parameters, idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -229,6 +233,79 @@ def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
     return _parse_review_text(text)
 
 
+def _review_execution(args: argparse.Namespace, idempotency_key: str, decision: Decision) -> dict[str, object]:
+    prompt = (
+        "Review this bounded execution request and return a compact approval JSON object.\n\n"
+        f"Idempotency key: {idempotency_key}\n"
+        f"Decision: {json.dumps(decision.to_dict(), sort_keys=True)}"
+    )
+    if decision.execution_plan["system"] != "repo_patch_service":
+        return _review(args, prompt)
+    return _review_code_patch(args, prompt)
+
+
+def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, object]:
+    command = [
+        args.goose_bin,
+        "run",
+        "--text",
+        prompt,
+        "--system",
+        GOOSE_CODE_PATCH_SYSTEM_PROMPT,
+        "--no-session",
+        "--quiet",
+        "--output-format",
+        "json",
+    ]
+    if args.provider or args.model:
+        command.append("--no-profile")
+    if args.provider:
+        command.extend(["--provider", args.provider])
+    if args.model:
+        command.extend(["--model", args.model])
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=MESH_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "approved": False,
+            "summary": f"goose subprocess failed: {exc}",
+            "risk_flags": ["subprocess_error"],
+            "next_action": "human_review",
+        }
+    if completed.returncode != 0:
+        return {
+            "approved": False,
+            "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
+            "risk_flags": ["cli_error"],
+            "next_action": "human_review",
+        }
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        return {
+            "approved": False,
+            "summary": f"goose subprocess returned invalid JSON: {exc}",
+            "risk_flags": ["invalid_json"],
+            "next_action": "human_review",
+        }
+    text = _assistant_text(payload)
+    if not text:
+        return {
+            "approved": False,
+            "summary": "goose did not return assistant text",
+            "risk_flags": ["empty_response"],
+            "next_action": "human_review",
+        }
+    return _parse_review_text(text)
+
+
 def _parse_review_text(text: str) -> dict[str, object]:
     cleaned = text.strip()
     try:
@@ -261,7 +338,22 @@ def _parse_review_text(text: str) -> dict[str, object]:
         "risk_flags": [str(item) for item in risk_flags],
         "next_action": next_action,
         "raw_text": cleaned,
+        "patch": parsed.get("patch"),
+        "test_commands": parsed.get("test_commands"),
     }
+
+
+def _resolved_patch_parameters(decision: Decision, review: dict[str, object]) -> dict[str, object]:
+    parameters = dict(decision.execution_plan["parameters"])
+    if isinstance(review.get("patch"), dict):
+        parameters["patch_template"] = {
+            "target_file": review["patch"].get("target_file"),
+            "find": review["patch"].get("find"),
+            "replace": review["patch"].get("replace"),
+        }
+    if isinstance(review.get("test_commands"), list) and review["test_commands"]:
+        parameters["test_commands"] = [str(command) for command in review["test_commands"]]
+    return parameters
 
 
 def _assistant_text(payload: dict) -> str:

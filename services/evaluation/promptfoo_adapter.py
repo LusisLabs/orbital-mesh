@@ -126,7 +126,7 @@ def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) 
     )
     add_check(
         "allowed_action",
-        decision.execution_plan["action"] in {"set_rollout", "open_incident", "record_no_action"},
+        decision.execution_plan["action"] in {"set_rollout", "open_incident", "record_no_action", "investigate_and_patch"},
         "action matches allowed contract",
         "action falls outside the allowed contract",
     )

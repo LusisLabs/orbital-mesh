@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 
+from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter
 from shared.mesh_runtime import Decision
 
@@ -14,6 +15,7 @@ def main() -> None:
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
     audit_logs = AuditLogAdapter()
+    repo_patch = RepoPatchAdapter()
 
     if mode == "incident":
         result = incidents.open_incident(
@@ -74,6 +76,8 @@ def main() -> None:
         result = feature_flags.set_rollout(execution_plan["parameters"])
     elif execution_plan["system"] == "incident_service":
         result = incidents.open_incident(execution_plan["parameters"])
+    elif execution_plan["system"] == "repo_patch_service":
+        result = repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 

@@ -1,6 +1,0 @@
-{
-  "gitnexus_sidecar_command": "/Users/shaanp/Documents/GitHub/hyperimpact/holisticai/GitNexus/gitnexus/node_modules/.bin/tsx GitNexus/gitnexus/src/cli/index.ts serve --host 127.0.0.1 --port 4747",
-  "gitnexus_sidecar_url": "http://127.0.0.1:4747",
-  "goose_command": "/opt/homebrew/opt/python@3.13/bin/python3.13 -m services.orchestrator.goose_bridge --goose-bin /opt/homebrew/bin/goose --provider ollama --model qwen2.5:0.5b",
-  "promptfoo_command": "/opt/homebrew/opt/python@3.13/bin/python3.13 -m services.evaluation.promptfoo_bridge --promptfoo-bin /Users/shaanp/.nvm/versions/node/v24.0.2/bin/promptfoo"
-}
