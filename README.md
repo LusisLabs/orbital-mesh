@@ -344,10 +344,10 @@ The mesh control plane is an **HTTP server without built-in authentication**. Pu
 
 ### Container (recommended)
 
-Build and run with Compose. The default stack starts:
+Build and run with Compose. The default stack starts only:
 
-1. **`gitnexus`** — GitNexus HTTP sidecar (`gitnexus serve` on port **4747**), built from `Dockerfile.gitnexus` on **Ubuntu 24.04** so bundled native modules get a recent enough `libstdc++` (Debian Bookworm–based Node images can fail at runtime on arm64). Used for `/api/readiness` and code-graph features. Indexes and registry live in the `gitnexus_home` volume (`~/.gitnexus` in the container). The [GitNexus npm package](https://www.npmjs.com/package/gitnexus) is **PolyForm Noncommercial**; review the license if you use it in production.
-2. **`mesh`** — control plane on **8787**, with **Promptfoo** pre-installed in the image so the `promptfoo` integration can report ready without extra setup.
+1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
+2. **GitNexus is optional** — Compose no longer builds a `gitnexus` container. If you already have a GitNexus instance running on the host or elsewhere, point `MESH_GITNEXUS_SIDECAR_URL` at it. Otherwise the control plane still starts cleanly and GitNexus readiness simply reports unavailable.
 
 ```bash
 docker compose up --build -d
@@ -356,23 +356,62 @@ docker compose up --build -d
 Persistence:
 
 - **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
-- **GitNexus** registry and indexes: volume `gitnexus_home` → `/root/.gitnexus`
+- **Goose** profile/config: volume `goose_config` → `/root/.config/goose`
+- **Workspace mirror**: bind mount `./` → `/workspace/mesh-intelligence`
 
 Override ports if needed:
 
 ```bash
-MESH_PUBLISH_PORT=18080 GITNEXUS_PUBLISH_PORT=14747 docker compose up --build -d
+MESH_PUBLISH_PORT=18080 docker compose up --build -d
 ```
 
-**Goose** is not installed in the default image. To enable it, install the Block Goose CLI on a custom image or on the host and set `MESH_GOOSE_COMMAND`, or add a companion service to Compose.
-
-Run **only** the control plane (no GitNexus sidecar), for example behind an existing GitNexus URL:
+Real-time logs:
 
 ```bash
-docker compose up --no-deps -d mesh
+docker compose logs -f mesh
 ```
 
-…and set `MESH_GITNEXUS_SIDECAR_URL` to that server.
+Inspect readiness from the running backend:
+
+```bash
+curl http://127.0.0.1:8787/api/readiness
+```
+
+By default, Promptfoo becomes ready automatically in the container. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as:
+
+```bash
+export GOOSE_PROVIDER=openai
+export GOOSE_MODEL=gpt-4o-mini
+export OPENAI_API_KEY=...
+docker compose up --build -d
+```
+
+If you prefer a local model, point Goose at Ollama running on the host:
+
+```bash
+export OLLAMA_HOST=http://host.docker.internal:11434
+docker compose up --build -d
+```
+
+For repo-patch and Kubernetes/code-remediation style flows, use repo paths from inside the container namespace, for example:
+
+```text
+/workspace/mesh-intelligence/fixtures/codebases/search_service
+```
+
+Optional GitNexus on the host:
+
+```bash
+npx -y gitnexus@latest serve
+```
+
+Then keep:
+
+```bash
+MESH_GITNEXUS_SIDECAR_URL=http://host.docker.internal:4747
+```
+
+Or blank the variable out if you do not want the sidecar integration at all.
 
 Health: `GET /api/health` on mesh; GitNexus exposes `GET /api/info` for quick probes (Docker Compose uses this). `GET /api/heartbeat` is Server-Sent Events and is not suitable for typical HTTP health checks.
 

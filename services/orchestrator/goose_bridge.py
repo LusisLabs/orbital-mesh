@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +32,8 @@ def main() -> None:
     parser.add_argument("--goose-bin", required=True, help="Path to the goose binary")
     parser.add_argument("--provider", help="Optional Goose provider override")
     parser.add_argument("--model", help="Optional Goose model override")
+    parser.add_argument("--fallback-provider", help="Optional fallback Goose provider override")
+    parser.add_argument("--fallback-model", help="Optional fallback Goose model override")
     parser.add_argument("--version", action="store_true", help="Print the upstream Goose version")
     parser.add_argument(
         "--healthcheck",
@@ -178,54 +182,12 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
 
 
 def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
-    command = [
-        args.goose_bin,
-        "run",
-        "--text",
-        prompt,
-        "--system",
-        GOOSE_SYSTEM_PROMPT,
-        "--no-session",
-        "--quiet",
-        "--output-format",
-        "json",
-    ]
-    if args.provider or args.model:
-        command.append("--no-profile")
-    if args.provider:
-        command.extend(["--provider", args.provider])
-    if args.model:
-        command.extend(["--model", args.model])
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=MESH_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
+    payload, error = _run_goose_prompt(args, prompt, GOOSE_SYSTEM_PROMPT)
+    if payload is None:
+        return error or {
             "approved": False,
-            "summary": f"goose subprocess failed: {exc}",
-            "risk_flags": ["subprocess_error"],
-            "next_action": "human_review",
-        }
-    if completed.returncode != 0:
-        return {
-            "approved": False,
-            "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
+            "summary": "goose run failed",
             "risk_flags": ["cli_error"],
-            "next_action": "human_review",
-        }
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        return {
-            "approved": False,
-            "summary": f"goose subprocess returned invalid JSON: {exc}",
-            "risk_flags": ["invalid_json"],
             "next_action": "human_review",
         }
     text = _assistant_text(payload)
@@ -251,54 +213,12 @@ def _review_execution(args: argparse.Namespace, idempotency_key: str, decision: 
 
 
 def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, object]:
-    command = [
-        args.goose_bin,
-        "run",
-        "--text",
-        prompt,
-        "--system",
-        GOOSE_CODE_PATCH_SYSTEM_PROMPT,
-        "--no-session",
-        "--quiet",
-        "--output-format",
-        "json",
-    ]
-    if args.provider or args.model:
-        command.append("--no-profile")
-    if args.provider:
-        command.extend(["--provider", args.provider])
-    if args.model:
-        command.extend(["--model", args.model])
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=MESH_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
+    payload, error = _run_goose_prompt(args, prompt, GOOSE_CODE_PATCH_SYSTEM_PROMPT)
+    if payload is None:
+        return error or {
             "approved": False,
-            "summary": f"goose subprocess failed: {exc}",
-            "risk_flags": ["subprocess_error"],
-            "next_action": "human_review",
-        }
-    if completed.returncode != 0:
-        return {
-            "approved": False,
-            "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
+            "summary": "goose run failed",
             "risk_flags": ["cli_error"],
-            "next_action": "human_review",
-        }
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        return {
-            "approved": False,
-            "summary": f"goose subprocess returned invalid JSON: {exc}",
-            "risk_flags": ["invalid_json"],
             "next_action": "human_review",
         }
     text = _assistant_text(payload)
@@ -312,10 +232,105 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
     return _parse_review_text(text)
 
 
+def _run_goose_prompt(
+    args: argparse.Namespace,
+    prompt: str,
+    system_prompt: str,
+) -> tuple[dict | None, dict[str, object] | None]:
+    last_error: dict[str, object] | None = None
+    for provider, model, is_fallback in _profiles_for_prompt(args):
+        command = [
+            args.goose_bin,
+            "run",
+            "--text",
+            prompt,
+            "--system",
+            system_prompt,
+            "--no-session",
+            "--quiet",
+            "--output-format",
+            "json",
+        ]
+        if provider or model:
+            command.append("--no-profile")
+        if provider:
+            command.extend(["--provider", provider])
+        if model:
+            command.extend(["--model", model])
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=MESH_ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=_profile_timeout_seconds(provider, is_fallback),
+                env=_command_env(provider),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last_error = {
+                "approved": False,
+                "summary": f"goose subprocess failed: {exc}",
+                "risk_flags": ["subprocess_error", "fallback_used" if is_fallback else "primary_failed"],
+                "next_action": "human_review",
+            }
+            continue
+        if completed.returncode != 0:
+            last_error = {
+                "approved": False,
+                "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
+                "risk_flags": ["cli_error", "fallback_used" if is_fallback else "primary_failed"],
+                "next_action": "human_review",
+            }
+            continue
+        try:
+            payload = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            last_error = {
+                "approved": False,
+                "summary": f"goose subprocess returned invalid JSON: {exc}",
+                "risk_flags": ["invalid_json", "fallback_used" if is_fallback else "primary_failed"],
+                "next_action": "human_review",
+            }
+            continue
+        return payload, None
+    return None, last_error
+
+
+def _profiles_for_prompt(args: argparse.Namespace) -> list[tuple[str | None, str | None, bool]]:
+    primary = (args.provider, args.model, False)
+    fallback = (args.fallback_provider, args.fallback_model, True)
+    profiles: list[tuple[str | None, str | None, bool]] = []
+    if primary[0] or primary[1]:
+        profiles.append(primary)
+    else:
+        profiles.append((None, None, False))
+    if fallback[:2] != primary[:2] and (fallback[0] or fallback[1]):
+        profiles.append(fallback)
+    return profiles
+
+
+def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
+    if is_fallback:
+        return int(os.getenv("GOOSE_FALLBACK_TIMEOUT_SECONDS", "90"))
+    if provider == "ollama":
+        return int(os.getenv("GOOSE_OLLAMA_TIMEOUT_SECONDS", "45"))
+    return int(os.getenv("GOOSE_PRIMARY_TIMEOUT_SECONDS", "60"))
+
+
+def _command_env(provider: str | None) -> dict[str, str]:
+    env = os.environ.copy()
+    if provider == "openai" and env.get("OPENAI_BASE_URL") and not env.get("OPENAI_HOST"):
+        env["OPENAI_HOST"] = env["OPENAI_BASE_URL"]
+    if provider == "anthropic" and env.get("ANTHROPIC_BASE_URL") and not env.get("ANTHROPIC_HOST"):
+        env["ANTHROPIC_HOST"] = env["ANTHROPIC_BASE_URL"]
+    return env
+
+
 def _parse_review_text(text: str) -> dict[str, object]:
     cleaned = text.strip()
     try:
-        parsed = json.loads(cleaned)
+        parsed = _parse_json_like_review(cleaned)
     except json.JSONDecodeError:
         lowered = cleaned.lower()
         if lowered.startswith("ack"):
@@ -347,6 +362,20 @@ def _parse_review_text(text: str) -> dict[str, object]:
         "patch": parsed.get("patch"),
         "test_commands": parsed.get("test_commands"),
     }
+
+
+def _parse_json_like_review(text: str) -> dict[str, object]:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+        if fenced_match:
+            return json.loads(fenced_match.group(1))
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
 
 
 def _resolved_patch_parameters(decision: Decision, review: dict[str, object]) -> dict[str, object]:

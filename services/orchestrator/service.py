@@ -34,7 +34,10 @@ class OrchestratorService:
     def _build_adapter(self) -> GooseAdapter:
         if self.config.orchestration_mode == "goose":
             resolved = resolve_integrations_config(self.config)
-            return GooseCliAdapter(command=resolved.goose_command)
+            return GooseCliAdapter(
+                command=resolved.goose_command,
+                timeout_seconds=self.config.goose_command_timeout_seconds,
+            )
         return NativeGooseAdapter()
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
@@ -83,10 +86,18 @@ class OrchestratorService:
                 break
             if attempts > self.config.max_transient_retries:
                 break
-            retry_after_seconds = float((candidate.failure or {}).get("retry_after_seconds", 0.0))
+            retry_after_seconds = self._retry_delay_seconds(attempts, candidate.failure)
             if self.clock() - retry_window_started_at + retry_after_seconds > self.config.max_retry_window_seconds:
                 break
             if retry_after_seconds > 0:
+                log_runtime_event(
+                    "execution_retry_scheduled",
+                    mode=self.config.orchestration_mode,
+                    decision_id=decision.decision_id,
+                    attempts=attempts,
+                    retry_after_seconds=retry_after_seconds,
+                    failure_reason=(candidate.failure or {}).get("reason"),
+                )
                 self.sleeper(retry_after_seconds)
 
         if result is None:
@@ -135,3 +146,10 @@ class OrchestratorService:
             attempts=(failure or {}).get("attempts", attempts),
         )
         return record
+
+    def _retry_delay_seconds(self, attempts: int, failure: dict | None) -> float:
+        if failure is not None and failure.get("retry_after_seconds") is not None:
+            return float(failure["retry_after_seconds"])
+        # Use bounded exponential backoff for transient failures that do not provide
+        # an explicit retry hint so unattended runs do not hot-loop integrations.
+        return float(min(2 ** max(attempts - 1, 0), 8))

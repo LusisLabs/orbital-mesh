@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import threading
 from collections import deque
 from dataclasses import replace
@@ -159,7 +160,11 @@ class RunCoordinator:
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         steering_mode = payload.get("steering_mode", self.config.default_steering_mode)
         auto_mode = steering_mode == "interruptible_auto"
-        raw_pause_points = payload["pause_points"] if "pause_points" in payload else [self.config.default_operator_pause_point]
+        raw_pause_points = (
+            payload["pause_points"]
+            if "pause_points" in payload
+            else ([] if auto_mode else [self.config.default_operator_pause_point])
+        )
         pause_points = self._normalize_pause_points(raw_pause_points)
         goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
         scenario_key = payload.get("scenario_key")
@@ -514,8 +519,15 @@ class RunCoordinator:
                             run_id,
                             stage="awaiting_operator",
                             event_type=APPROVAL_BLOCKED,
-                            payload={"reason": "evaluation did not pass"},
-                            summary={"status": "blocked"},
+                            payload={
+                                "reason": "evaluation did not pass",
+                                "final_recommendation": evaluation.final_recommendation if evaluation else None,
+                                "blocking_reasons": list(evaluation.blocking_reasons) if evaluation else [],
+                            },
+                            summary={
+                                "status": "blocked",
+                                "recommendation": evaluation.final_recommendation if evaluation else "unknown",
+                            },
                             status="blocked",
                         )
                         continue
@@ -572,13 +584,37 @@ class RunCoordinator:
 
     def _resolve_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("signal_payload"), dict):
-            return copy.deepcopy(payload["signal_payload"])
+            return self._resolve_signal_placeholders(copy.deepcopy(payload["signal_payload"]))
         scenario_key = payload.get("scenario_key")
         if scenario_key:
-            signal = copy.deepcopy(load_fixture("signals", f"{scenario_key}.json"))
+            signal = self._resolve_signal_placeholders(copy.deepcopy(load_fixture("signals", f"{scenario_key}.json")))
             signal["signal_id"] = f"{signal['signal_id']}_{uuid4().hex[:10]}"
             return signal
         raise ValueError("scenario_key or signal_payload is required")
+
+    def _resolve_signal_placeholders(self, signal: dict[str, Any]) -> dict[str, Any]:
+        related_context = signal.get("related_context")
+        if not isinstance(related_context, dict):
+            return signal
+        if related_context.get("repo_path") == "__FIXTURE_REPO__":
+            resolved_repo_path = self._resolve_fixture_repo_path()
+            if resolved_repo_path:
+                related_context["repo_path"] = resolved_repo_path
+        return signal
+
+    def _resolve_fixture_repo_path(self) -> str | None:
+        candidates = [
+            Path("/workspace/mesh-intelligence/fixtures/codebases/search_service"),
+            Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                workspace_root = Path(self.config.state_directory) / "fixture-workspaces" / uuid4().hex
+                destination = workspace_root / candidate.name
+                workspace_root.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(candidate, destination)
+                return str(destination)
+        return None
 
 
 def _timestamp() -> str:

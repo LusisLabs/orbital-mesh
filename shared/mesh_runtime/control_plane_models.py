@@ -93,6 +93,9 @@ class IntegrationStatus(JsonModel):
     detail: str
     command: str | None = None
     url: str | None = None
+    primary_route: str | None = None
+    fallback_route: str | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass

@@ -91,6 +91,9 @@ export interface IntegrationStatus {
   detail: string;
   command?: string | null;
   url?: string | null;
+  primary_route?: string | null;
+  fallback_route?: string | null;
+  warnings?: string[];
 }
 
 export interface IntegrationReadiness {

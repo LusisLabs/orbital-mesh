@@ -92,8 +92,9 @@ class NativeGooseAdapter(GooseAdapter):
 
 
 class GooseCliAdapter(GooseAdapter):
-    def __init__(self, command: str | None = None):
+    def __init__(self, command: str | None = None, timeout_seconds: int = 30):
         self.command = command
+        self.timeout_seconds = timeout_seconds
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
         result = self._invoke(
@@ -135,7 +136,7 @@ class GooseCliAdapter(GooseAdapter):
                 text=True,
                 cwd=MESH_ROOT,
                 check=False,
-                timeout=30,
+                timeout=self.timeout_seconds,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"error": f"goose subprocess failed: {exc}"}
