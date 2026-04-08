@@ -1,5 +1,9 @@
 # First Vertical Slice
 
+Historical note: this document predates the current MVP implementation. The active runtime now uses
+`trigger -> decision -> evaluation -> execution -> feedback` and does not ship the earlier
+diagnosis or remediation-plan stages.
+
 ## Goal
 
 Define the first end-to-end slice that proves the closed-loop platform works for infrastructure healing without taking on the full domain surface at once.

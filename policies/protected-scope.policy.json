@@ -1,5 +1,8 @@
 {
   "protected_services": [],
-  "protected_segments": ["strategic_accounts"],
-  "escalate_on_protected_scope": true
+  "approval_required_customer_tiers": [
+    "strategic",
+    "platinum"
+  ],
+  "escalate_on_multi_service": true
 }

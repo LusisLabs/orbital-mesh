@@ -1,11 +1,8 @@
 {
-  "required_checkpoint_windows": {
-    "feature_flag_change": "10m",
-    "traffic_shift": "10m",
-    "incident_open": "0m"
-  },
-  "require_rollback_for_categories": [
-    "feature_flag_change",
-    "traffic_shift"
-  ]
+  "require_rollback_plan_for_decision_types": [
+    "reduce_rollout",
+    "disable_flag"
+  ],
+  "minimum_confidence": 0.75,
+  "cooldown_hours_after_rollback": 24
 }

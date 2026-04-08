@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 
-from shared.mesh_runtime import Diagnosis, ExecutionRecord, RemediationPlan, Trigger
+from shared.mesh_runtime import Decision, EventEnvelope, ExecutionRecord, Trigger
 
 from .service import FeedbackService
 
@@ -11,10 +11,10 @@ from .service import FeedbackService
 def main() -> None:
     payload = json.load(sys.stdin)
     trigger = Trigger.from_dict(payload["trigger"])
-    diagnosis = Diagnosis.from_dict(payload["diagnosis"])
-    plan = RemediationPlan.from_dict(payload["plan"])
+    decision = Decision.from_dict(payload["decision"])
     execution = ExecutionRecord.from_dict(payload["execution"])
-    feedback = FeedbackService().record(trigger, diagnosis, plan, execution)
+    normalized_event = EventEnvelope(**payload["normalized_event"])
+    feedback = FeedbackService().record(trigger, decision, execution, normalized_event)
     json.dump(feedback.to_dict(), sys.stdout, indent=2)
     sys.stdout.write("\n")
 

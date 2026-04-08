@@ -5,25 +5,21 @@
   "type": "object",
   "required": [
     "feedback_id",
-    "trigger_id",
-    "plan_id",
+    "decision_id",
     "execution_id",
     "measured_at",
     "window",
     "outcome",
     "metric_comparison",
-    "diagnosis_accuracy",
-    "plan_effectiveness",
+    "prediction_accuracy",
+    "side_effects",
     "world_model_updates"
   ],
   "properties": {
     "feedback_id": {
       "type": "string"
     },
-    "trigger_id": {
-      "type": "string"
-    },
-    "plan_id": {
+    "decision_id": {
       "type": "string"
     },
     "execution_id": {
@@ -40,19 +36,19 @@
       "type": "string",
       "enum": [
         "successful",
-        "partial",
-        "failed",
-        "escalated"
+        "escalated",
+        "rolled_back",
+        "unsuccessful"
       ]
     },
     "metric_comparison": {
       "type": "object"
     },
-    "diagnosis_accuracy": {
+    "prediction_accuracy": {
       "type": "object"
     },
-    "plan_effectiveness": {
-      "type": "object"
+    "side_effects": {
+      "type": "array"
     },
     "recommended_follow_up": {
       "type": [

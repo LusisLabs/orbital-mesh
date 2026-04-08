@@ -1,0 +1,42 @@
+{
+  "decision_id": "dec_high_risk",
+  "trigger_id": "trg_high_risk",
+  "decision_type": "disable_flag",
+  "autonomy_tier": "approval_required",
+  "summary": "Disable semantic_search_v2 for production despite a high business impact signal.",
+  "reasoning": {
+    "primary_hypothesis": "The feature path is causing severe regressions.",
+    "evidence": [
+      "p95 latency increased 55.0% vs baseline",
+      "error rate increased 2.60x vs baseline"
+    ],
+    "alternatives_considered": [
+      "continue with no change",
+      "reduce rollout to 10%",
+      "disable feature flag fully"
+    ]
+  },
+  "expected_outcome": {
+    "target_metrics": {
+      "p95_latency_ms": "<= 470",
+      "error_rate": "<= 0.015"
+    },
+    "time_to_effect": "10m"
+  },
+  "risk": {
+    "level": "high",
+    "blast_radius": "single_flag_single_service",
+    "customer_impact_if_wrong": "temporary feature unavailability"
+  },
+  "confidence": 0.9,
+  "execution_plan": {
+    "system": "feature_flag_service",
+    "action": "set_rollout",
+    "parameters": {
+      "flag_key": "semantic_search_v2",
+      "environment": "production",
+      "rollout_pct": 0
+    },
+    "rollback_plan": "restore previous rollout percentage of 50 if follow-up evaluation disproves causality"
+  }
+}

@@ -1,41 +1,39 @@
 from __future__ import annotations
 
-from services.diagnosis.service import DiagnosisService
-from services.evaluation.service import EvaluationService
-from services.feedback.service import FeedbackService
-from services.ingest.service import IngestService
-from services.orchestrator.service import OrchestratorService
-from services.planner.service import PlannerService
-from services.trigger.service import TriggerService
+from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
+from services.runtime import MeshRuntimeEngine
 
 
 class FirstSlicePipeline:
-    def __init__(self) -> None:
-        self.ingest = IngestService()
-        self.trigger = TriggerService()
-        self.diagnosis = DiagnosisService()
-        self.planner = PlannerService()
-        self.evaluation = EvaluationService()
-        self.orchestrator = OrchestratorService()
-        self.feedback = FeedbackService()
+    def __init__(
+        self,
+        config: RuntimeConfig | None = None,
+        state_store: RuntimeStateStore | None = None,
+        ingest: IngestService | None = None,
+        trigger: TriggerService | None = None,
+        decision: DecisionService | None = None,
+        evaluation: EvaluationService | None = None,
+        orchestrator: OrchestratorService | None = None,
+        feedback: FeedbackService | None = None,
+    ) -> None:
+        self.config = config or RuntimeConfig.from_env()
+        self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
+        self.engine = MeshRuntimeEngine(
+            config=self.config,
+            state_store=self.state_store,
+            ingest=ingest,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+            orchestrator=orchestrator,
+            feedback=feedback,
+        )
+        self.ingest = self.engine.ingest
+        self.trigger = self.engine.trigger
+        self.decision = self.engine.decision
+        self.evaluation = self.engine.evaluation
+        self.orchestrator = self.engine.orchestrator
+        self.feedback = self.engine.feedback
 
-    def run(self, raw_signal: dict) -> dict:
-        normalized_event = self.ingest.normalize_signal(raw_signal)
-        trigger = self.trigger.detect(normalized_event)
-        if trigger is None:
-            return {"normalized_event": normalized_event.to_dict(), "trigger": None}
-
-        diagnosis = self.diagnosis.diagnose(trigger)
-        plan = self.planner.plan(trigger, diagnosis)
-        evaluation = self.evaluation.evaluate(plan)
-        execution = self.orchestrator.execute(plan, evaluation)
-        feedback = self.feedback.record(trigger, diagnosis, plan, execution)
-        return {
-            "normalized_event": normalized_event.to_dict(),
-            "trigger": trigger.to_dict(),
-            "diagnosis": diagnosis.to_dict(),
-            "plan": plan.to_dict(),
-            "evaluation": evaluation.to_dict(),
-            "execution": execution.to_dict(),
-            "feedback": feedback.to_dict(),
-        }
+    def run(self, raw_signal: dict, scenario_name: str = "manual") -> dict:
+        return self.engine.run_sync(raw_signal, scenario_name=scenario_name)

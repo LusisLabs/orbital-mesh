@@ -1,699 +1,231 @@
-# Comprehensive Closed Loop Contract
+# First Closed Loop Contract
 
 ## Purpose
 
-This document defines a single closed-loop contract for mesh intelligence systems that must do more than label a signal as good or bad.
+This document defines the first end-to-end autonomous decision loop for the mesh intelligence MVP.
 
-The loop is designed to:
+## Chosen MVP Loop
 
-- detect meaningful symptoms from telemetry and external events
-- diagnose likely causes using richer operational and business context
-- produce bounded multi-step remediation plans
-- evaluate both the overall plan and each execution step
-- execute through controlled actuator surfaces with checkpoints and rollback
-- measure outcomes and learn from both successes and failures
+The first loop targets performance remediation for a newly exposed feature flag.
 
-## System Intent
+Why this loop first:
 
-The system is not just a feature watchdog. It is an autonomous operator with guardrails.
+- it is driven by telemetry the system already expects to ingest
+- it has a narrow and reversible action surface
+- it produces measurable results within minutes
+- it fits the existing Promptfoo quality-gate and Goose execution model
 
-Its job is to turn raw signals such as latency spikes, error bursts, deploy changes, customer distress signals, or churn indicators into a managed loop:
+## Loop Goal
 
-`observe -> diagnose -> plan -> evaluate -> execute -> verify -> learn`
+When a feature rollout causes a material regression in latency or errors for a specific service,
+endpoint, or user segment, the system decides whether to:
+
+- continue with no change
+- reduce rollout percentage
+- disable the feature flag
+- escalate to human review
+
+The MVP does not generate arbitrary remediation plans. It operates within a fixed, audited action
+set.
 
 ## Contract Summary
 
-```mermaid
-flowchart LR
-    telemetry[TelemetryAndExternalSignals] --> detection[TriggerDetection]
-    detection --> diagnosis[DiagnosisContract]
-    diagnosis --> planning[RemediationPlanContract]
-    planning --> evaluation[EvaluationContract]
-    evaluation -->|pass| execution[ExecutionContract]
-    evaluation -->|fail_or_uncertain| humanReview[HumanReview]
-    execution --> verification[FeedbackAndVerification]
-    verification --> learning[WorldModelUpdate]
-    verification --> diagnosis
-```
+### 1. Trigger Contract
 
-## Core Principles
+Trigger objective:
+Create a decision opportunity only when the system detects a statistically meaningful regression
+tied to a feature flag exposure.
 
-- every loop instance must be tied to a durable `trigger_id`
-- every diagnosis must be evidence-backed and auditable
-- every plan must be bounded, explicit, and reversible where possible
-- every execution step must be evaluated before it runs
-- every outcome must update the world model and future decision priors
-- autonomy is earned through narrow actuator surfaces, not through unconstrained planning
+Required inputs:
 
-## 1. Trigger Contract
+- request telemetry with `timestamp`, `service`, `endpoint`, `latency_ms`, `status_code`
+- feature flag exposure events with `flag_key`, `variant`, `rollout_pct`, `user_id` or `account_id`
+- deployment metadata with `release_id`, `service`, `started_at`
+- segment metadata with `environment`, `customer_tier`, `region`
 
-### Objective
+Trigger conditions:
 
-Create a decision opportunity only when the system observes a meaningful symptom cluster that deserves diagnosis.
+- a feature flag changed state or rollout percentage within the last 30 minutes
+- the affected slice has at least `N >= 500` requests since the change
+- one of these regressions is present against baseline:
+  - `p95_latency_ms` worsens by `>= 25%`
+  - `error_rate` worsens by `>= 1.5x`
+  - `timeout_rate` crosses `>= 2%`
+- the regression persists for at least 2 consecutive evaluation windows of 5 minutes
+- no active suppression exists for the same `service + endpoint + flag_key`
 
-### Evidence Inputs
-
-The trigger layer may combine:
-
-- request and service metrics such as `latency_ms`, `error_rate`, `timeout_rate`, saturation, queue depth
-- traces and dependency timings
-- structured logs and incident annotations
-- deployment and config-change metadata
-- feature-flag exposure and rollout events
-- ticket volume, support sentiment, and customer-tier context
-- business signals such as conversion drop, churn-risk increase, or revenue degradation
-
-### Trigger Types
-
-The system should support a common shape across multiple domains:
-
-- `performance_regression`
-- `reliability_incident`
-- `dependency_degradation`
-- `customer_distress_signal`
-- `churn_risk_increase`
-
-### Trigger Conditions
-
-A trigger should be emitted when all of the following are true:
-
-1. A symptom crosses a domain-specific threshold or anomaly score.
-2. The symptom persists long enough to avoid noise.
-3. Minimum sample size or evidence quality thresholds are met.
-4. The scope can be identified, such as service, endpoint, customer segment, account cohort, or dependency.
-5. No active suppression or duplicate incident already owns the same scope.
-
-### Trigger Output Contract
+Trigger output contract:
 
 ```json
 {
-  "trigger_id": "trg_01J2...",
-  "trigger_type": "performance_regression",
+  "trigger_id": "trg_01HRY...",
+  "trigger_type": "feature_flag_performance_regression",
   "triggered_at": "2026-04-06T10:30:00Z",
-  "scope": {
-    "environment": "production",
-    "service": "api-gateway",
-    "endpoint": "POST /search",
-    "segment": "enterprise_us"
+  "environment": "production",
+  "service": "api-gateway",
+  "endpoint": "POST /search",
+  "flag_key": "semantic_search_v2",
+  "current_rollout_pct": 50,
+  "comparison_window": {
+    "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+    "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
   },
-  "symptoms": [
-    {
-      "metric": "p95_latency_ms",
-      "baseline": 420,
-      "observed": 615,
-      "delta_pct": 46.4
-    },
-    {
-      "metric": "error_rate",
-      "baseline": 0.012,
-      "observed": 0.026,
-      "delta_pct": 116.7
-    }
-  ],
-  "related_changes": {
-    "release_id": "rel_2026_04_06_01",
-    "flag_changes": ["semantic_search_v2:50"],
-    "config_changes": []
+  "segment": {
+    "customer_tier": "enterprise",
+    "region": "us-east-1"
   },
-  "evidence_quality": {
-    "sample_size": 1840,
-    "trace_coverage_pct": 82,
-    "log_coverage_pct": 96
-  },
-  "dedupe_key": "prod:api-gateway:POST/search:enterprise_us"
-}
-```
-
-### Trigger Rejection Rules
-
-Do not emit a trigger when:
-
-- the evidence set is too weak to support diagnosis
-- the symptom is already owned by an active loop or human incident
-- the condition is explained by a known external event already under mitigation
-- the signal falls below the minimum persistence or sample thresholds
-
-## 2. Diagnosis Contract
-
-### Objective
-
-Convert a validated trigger into a bounded diagnostic picture of what is likely happening, where it is happening, and which remediations are plausible.
-
-### Diagnosis Inputs
-
-The diagnosis layer should pull together:
-
-- trigger payload
-- current world model state
-- recent deploy and config history
-- dependency health and topology
-- trace spans and bottleneck breakdowns
-- structured log clusters
-- prior similar incidents and prior successful remediations
-- business and customer context for the affected scope
-
-### Diagnosis Outputs
-
-Each diagnosis must include:
-
-- a symptom summary
-- affected scope and blast radius estimate
-- ranked root-cause hypotheses
-- confidence score for each hypothesis
-- supporting and conflicting evidence
-- candidate remediations and expected side effects
-
-### Diagnosis Output Contract
-
-```json
-{
-  "diagnosis_id": "diag_01J2...",
-  "trigger_id": "trg_01J2...",
-  "summary": "Search latency regression is most likely caused by the semantic_search_v2 request path and secondarily amplified by vector-db saturation.",
-  "affected_scope": {
-    "services": ["api-gateway", "vector-query-service"],
-    "customer_segments": ["enterprise_us"],
-    "blast_radius": "medium"
-  },
-  "hypotheses": [
-    {
-      "hypothesis_id": "hyp_1",
-      "statement": "semantic_search_v2 increased downstream vector query cost",
-      "confidence": 0.82,
-      "supporting_evidence": [
-        "latency increase started after rollout change",
-        "trace spans show vector query time up 63%",
-        "similar prior incident resolved by reducing rollout"
-      ],
-      "conflicting_evidence": []
-    },
-    {
-      "hypothesis_id": "hyp_2",
-      "statement": "vector-db cluster saturation is independently causing degradation",
-      "confidence": 0.41,
-      "supporting_evidence": [
-        "cpu saturation increased on vector-query-service"
-      ],
-      "conflicting_evidence": [
-        "non-search endpoints remain healthy"
-      ]
-    }
-  ],
-  "candidate_remediations": [
-    "reduce feature rollout",
-    "disable feature rollout",
-    "shift traffic away from degraded dependency",
-    "restart a degraded worker pool",
-    "escalate to human operator"
-  ]
-}
-```
-
-### Diagnosis Invariants
-
-- diagnosis must never claim certainty when evidence is mixed
-- every hypothesis must carry both confidence and cited evidence
-- candidate remediations must map to allowed actuator categories
-- diagnosis may recommend escalation instead of action
-
-## 3. Remediation Plan Contract
-
-### Objective
-
-Turn the diagnosis into an explicit, bounded plan with ordered steps, checkpoints, risks, and rollback instructions.
-
-### Plan Semantics
-
-The system may generate:
-
-- `no_action` plans when evidence is insufficient or the condition self-resolves
-- single-step plans when one clear mitigation exists
-- multi-step plans when safe mitigation requires sequencing
-- `escalate` plans when autonomy boundaries are exceeded
-
-### Step Categories
-
-Allowed step categories should be enumerated and policy-controlled:
-
-- `feature_flag_change`
-- `traffic_shift`
-- `config_revert`
-- `service_restart`
-- `incident_open`
-- `customer_intervention`
-- `human_approval`
-
-### Remediation Plan Output Contract
-
-```json
-{
-  "plan_id": "plan_01J2...",
-  "trigger_id": "trg_01J2...",
-  "diagnosis_id": "diag_01J2...",
-  "plan_type": "multi_step_remediation",
-  "autonomy_tier": "autonomous",
-  "goal": "Restore search latency and error rate to within acceptable bounds without causing broader customer disruption.",
-  "primary_hypothesis_id": "hyp_1",
-  "confidence": 0.84,
-  "risk": {
-    "level": "medium",
-    "blast_radius": "two_services_one_segment",
-    "customer_impact_if_wrong": "temporary feature degradation"
-  },
-  "steps": [
-    {
-      "step_id": "step_1",
-      "category": "feature_flag_change",
-      "description": "Reduce semantic_search_v2 rollout from 50 to 10 percent for enterprise_us.",
-      "system": "feature_flag_service",
-      "action": "set_rollout",
-      "parameters": {
-        "flag_key": "semantic_search_v2",
-        "environment": "production",
-        "segment": "enterprise_us",
-        "rollout_pct": 10
-      },
-      "success_checkpoint": {
-        "type": "metric_window",
-        "window": "10m",
-        "target": "p95_latency_ms <= 500"
-      },
-      "rollback": {
-        "type": "restore_previous_value",
-        "value": 50
-      }
-    },
-    {
-      "step_id": "step_2",
-      "category": "traffic_shift",
-      "description": "Shift 20 percent of vector-query traffic away from the most saturated pool if step_1 fails.",
-      "depends_on": ["step_1"],
-      "run_if": "checkpoint_failed",
-      "system": "traffic_controller",
-      "action": "rebalance_pool",
-      "parameters": {
-        "service": "vector-query-service",
-        "shift_pct": 20
-      },
-      "success_checkpoint": {
-        "type": "metric_window",
-        "window": "10m",
-        "target": "error_rate <= 0.015"
-      },
-      "rollback": {
-        "type": "restore_previous_distribution"
-      }
-    }
-  ],
-  "stop_conditions": [
-    "risk level escalates to high",
-    "customer impact broadens beyond declared scope",
-    "two consecutive checkpoints fail without improvement"
-  ],
-  "human_handoff_conditions": [
-    "conflicting hypotheses remain unresolved",
-    "plan requires disallowed actuator",
-    "business-critical accounts are disproportionately affected"
-  ]
-}
-```
-
-### Plan Invariants
-
-- every plan must have an explicit goal and bounded scope
-- every step must have a rollback or an explanation for why rollback is not possible
-- every step must define a verification checkpoint
-- plans may branch conditionally, but only through explicit `run_if` rules
-- free-form code mutation is out of scope for the initial implementation boundary
-
-## 4. Evaluation Contract
-
-### Objective
-
-Block unsafe, low-confidence, or non-compliant plans before execution, then re-check each step just before it runs.
-
-### Evaluation Layers
-
-The system should evaluate both the full plan and each step.
-
-Plan-level evaluation:
-
-- `schema_validation`
-- `policy_validation`
-- `promptfoo_quality`
-- `business_rule_validation`
-- `risk_and_blast_radius_review`
-- `rollback_completeness`
-
-Step-level evaluation:
-
-- actuator readiness
-- credential availability
-- current-state drift check
-- idempotency check
-- checkpoint definition validity
-
-### Pass Criteria
-
-All of the following must be true before autonomous execution:
-
-- plan schema is valid
-- all steps use allowed categories and approved systems
-- `confidence >= 0.75`
-- `risk.level` is not `high`
-- every executable step has rollback and checkpoint definitions
-- no plan-level blocking policy is violated
-
-### Evaluation Output Contract
-
-```json
-{
-  "evaluation_id": "eval_01J2...",
-  "plan_id": "plan_01J2...",
-  "passed": true,
-  "final_recommendation": "execute_stepwise",
-  "plan_results": {
-    "schema_validation": { "passed": true },
-    "policy_validation": { "passed": true },
-    "promptfoo_quality": {
-      "passed": true,
-      "score": 0.92,
-      "notes": ["plan aligns with cited evidence", "all branches are explicit"]
-    },
-    "business_rule_validation": {
-      "passed": true,
-      "notes": ["scope bounded to enterprise_us", "no protected account policy conflict"]
-    },
-    "rollback_completeness": { "passed": true }
-  },
-  "step_results": {
-    "step_1": {
-      "passed": true,
-      "notes": ["feature flag credentials available", "idempotency key valid"]
-    },
-    "step_2": {
-      "passed": true,
-      "notes": ["traffic controller available", "depends_on condition unresolved until checkpoint"]
-    }
-  },
-  "blocking_reasons": [],
-  "review_route": null
-}
-```
-
-### Evaluation Failure Routing Rules
-
-- send to `human_review` when evidence is mixed and the system cannot justify a clear primary hypothesis
-- send to `human_review` when blast radius is larger than declared autonomy policy
-- reject the plan when any step uses a disallowed actuator or lacks rollback/checkpoint definitions
-- suppress duplicate evaluations when the same plan hash is already active
-
-## 5. Execution Contract
-
-### Objective
-
-Execute an approved plan step by step, verify after each step, and stop immediately when risk, drift, or poor outcomes exceed policy.
-
-### Allowed Execution Surface
-
-The execution layer may call only approved actuators such as:
-
-- feature-flag provider API
-- traffic-control API
-- config-management API
-- service orchestration API for bounded restarts
-- incident and ticketing API
-- audit-log sink
-- customer engagement systems for bounded outreach actions
-
-It may not:
-
-- modify application source code in production
-- run arbitrary shell commands against production
-- make direct destructive writes to production data stores
-- expand to new tools or systems without policy enrollment
-
-### Execution Preconditions
-
-- the plan passed evaluation
-- the current step passed step-level readiness checks
-- the live state still matches the assumptions used in evaluation
-- an idempotency key and audit record exist before side effects occur
-
-### Execution Semantics
-
-The execution engine must:
-
-- execute at most one step at a time
-- verify the checkpoint after each step
-- continue only if the checkpoint passes or a branch rule explicitly says to continue
-- rollback or escalate if stop conditions are met
-
-### Execution Output Contract
-
-```json
-{
-  "execution_id": "exe_01J2...",
-  "plan_id": "plan_01J2...",
-  "status": "step_1_succeeded_step_2_skipped",
-  "started_at": "2026-04-06T10:31:02Z",
-  "completed_at": "2026-04-06T10:44:10Z",
-  "executor": "goose",
-  "step_history": [
-    {
-      "step_id": "step_1",
-      "status": "succeeded",
-      "idempotency_key": "plan_01J2:step_1",
-      "external_refs": {
-        "flag_change_id": "ffchg_88219",
-        "audit_log_id": "audit_71102"
-      },
-      "checkpoint_result": {
-        "window": "10m",
-        "passed": true
-      }
-    },
-    {
-      "step_id": "step_2",
-      "status": "skipped",
-      "reason": "step_1 checkpoint passed"
-    }
-  ],
-  "failure": null
-}
-```
-
-### Execution Failure Rules
-
-- retry transient actuator failures only within policy-defined retry budgets
-- if drift invalidates the current step assumptions, pause and re-run diagnosis
-- if an irreversible step fails midway, open an incident and route to human review
-- if audit logging fails, do not execute the step
-
-## 6. Feedback And Learning Contract
-
-### Objective
-
-Measure whether the plan actually improved the system, whether the diagnosis was directionally correct, and how future loops should behave.
-
-### Observation Windows
-
-Use multiple windows based on the domain and actuator:
-
-- `immediate`: seconds to minutes for execution correctness
-- `stabilization`: 10 to 30 minutes for operational recovery
-- `outcome`: hours to days for business effects
-- `retrospective`: days to weeks for pattern learning
-
-### Feedback Inputs
-
-- trigger payload
-- diagnosis and hypothesis set
-- evaluated plan
-- execution history
-- post-action telemetry in the same scope
-- business and customer outcomes
-- human override events and incident notes
-
-### Feedback Output Contract
-
-```json
-{
-  "feedback_id": "fb_01J2...",
-  "trigger_id": "trg_01J2...",
-  "plan_id": "plan_01J2...",
-  "execution_id": "exe_01J2...",
-  "measured_at": "2026-04-06T11:01:04Z",
-  "window": "stabilization",
-  "outcome": "successful",
-  "metric_comparison": {
+  "metrics": {
     "baseline_p95_latency_ms": 420,
-    "post_action_p95_latency_ms": 452,
+    "observed_p95_latency_ms": 615,
     "baseline_error_rate": 0.012,
-    "post_action_error_rate": 0.014
+    "observed_error_rate": 0.026,
+    "sample_size": 1840
   },
-  "diagnosis_accuracy": {
-    "primary_hypothesis_id": "hyp_1",
-    "supported_by_outcome": true,
-    "confidence_adjustment": 0.07
-  },
-  "plan_effectiveness": {
-    "steps_executed": 1,
-    "steps_skipped": 1,
-    "time_to_effect": "8m",
-    "side_effects": []
-  },
-  "recommended_follow_up": "increase_prior_for_feature_flag_rollout_mitigation",
-  "world_model_updates": {
-    "causal_link_strength": 0.84,
-    "service_incident_pattern": "semantic_search_v2_rollout_correlates_with_vector_query_saturation",
-    "actuator_success_prior": {
-      "feature_flag_change": 0.79
-    }
+  "related_context": {
+    "release_id": "rel_2026_04_06_01",
+    "active_incidents": 0,
+    "similar_prior_cases": 3
   }
 }
 ```
 
-### Success And Escalation Rules
+Trigger rejection rules:
 
-Mark the loop as `successful` only when:
+- traffic is below the minimum sample size
+- the flag is already under rollback
+- the incident is already open and owned by a human
+- degradation is caused by a known upstream outage unrelated to the flag
 
-- target symptoms materially improve within the declared stabilization window
-- customer harm does not spread beyond the declared blast radius
-- no stop condition was violated during execution
+### 2. Decision Contract
 
-Escalate or reopen diagnosis when:
+Decision objective:
+Convert a validated trigger plus current world state into a single bounded remediation proposal.
 
-- checkpoints fail repeatedly without directional improvement
-- recovery in one metric causes unacceptable degradation elsewhere
-- the executed plan contradicts the leading diagnosis
+Allowed decision types:
 
-### Learning Writes
+- `no_action`
+- `reduce_rollout`
+- `disable_flag`
+- `escalate`
 
-After feedback is recorded, the system should update:
+Autonomy tiers:
 
-- trigger dedupe and suppression knowledge
-- diagnosis priors and causal-link confidence
-- actuator success and rollback priors
-- protected-scope and business-risk policies
-- prompt and evaluation fixtures used by the quality gate
+- `autonomous`: reduce rollout or disable flag in production when blast radius is limited to one
+  flag and one service
+- `approval_required`: any action affecting multiple services, premium tiers only, or repeated
+  rollback within 24 hours
+- `escalated`: insufficient evidence, conflicting signals, or high business impact
 
-## 7. Domain Abstraction
+Decision invariants:
 
-### What Stays Constant Across Domains
+- exactly one decision per trigger
+- exactly one primary action
+- no free-form code changes in the MVP
+- every decision must include explicit `expected_outcome`, `risk`, and `rollback_plan`
+- every decision must be deterministic enough to audit after the fact
 
-These parts of the loop should be shared:
+### 3. Evaluation Contract
 
-- durable event and audit identifiers
-- trigger, diagnosis, plan, evaluation, execution, and feedback object shapes
-- evidence-based reasoning requirements
-- per-step checkpoints and rollback semantics
-- human-handoff and escalation pathways
+Evaluation objective:
+Block unsafe, low-confidence, or non-compliant decisions before execution.
 
-### What Changes By Domain
+Evaluation stages:
 
-These parts are domain-specific:
+- `schema_validation`
+- `policy_validation`
+- `promptfoo_quality`
+- `business_rules`
+- `execution_readiness`
 
-- trigger thresholds and anomaly rules
-- evidence sources
-- allowed actuator categories
-- success metrics
-- business-risk policies
+Pass criteria:
 
-### Example Domains
+- schema valid
+- confidence `>= 0.75`
+- `risk.level != high`
+- action is idempotent
+- rollback parameters are present
+- no blocking policy violation
 
-Infrastructure healing:
+Failure routing rules:
 
-- signals: latency, errors, saturation, dependency failures, deploy drift
-- actions: rollout reduction, config revert, traffic shift, restart, incident open
-- success: service recovery with bounded blast radius
+- send to `human_review` if confidence `< 0.75`
+- send to `human_review` if `risk.level == high`
+- reject directly if the action falls outside the allowed action set
+- suppress duplicate evaluations for the same `trigger_id`
 
-Churn prevention:
+### 4. Execution Contract
 
-- signals: usage decline, failed journeys, support distress, billing friction, account health score drop
-- actions: outreach, offer selection, workflow change, task creation, human escalation
-- success: improved retention signals without harming customer trust or margin
+Execution objective:
+Execute only the approved bounded action and capture a verifiable result.
 
-## 8. Initial Implementation Boundary
+Allowed execution surface:
 
-This contract is comprehensive, but the first implementation should still start with a constrained subset.
+- feature flag provider API
+- incident or ticketing API
+- audit log sink
 
-The initial build should support:
+Never:
 
-- operational triggers in performance and reliability domains
-- diagnosis using metrics, traces, deploy metadata, and incident history
-- bounded actuator categories such as feature flags, traffic control, config revert, restart, and incident creation
-- multi-step plans with checkpoints and rollback
+- modify source code
+- change infrastructure config
+- write to production databases directly
+- execute arbitrary shell commands against production
 
-The initial build should not yet support:
+Execution preconditions:
 
-- arbitrary source-code remediation in production
-- open-ended infrastructure mutation
-- unconstrained outbound customer messaging
-- autonomous expansion into new actuator surfaces without policy review
+- evaluation result is `passed: true`
+- action parameters match the evaluated payload exactly
+- idempotency key is present
+- audit record is created before the side effect
 
-## 9. Development Plan
+Failure rules:
 
-### Workstream 1: Telemetry And World Model Enrichment
+- on transient API failure, retry up to 2 times within 60 seconds
+- on repeated failure, open an incident and route to human review
+- never partially execute more than one action
+- if audit logging fails, do not execute
 
-Build ingestion and normalization for:
+### 5. Feedback Contract
 
-- metrics, logs, traces, deploys, config changes, feature flags
-- dependency graph and service topology
-- incident history and prior remediation outcomes
-- customer and business context needed for protected-scope decisions
+Feedback objective:
+Measure whether the action improved the target metrics and whether the system should learn,
+rollback, or escalate.
 
-### Workstream 2: Trigger And Diagnosis Engine
+Observation windows:
 
-Implement:
+- `T+10m`: immediate stabilization check
+- `T+30m`: primary success decision
+- `T+24h`: learning-only retrospective for recurrence patterns
 
-- symptom detection and deduplication
-- evidence aggregation for the affected scope
-- root-cause hypothesis ranking
-- diagnosis objects that cite supporting and conflicting evidence
+Success rules at `T+30m`:
 
-### Workstream 3: Remediation Planner
+- `p95_latency_ms` is within 10% of baseline
+- `error_rate` returns to within 20% of baseline
+- no new severe incident was opened for the same scope
 
-Implement:
+Rollback and escalation rules:
 
-- bounded plan generation with ordered steps
-- explicit `depends_on`, `run_if`, checkpoint, and rollback semantics
-- autonomy-tier assignment based on risk and blast radius
+- if metrics do not improve by `T+10m`, escalate for human review
+- if disabling the flag causes a worse business issue, restore the prior rollout and escalate
+- if the same flag triggers `>= 3` regressions in 7 days, mark it for human-owned remediation
+  before further rollout
 
-### Workstream 4: Evaluation And Policy Framework
+Learning writes after feedback:
 
-Implement:
+- feature flag risk score
+- service and endpoint incident history
+- prior-success priors for similar rollback decisions
+- Promptfoo and evaluation fixtures
 
-- plan-level schema and policy validation
-- prompt-quality checks for diagnosis and planning outputs
-- step-level readiness checks
-- protected-scope, actuator-scope, and business-risk policies
+## Implementation Boundary
 
-### Workstream 5: Execution Orchestrator
+The first closed loop is complete only if it supports all of the following:
 
-Implement:
+- emits a structured trigger from telemetry
+- generates one bounded decision in a stable JSON shape
+- evaluates that decision through a blocking quality gate
+- executes through a restricted actuator surface
+- measures post-action impact and writes the result back into the world model
 
-- stepwise execution through approved actuators
-- checkpoint verification between steps
-- stop-condition handling, rollback, and human handoff
-- auditable execution history with idempotency keys
-
-### Workstream 6: Feedback And Learning
-
-Implement:
-
-- immediate and stabilization-window verification
-- outcome scoring for diagnosis accuracy and plan effectiveness
-- world-model updates that improve priors for future loops
-
-### Workstream 7: Domain Onboarding Pattern
-
-Create a repeatable way to add domains by defining:
-
-- trigger taxonomy
-- evidence adapters
-- allowed actuator catalog
-- domain-specific success metrics
-- risk policies and approval thresholds
-
-Infrastructure healing should be the first fully supported domain. Churn prevention should follow only after the shared loop machinery and governance model are stable.
+Anything beyond this, including code remediation, infrastructure mutation, or open-ended planning,
+stays out of the MVP.

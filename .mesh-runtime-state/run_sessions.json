@@ -1,0 +1,1455 @@
+{
+  "runs": [
+    {
+      "artifacts": {
+        "decision": {
+          "autonomy_tier": "autonomous",
+          "confidence": 0.88,
+          "decision_id": "dec_trg_sig_search_latency_001_8b832cae25",
+          "decision_type": "disable_flag",
+          "execution_plan": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "rollback_plan": "restore previous rollout percentage of 50 if follow-up evaluation disproves causality",
+            "system": "feature_flag_service"
+          },
+          "expected_outcome": {
+            "target_metrics": {
+              "error_rate": "<= 0.015",
+              "p95_latency_ms": "<= 470"
+            },
+            "time_to_effect": "10m"
+          },
+          "reasoning": {
+            "alternatives_considered": [
+              "continue with no change",
+              "reduce rollout to 10%",
+              "disable feature flag fully"
+            ],
+            "evidence": [
+              "p95 latency increased 46.4% vs baseline",
+              "error rate increased 2.17x vs baseline",
+              "regression began within 12 minutes of rollout increase",
+              "timeout rate reached 2.4%"
+            ],
+            "primary_hypothesis": "The semantic_search_v2 feature path is increasing request latency and error rates on POST /search."
+          },
+          "risk": {
+            "blast_radius": "single_flag_single_service",
+            "customer_impact_if_wrong": "temporary feature unavailability",
+            "level": "medium"
+          },
+          "summary": "Disable semantic_search_v2 for production due to sustained latency and error regression after rollout increase to 50%.",
+          "trigger_id": "trg_sig_search_latency_001_8b832cae25"
+        },
+        "evaluation": {
+          "blocking_reasons": [],
+          "decision_id": "dec_trg_sig_search_latency_001_8b832cae25",
+          "evaluation_id": "eval_dec_trg_sig_search_latency_001_8b832cae25",
+          "final_recommendation": "execute",
+          "passed": true,
+          "review_route": null,
+          "stage_results": {
+            "business_rules": {
+              "notes": [
+                "single-service scope",
+                "no cooldown conflict"
+              ],
+              "passed": true
+            },
+            "execution_readiness": {
+              "notes": [
+                "feature flag credentials available",
+                "rollback value present"
+              ],
+              "passed": true
+            },
+            "policy_validation": {
+              "notes": [],
+              "passed": true
+            },
+            "promptfoo_quality": {
+              "notes": [
+                "reasoning references observed metrics",
+                "action matches allowed contract",
+                "promptfoo eval completed via CLI bridge"
+              ],
+              "passed": true,
+              "score": 0.93
+            },
+            "schema_validation": {
+              "passed": true
+            }
+          }
+        },
+        "execution": {
+          "applied_action": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "system": "feature_flag_service"
+          },
+          "completed_at": "2026-04-06T20:30:51.822929+00:00",
+          "decision_id": "dec_trg_sig_search_latency_001_8b832cae25",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_8b832cae25",
+          "executor": "goose",
+          "external_refs": {},
+          "failure": {
+            "attempts": 1,
+            "reason": "goose rejected the request: ```json\n{\n  \"action\": \"disable_flag\",\n  \"parameters\": {\n    \"environment\": \"production\",\n    \"flag_key\": \"semantic_search_v2\",\n    \"rollout_pct\": 0,\n    \"system_status\": \"feature_flag_service\"\n  },\n  \"rollback_plan\": \"restore previous rollout percentage of 50 if follow-up evaluation disproves causality\",\n  \"expected_outcome\": {\n    \"target_metrics\": {\n      \"error_rate\": \"<= 0.015\",\n      \"p95_latency_ms\": \"<= 470\"\n    },\n    \"time_to_effect\": \"10m\"\n  },\n  \"reasoning\": {\n    \"alternatives_considered\": [\"continue with no change\", \"reduce rollout to 10%\", \"disable feature flag fully\"],\n    \"evidence\": [\n      {\"effect_on_latency_increase\": true, \"effect_size\": 2.17},\n      {\"effect_on_cause_regressions\": true}\n    ],\n    \"primary_hypothesis\": \"The semantic_search_v2 feature path is increasing request latency and error rates on POST /search.\",\n    \"risk\": {\n      \"blast_radius\": \"single_flag_single_service\",\n      \"customer_impact_if_wrong\": \"temporary feature unavailability\",\n      \"level\": \"medium\"\n    },\n    \"summary\": \"Disable semantic_search_v2 for production due to sustained latency and error regression after rollout increase to 50%. To prevent a temporary failure in case of regression, it is recommended to reduce the rollout percentage to 10%.\"\n  },\n  \"risk_category\": \"high\",\n  \"trigger_id\": \"trg_sig_search_latency_001_8b832cae25\"\n}\n```"
+          },
+          "idempotency_key": "dec_trg_sig_search_latency_001_8b832cae25:set_rollout",
+          "started_at": "2026-04-06T20:30:48.671148+00:00",
+          "status": "failed"
+        },
+        "feedback": {
+          "decision_id": "dec_trg_sig_search_latency_001_8b832cae25",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_8b832cae25",
+          "feedback_id": "fb_dec_trg_sig_search_latency_001_8b832cae25",
+          "measured_at": "2026-04-06T11:01:04Z",
+          "metric_comparison": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "post_action_error_rate": 0.014,
+            "post_action_p95_latency_ms": 438
+          },
+          "outcome": "escalated",
+          "prediction_accuracy": {
+            "expected_time_to_effect": "10m",
+            "observed_time_to_effect": "7m"
+          },
+          "recommended_follow_up": "human_review",
+          "side_effects": [],
+          "window": "30m",
+          "world_model_updates": {
+            "causal_link_strength": 0.38,
+            "flag_risk_score_delta": 0.15,
+            "service_recovery_pattern": "flag_disable_insufficient"
+          }
+        },
+        "input_signal": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "deployment": {
+            "release_id": "rel_2026_04_06_01",
+            "started_at": "2026-04-06T10:05:00Z"
+          },
+          "endpoint": "POST /search",
+          "environment": "production",
+          "feature_flag": {
+            "changed_at": "2026-04-06T10:18:00Z",
+            "current_rollout_pct": 50,
+            "flag_key": "semantic_search_v2",
+            "previous_rollout_pct": 10,
+            "under_rollback": false,
+            "variant": "enabled"
+          },
+          "observed_at": "2026-04-06T10:30:00Z",
+          "post_action_observations": {
+            "10m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.015,
+              "measured_at": "2026-04-06T10:40:00Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 455,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            },
+            "24h": {
+              "measured_at": "2026-04-07T10:30:00Z",
+              "recurrence_detected": false
+            },
+            "30m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.014,
+              "measured_at": "2026-04-06T11:01:04Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 438,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            }
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "request_telemetry": {
+            "baseline": {
+              "error_rate": 0.012,
+              "p95_latency_ms": 420,
+              "timeout_rate": 0.008
+            },
+            "observed": {
+              "error_rate": 0.026,
+              "p95_latency_ms": 615,
+              "timeout_rate": 0.024
+            },
+            "persistent_windows": 2,
+            "sample_size": 1840
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "signal_id": "sig_search_latency_001_8b832cae25"
+        },
+        "normalized_event": {
+          "emitted_at": "2026-04-06T10:30:00Z",
+          "event_type": "normalized_signal",
+          "object_id": "sig_search_latency_001_8b832cae25",
+          "parent_ids": null,
+          "payload": {
+            "comparison_window": {
+              "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+              "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+            },
+            "deployment": {
+              "release_id": "rel_2026_04_06_01",
+              "started_at": "2026-04-06T10:05:00Z"
+            },
+            "endpoint": "POST /search",
+            "environment": "production",
+            "feature_flag": {
+              "changed_at": "2026-04-06T10:18:00Z",
+              "current_rollout_pct": 50,
+              "flag_key": "semantic_search_v2",
+              "previous_rollout_pct": 10,
+              "under_rollback": false,
+              "variant": "enabled"
+            },
+            "post_action_observations": {
+              "10m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.015,
+                "measured_at": "2026-04-06T10:40:00Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 455,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              },
+              "24h": {
+                "measured_at": "2026-04-07T10:30:00Z",
+                "recurrence_detected": false
+              },
+              "30m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.014,
+                "measured_at": "2026-04-06T11:01:04Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 438,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              }
+            },
+            "related_context": {
+              "active_incidents": 0,
+              "active_suppression": false,
+              "audit_logging_available": true,
+              "conflicting_signals": false,
+              "feature_flag_credentials_available": true,
+              "high_business_impact": false,
+              "incident_credentials_available": true,
+              "incident_owned_by_human": false,
+              "known_upstream_outage": false,
+              "multi_service_impact": false,
+              "regressions_last_7d": 2,
+              "rollbacks_last_24h": 0,
+              "similar_prior_cases": 3
+            },
+            "request_telemetry": {
+              "baseline": {
+                "error_rate": 0.012,
+                "p95_latency_ms": 420,
+                "timeout_rate": 0.008
+              },
+              "observed": {
+                "error_rate": 0.026,
+                "p95_latency_ms": 615,
+                "timeout_rate": 0.024
+              },
+              "persistent_windows": 2,
+              "sample_size": 1840
+            },
+            "segment": {
+              "customer_tier": "enterprise",
+              "region": "us-east-1"
+            },
+            "service": "api-gateway"
+          },
+          "schema_version": "v1",
+          "summary": {
+            "endpoint": "POST /search",
+            "flag_key": "semantic_search_v2",
+            "service": "api-gateway"
+          }
+        },
+        "trigger": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "current_rollout_pct": 50,
+          "endpoint": "POST /search",
+          "environment": "production",
+          "flag_key": "semantic_search_v2",
+          "metrics": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "baseline_timeout_rate": 0.008,
+            "observed_error_rate": 0.026,
+            "observed_p95_latency_ms": 615,
+            "observed_timeout_rate": 0.024,
+            "sample_size": 1840
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "minutes_since_flag_change": 12,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "release_id": "rel_2026_04_06_01",
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "trigger_id": "trg_sig_search_latency_001_8b832cae25",
+          "trigger_type": "feature_flag_performance_regression",
+          "triggered_at": "2026-04-06T10:30:00Z"
+        }
+      },
+      "auto_mode": false,
+      "created_at": "2026-04-06T20:30:05.458873+00:00",
+      "error": null,
+      "evaluation_mode": "promptfoo",
+      "goal_id": "goal_20260406192254_3",
+      "latest_event_id": "evt_0011_cdc88453",
+      "latest_event_sequence": 11,
+      "latest_merkle_root": "bdc0d681599008938b559813b54c2ecd8d7146cc60986d9e801c70dfa55a912a",
+      "operator_notes": [
+        "go ahead"
+      ],
+      "orchestration_mode": "goose",
+      "pause_points": [
+        "evaluation_ready"
+      ],
+      "pending_pause_stage": null,
+      "run_id": "run_20260406T203005_7d5648cc",
+      "scenario_key": "search_latency_regression",
+      "stage": "completed",
+      "status": "completed",
+      "steering_mode": "approval_gate",
+      "updated_at": "2026-04-06T20:32:51.189814+00:00"
+    },
+    {
+      "artifacts": {
+        "decision": {
+          "autonomy_tier": "autonomous",
+          "confidence": 0.88,
+          "decision_id": "dec_trg_sig_search_latency_001_70ef64b366",
+          "decision_type": "disable_flag",
+          "execution_plan": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "rollback_plan": "restore previous rollout percentage of 50 if follow-up evaluation disproves causality",
+            "system": "feature_flag_service"
+          },
+          "expected_outcome": {
+            "target_metrics": {
+              "error_rate": "<= 0.015",
+              "p95_latency_ms": "<= 470"
+            },
+            "time_to_effect": "10m"
+          },
+          "reasoning": {
+            "alternatives_considered": [
+              "continue with no change",
+              "reduce rollout to 10%",
+              "disable feature flag fully"
+            ],
+            "evidence": [
+              "p95 latency increased 46.4% vs baseline",
+              "error rate increased 2.17x vs baseline",
+              "regression began within 12 minutes of rollout increase",
+              "timeout rate reached 2.4%"
+            ],
+            "primary_hypothesis": "The semantic_search_v2 feature path is increasing request latency and error rates on POST /search."
+          },
+          "risk": {
+            "blast_radius": "single_flag_single_service",
+            "customer_impact_if_wrong": "temporary feature unavailability",
+            "level": "medium"
+          },
+          "summary": "Disable semantic_search_v2 for production due to sustained latency and error regression after rollout increase to 50%.",
+          "trigger_id": "trg_sig_search_latency_001_70ef64b366"
+        },
+        "evaluation": {
+          "blocking_reasons": [],
+          "decision_id": "dec_trg_sig_search_latency_001_70ef64b366",
+          "evaluation_id": "eval_dec_trg_sig_search_latency_001_70ef64b366",
+          "final_recommendation": "execute",
+          "passed": true,
+          "review_route": null,
+          "stage_results": {
+            "business_rules": {
+              "notes": [
+                "single-service scope",
+                "no cooldown conflict"
+              ],
+              "passed": true
+            },
+            "execution_readiness": {
+              "notes": [
+                "feature flag credentials available",
+                "rollback value present"
+              ],
+              "passed": true
+            },
+            "policy_validation": {
+              "notes": [],
+              "passed": true
+            },
+            "promptfoo_quality": {
+              "notes": [
+                "reasoning references observed metrics",
+                "action matches allowed contract",
+                "promptfoo eval completed via CLI bridge"
+              ],
+              "passed": true,
+              "score": 0.93
+            },
+            "schema_validation": {
+              "passed": true
+            }
+          }
+        },
+        "execution": {
+          "applied_action": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "system": "feature_flag_service"
+          },
+          "completed_at": "2026-04-06T19:59:42.299714+00:00",
+          "decision_id": "dec_trg_sig_search_latency_001_70ef64b366",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_70ef64b366",
+          "executor": "goose",
+          "external_refs": {
+            "audit_log_id": "audit_dec_trg_sig_search_latency_001_70ef64b366",
+            "flag_change_id": "ffchg_semantic_search_v2_0",
+            "goose_review": "ACK"
+          },
+          "failure": null,
+          "idempotency_key": "dec_trg_sig_search_latency_001_70ef64b366:set_rollout",
+          "started_at": "2026-04-06T19:59:41.867899+00:00",
+          "status": "succeeded"
+        },
+        "feedback": {
+          "decision_id": "dec_trg_sig_search_latency_001_70ef64b366",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_70ef64b366",
+          "feedback_id": "fb_dec_trg_sig_search_latency_001_70ef64b366",
+          "measured_at": "2026-04-06T11:01:04Z",
+          "metric_comparison": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "post_action_error_rate": 0.014,
+            "post_action_p95_latency_ms": 438
+          },
+          "outcome": "successful",
+          "prediction_accuracy": {
+            "expected_time_to_effect": "10m",
+            "observed_time_to_effect": "7m"
+          },
+          "recommended_follow_up": "record_positive_outcome",
+          "side_effects": [],
+          "window": "30m",
+          "world_model_updates": {
+            "causal_link_strength": 0.82,
+            "flag_risk_score_delta": 0.15,
+            "service_recovery_pattern": "flag_disable_restores_latency"
+          }
+        },
+        "input_signal": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "deployment": {
+            "release_id": "rel_2026_04_06_01",
+            "started_at": "2026-04-06T10:05:00Z"
+          },
+          "endpoint": "POST /search",
+          "environment": "production",
+          "feature_flag": {
+            "changed_at": "2026-04-06T10:18:00Z",
+            "current_rollout_pct": 50,
+            "flag_key": "semantic_search_v2",
+            "previous_rollout_pct": 10,
+            "under_rollback": false,
+            "variant": "enabled"
+          },
+          "observed_at": "2026-04-06T10:30:00Z",
+          "post_action_observations": {
+            "10m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.015,
+              "measured_at": "2026-04-06T10:40:00Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 455,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            },
+            "24h": {
+              "measured_at": "2026-04-07T10:30:00Z",
+              "recurrence_detected": false
+            },
+            "30m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.014,
+              "measured_at": "2026-04-06T11:01:04Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 438,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            }
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "request_telemetry": {
+            "baseline": {
+              "error_rate": 0.012,
+              "p95_latency_ms": 420,
+              "timeout_rate": 0.008
+            },
+            "observed": {
+              "error_rate": 0.026,
+              "p95_latency_ms": 615,
+              "timeout_rate": 0.024
+            },
+            "persistent_windows": 2,
+            "sample_size": 1840
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "signal_id": "sig_search_latency_001_70ef64b366"
+        },
+        "normalized_event": {
+          "emitted_at": "2026-04-06T10:30:00Z",
+          "event_type": "normalized_signal",
+          "object_id": "sig_search_latency_001_70ef64b366",
+          "parent_ids": null,
+          "payload": {
+            "comparison_window": {
+              "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+              "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+            },
+            "deployment": {
+              "release_id": "rel_2026_04_06_01",
+              "started_at": "2026-04-06T10:05:00Z"
+            },
+            "endpoint": "POST /search",
+            "environment": "production",
+            "feature_flag": {
+              "changed_at": "2026-04-06T10:18:00Z",
+              "current_rollout_pct": 50,
+              "flag_key": "semantic_search_v2",
+              "previous_rollout_pct": 10,
+              "under_rollback": false,
+              "variant": "enabled"
+            },
+            "post_action_observations": {
+              "10m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.015,
+                "measured_at": "2026-04-06T10:40:00Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 455,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              },
+              "24h": {
+                "measured_at": "2026-04-07T10:30:00Z",
+                "recurrence_detected": false
+              },
+              "30m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.014,
+                "measured_at": "2026-04-06T11:01:04Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 438,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              }
+            },
+            "related_context": {
+              "active_incidents": 0,
+              "active_suppression": false,
+              "audit_logging_available": true,
+              "conflicting_signals": false,
+              "feature_flag_credentials_available": true,
+              "high_business_impact": false,
+              "incident_credentials_available": true,
+              "incident_owned_by_human": false,
+              "known_upstream_outage": false,
+              "multi_service_impact": false,
+              "regressions_last_7d": 2,
+              "rollbacks_last_24h": 0,
+              "similar_prior_cases": 3
+            },
+            "request_telemetry": {
+              "baseline": {
+                "error_rate": 0.012,
+                "p95_latency_ms": 420,
+                "timeout_rate": 0.008
+              },
+              "observed": {
+                "error_rate": 0.026,
+                "p95_latency_ms": 615,
+                "timeout_rate": 0.024
+              },
+              "persistent_windows": 2,
+              "sample_size": 1840
+            },
+            "segment": {
+              "customer_tier": "enterprise",
+              "region": "us-east-1"
+            },
+            "service": "api-gateway"
+          },
+          "schema_version": "v1",
+          "summary": {
+            "endpoint": "POST /search",
+            "flag_key": "semantic_search_v2",
+            "service": "api-gateway"
+          }
+        },
+        "trigger": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "current_rollout_pct": 50,
+          "endpoint": "POST /search",
+          "environment": "production",
+          "flag_key": "semantic_search_v2",
+          "metrics": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "baseline_timeout_rate": 0.008,
+            "observed_error_rate": 0.026,
+            "observed_p95_latency_ms": 615,
+            "observed_timeout_rate": 0.024,
+            "sample_size": 1840
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "minutes_since_flag_change": 12,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "release_id": "rel_2026_04_06_01",
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "trigger_id": "trg_sig_search_latency_001_70ef64b366",
+          "trigger_type": "feature_flag_performance_regression",
+          "triggered_at": "2026-04-06T10:30:00Z"
+        }
+      },
+      "auto_mode": true,
+      "created_at": "2026-04-06T19:59:38.339685+00:00",
+      "error": null,
+      "evaluation_mode": "promptfoo",
+      "goal_id": "goal_20260406192254_3",
+      "latest_event_id": "evt_0008_a24686a3",
+      "latest_event_sequence": 8,
+      "latest_merkle_root": "9c8195ca71f6e546e5159b7477abd0b482eb5e31b9986fce6d4f7adc1564aa70",
+      "operator_notes": [],
+      "orchestration_mode": "goose",
+      "pause_points": [],
+      "pending_pause_stage": null,
+      "run_id": "run_20260406T195938_b9e2b7db",
+      "scenario_key": "search_latency_regression",
+      "stage": "completed",
+      "status": "completed",
+      "steering_mode": "interruptible_auto",
+      "updated_at": "2026-04-06T19:59:42.343081+00:00"
+    },
+    {
+      "artifacts": {
+        "decision": {
+          "autonomy_tier": "autonomous",
+          "confidence": 0.88,
+          "decision_id": "dec_trg_sig_search_latency_001_e3891f9f1c",
+          "decision_type": "disable_flag",
+          "execution_plan": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "rollback_plan": "restore previous rollout percentage of 50 if follow-up evaluation disproves causality",
+            "system": "feature_flag_service"
+          },
+          "expected_outcome": {
+            "target_metrics": {
+              "error_rate": "<= 0.015",
+              "p95_latency_ms": "<= 470"
+            },
+            "time_to_effect": "10m"
+          },
+          "reasoning": {
+            "alternatives_considered": [
+              "continue with no change",
+              "reduce rollout to 10%",
+              "disable feature flag fully"
+            ],
+            "evidence": [
+              "p95 latency increased 46.4% vs baseline",
+              "error rate increased 2.17x vs baseline",
+              "regression began within 12 minutes of rollout increase",
+              "timeout rate reached 2.4%"
+            ],
+            "primary_hypothesis": "The semantic_search_v2 feature path is increasing request latency and error rates on POST /search."
+          },
+          "risk": {
+            "blast_radius": "single_flag_single_service",
+            "customer_impact_if_wrong": "temporary feature unavailability",
+            "level": "medium"
+          },
+          "summary": "Disable semantic_search_v2 for production due to sustained latency and error regression after rollout increase to 50%.",
+          "trigger_id": "trg_sig_search_latency_001_e3891f9f1c"
+        },
+        "evaluation": {
+          "blocking_reasons": [],
+          "decision_id": "dec_trg_sig_search_latency_001_e3891f9f1c",
+          "evaluation_id": "eval_dec_trg_sig_search_latency_001_e3891f9f1c",
+          "final_recommendation": "execute",
+          "passed": true,
+          "review_route": null,
+          "stage_results": {
+            "business_rules": {
+              "notes": [
+                "single-service scope",
+                "no cooldown conflict"
+              ],
+              "passed": true
+            },
+            "execution_readiness": {
+              "notes": [
+                "feature flag credentials available",
+                "rollback value present"
+              ],
+              "passed": true
+            },
+            "policy_validation": {
+              "notes": [],
+              "passed": true
+            },
+            "promptfoo_quality": {
+              "notes": [
+                "reasoning references observed metrics",
+                "action matches allowed contract"
+              ],
+              "passed": true,
+              "score": 0.93
+            },
+            "schema_validation": {
+              "passed": true
+            }
+          }
+        },
+        "execution": {
+          "applied_action": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "system": "feature_flag_service"
+          },
+          "completed_at": "2026-04-06T19:22:54.507366+00:00",
+          "decision_id": "dec_trg_sig_search_latency_001_e3891f9f1c",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_e3891f9f1c",
+          "executor": "goose",
+          "external_refs": {
+            "audit_log_id": "audit_dec_trg_sig_search_latency_001_e3891f9f1c",
+            "flag_change_id": "ffchg_semantic_search_v2_0"
+          },
+          "failure": null,
+          "idempotency_key": "dec_trg_sig_search_latency_001_e3891f9f1c:set_rollout",
+          "started_at": "2026-04-06T19:22:54.507351+00:00",
+          "status": "succeeded"
+        },
+        "feedback": {
+          "decision_id": "dec_trg_sig_search_latency_001_e3891f9f1c",
+          "execution_id": "exe_dec_trg_sig_search_latency_001_e3891f9f1c",
+          "feedback_id": "fb_dec_trg_sig_search_latency_001_e3891f9f1c",
+          "measured_at": "2026-04-06T11:01:04Z",
+          "metric_comparison": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "post_action_error_rate": 0.014,
+            "post_action_p95_latency_ms": 438
+          },
+          "outcome": "successful",
+          "prediction_accuracy": {
+            "expected_time_to_effect": "10m",
+            "observed_time_to_effect": "7m"
+          },
+          "recommended_follow_up": "record_positive_outcome",
+          "side_effects": [],
+          "window": "30m",
+          "world_model_updates": {
+            "causal_link_strength": 0.82,
+            "flag_risk_score_delta": 0.15,
+            "service_recovery_pattern": "flag_disable_restores_latency"
+          }
+        },
+        "input_signal": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "deployment": {
+            "release_id": "rel_2026_04_06_01",
+            "started_at": "2026-04-06T10:05:00Z"
+          },
+          "endpoint": "POST /search",
+          "environment": "production",
+          "feature_flag": {
+            "changed_at": "2026-04-06T10:18:00Z",
+            "current_rollout_pct": 50,
+            "flag_key": "semantic_search_v2",
+            "previous_rollout_pct": 10,
+            "under_rollback": false,
+            "variant": "enabled"
+          },
+          "observed_at": "2026-04-06T10:30:00Z",
+          "post_action_observations": {
+            "10m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.015,
+              "measured_at": "2026-04-06T10:40:00Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 455,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            },
+            "24h": {
+              "measured_at": "2026-04-07T10:30:00Z",
+              "recurrence_detected": false
+            },
+            "30m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.014,
+              "measured_at": "2026-04-06T11:01:04Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 438,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            }
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "request_telemetry": {
+            "baseline": {
+              "error_rate": 0.012,
+              "p95_latency_ms": 420,
+              "timeout_rate": 0.008
+            },
+            "observed": {
+              "error_rate": 0.026,
+              "p95_latency_ms": 615,
+              "timeout_rate": 0.024
+            },
+            "persistent_windows": 2,
+            "sample_size": 1840
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "signal_id": "sig_search_latency_001_e3891f9f1c"
+        },
+        "normalized_event": {
+          "emitted_at": "2026-04-06T10:30:00Z",
+          "event_type": "normalized_signal",
+          "object_id": "sig_search_latency_001_e3891f9f1c",
+          "parent_ids": null,
+          "payload": {
+            "comparison_window": {
+              "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+              "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+            },
+            "deployment": {
+              "release_id": "rel_2026_04_06_01",
+              "started_at": "2026-04-06T10:05:00Z"
+            },
+            "endpoint": "POST /search",
+            "environment": "production",
+            "feature_flag": {
+              "changed_at": "2026-04-06T10:18:00Z",
+              "current_rollout_pct": 50,
+              "flag_key": "semantic_search_v2",
+              "previous_rollout_pct": 10,
+              "under_rollback": false,
+              "variant": "enabled"
+            },
+            "post_action_observations": {
+              "10m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.015,
+                "measured_at": "2026-04-06T10:40:00Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 455,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              },
+              "24h": {
+                "measured_at": "2026-04-07T10:30:00Z",
+                "recurrence_detected": false
+              },
+              "30m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.014,
+                "measured_at": "2026-04-06T11:01:04Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 438,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              }
+            },
+            "related_context": {
+              "active_incidents": 0,
+              "active_suppression": false,
+              "audit_logging_available": true,
+              "conflicting_signals": false,
+              "feature_flag_credentials_available": true,
+              "high_business_impact": false,
+              "incident_credentials_available": true,
+              "incident_owned_by_human": false,
+              "known_upstream_outage": false,
+              "multi_service_impact": false,
+              "regressions_last_7d": 2,
+              "rollbacks_last_24h": 0,
+              "similar_prior_cases": 3
+            },
+            "request_telemetry": {
+              "baseline": {
+                "error_rate": 0.012,
+                "p95_latency_ms": 420,
+                "timeout_rate": 0.008
+              },
+              "observed": {
+                "error_rate": 0.026,
+                "p95_latency_ms": 615,
+                "timeout_rate": 0.024
+              },
+              "persistent_windows": 2,
+              "sample_size": 1840
+            },
+            "segment": {
+              "customer_tier": "enterprise",
+              "region": "us-east-1"
+            },
+            "service": "api-gateway"
+          },
+          "schema_version": "v1",
+          "summary": {
+            "endpoint": "POST /search",
+            "flag_key": "semantic_search_v2",
+            "service": "api-gateway"
+          }
+        },
+        "trigger": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "current_rollout_pct": 50,
+          "endpoint": "POST /search",
+          "environment": "production",
+          "flag_key": "semantic_search_v2",
+          "metrics": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "baseline_timeout_rate": 0.008,
+            "observed_error_rate": 0.026,
+            "observed_p95_latency_ms": 615,
+            "observed_timeout_rate": 0.024,
+            "sample_size": 1840
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "minutes_since_flag_change": 12,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "release_id": "rel_2026_04_06_01",
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "trigger_id": "trg_sig_search_latency_001_e3891f9f1c",
+          "trigger_type": "feature_flag_performance_regression",
+          "triggered_at": "2026-04-06T10:30:00Z"
+        }
+      },
+      "auto_mode": false,
+      "created_at": "2026-04-06T19:22:54.373036+00:00",
+      "error": null,
+      "evaluation_mode": "native",
+      "goal_id": "goal_20260406192254_3",
+      "latest_event_id": "evt_0009_cde811cf",
+      "latest_event_sequence": 9,
+      "latest_merkle_root": "b4f00ab97c496d4e315861593d4787e597f73785d3b19f30001c2ad8bd60ec87",
+      "operator_notes": [],
+      "orchestration_mode": "native",
+      "pause_points": [
+        "evaluation_ready"
+      ],
+      "pending_pause_stage": null,
+      "run_id": "run_20260406T192254_1dbb3712",
+      "scenario_key": "search_latency_regression",
+      "stage": "completed",
+      "status": "completed",
+      "steering_mode": "approval_gate",
+      "updated_at": "2026-04-06T19:22:54.536404+00:00"
+    },
+    {
+      "artifacts": {
+        "decision": {
+          "autonomy_tier": "autonomous",
+          "confidence": 0.88,
+          "decision_id": "dec_trg_sig_search_latency_001",
+          "decision_type": "disable_flag",
+          "execution_plan": {
+            "action": "set_rollout",
+            "parameters": {
+              "environment": "production",
+              "flag_key": "semantic_search_v2",
+              "rollout_pct": 0
+            },
+            "rollback_plan": "restore previous rollout percentage of 50 if follow-up evaluation disproves causality",
+            "system": "feature_flag_service"
+          },
+          "expected_outcome": {
+            "target_metrics": {
+              "error_rate": "<= 0.015",
+              "p95_latency_ms": "<= 470"
+            },
+            "time_to_effect": "10m"
+          },
+          "reasoning": {
+            "alternatives_considered": [
+              "continue with no change",
+              "reduce rollout to 10%",
+              "disable feature flag fully"
+            ],
+            "evidence": [
+              "p95 latency increased 46.4% vs baseline",
+              "error rate increased 2.17x vs baseline",
+              "regression began within 12 minutes of rollout increase",
+              "timeout rate reached 2.4%"
+            ],
+            "primary_hypothesis": "The semantic_search_v2 feature path is increasing request latency and error rates on POST /search."
+          },
+          "risk": {
+            "blast_radius": "single_flag_single_service",
+            "customer_impact_if_wrong": "temporary feature unavailability",
+            "level": "medium"
+          },
+          "summary": "Disable semantic_search_v2 for production due to sustained latency and error regression after rollout increase to 50%.",
+          "trigger_id": "trg_sig_search_latency_001"
+        },
+        "evaluation": {
+          "blocking_reasons": [
+            "duplicate evaluation suppressed for trigger_id"
+          ],
+          "decision_id": "dec_trg_sig_search_latency_001",
+          "evaluation_id": "eval_dec_trg_sig_search_latency_001",
+          "final_recommendation": "reject",
+          "passed": false,
+          "review_route": null,
+          "stage_results": {
+            "business_rules": {
+              "notes": [
+                "single-service scope",
+                "no cooldown conflict"
+              ],
+              "passed": true
+            },
+            "execution_readiness": {
+              "notes": [
+                "feature flag credentials available",
+                "rollback value present"
+              ],
+              "passed": true
+            },
+            "policy_validation": {
+              "notes": [
+                "duplicate evaluation suppressed for trigger_id"
+              ],
+              "passed": false
+            },
+            "promptfoo_quality": {
+              "notes": [
+                "reasoning references observed metrics",
+                "action matches allowed contract"
+              ],
+              "passed": true,
+              "score": 0.93
+            },
+            "schema_validation": {
+              "passed": true
+            }
+          }
+        },
+        "input_signal": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "deployment": {
+            "release_id": "rel_2026_04_06_01",
+            "started_at": "2026-04-06T10:05:00Z"
+          },
+          "endpoint": "POST /search",
+          "environment": "production",
+          "feature_flag": {
+            "changed_at": "2026-04-06T10:18:00Z",
+            "current_rollout_pct": 50,
+            "flag_key": "semantic_search_v2",
+            "previous_rollout_pct": 10,
+            "under_rollback": false,
+            "variant": "enabled"
+          },
+          "observed_at": "2026-04-06T10:30:00Z",
+          "post_action_observations": {
+            "10m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.015,
+              "measured_at": "2026-04-06T10:40:00Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 455,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            },
+            "24h": {
+              "measured_at": "2026-04-07T10:30:00Z",
+              "recurrence_detected": false
+            },
+            "30m": {
+              "business_guardrail_breached": false,
+              "error_rate": 0.014,
+              "measured_at": "2026-04-06T11:01:04Z",
+              "new_severe_incidents": 0,
+              "observed_time_to_effect": "7m",
+              "p95_latency_ms": 438,
+              "side_effects": [],
+              "timeout_rate": 0.009
+            }
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "request_telemetry": {
+            "baseline": {
+              "error_rate": 0.012,
+              "p95_latency_ms": 420,
+              "timeout_rate": 0.008
+            },
+            "observed": {
+              "error_rate": 0.026,
+              "p95_latency_ms": 615,
+              "timeout_rate": 0.024
+            },
+            "persistent_windows": 2,
+            "sample_size": 1840
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "signal_id": "sig_search_latency_001"
+        },
+        "normalized_event": {
+          "emitted_at": "2026-04-06T10:30:00Z",
+          "event_type": "normalized_signal",
+          "object_id": "sig_search_latency_001",
+          "parent_ids": null,
+          "payload": {
+            "comparison_window": {
+              "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+              "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+            },
+            "deployment": {
+              "release_id": "rel_2026_04_06_01",
+              "started_at": "2026-04-06T10:05:00Z"
+            },
+            "endpoint": "POST /search",
+            "environment": "production",
+            "feature_flag": {
+              "changed_at": "2026-04-06T10:18:00Z",
+              "current_rollout_pct": 50,
+              "flag_key": "semantic_search_v2",
+              "previous_rollout_pct": 10,
+              "under_rollback": false,
+              "variant": "enabled"
+            },
+            "post_action_observations": {
+              "10m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.015,
+                "measured_at": "2026-04-06T10:40:00Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 455,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              },
+              "24h": {
+                "measured_at": "2026-04-07T10:30:00Z",
+                "recurrence_detected": false
+              },
+              "30m": {
+                "business_guardrail_breached": false,
+                "error_rate": 0.014,
+                "measured_at": "2026-04-06T11:01:04Z",
+                "new_severe_incidents": 0,
+                "observed_time_to_effect": "7m",
+                "p95_latency_ms": 438,
+                "side_effects": [],
+                "timeout_rate": 0.009
+              }
+            },
+            "related_context": {
+              "active_incidents": 0,
+              "active_suppression": false,
+              "audit_logging_available": true,
+              "conflicting_signals": false,
+              "feature_flag_credentials_available": true,
+              "high_business_impact": false,
+              "incident_credentials_available": true,
+              "incident_owned_by_human": false,
+              "known_upstream_outage": false,
+              "multi_service_impact": false,
+              "regressions_last_7d": 2,
+              "rollbacks_last_24h": 0,
+              "similar_prior_cases": 3
+            },
+            "request_telemetry": {
+              "baseline": {
+                "error_rate": 0.012,
+                "p95_latency_ms": 420,
+                "timeout_rate": 0.008
+              },
+              "observed": {
+                "error_rate": 0.026,
+                "p95_latency_ms": 615,
+                "timeout_rate": 0.024
+              },
+              "persistent_windows": 2,
+              "sample_size": 1840
+            },
+            "segment": {
+              "customer_tier": "enterprise",
+              "region": "us-east-1"
+            },
+            "service": "api-gateway"
+          },
+          "schema_version": "v1",
+          "summary": {
+            "endpoint": "POST /search",
+            "flag_key": "semantic_search_v2",
+            "service": "api-gateway"
+          }
+        },
+        "trigger": {
+          "comparison_window": {
+            "baseline": "2026-04-06T09:30:00Z/2026-04-06T10:00:00Z",
+            "observed": "2026-04-06T10:20:00Z/2026-04-06T10:30:00Z"
+          },
+          "current_rollout_pct": 50,
+          "endpoint": "POST /search",
+          "environment": "production",
+          "flag_key": "semantic_search_v2",
+          "metrics": {
+            "baseline_error_rate": 0.012,
+            "baseline_p95_latency_ms": 420,
+            "baseline_timeout_rate": 0.008,
+            "observed_error_rate": 0.026,
+            "observed_p95_latency_ms": 615,
+            "observed_timeout_rate": 0.024,
+            "sample_size": 1840
+          },
+          "related_context": {
+            "active_incidents": 0,
+            "active_suppression": false,
+            "audit_logging_available": true,
+            "conflicting_signals": false,
+            "feature_flag_credentials_available": true,
+            "high_business_impact": false,
+            "incident_credentials_available": true,
+            "incident_owned_by_human": false,
+            "known_upstream_outage": false,
+            "minutes_since_flag_change": 12,
+            "multi_service_impact": false,
+            "regressions_last_7d": 2,
+            "release_id": "rel_2026_04_06_01",
+            "rollbacks_last_24h": 0,
+            "similar_prior_cases": 3
+          },
+          "segment": {
+            "customer_tier": "enterprise",
+            "region": "us-east-1"
+          },
+          "service": "api-gateway",
+          "trigger_id": "trg_sig_search_latency_001",
+          "trigger_type": "feature_flag_performance_regression",
+          "triggered_at": "2026-04-06T10:30:00Z"
+        }
+      },
+      "auto_mode": false,
+      "created_at": "2026-04-06T19:21:42.389931+00:00",
+      "error": null,
+      "evaluation_mode": "native",
+      "goal_id": "goal_20260406192142_2",
+      "latest_event_id": "evt_0007_6d4c4d9d",
+      "latest_event_sequence": 7,
+      "latest_merkle_root": "14533ceea36643755264fed01474fef19e20171bec69cfd6a90372a7cbe38882",
+      "operator_notes": [],
+      "orchestration_mode": "native",
+      "pause_points": [
+        "evaluation_ready"
+      ],
+      "pending_pause_stage": "evaluation_ready",
+      "run_id": "run_20260406T192142_8af73a21",
+      "scenario_key": "search_latency_regression",
+      "stage": "awaiting_operator",
+      "status": "awaiting_operator",
+      "steering_mode": "approval_gate",
+      "updated_at": "2026-04-06T19:21:42.514475+00:00"
+    }
+  ]
+}

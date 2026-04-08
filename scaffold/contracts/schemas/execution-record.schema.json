@@ -5,20 +5,20 @@
   "type": "object",
   "required": [
     "execution_id",
-    "plan_id",
-    "status",
+    "decision_id",
     "started_at",
+    "completed_at",
     "executor",
-    "step_history"
+    "status",
+    "idempotency_key",
+    "applied_action",
+    "external_refs"
   ],
   "properties": {
     "execution_id": {
       "type": "string"
     },
-    "plan_id": {
-      "type": "string"
-    },
-    "status": {
+    "decision_id": {
       "type": "string"
     },
     "started_at": {
@@ -26,57 +26,45 @@
       "format": "date-time"
     },
     "completed_at": {
-      "type": [
-        "string",
-        "null"
-      ],
+      "type": "string",
       "format": "date-time"
     },
     "executor": {
       "type": "string"
     },
-    "step_history": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": [
-          "step_id",
-          "status"
-        ],
-        "properties": {
-          "step_id": {
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "idempotency_key": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "external_refs": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "checkpoint_result": {
-            "type": [
-              "object",
-              "null"
-            ]
-          },
-          "reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
+    "status": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "rejected"
+      ]
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "applied_action": {
+      "type": "object",
+      "required": [
+        "system",
+        "action",
+        "parameters"
+      ],
+      "properties": {
+        "system": {
+          "type": "string"
         },
-        "additionalProperties": true
-      }
+        "action": {
+          "type": "string"
+        },
+        "parameters": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "external_refs": {
+      "type": "object"
     },
     "failure": {
       "type": [
