@@ -79,8 +79,8 @@
     ],
     "patch_template": {
       "target_file": "app/search.py",
-      "find": "PARSE_TIMEOUT_MS = 250",
-      "replace": "PARSE_TIMEOUT_MS = 100"
+      "find": "PARSE_TIMEOUT_MS = 100",
+      "replace": "PARSE_TIMEOUT_MS = 80"
     }
   },
   "post_action_observations": {

@@ -211,12 +211,18 @@ def _parse_promptfoo_output(results_path: Path) -> dict | None:
     if not results_path.exists():
         return None
     data = json.loads(results_path.read_text())
-    outputs = data.get("results", {}).get("outputs", [])
-    if not outputs:
+    result_block = data.get("results", {})
+    outputs = result_block.get("outputs") or result_block.get("results") or []
+    if not isinstance(outputs, list) or not outputs:
         return None
     first_output = outputs[0]
-    passed = bool(first_output.get("pass", first_output.get("success", False)))
-    score = float(first_output.get("score", 0.0))
+    grading = first_output.get("gradingResult", {}) if isinstance(first_output, dict) else {}
+    passed = bool(
+        first_output.get("pass", first_output.get("success", grading.get("pass", False)))
+        if isinstance(first_output, dict)
+        else False
+    )
+    score = float(first_output.get("score", grading.get("score", 0.0)) if isinstance(first_output, dict) else 0.0)
     assertions = _extract_assertions(first_output)
     notes = [item["reason"] for item in assertions if item.get("reason")] or [f"promptfoo pass={passed} score={score}"]
     return {
@@ -225,7 +231,7 @@ def _parse_promptfoo_output(results_path: Path) -> dict | None:
         "notes": notes,
         "assertions": assertions,
         "result_file": results_path.name,
-        "stats": data.get("results", {}).get("stats", {}),
+        "stats": result_block.get("stats", {}),
     }
 
 

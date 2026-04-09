@@ -521,6 +521,7 @@ function VaultTab(props: InspectorProps) {
 /* ─── Merkle ─── */
 
 function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerkleProof | null }) {
+  const proofNodes = merkleProof ? buildProofNodes(merkleProof) : [];
   return (
     <div className="inspector-scroll">
       <Section title="Merkle Snapshot">
@@ -556,6 +557,18 @@ function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerklePr
           <Field label="Event" value={<code>{merkleProof.event_id}</code>} />
           <Field label="Leaf Hash" value={<code>{truncateHash(merkleProof.leaf_hash, 20)}</code>} />
           <Field label="Root Hash" value={<code>{truncateHash(merkleProof.root_hash, 20)}</code>} />
+
+          {proofNodes.length > 0 && (
+            <div className="merkle-proof-ladder">
+              <h5 className="inspector-subheading">Verification Path</h5>
+              {proofNodes.map((node, i) => (
+                <div key={`${node.kind}-${i}`} className={`merkle-proof-node ${node.kind}`}>
+                  <span className="merkle-proof-node-label">{node.label}</span>
+                  <code>{truncateHash(node.hash, 18)}</code>
+                </div>
+              ))}
+            </div>
+          )}
 
           {merkleProof.proof.length > 0 && (
             <div className="merkle-chain">
@@ -635,4 +648,19 @@ function stageColor(stage: string): string {
   if (stage === "awaiting_operator") return "var(--accent-warm)";
   if (stage === "executing") return "var(--accent)";
   return "var(--muted)";
+}
+
+function buildProofNodes(proof: MerkleProof): Array<{ kind: "leaf" | "sibling" | "root"; label: string; hash: string }> {
+  const nodes: Array<{ kind: "leaf" | "sibling" | "root"; label: string; hash: string }> = [
+    { kind: "leaf", label: "Leaf", hash: proof.leaf_hash },
+  ];
+  proof.proof.forEach((step, index) => {
+    nodes.push({
+      kind: "sibling",
+      label: `Step ${index + 1} ${step.position}`,
+      hash: step.hash,
+    });
+  });
+  nodes.push({ kind: "root", label: "Root", hash: proof.root_hash });
+  return nodes;
 }

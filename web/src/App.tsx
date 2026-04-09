@@ -51,6 +51,12 @@ const DEFAULT_LAUNCH_DRAFT = {
   customSignal: "",
 };
 
+const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
+  evaluationMode: "promptfoo",
+  orchestrationMode: "goose",
+  steeringMode: "interruptible_auto",
+} as const;
+
 export default function App() {
   const [baseUrl] = useState(resolveBaseUrl);
 
@@ -346,10 +352,33 @@ export default function App() {
   const activeGoal = goals.find(
     (g) => g.goal_id === (activeRun?.goal_id ?? selectedGoalId),
   ) ?? goals[0] ?? null;
+  const activeEvaluation = activeRun?.artifacts.evaluation as Record<string, any> | undefined;
+  const approvalBlockedEvent = activeRun?.events
+    ?.slice()
+    .reverse()
+    .find((event) => event.event_type === "approval_blocked");
+  const approvalBlockingReasons = (
+    approvalBlockedEvent?.payload?.blocking_reasons ??
+    activeEvaluation?.blocking_reasons ??
+    []
+  ) as string[];
+  const approvalRecommendation = String(
+    approvalBlockedEvent?.payload?.final_recommendation ??
+    activeEvaluation?.final_recommendation ??
+    "",
+  );
+  const approvalCurrentlyBlocked =
+    activeRun?.stage === "awaiting_operator" &&
+    activeRun?.pending_pause_stage === "evaluation_ready" &&
+    approvalRecommendation !== "" &&
+    approvalRecommendation !== "execute";
 
   const integrationsReady = readiness
     ? [readiness.promptfoo, readiness.goose, readiness.gitnexus].filter((i) => i.ready).length
     : 0;
+  const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
+  const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
+  const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
 
   /* ──────────── Render ──────────── */
 
@@ -387,6 +416,13 @@ export default function App() {
             icon={<CircleDot size={16} />}
             label="Operator Mode"
             value={humanize(activeRun?.steering_mode ?? launchDraft.steeringMode)}
+          />
+          <InferenceMetric
+            icon={<Zap size={16} />}
+            primaryRoute={inferencePrimaryRoute}
+            fallbackRoute={inferenceFallbackRoute}
+            warning={inferenceWarning}
+            ready={Boolean(readiness?.goose.ready)}
           />
           <HeaderMetric
             icon={<Waves size={16} />}
@@ -461,6 +497,17 @@ export default function App() {
 
           <SectionTitle icon={<TimerReset size={15} />} title="Launch Run" />
           <div className="stack">
+            <div className="launch-preset-row">
+              <button
+                className="action-button compact"
+                onClick={() => setLaunchDraft((draft) => ({ ...draft, ...RESEARCH_SAFE_LAUNCH_OVERRIDES }))}
+                type="button"
+              >
+                <ShieldCheck size={14} />
+                Research Safe
+              </button>
+              <p className="helper-text">Promptfoo + Goose + interruptible auto with no default pause points.</p>
+            </div>
             {scenarios.length > 0 && (
               <div className="select-wrap">
                 <select value={launchDraft.scenarioKey} onChange={(e) => setLaunchDraft({ ...launchDraft, scenarioKey: e.target.value })}>
@@ -537,6 +584,30 @@ export default function App() {
               <p className="eyebrow">Active Goal</p>
               <h2>{activeGoal?.title ?? "No goal selected"}</h2>
               <p className="muted">{activeGoal?.objective ?? "Create a goal or select the default goal to begin."}</p>
+              {activeRun?.stage === "awaiting_operator" && (
+                <div className={`run-gate-banner ${approvalCurrentlyBlocked ? "danger" : "warn"}`}>
+                  <AlertTriangle size={14} />
+                  <div>
+                    <strong>
+                      {approvalCurrentlyBlocked
+                        ? `Approval blocked: ${humanize(approvalRecommendation)}`
+                        : "Awaiting operator approval"}
+                    </strong>
+                    <p>
+                      {approvalCurrentlyBlocked
+                        ? "Execution is paused until you resolve the blocking evaluation issues or override the decision."
+                        : "This run is paused at the operator gate and can continue when approved."}
+                    </p>
+                    {approvalBlockingReasons.length > 0 && (
+                      <ul className="banner-reason-list">
+                        {approvalBlockingReasons.slice(0, 3).map((reason, index) => (
+                          <li key={`${reason}-${index}`}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="status-row">
               <StatusChip label={activeRun ? humanize(activeRun.stage) : "Idle"} tone={toneForStage(activeRun?.stage ?? "queued")} />
@@ -573,7 +644,14 @@ export default function App() {
             <div className="panel timeline-panel">
               <SectionTitle icon={<AlertTriangle size={15} />} title="Steering Console" />
               <div className="steering-grid">
-                <SteerButton label="Approve" command="approve" active={steering} disabled={!activeRunId || activeRun?.stage !== "awaiting_operator"} primary onClick={handleSteer} />
+                <SteerButton
+                  label="Approve"
+                  command="approve"
+                  active={steering}
+                  disabled={!activeRunId || activeRun?.stage !== "awaiting_operator" || approvalCurrentlyBlocked}
+                  primary
+                  onClick={handleSteer}
+                />
                 <SteerButton label="Resume" command="resume" active={steering} disabled={!activeRunId} onClick={handleSteer} />
                 <SteerButton label="Cancel" command="cancel" active={steering} disabled={!activeRunId} onClick={handleSteer} />
                 <SteerButton
@@ -740,12 +818,66 @@ function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string })
   );
 }
 
-function ReadinessCard({ label, status }: { label: string; status?: { ready: boolean; detail: string } | null }) {
+function ReadinessCard({
+  label,
+  status,
+}: {
+  label: string;
+  status?: {
+    ready: boolean;
+    detail: string;
+    primary_route?: string | null;
+    fallback_route?: string | null;
+    warnings?: string[];
+  } | null;
+}) {
   return (
     <div className={`readiness-card ${status?.ready ? "good" : "warn"}`}>
       <div className="readiness-dot" data-ready={String(status?.ready ?? false)} />
       <strong>{label}</strong>
+      {status?.primary_route && (
+        <span className="readiness-route">
+          Primary: <code>{status.primary_route}</code>
+        </span>
+      )}
+      {status?.fallback_route && (
+        <span className="readiness-route">
+          Fallback: <code>{status.fallback_route}</code>
+        </span>
+      )}
+      {status?.warnings?.map((warning) => (
+        <span key={warning} className="readiness-warning">
+          <AlertTriangle size={12} />
+          {warning}
+        </span>
+      ))}
       <span className="readiness-detail">{status?.detail ?? "Checking…"}</span>
+    </div>
+  );
+}
+
+function InferenceMetric({
+  icon,
+  primaryRoute,
+  fallbackRoute,
+  warning,
+  ready,
+}: {
+  icon: React.ReactNode;
+  primaryRoute: string;
+  fallbackRoute: string | null;
+  warning: string | null;
+  ready: boolean;
+}) {
+  return (
+    <div className={`header-metric header-inference ${warning ? "danger" : ready ? "good" : "warn"}`}>
+      <span className="header-metric-icon">{icon}</span>
+      <div>
+        <p>Inference Routing</p>
+        <strong>{primaryRoute}</strong>
+        {fallbackRoute && <span className="header-metric-subline">Fallback: {fallbackRoute}</span>}
+        {warning && <span className="header-metric-warning">{warning}</span>}
+      </div>
     </div>
   );
 }

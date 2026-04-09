@@ -92,10 +92,9 @@ class NativeGooseAdapter(GooseAdapter):
 
 
 class GooseCliAdapter(GooseAdapter):
-    def __init__(self, command: str | None = None, timeout_seconds: float | None = None):
+    def __init__(self, command: str | None = None, timeout_seconds: int = 30):
         self.command = command
-        # Full bridge process budget (review + audit + actuators). Keep above inner Goose CLI timeouts.
-        self.timeout_seconds = float(timeout_seconds) if timeout_seconds is not None else 180.0
+        self.timeout_seconds = timeout_seconds
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
         result = self._invoke(

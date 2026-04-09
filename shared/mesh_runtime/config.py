@@ -21,6 +21,7 @@ class RuntimeConfig:
     audit_logging_available: bool = True
     max_transient_retries: int = 2
     max_retry_window_seconds: int = 60
+    goose_timeout_seconds: int = 180
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     server_host: str = "127.0.0.1"
     server_port: int = 8787
@@ -31,15 +32,14 @@ class RuntimeConfig:
     default_operator_pause_point: str = "evaluation_ready"
     promptfoo_command: str | None = None
     goose_command: str | None = None
-    # Subprocess timeout for `goose_bridge` / cli_executor (full JSON stdin→stdout invoke).
-    # Must exceed inner `goose run` timeouts (see MESH_GOOSE_RUN_TIMEOUT_SECONDS).
-    goose_bridge_timeout_seconds: float = 180.0
+    goose_command_timeout_seconds: int = 180
     gitnexus_sidecar_url: str | None = None
     gitnexus_sidecar_command: str | None = None
     gitnexus_disable_autostart: bool = False
     max_json_body_bytes: int = 1_048_576
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
+    vault_ai_postprocess_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -52,6 +52,7 @@ class RuntimeConfig:
             audit_logging_available=os.getenv("MESH_AUDIT_LOGGING_AVAILABLE", "true").lower() == "true",
             max_transient_retries=int(os.getenv("MESH_MAX_TRANSIENT_RETRIES", "2")),
             max_retry_window_seconds=int(os.getenv("MESH_MAX_RETRY_WINDOW_SECONDS", "60")),
+            goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
             state_directory=os.getenv("MESH_STATE_DIRECTORY", str(DEFAULT_STATE_DIRECTORY)),
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),
             server_port=int(os.getenv("MESH_SERVER_PORT", "8787")),
@@ -65,8 +66,11 @@ class RuntimeConfig:
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             goose_command=os.getenv("MESH_GOOSE_COMMAND") or None,
-            goose_bridge_timeout_seconds=float(
-                os.getenv("MESH_GOOSE_BRIDGE_TIMEOUT_SECONDS", "180")
+            goose_command_timeout_seconds=int(
+                os.getenv(
+                    "MESH_GOOSE_COMMAND_TIMEOUT_SECONDS",
+                    os.getenv("MESH_GOOSE_BRIDGE_TIMEOUT_SECONDS", "180"),
+                )
             ),
             gitnexus_sidecar_url=os.getenv("MESH_GITNEXUS_SIDECAR_URL") or None,
             gitnexus_sidecar_command=os.getenv("MESH_GITNEXUS_SIDECAR_COMMAND") or None,
@@ -76,4 +80,6 @@ class RuntimeConfig:
             access_log_enabled=os.getenv("MESH_ACCESS_LOG", "").lower() in ("1", "true", "yes"),
             security_headers_enabled=os.getenv("MESH_SECURITY_HEADERS", "true").lower()
             not in ("0", "false", "no"),
+            vault_ai_postprocess_enabled=os.getenv("MESH_VAULT_AI_POSTPROCESS_ENABLED", "").lower()
+            in ("1", "true", "yes"),
         )

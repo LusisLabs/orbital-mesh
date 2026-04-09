@@ -24,6 +24,7 @@ GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
 GOOSE_MODEL_PREFERENCE = (
+    "gemma4:31b-it-q4_K_M",
     "qwen2.5:0.5b",
     "qwen2.5:latest",
     "glm-4.7-flash:latest",
@@ -167,6 +168,9 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
     goose_detail = _describe_goose_command(current.goose_command)
     if goose_detail:
         actions.append(goose_detail)
+    goose_warnings = _goose_warnings(current.goose_command)
+    for warning in goose_warnings:
+        actions.append(f"warning: {warning}")
 
     save_integrations_config(runtime_config.integrations_config_path, current)
 
@@ -190,6 +194,7 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
         "actions": actions,
         "config": current.to_dict(),
         "smoke_checks": smoke_checks,
+        "warnings": {"goose": goose_warnings},
         "guidance": guidance,
     }
 
@@ -215,7 +220,24 @@ def _command_status(name: str, command: str | None) -> IntegrationStatus:
     binary = executable if os.path.isabs(executable) else shutil.which(executable)
     if binary is None and not Path(executable).exists():
         return IntegrationStatus(name=name, ready=False, detail="command not found", command=command)
-    ok, detail = _smoke_check_with_fallback(command, [["--healthcheck"], ["--version"]])
+    if name == "goose":
+        ok, detail = _smoke_check(command, ["--version"])
+        primary_route, fallback_route = _goose_routes(command)
+        warnings = _goose_warnings(command)
+        profile_detail = _describe_goose_command(command)
+        if profile_detail:
+            detail = f"{profile_detail}; probe={detail}"
+        return IntegrationStatus(
+            name=name,
+            ready=ok,
+            detail=detail,
+            command=command,
+            primary_route=primary_route,
+            fallback_route=fallback_route,
+            warnings=warnings,
+        )
+    else:
+        ok, detail = _smoke_check_with_fallback(command, [["--healthcheck"], ["--version"]])
     return IntegrationStatus(name=name, ready=ok, detail=detail, command=command)
 
 
@@ -228,7 +250,7 @@ def _smoke_check(command: str | None, extra_args: list[str]) -> tuple[bool, str]
             capture_output=True,
             text=True,
             check=False,
-            timeout=10,
+            timeout=20,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
@@ -263,8 +285,16 @@ def _resolve_goose_command(command: str | None) -> str | None:
     discovered = _resolve_vendor_binary(command, "goose")
     if discovered is None:
         return command
-    provider, model = _discover_goose_profile(discovered)
-    return _build_goose_bridge_command(discovered, provider=provider, model=model)
+    provider, model, fallback_provider, fallback_model = _configured_goose_profile()
+    if provider is None and model is None:
+        provider, model = _discover_goose_profile(discovered)
+    return _build_goose_bridge_command(
+        discovered,
+        provider=provider,
+        model=model,
+        fallback_provider=fallback_provider,
+        fallback_model=fallback_model,
+    )
 
 
 def _resolve_vendor_binary(command: str | None, executable_name: str) -> str | None:
@@ -288,7 +318,13 @@ def _build_promptfoo_bridge_command(promptfoo_bin: str) -> str:
     )
 
 
-def _build_goose_bridge_command(goose_bin: str, provider: str | None, model: str | None) -> str:
+def _build_goose_bridge_command(
+    goose_bin: str,
+    provider: str | None,
+    model: str | None,
+    fallback_provider: str | None = None,
+    fallback_model: str | None = None,
+) -> str:
     command = [
         sys.executable,
         "-m",
@@ -300,18 +336,68 @@ def _build_goose_bridge_command(goose_bin: str, provider: str | None, model: str
         command.extend(["--provider", provider])
     if model:
         command.extend(["--model", model])
+    if fallback_provider:
+        command.extend(["--fallback-provider", fallback_provider])
+    if fallback_model:
+        command.extend(["--fallback-model", fallback_model])
     return shlex.join(command)
 
 
 def _describe_goose_command(command: str | None) -> str | None:
     if not command:
         return None
+    primary_route, fallback_route = _goose_routes(command)
+    if primary_route and fallback_route:
+        return f"configured Goose bridge for {primary_route} with fallback {fallback_route}"
+    if primary_route:
+        return f"configured Goose bridge for {primary_route}"
+    return "configured Goose bridge with the default Goose profile"
+
+
+def _goose_routes(command: str | None) -> tuple[str | None, str | None]:
+    if not command:
+        return None, None
     tokens = shlex.split(command)
     provider = _flag_value(tokens, "--provider")
     model = _flag_value(tokens, "--model")
-    if provider and model:
-        return f"configured Goose bridge for {provider}/{model}"
-    return "configured Goose bridge with the default Goose profile"
+    fallback_provider = _flag_value(tokens, "--fallback-provider")
+    fallback_model = _flag_value(tokens, "--fallback-model")
+    primary_route = f"{provider}/{model}" if provider and model else None
+    fallback_route = f"{fallback_provider}/{fallback_model}" if fallback_provider and fallback_model else None
+    return primary_route, fallback_route
+
+
+def _goose_warnings(command: str | None) -> list[str]:
+    primary_route, _fallback_route = _goose_routes(command)
+    if not primary_route or not primary_route.startswith("ollama/"):
+        return []
+    _, model = primary_route.split("/", 1)
+    return _ollama_route_warnings(model)
+
+
+def _ollama_route_warnings(model: str) -> list[str]:
+    host = (os.getenv("OLLAMA_HOST") or "").rstrip("/")
+    if not host:
+        return ["ollama route selected but OLLAMA_HOST is not configured"]
+    tags_url = f"{host}/api/tags"
+    try:
+        with urlopen(tags_url, timeout=2) as response:
+            if response.status < 200 or response.status >= 300:
+                return [f"ollama self-check returned HTTP {response.status}"]
+            payload = json.loads(response.read().decode("utf-8"))
+    except (URLError, ValueError, TimeoutError, json.JSONDecodeError) as exc:
+        return [f"ollama self-check failed: {exc}"]
+    models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(models, list):
+        return ["ollama self-check returned an unexpected payload"]
+    available = {
+        str(entry.get("name")).strip()
+        for entry in models
+        if isinstance(entry, dict) and entry.get("name")
+    }
+    if model not in available:
+        return [f"ollama reachable but model `{model}` is not loaded"]
+    return []
 
 
 def _flag_value(tokens: list[str], flag: str) -> str | None:
@@ -322,6 +408,24 @@ def _flag_value(tokens: list[str], flag: str) -> str | None:
     if index + 1 >= len(tokens):
         return None
     return tokens[index + 1]
+
+
+def _configured_goose_profile() -> tuple[str | None, str | None, str | None, str | None]:
+    provider = os.getenv("GOOSE_PROVIDER") or None
+    model = os.getenv("GOOSE_MODEL") or os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or None
+    if provider is None:
+        hermes_provider = os.getenv("HERMES_INFERENCE_PROVIDER") or None
+        if hermes_provider and hermes_provider.lower() != "auto":
+            provider = hermes_provider
+        elif hermes_provider and hermes_provider.lower() == "auto" and os.getenv("OPENAI_BASE_URL"):
+            provider = "openai"
+    fallback_provider = os.getenv("GOOSE_FALLBACK_PROVIDER") or None
+    fallback_model = os.getenv("GOOSE_FALLBACK_MODEL") or None
+    if fallback_provider is None and os.getenv("OPENAI_BASE_URL"):
+        if provider != "openai":
+            fallback_provider = "openai"
+            fallback_model = fallback_model or os.getenv("HERMES_FALLBACK_MODEL") or "MiniMax-M2.5"
+    return provider, model, fallback_provider, fallback_model
 
 
 def _discover_goose_profile(goose_bin: str) -> tuple[str | None, str | None]:

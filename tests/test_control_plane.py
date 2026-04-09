@@ -10,7 +10,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from control_plane_server import start_server_in_thread
-from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime import RuntimeConfig, load_fixture
 
 
 class ControlPlaneApiTests(unittest.TestCase):
@@ -22,6 +22,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             integrations_config_path=str(Path(self.temp_dir.name) / "integrations.json"),
             server_host="127.0.0.1",
             server_port=0,
+            vault_ai_postprocess_enabled=True,
             promptfoo_command="/missing/promptfoo",
             goose_command="/missing/goose",
             gitnexus_sidecar_url="http://127.0.0.1:65535",
@@ -97,12 +98,26 @@ class ControlPlaneApiTests(unittest.TestCase):
         tree = self._request("GET", "/api/vault/tree")["tree"]
         run_paths = self._flatten_tree(tree)
         self.assertIn(f"Runs/{run['run_id']}.md", run_paths)
+        self.assertIn(f"Insights/{run['run_id']}.md", run_paths)
+        self.assertIn(f"Visualizations/{run['run_id']}.md", run_paths)
         run_note_path = f"Runs/{run['run_id']}.md"
         document = self._request(
             "GET",
             f"/api/vault/document?{urlencode({'path': run_note_path})}",
         )
         self.assertIn(run["run_id"], document["content"])
+        insight_note_path = f"Insights/{run['run_id']}.md"
+        visualization_note_path = f"Visualizations/{run['run_id']}.md"
+        insights = self._request(
+            "GET",
+            f"/api/vault/document?{urlencode({'path': insight_note_path})}",
+        )
+        visualization = self._request(
+            "GET",
+            f"/api/vault/document?{urlencode({'path': visualization_note_path})}",
+        )
+        self.assertIn("AI Run Insight", insights["content"])
+        self.assertIn("```mermaid", visualization["content"])
 
     def test_interruptible_auto_executes_without_operator_pause(self) -> None:
         run = self._request(
@@ -113,12 +128,99 @@ class ControlPlaneApiTests(unittest.TestCase):
                 "evaluation_mode": "native",
                 "orchestration_mode": "native",
                 "steering_mode": "interruptible_auto",
-                "pause_points": [],
             },
         )
         completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
         self.assertNotEqual(completed["status"], "awaiting_operator")
+
+    def test_kubernetes_fixture_repo_placeholder_resolves_before_evaluation(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "kubernetes_crashloop_patch",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        paused = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        self.assertNotEqual(
+            paused["artifacts"]["input_signal"]["related_context"]["repo_path"],
+            "__FIXTURE_REPO__",
+        )
+        self.assertTrue(paused["artifacts"]["evaluation"]["passed"])
+
+    def test_kubernetes_fixture_repo_placeholder_uses_isolated_copy_per_run(self) -> None:
+        source_repo = str(Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service")
+        first = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "kubernetes_crashloop_patch",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        second = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "kubernetes_crashloop_patch",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        first_paused = self._poll_run(
+            first["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        second_paused = self._poll_run(
+            second["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        first_repo = first_paused["artifacts"]["input_signal"]["related_context"]["repo_path"]
+        second_repo = second_paused["artifacts"]["input_signal"]["related_context"]["repo_path"]
+
+        self.assertNotEqual(first_repo, source_repo)
+        self.assertNotEqual(second_repo, source_repo)
+        self.assertNotEqual(first_repo, second_repo)
+        self.assertTrue(Path(first_repo).exists())
+        self.assertTrue(Path(second_repo).exists())
+
+    def test_blocked_approval_includes_evaluation_reasons(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["high_business_impact"] = True
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "signal_payload": signal,
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        self._request("POST", f"/api/runs/{run['run_id']}/steer", {"command": "approve"})
+        blocked = self._poll_run(
+            run["run_id"],
+            lambda payload: any(event["event_type"] == "approval_blocked" for event in payload["events"]),
+        )
+        blocked_events = [event for event in blocked["events"] if event["event_type"] == "approval_blocked"]
+        self.assertTrue(blocked_events)
+        self.assertEqual(blocked_events[-1]["payload"]["reason"], "evaluation did not pass")
+        self.assertEqual(blocked_events[-1]["payload"]["final_recommendation"], "human_review")
+        self.assertTrue(blocked_events[-1]["payload"]["blocking_reasons"])
 
     def test_readiness_reports_missing_cli_integrations(self) -> None:
         readiness = self._request("GET", "/api/readiness")

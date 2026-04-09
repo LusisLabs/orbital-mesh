@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from services.actuators.repo_patch import RepoPatchAdapter
 from services.evaluation.service import EvaluationService
 from services.orchestrator.goose_adapter import GooseAdapter, GooseExecutionResult
 from services.orchestrator.service import OrchestratorService
@@ -247,6 +248,38 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertEqual(execution.failure["attempts"], 3)
         self.assertIn("incident_id", execution.external_refs)
 
+    def test_orchestrator_uses_default_backoff_without_retry_hint(self) -> None:
+        signal = base_signal()
+        pipeline = FirstSlicePipeline(config=self.config)
+        trigger = pipeline.trigger.detect(pipeline.ingest.normalize_signal(signal))
+        self.assertIsNotNone(trigger)
+        decision = pipeline.decision.decide(trigger)
+        adapter = AlwaysTransientFailureAdapter()
+        clock_state = {"now": 0.0}
+
+        def fake_clock() -> float:
+            return clock_state["now"]
+
+        def fake_sleep(seconds: float) -> None:
+            clock_state["now"] += seconds
+
+        service = OrchestratorService(
+            adapter=adapter,
+            config=RuntimeConfig(
+                orchestration_mode="native",
+                max_transient_retries=2,
+                state_directory=self.temp_dir.name,
+            ),
+            clock=fake_clock,
+            sleeper=fake_sleep,
+        )
+
+        execution = service.execute(decision, approved_evaluation(decision.decision_id))
+
+        self.assertEqual(adapter.calls, 3)
+        self.assertEqual(clock_state["now"], 3.0)
+        self.assertEqual(execution.failure["attempts"], 3)
+
     def test_orchestrator_respects_retry_window_budget(self) -> None:
         signal = base_signal()
         pipeline = FirstSlicePipeline(config=self.config)
@@ -356,8 +389,8 @@ class LoopBehaviorTests(unittest.TestCase):
                     "test_commands": ["python3 -m unittest discover -s tests"],
                     "patch_template": {
                         "target_file": "app/search.py",
-                        "find": "PARSE_TIMEOUT_MS = 250",
-                        "replace": "PARSE_TIMEOUT_MS = 100",
+                        "find": "PARSE_TIMEOUT_MS = 100",
+                        "replace": "PARSE_TIMEOUT_MS = 80",
                     },
                 }
             )
@@ -378,10 +411,57 @@ class LoopBehaviorTests(unittest.TestCase):
                 "repo_patch_service",
             )
             patched_file = repo_path / "app" / "search.py"
-            self.assertIn("PARSE_TIMEOUT_MS = 100", patched_file.read_text())
+            self.assertIn("PARSE_TIMEOUT_MS = 80", patched_file.read_text())
             test_results = result["execution"]["external_refs"]["test_results"]
             self.assertEqual(test_results[0]["returncode"], 0)
             self.assertEqual(result["feedback"]["outcome"], "successful")
+
+    def test_repo_patch_accepts_absolute_target_inside_repo_scope(self) -> None:
+        fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "search_service"
+            shutil.copytree(fixture_repo, repo_path)
+            target_path = repo_path / "app" / "search.py"
+
+            result = RepoPatchAdapter().execute_patch(
+                {
+                    "repo_path": str(repo_path),
+                    "allowed_paths": ["app/search.py"],
+                    "patch_template": {
+                        "target_file": str(target_path),
+                        "find": "PARSE_TIMEOUT_MS = 100",
+                        "replace": "PARSE_TIMEOUT_MS = 80",
+                    },
+                    "test_commands": ["python3 -m unittest discover -s tests"],
+                },
+                "absolute_target_test",
+            )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["external_refs"]["patched_files"], ["app/search.py"])
+
+    def test_repo_patch_supports_shell_form_test_commands(self) -> None:
+        fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "search_service"
+            shutil.copytree(fixture_repo, repo_path)
+
+            result = RepoPatchAdapter().execute_patch(
+                {
+                    "repo_path": str(repo_path),
+                    "allowed_paths": ["app/search.py"],
+                    "patch_template": {
+                        "target_file": "app/search.py",
+                        "find": "PARSE_TIMEOUT_MS = 100",
+                        "replace": "PARSE_TIMEOUT_MS = 80",
+                    },
+                    "test_commands": ["cd . && python3 -m unittest discover -s tests"],
+                },
+                "shell_test_command",
+            )
+
+        self.assertEqual(result["status"], "succeeded")
+        self.assertEqual(result["external_refs"]["test_results"][0]["returncode"], 0)
 
     def test_kubernetes_signal_can_drive_bounded_patch_flow(self) -> None:
         signal = base_kubernetes_signal()
@@ -405,7 +485,7 @@ class LoopBehaviorTests(unittest.TestCase):
             self.assertEqual(result["execution"]["status"], "succeeded")
             self.assertEqual(result["execution"]["applied_action"]["system"], "repo_patch_service")
             self.assertEqual(result["feedback"]["outcome"], "successful")
-            self.assertIn("PARSE_TIMEOUT_MS = 100", (repo_path / "app" / "search.py").read_text())
+            self.assertIn("PARSE_TIMEOUT_MS = 80", (repo_path / "app" / "search.py").read_text())
 
     def test_kubernetes_image_pull_failure_prefers_rollback(self) -> None:
         signal = base_kubernetes_signal()

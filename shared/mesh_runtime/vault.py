@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .config import RuntimeConfig
 from .control_plane_models import GoalRecord, MerkleSnapshot, RunEvent, RunSession
+from .postprocessing import VaultAiPostprocessor
 
 
 VAULT_DIRECTORIES = (
@@ -16,15 +18,18 @@ VAULT_DIRECTORIES = (
     "Feedback",
     "Merkle",
     "Notes",
+    "Insights",
+    "Visualizations",
 )
 
 
 class VaultManager:
-    def __init__(self, root_path: str | Path):
+    def __init__(self, root_path: str | Path, runtime_config: RuntimeConfig | None = None):
         self.root_path = Path(root_path)
         self.root_path.mkdir(parents=True, exist_ok=True)
         for directory in VAULT_DIRECTORIES:
             (self.root_path / directory).mkdir(parents=True, exist_ok=True)
+        self.postprocessor = VaultAiPostprocessor(self.root_path, runtime_config) if runtime_config else None
 
     def write_goal(self, goal: GoalRecord) -> str:
         relative_path = self._goal_note_path(goal.goal_id)
@@ -78,6 +83,8 @@ class VaultManager:
             f"- Feedback: {self._artifact_link('Feedback', session.run_id)}",
             f"- Merkle: {self._artifact_link('Merkle', session.run_id)}",
             f"- Notes: {self._artifact_link('Notes', session.run_id)}",
+            f"- Insights: {self._artifact_link('Insights', session.run_id)}",
+            f"- Visualizations: {self._artifact_link('Visualizations', session.run_id)}",
             "",
             "## Timeline",
             "",
@@ -128,6 +135,8 @@ class VaultManager:
         else:
             notes_lines.append("- none recorded")
         self._write_markdown(self._artifact_path("Notes", session.run_id), notes_lines)
+        if self.postprocessor is not None:
+            self.postprocessor.write_run_postprocess(session, events, merkle, goal)
 
     def tree(self) -> list[dict[str, Any]]:
         def build(path: Path) -> list[dict[str, Any]]:

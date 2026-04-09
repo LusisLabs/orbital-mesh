@@ -22,7 +22,7 @@ class ControlPlaneStateStore:
         self.state_directory = Path(config.state_directory)
         self.state_directory.mkdir(parents=True, exist_ok=True)
         self.runtime_store = RuntimeStateStore(self.state_directory)
-        self.vault = VaultManager(config.vault_path)
+        self.vault = VaultManager(config.vault_path, runtime_config=config)
         self._goals_path = self.state_directory / "goals.json"
         self._run_sessions_path = self.state_directory / "run_sessions.json"
         self._run_events_dir = self.state_directory / "run_events"

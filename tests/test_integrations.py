@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import tempfile
@@ -8,8 +9,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from services.evaluation.promptfoo_bridge import _parse_promptfoo_output
-from services.orchestrator.goose_bridge import _parse_review_text
+from services.orchestrator.goose_adapter import GooseCliAdapter
+from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _run_goose_prompt
 from shared.mesh_runtime import RuntimeConfig, resolve_integrations_config
+from shared.mesh_runtime.integrations import build_readiness
 
 
 class IntegrationsTests(unittest.TestCase):
@@ -107,6 +110,293 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(artifact["passed"])
         self.assertEqual(artifact["score"], 0.88)
         self.assertEqual(artifact["assertions"][0]["reason"], "confidence meets minimum threshold")
+
+    def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            results_path = Path(temp_dir) / "results.json"
+            results_path.write_text(
+                json.dumps(
+                    {
+                        "results": {
+                            "results": [
+                                {
+                                    "gradingResult": {
+                                        "pass": True,
+                                        "score": 1.0,
+                                        "componentResults": [
+                                            {
+                                                "assertion": {"type": "python"},
+                                                "pass": True,
+                                                "score": 1.0,
+                                                "reason": "observed latency exceeds baseline",
+                                            }
+                                        ],
+                                    }
+                                }
+                            ],
+                            "stats": {"successes": 1, "failures": 0},
+                        }
+                    }
+                )
+            )
+
+            artifact = _parse_promptfoo_output(results_path)
+
+        self.assertIsNotNone(artifact)
+        self.assertTrue(artifact["passed"])
+        self.assertEqual(artifact["score"], 1.0)
+        self.assertEqual(artifact["assertions"][0]["reason"], "observed latency exceeds baseline")
+
+    def test_resolve_integrations_prefers_configured_openai_compatible_goose_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+            )
+            with (
+                patch("shared.mesh_runtime.integrations.shutil.which", side_effect=lambda name: "/usr/local/bin/goose" if name == "goose" else None),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "HERMES_INFERENCE_PROVIDER": "auto",
+                        "HERMES_MODEL": "MiniMax-M2.5",
+                        "LLM_MODEL": "MiniMax-M2.5",
+                        "OPENAI_BASE_URL": "https://api.minimax.io/v1",
+                    },
+                    clear=False,
+                ),
+            ):
+                resolved = resolve_integrations_config(config)
+
+        self.assertIn("services.orchestrator.goose_bridge", resolved.goose_command or "")
+        self.assertIn("--provider openai", resolved.goose_command or "")
+        self.assertIn("--model MiniMax-M2.5", resolved.goose_command or "")
+
+    def test_resolve_integrations_prefers_local_ollama_with_openai_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+            )
+            with (
+                patch("shared.mesh_runtime.integrations.shutil.which", side_effect=lambda name: "/usr/local/bin/goose" if name == "goose" else None),
+                patch.dict(
+                    "os.environ",
+                    {
+                        "GOOSE_PROVIDER": "ollama",
+                        "GOOSE_MODEL": "gemma4:31b-it-q4_K_M",
+                        "GOOSE_FALLBACK_PROVIDER": "openai",
+                        "GOOSE_FALLBACK_MODEL": "MiniMax-M2.5",
+                        "OPENAI_BASE_URL": "https://api.minimax.io/v1",
+                    },
+                    clear=False,
+                ),
+            ):
+                resolved = resolve_integrations_config(config)
+
+        self.assertIn("--provider ollama", resolved.goose_command or "")
+        self.assertIn("--model gemma4:31b-it-q4_K_M", resolved.goose_command or "")
+        self.assertIn("--fallback-provider openai", resolved.goose_command or "")
+        self.assertIn("--fallback-model MiniMax-M2.5", resolved.goose_command or "")
+
+    def test_goose_bridge_tries_fallback_profile_after_primary_cli_failure(self) -> None:
+        args = argparse.Namespace(
+            goose_bin="/usr/local/bin/goose",
+            provider="ollama",
+            model="gemma4:31b-it-q4_K_M",
+            fallback_provider="openai",
+            fallback_model="MiniMax-M2.5",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run(
+            args: list[str],
+            cwd: Path | str | None = None,
+            capture_output: bool = False,
+            text: bool = False,
+            check: bool = False,
+            timeout: int | float | None = None,
+            env: dict[str, str] | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            if "--provider" in args and args[args.index("--provider") + 1] == "ollama":
+                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="ollama unavailable")
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps({"messages": [{"role": "assistant", "content": [{"type": "text", "text": "ACK"}]}]}),
+                stderr="",
+            )
+
+        with patch("services.orchestrator.goose_bridge.subprocess.run", side_effect=fake_run):
+            payload, error = _run_goose_prompt(args, "Reply with ACK.", "System prompt")
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--provider", calls[0])
+        self.assertEqual(calls[0][calls[0].index("--provider") + 1], "ollama")
+        self.assertIn("--provider", calls[1])
+        self.assertEqual(calls[1][calls[1].index("--provider") + 1], "openai")
+
+    def test_goose_bridge_tries_fallback_profile_after_primary_timeout(self) -> None:
+        args = argparse.Namespace(
+            goose_bin="/usr/local/bin/goose",
+            provider="ollama",
+            model="gemma4:31b-it-q4_K_M",
+            fallback_provider="openai",
+            fallback_model="MiniMax-M2.5",
+        )
+        calls: list[list[str]] = []
+
+        def fake_run(
+            args: list[str],
+            cwd: Path | str | None = None,
+            capture_output: bool = False,
+            text: bool = False,
+            check: bool = False,
+            timeout: int | float | None = None,
+            env: dict[str, str] | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            if "--provider" in args and args[args.index("--provider") + 1] == "ollama":
+                raise subprocess.TimeoutExpired(args, timeout or 0)
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps({"messages": [{"role": "assistant", "content": [{"type": "text", "text": "ACK"}]}]}),
+                stderr="",
+            )
+
+        with patch("services.orchestrator.goose_bridge.subprocess.run", side_effect=fake_run):
+            payload, error = _run_goose_prompt(args, "Reply with ACK.", "System prompt")
+
+        self.assertIsNone(error)
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][calls[0].index("--provider") + 1], "ollama")
+        self.assertEqual(calls[1][calls[1].index("--provider") + 1], "openai")
+
+    def test_goose_cli_adapter_uses_configured_timeout_budget(self) -> None:
+        observed: dict[str, int | float | None] = {"timeout": None}
+
+        def fake_run(
+            args: list[str],
+            input: str | None = None,
+            capture_output: bool = False,
+            text: bool = False,
+            cwd: Path | str | None = None,
+            check: bool = False,
+            timeout: int | float | None = None,
+        ) -> subprocess.CompletedProcess[str]:
+            observed["timeout"] = timeout
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout=json.dumps({"status": "succeeded", "external_refs": {}}),
+                stderr="",
+            )
+
+        adapter = GooseCliAdapter(command="python3 -m services.orchestrator.goose_bridge", timeout_seconds=180)
+        with patch("services.orchestrator.goose_adapter.subprocess.run", side_effect=fake_run):
+            result = adapter._invoke({"mode": "execute", "decision": {}, "idempotency_key": "k"})
+
+        self.assertEqual(observed["timeout"], 180)
+        self.assertEqual(result["status"], "succeeded")
+
+    def test_goose_openai_profile_maps_base_url_to_host(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "OPENAI_BASE_URL": "https://api.minimax.io/v1",
+            },
+            clear=False,
+        ):
+            env = _command_env("openai")
+
+        self.assertEqual(env["OPENAI_HOST"], "https://api.minimax.io/v1")
+
+    def test_parse_review_text_accepts_fenced_json(self) -> None:
+        parsed = _parse_review_text(
+            """```json
+{"approved": true, "summary": "Proceed", "risk_flags": [], "next_action": "execute"}
+```"""
+        )
+
+        self.assertTrue(parsed["approved"])
+        self.assertEqual(parsed["summary"], "Proceed")
+
+    def test_goose_anthropic_profile_maps_base_url_to_host(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "ANTHROPIC_BASE_URL": "https://api.minimax.io/anthropic",
+            },
+            clear=False,
+        ):
+            env = _command_env("anthropic")
+
+        self.assertEqual(env["ANTHROPIC_HOST"], "https://api.minimax.io/anthropic")
+
+    def test_readiness_warns_when_ollama_model_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                goose_command="/usr/local/bin/goose",
+            )
+
+            def fake_run(
+                args: list[str],
+                capture_output: bool = False,
+                text: bool = False,
+                check: bool = False,
+                timeout: int | float | None = None,
+            ) -> subprocess.CompletedProcess[str]:
+                if len(args) >= 4 and args[1:3] == ["-m", "services.orchestrator.goose_bridge"] and args[-1] == "--version":
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout="1.30.0\n", stderr="")
+                raise AssertionError(f"unexpected subprocess args: {args}")
+
+            class FakeResponse:
+                def __init__(self, payload: dict):
+                    self.payload = payload
+                    self.status = 200
+
+                def read(self) -> bytes:
+                    return json.dumps(self.payload).encode("utf-8")
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+            with (
+                patch.dict(
+                    "os.environ",
+                    {
+                        "GOOSE_PROVIDER": "ollama",
+                        "GOOSE_MODEL": "gemma4:31b-it-q4_K_M",
+                        "GOOSE_FALLBACK_PROVIDER": "openai",
+                        "GOOSE_FALLBACK_MODEL": "MiniMax-M2.5",
+                        "OLLAMA_HOST": "http://ollama.local:11434",
+                    },
+                    clear=False,
+                ),
+                patch("shared.mesh_runtime.integrations.shutil.which", side_effect=lambda name: "/usr/local/bin/goose" if name == "goose" else None),
+                patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run),
+                patch(
+                    "shared.mesh_runtime.integrations.urlopen",
+                    return_value=FakeResponse({"models": [{"name": "qwen2.5:0.5b"}]}),
+                ),
+            ):
+                readiness = build_readiness(config)
+
+        self.assertTrue(readiness.goose.ready)
+        self.assertEqual(readiness.goose.primary_route, "ollama/gemma4:31b-it-q4_K_M")
+        self.assertEqual(readiness.goose.fallback_route, "openai/MiniMax-M2.5")
+        self.assertTrue(readiness.goose.warnings)
+        self.assertIn("ollama reachable but model `gemma4:31b-it-q4_K_M` is not loaded", readiness.goose.warnings[0])
 
     def test_goose_review_parser_accepts_json_review(self) -> None:
         review = _parse_review_text(
