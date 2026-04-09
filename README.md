@@ -2,6 +2,20 @@
 
 `mesh-intelligence` is a local agentic operations control plane for bounded closed-loop remediation. It ingests infrastructure signals, decides on a remediation path, evaluates the decision against policy and quality gates, pauses for operator steering before actuation by default, executes through a bounded orchestration layer, records feedback, persists run memory into an Obsidian-compatible vault, and exposes continuous Merkle roots and proofs for the run log.
 
+---
+## Tldr
+Ingress: client starts run via POST /api/runs using signal_payload or scenario_key.
+Ingest stage: IngestService.normalize_signal(...) creates normalized event envelope.
+Trigger stage: TriggerService.detect(...) decides if signal is actionable.
+no trigger -> run ends no_trigger/completed
+Decision stage: DecisionService.decide(...) picks bounded action (no_action, reduce_rollout, disable_flag, escalate, etc.).
+Evaluation stage: EvaluationService.evaluate(...) applies policy/business/quality checks (Promptfoo when enabled).
+Operator gate: enters awaiting_operator if required by steering mode/pause points.
+Execution stage: OrchestratorService.execute(...) calls native path or Goose bridge/adapter.
+Feedback stage: FeedbackService.record(...) writes outcome signals (10m/30m observations, recurrence/guardrails).
+Persistence/streaming: each stage emits typed events, persisted + streamed over SSE, mirrored to vault, Merkle updated.
+---
+
 The system now ships with two operator surfaces:
 
 - Browser-first control plane served by `run_server.py`
