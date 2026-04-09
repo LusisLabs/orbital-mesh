@@ -31,6 +31,9 @@ class RuntimeConfig:
     default_operator_pause_point: str = "evaluation_ready"
     promptfoo_command: str | None = None
     goose_command: str | None = None
+    # Subprocess timeout for `goose_bridge` / cli_executor (full JSON stdin→stdout invoke).
+    # Must exceed inner `goose run` timeouts (see MESH_GOOSE_RUN_TIMEOUT_SECONDS).
+    goose_bridge_timeout_seconds: float = 180.0
     gitnexus_sidecar_url: str | None = None
     gitnexus_sidecar_command: str | None = None
     gitnexus_disable_autostart: bool = False
@@ -62,6 +65,9 @@ class RuntimeConfig:
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             goose_command=os.getenv("MESH_GOOSE_COMMAND") or None,
+            goose_bridge_timeout_seconds=float(
+                os.getenv("MESH_GOOSE_BRIDGE_TIMEOUT_SECONDS", "180")
+            ),
             gitnexus_sidecar_url=os.getenv("MESH_GITNEXUS_SIDECAR_URL") or None,
             gitnexus_sidecar_command=os.getenv("MESH_GITNEXUS_SIDECAR_COMMAND") or None,
             gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()

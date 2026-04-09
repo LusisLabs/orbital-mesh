@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,10 @@ GOOSE_CODE_PATCH_SYSTEM_PROMPT = (
     '"patch": {"target_file": string, "find": string, "replace": string}, "test_commands": string[]}. '
     "Do not include markdown."
 )
+
+
+def _goose_run_timeout_seconds() -> float:
+    return float(os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS", "60"))
 
 
 def main() -> None:
@@ -178,86 +183,37 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
 
 
 def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
-    command = [
-        args.goose_bin,
-        "run",
-        "--text",
-        prompt,
-        "--system",
-        GOOSE_SYSTEM_PROMPT,
-        "--no-session",
-        "--quiet",
-        "--output-format",
-        "json",
-    ]
-    if args.provider or args.model:
-        command.append("--no-profile")
-    if args.provider:
-        command.extend(["--provider", args.provider])
-    if args.model:
-        command.extend(["--model", args.model])
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=MESH_ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {
-            "approved": False,
-            "summary": f"goose subprocess failed: {exc}",
-            "risk_flags": ["subprocess_error"],
-            "next_action": "human_review",
-        }
-    if completed.returncode != 0:
-        return {
-            "approved": False,
-            "summary": completed.stderr.strip() or completed.stdout.strip() or "goose run failed",
-            "risk_flags": ["cli_error"],
-            "next_action": "human_review",
-        }
-    try:
-        payload = json.loads(completed.stdout)
-    except json.JSONDecodeError as exc:
-        return {
-            "approved": False,
-            "summary": f"goose subprocess returned invalid JSON: {exc}",
-            "risk_flags": ["invalid_json"],
-            "next_action": "human_review",
-        }
-    text = _assistant_text(payload)
-    if not text:
-        return {
-            "approved": False,
-            "summary": "goose did not return assistant text",
-            "risk_flags": ["empty_response"],
-            "next_action": "human_review",
-        }
-    return _parse_review_text(text)
+    return _run_goose_review_cli(args, prompt, system_prompt=GOOSE_SYSTEM_PROMPT)
 
 
 def _review_execution(args: argparse.Namespace, idempotency_key: str, decision: Decision) -> dict[str, object]:
+    decision_json = json.dumps(decision.to_dict(), sort_keys=True, separators=(",", ":"))
     prompt = (
         "Review this bounded execution request and return a compact approval JSON object.\n\n"
         f"Idempotency key: {idempotency_key}\n"
-        f"Decision: {json.dumps(decision.to_dict(), sort_keys=True)}"
+        f"Decision: {decision_json}"
     )
-    if decision.execution_plan["system"] != "repo_patch_service":
-        return _review(args, prompt)
-    return _review_code_patch(args, prompt)
+    system = (
+        GOOSE_CODE_PATCH_SYSTEM_PROMPT
+        if decision.execution_plan["system"] == "repo_patch_service"
+        else GOOSE_SYSTEM_PROMPT
+    )
+    return _run_goose_review_cli(args, prompt, system_prompt=system)
 
 
-def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, object]:
+def _run_goose_review_cli(
+    args: argparse.Namespace,
+    prompt: str,
+    *,
+    system_prompt: str,
+) -> dict[str, object]:
     command = [
         args.goose_bin,
         "run",
         "--text",
         prompt,
         "--system",
-        GOOSE_CODE_PATCH_SYSTEM_PROMPT,
+        system_prompt,
         "--no-session",
         "--quiet",
         "--output-format",
@@ -269,6 +225,7 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
         command.extend(["--provider", args.provider])
     if args.model:
         command.extend(["--model", args.model])
+    timeout = _goose_run_timeout_seconds()
     try:
         completed = subprocess.run(
             command,
@@ -276,7 +233,7 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {

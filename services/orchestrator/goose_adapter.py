@@ -92,8 +92,10 @@ class NativeGooseAdapter(GooseAdapter):
 
 
 class GooseCliAdapter(GooseAdapter):
-    def __init__(self, command: str | None = None):
+    def __init__(self, command: str | None = None, timeout_seconds: float | None = None):
         self.command = command
+        # Full bridge process budget (review + audit + actuators). Keep above inner Goose CLI timeouts.
+        self.timeout_seconds = float(timeout_seconds) if timeout_seconds is not None else 180.0
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
         result = self._invoke(
@@ -130,12 +132,12 @@ class GooseCliAdapter(GooseAdapter):
         try:
             completed = subprocess.run(
                 self._resolve_command(),
-                input=json.dumps(payload),
+                input=json.dumps(payload, separators=(",", ":")),
                 capture_output=True,
                 text=True,
                 cwd=MESH_ROOT,
                 check=False,
-                timeout=30,
+                timeout=self.timeout_seconds,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"error": f"goose subprocess failed: {exc}"}

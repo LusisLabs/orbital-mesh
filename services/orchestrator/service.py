@@ -34,7 +34,10 @@ class OrchestratorService:
     def _build_adapter(self) -> GooseAdapter:
         if self.config.orchestration_mode == "goose":
             resolved = resolve_integrations_config(self.config)
-            return GooseCliAdapter(command=resolved.goose_command)
+            return GooseCliAdapter(
+                command=resolved.goose_command,
+                timeout_seconds=self.config.goose_bridge_timeout_seconds,
+            )
         return NativeGooseAdapter()
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
