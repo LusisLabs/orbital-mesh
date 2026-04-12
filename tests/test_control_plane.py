@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 
 from control_plane_server import start_server_in_thread
 from shared.mesh_runtime import RuntimeConfig, load_fixture
+from tests.test_kubernetes_live_execution import _write_fake_kubectl
 
 
 class ControlPlaneApiTests(unittest.TestCase):
@@ -35,6 +36,65 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
         self.temp_dir.cleanup()
+
+    def test_research_sessions_api_lists_manifest_sessions(self) -> None:
+        empty = self._request("GET", "/api/research-sessions")
+        self.assertEqual(empty["sessions"], [])
+        research_root = Path(self.temp_dir.name) / "research"
+        session_dir = research_root / "20260101T000000Z-test"
+        session_dir.mkdir(parents=True)
+        (session_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "session_id": "20260101T000000Z-test",
+                    "question": "Hello?",
+                    "status": "minimax_multiwave_complete",
+                    "minimax_route": "openai",
+                    "minimax_model": "MiniMax-M2.7",
+                }
+            )
+        )
+        (session_dir / "synthesis").mkdir()
+        (session_dir / "synthesis" / "final-report.md").write_text("# Report\n\nBody")
+        listed = self._request("GET", "/api/research-sessions")
+        self.assertEqual(len(listed["sessions"]), 1)
+        self.assertEqual(listed["sessions"][0]["session_id"], "20260101T000000Z-test")
+        self.assertTrue(listed["sessions"][0]["has_final_report"])
+        self.assertIn("research_intelligence", listed["sessions"][0])
+        detail = self._request("GET", "/api/research-sessions/20260101T000000Z-test")
+        self.assertIn("Body", detail["final_report_markdown"] or "")
+        self.assertIn("research_intelligence", detail)
+
+    def test_research_sessions_api_sanitizes_and_flags_drift(self) -> None:
+        research_root = Path(self.temp_dir.name) / "research"
+        session_dir = research_root / "20260101T000001Z-drift"
+        session_dir.mkdir(parents=True)
+        (session_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "session_id": "20260101T000001Z-drift",
+                    "question": "Assess Mesh Intelligence from all research",
+                    "status": "complete",
+                }
+            )
+        )
+        (session_dir / "synthesis").mkdir()
+        (session_dir / "synthesis" / "final-report.md").write_text(
+            "<think>internal scratch</think>\n"
+            "# Report\n\n"
+            "1. Coverage extension for Wi-Fi, cabling, Cisco, Aruba, and SD-WAN is the primary ROI path.\n"
+        )
+
+        detail = self._request("GET", "/api/research-sessions/20260101T000001Z-drift")
+        self.assertNotIn("internal scratch", detail["final_report_markdown"] or "")
+        intelligence = detail["research_intelligence"]
+        self.assertEqual(intelligence["classification"], "off_domain")
+        self.assertIn("off_domain_drift", intelligence["flags"])
+        self.assertIn("reasoning_block_redacted", intelligence["flags"])
+
+        corpus = self._request("GET", "/api/research-corpus")
+        self.assertEqual(corpus["sessions_analyzed"], 1)
+        self.assertEqual(corpus["classification_counts"]["off_domain"], 1)
 
     def test_approval_gate_http_flow_writes_vault_and_merkle(self) -> None:
         goal = self._request(
@@ -221,6 +281,37 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(blocked_events[-1]["payload"]["reason"], "evaluation did not pass")
         self.assertEqual(blocked_events[-1]["payload"]["final_recommendation"], "human_review")
         self.assertTrue(blocked_events[-1]["payload"]["blocking_reasons"])
+
+    def test_live_kubernetes_signal_can_be_launched_via_api(self) -> None:
+        fake_state_dir = Path(self.temp_dir.name) / "fake-kubectl"
+        fake_state_dir.mkdir(parents=True, exist_ok=True)
+        _, fake_command = _write_fake_kubectl(fake_state_dir)
+        self.server.config.kubectl_command = fake_command
+        self.server.coordinator.config.kubectl_command = fake_command
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+                "live_signal": {
+                    "source": "kubernetes",
+                    "deployment_name": "semantic-search",
+                    "namespace": "search",
+                    "kube_context": "k3d-mesh-e2e",
+                    "environment": "staging",
+                },
+            },
+        )
+        paused = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        self.assertEqual(paused["scenario_key"], "live_kubernetes:search/semantic-search")
+        self.assertEqual(paused["artifacts"]["input_signal"]["signal_type"], "kubernetes_deployment_issue")
+        self.assertEqual(paused["artifacts"]["input_signal"]["related_context"]["kube_context"], "k3d-mesh-e2e")
+        self.assertEqual(paused["artifacts"]["decision"]["decision_type"], "rollback_deployment")
 
     def test_readiness_reports_missing_cli_integrations(self) -> None:
         readiness = self._request("GET", "/api/readiness")

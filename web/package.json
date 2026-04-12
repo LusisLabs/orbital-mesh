@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "test": "vitest run"
@@ -27,4 +28,3 @@
     "vitest": "^2.1.9"
   }
 }
-

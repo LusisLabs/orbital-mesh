@@ -97,6 +97,8 @@ class FeedbackService:
     ) -> FeedbackRecord:
         observations = normalized_event.payload.get("post_action_observations", {})
         check_30m = observations.get("30m", {})
+        if not check_30m:
+            check_30m = _kubernetes_feedback_fallback(execution)
         goose_review = execution.external_refs.get("goose_review", {}) if isinstance(execution.external_refs, dict) else {}
         desired = int(check_30m.get("desired_replicas", trigger.metrics.get("desired_replicas") or 0))
         ready = int(check_30m.get("ready_replicas", 0))
@@ -160,3 +162,24 @@ def _service_recovery_pattern(decision_type: str, successful: bool) -> str:
     if decision_type == "no_action":
         return "no_automated_change_recorded"
     return "human_review_required"
+
+
+def _kubernetes_feedback_fallback(execution: ExecutionRecord) -> dict:
+    if not isinstance(execution.external_refs, dict):
+        return {}
+    deployment_after = execution.external_refs.get("deployment_after")
+    if not isinstance(deployment_after, dict):
+        return {}
+    desired = int(deployment_after.get("desired_replicas") or 0)
+    available = int(deployment_after.get("available_replicas") or 0)
+    unavailable = int(deployment_after.get("unavailable_replicas") or 0)
+    rollout_status = "healthy" if desired > 0 and available >= desired and unavailable == 0 else "degraded"
+    return {
+        "measured_at": execution.external_refs.get("observed_at", datetime.now(timezone.utc).isoformat()),
+        "desired_replicas": desired,
+        "ready_replicas": available,
+        "restart_delta": 0,
+        "rollout_status": rollout_status,
+        "new_error_signatures": [],
+        "observed_time_to_effect": "immediate_post_action_snapshot",
+    }

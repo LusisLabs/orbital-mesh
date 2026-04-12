@@ -831,6 +831,43 @@ code {
   font-size: 0.82rem;
 }
 
+.inspector-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.35rem 0;
+}
+
+.research-inspector .research-markdown {
+  margin-top: 0.75rem;
+  max-height: min(70vh, 42rem);
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: var(--radius-md);
+}
+
+.research-inspector .mini-list {
+  margin-top: 0.55rem;
+}
+
+.research-inspector .mini-list ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1rem;
+  color: var(--ink-secondary);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.research-inspector .mini-list p {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+}
+
 .inspector-label {
   color: var(--muted);
   font-size: 0.75rem;
