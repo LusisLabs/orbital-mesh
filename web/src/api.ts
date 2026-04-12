@@ -3,6 +3,9 @@ import type {
   IntegrationReadiness,
   MerkleProof,
   MerkleSnapshot,
+  ResearchCorpusIntelligence,
+  ResearchSessionDetail,
+  ResearchSessionRecord,
   RunDetail,
   RunSessionRecord,
   ScenarioRecord,
@@ -68,6 +71,19 @@ export const api = {
 
   getRuns(baseUrl: string) {
     return request<{ runs: RunSessionRecord[] }>(baseUrl, "/api/runs");
+  },
+
+  getResearchSessions(baseUrl: string) {
+    return request<{ sessions: ResearchSessionRecord[] }>(baseUrl, "/api/research-sessions");
+  },
+
+  getResearchCorpus(baseUrl: string) {
+    return request<ResearchCorpusIntelligence>(baseUrl, "/api/research-corpus");
+  },
+
+  getResearchSession(baseUrl: string, sessionId: string) {
+    const id = encodeURIComponent(sessionId);
+    return request<ResearchSessionDetail>(baseUrl, `/api/research-sessions/${id}`);
   },
 
   createRun(baseUrl: string, payload: Record<string, unknown>) {

@@ -14,11 +14,12 @@ import {
 import { useState } from "react";
 
 import { formatDuration, formatTimestamp, humanize, riskColor, truncateHash } from "../lib/format";
-import type { InspectorTab, MerkleProof, RunDetail, VaultTreeEntry } from "../types";
+import type { InspectorTab, MerkleProof, ResearchIntelligence, ResearchSessionDetail, RunDetail, VaultTreeEntry } from "../types";
 
 interface InspectorProps {
   tab: InspectorTab;
   run: RunDetail | null;
+  researchDetail: ResearchSessionDetail | null;
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
   merkleProof: MerkleProof | null;
@@ -33,6 +34,22 @@ interface InspectorProps {
 
 export function Inspector(props: InspectorProps) {
   const { tab, run } = props;
+
+  if (tab === "research") {
+    if (!props.researchDetail) {
+      return (
+        <div className="inspector-empty">
+          <FileText size={32} strokeWidth={1.2} />
+          <p>
+            Select a session under <strong>Research (MiniMax)</strong> in the left rail. These sessions are produced by{" "}
+            <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
+            in the Run Queue.
+          </p>
+        </div>
+      );
+    }
+    return <ResearchTab detail={props.researchDetail} />;
+  }
 
   if (!run) {
     return (
@@ -60,6 +77,100 @@ export function Inspector(props: InspectorProps) {
       return <MerkleTab run={run} merkleProof={props.merkleProof} />;
     case "code":
       return <CodeTab {...props} />;
+    default:
+      return null;
+  }
+}
+
+function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
+  const m = detail.manifest;
+  const q = typeof m.question === "string" ? m.question : "";
+  const status = typeof m.status === "string" ? m.status : "";
+  const route = typeof m.minimax_route === "string" ? m.minimax_route : "";
+  const model = typeof m.minimax_model === "string" ? m.minimax_model : "";
+  const intelligence = detail.research_intelligence;
+  return (
+    <div className="inspector-scroll research-inspector">
+      <div className="inspector-field">
+        <span className="inspector-label">Session</span>
+        <span className="inspector-value mono">{detail.session_id}</span>
+      </div>
+      {q ? (
+        <div className="inspector-field">
+          <span className="inspector-label">Question</span>
+          <span className="inspector-value">{q}</span>
+        </div>
+      ) : null}
+      <div className="inspector-field-row">
+        {status ? <Badge label={status} color="#64c7d0" /> : null}
+        {route ? <Badge label={`route: ${route}`} color="#8b9bb4" /> : null}
+        {model ? <Badge label={model} color="#6b8cae" /> : null}
+      </div>
+      {intelligence ? <ResearchIntelligencePanel intelligence={intelligence} /> : null}
+      {detail.final_report_markdown ? (
+        <pre className="research-markdown">{detail.final_report_markdown}</pre>
+      ) : (
+        <p className="muted">No synthesis/final-report.md yet.</p>
+      )}
+    </div>
+  );
+}
+
+function ResearchIntelligencePanel({ intelligence }: { intelligence: ResearchIntelligence }) {
+  return (
+    <Section title="Research Intelligence">
+      <div className="inspector-field-row">
+        <Badge label={humanize(intelligence.classification)} color={researchClassificationColor(intelligence.classification)} />
+        <Badge label={`repo ${intelligence.repo_grounding_score}`} color="#7fcf9f" />
+        <Badge label={`drift ${intelligence.off_domain_score}`} color="#d7a95e" />
+      </div>
+      {intelligence.flags.length > 0 ? (
+        <div className="inspector-field-row">
+          {intelligence.flags.map((flag) => (
+            <Badge key={flag} label={humanize(flag)} color="#d76c75" />
+          ))}
+        </div>
+      ) : null}
+      {intelligence.anchors.length > 0 ? (
+        <MiniList title="Grounded anchors" items={intelligence.anchors.slice(0, 4).map((anchor) => anchor.label)} />
+      ) : null}
+      {intelligence.extracted_actions && intelligence.extracted_actions.length > 0 ? (
+        <MiniList title="Next actions" items={intelligence.extracted_actions.slice(0, 4)} />
+      ) : null}
+      {intelligence.off_domain_terms && intelligence.off_domain_terms.length > 0 ? (
+        <MiniList title="Drift terms" items={intelligence.off_domain_terms.slice(0, 8)} inline />
+      ) : null}
+    </Section>
+  );
+}
+
+function MiniList({ title, items, inline }: { title: string; items: string[]; inline?: boolean }) {
+  return (
+    <div className="mini-list">
+      <span className="inspector-label">{title}</span>
+      {inline ? (
+        <p className="muted">{items.join(", ")}</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function researchClassificationColor(classification: ResearchIntelligence["classification"]) {
+  switch (classification) {
+    case "repo_grounded":
+      return "#7fcf9f";
+    case "mixed":
+      return "#d7a95e";
+    case "off_domain":
+      return "#d76c75";
+    default:
+      return "#8b9bb4";
   }
 }
 

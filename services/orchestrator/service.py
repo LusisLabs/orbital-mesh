@@ -38,7 +38,7 @@ class OrchestratorService:
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
-        return NativeGooseAdapter()
+        return NativeGooseAdapter(config=self.config)
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
         started_at = datetime.now(timezone.utc).isoformat()

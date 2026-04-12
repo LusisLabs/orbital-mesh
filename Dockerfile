@@ -35,7 +35,15 @@ WORKDIR /app
 
 RUN apt-get update \
   && apt-get upgrade -y \
-  && apt-get install -y --no-install-recommends ca-certificates git libgomp1 \
+  && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
+  && arch="$(dpkg --print-architecture)" \
+  && case "$arch" in \
+    amd64) kubectl_arch="amd64" ;; \
+    arm64) kubectl_arch="arm64" ;; \
+    *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
+  esac \
+  && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.5/bin/linux/${kubectl_arch}/kubectl" \
+  && chmod +x /usr/local/bin/kubectl \
   && python3 -m pip install --no-cache-dir --upgrade pip \
   && rm -rf /var/lib/apt/lists/*
 

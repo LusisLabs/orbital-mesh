@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowRight,
   Binary,
+  BookOpen,
   Bot,
   Check,
   ChevronDown,
@@ -31,6 +32,8 @@ import type {
   InspectorTab,
   IntegrationReadiness,
   MerkleProof,
+  ResearchSessionDetail,
+  ResearchSessionRecord,
   RunDetail,
   RunSessionRecord,
   ScenarioRecord,
@@ -44,11 +47,17 @@ const DEFAULT_GOAL_DRAFT = {
 };
 
 const DEFAULT_LAUNCH_DRAFT = {
+  signalSource: "scenario",
   evaluationMode: "native",
   orchestrationMode: "native",
   steeringMode: "approval_gate",
   scenarioKey: "",
   customSignal: "",
+  liveDeploymentName: "semantic-search",
+  liveNamespace: "search",
+  liveKubeContext: "k3d-mesh-e2e",
+  liveEnvironment: "local",
+  liveService: "",
 };
 
 const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
@@ -65,6 +74,9 @@ export default function App() {
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
+  const [researchSessions, setResearchSessions] = useState<ResearchSessionRecord[]>([]);
+  const [activeResearchSessionId, setActiveResearchSessionId] = useState("");
+  const [researchDetail, setResearchDetail] = useState<ResearchSessionDetail | null>(null);
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
   const [activeRunId, setActiveRunId] = useState(
     () => new URLSearchParams(window.location.search).get("run") ?? "",
@@ -194,16 +206,18 @@ export default function App() {
 
   async function refreshBootstrap() {
     try {
-      const [readinessRes, scenariosRes, goalsRes, runsRes] = await Promise.all([
+      const [readinessRes, scenariosRes, goalsRes, runsRes, researchRes] = await Promise.all([
         api.getReadiness(baseUrl),
         api.getScenarios(baseUrl),
         api.getGoals(baseUrl),
         api.getRuns(baseUrl),
+        api.getResearchSessions(baseUrl),
       ]);
       setReadiness(readinessRes);
       setScenarios(scenariosRes.scenarios);
       setGoals(goalsRes.goals);
       setRuns(runsRes.runs);
+      setResearchSessions(researchRes.sessions);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
       if (scenariosRes.scenarios[0] && !launchDraft.scenarioKey) {
@@ -226,6 +240,23 @@ export default function App() {
       setActiveRun(run);
     } catch (error) {
       addToast({ variant: "error", title: "Failed to load run", description: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
+  async function handleSelectResearchSession(sessionId: string) {
+    setActiveRunId("");
+    setActiveResearchSessionId(sessionId);
+    setInspectorTab("research");
+    try {
+      const detail = await api.getResearchSession(baseUrl, sessionId);
+      setResearchDetail(detail);
+    } catch (error) {
+      setResearchDetail(null);
+      addToast({
+        variant: "error",
+        title: "Failed to load research session",
+        description: error instanceof Error ? error.message : "Unknown error",
+      });
     }
   }
 
@@ -265,7 +296,7 @@ export default function App() {
         orchestration_mode: launchDraft.orchestrationMode,
         steering_mode: launchDraft.steeringMode,
       };
-      if (launchDraft.customSignal.trim()) {
+      if (launchDraft.signalSource === "custom") {
         const parsed = safeJsonParse(launchDraft.customSignal);
         if (!parsed.ok) {
           addToast({ variant: "error", title: "Invalid signal JSON", description: parsed.error });
@@ -273,7 +304,26 @@ export default function App() {
           return;
         }
         payload.signal_payload = parsed.data;
+      } else if (launchDraft.signalSource === "live_kubernetes") {
+        if (!launchDraft.liveDeploymentName.trim()) {
+          addToast({ variant: "warning", title: "Deployment name required", description: "Enter a Kubernetes deployment to harvest." });
+          setLaunching(false);
+          return;
+        }
+        payload.live_signal = {
+          source: "kubernetes",
+          deployment_name: launchDraft.liveDeploymentName.trim(),
+          namespace: launchDraft.liveNamespace.trim() || "default",
+          kube_context: launchDraft.liveKubeContext.trim() || undefined,
+          environment: launchDraft.liveEnvironment.trim() || "local",
+          service: launchDraft.liveService.trim() || undefined,
+        };
       } else {
+        if (!launchDraft.scenarioKey) {
+          addToast({ variant: "warning", title: "Scenario required", description: "Choose a fixture scenario or switch signal source." });
+          setLaunching(false);
+          return;
+        }
         payload.scenario_key = launchDraft.scenarioKey;
       }
       if (launchDraft.steeringMode === "interruptible_auto") {
@@ -402,6 +452,9 @@ export default function App() {
           <div>
             <p className="eyebrow">Mesh Intelligence</p>
             <h1>Operator Control Plane</h1>
+            <p className="muted tagline" style={{ margin: "0.15rem 0 0", fontSize: "0.78rem", maxWidth: "28rem" }}>
+              Policy-guided, bounded remediation — evaluation-gated and steerable by default.
+            </p>
           </div>
         </div>
         <div className="topbar-grid">
@@ -508,7 +561,18 @@ export default function App() {
               </button>
               <p className="helper-text">Promptfoo + Goose + interruptible auto with no default pause points.</p>
             </div>
-            {scenarios.length > 0 && (
+            <div className="select-wrap">
+              <select
+                value={launchDraft.signalSource}
+                onChange={(e) => setLaunchDraft({ ...launchDraft, signalSource: e.target.value })}
+              >
+                <option value="scenario">Signal: Fixture Scenario</option>
+                <option value="live_kubernetes">Signal: Live Kubernetes Deployment</option>
+                <option value="custom">Signal: Custom JSON</option>
+              </select>
+              <ChevronDown size={14} className="select-icon" />
+            </div>
+            {launchDraft.signalSource === "scenario" && scenarios.length > 0 && (
               <div className="select-wrap">
                 <select value={launchDraft.scenarioKey} onChange={(e) => setLaunchDraft({ ...launchDraft, scenarioKey: e.target.value })}>
                   {scenarios.map((s) => (
@@ -517,6 +581,42 @@ export default function App() {
                 </select>
                 <ChevronDown size={14} className="select-icon" />
               </div>
+            )}
+            {launchDraft.signalSource === "live_kubernetes" && (
+              <>
+                <div className="two-col">
+                  <input
+                    value={launchDraft.liveDeploymentName}
+                    onChange={(e) => setLaunchDraft({ ...launchDraft, liveDeploymentName: e.target.value })}
+                    placeholder="Deployment name"
+                  />
+                  <input
+                    value={launchDraft.liveNamespace}
+                    onChange={(e) => setLaunchDraft({ ...launchDraft, liveNamespace: e.target.value })}
+                    placeholder="Namespace"
+                  />
+                </div>
+                <div className="two-col">
+                  <input
+                    value={launchDraft.liveKubeContext}
+                    onChange={(e) => setLaunchDraft({ ...launchDraft, liveKubeContext: e.target.value })}
+                    placeholder="Kube context"
+                  />
+                  <input
+                    value={launchDraft.liveEnvironment}
+                    onChange={(e) => setLaunchDraft({ ...launchDraft, liveEnvironment: e.target.value })}
+                    placeholder="Mesh environment"
+                  />
+                </div>
+                <input
+                  value={launchDraft.liveService}
+                  onChange={(e) => setLaunchDraft({ ...launchDraft, liveService: e.target.value })}
+                  placeholder="Optional service label override"
+                />
+                <p className="helper-text">
+                  The control plane will harvest the live deployment state with backend <code>kubectl</code> access and launch the run directly from that snapshot.
+                </p>
+              </>
             )}
             <div className="two-col">
               <div className="select-wrap">
@@ -541,12 +641,14 @@ export default function App() {
               </select>
               <ChevronDown size={14} className="select-icon" />
             </div>
-            <textarea
-              value={launchDraft.customSignal}
-              onChange={(e) => setLaunchDraft({ ...launchDraft, customSignal: e.target.value })}
-              placeholder="Optional raw signal JSON…"
-              className="small-textarea mono-textarea"
-            />
+            {launchDraft.signalSource === "custom" && (
+              <textarea
+                value={launchDraft.customSignal}
+                onChange={(e) => setLaunchDraft({ ...launchDraft, customSignal: e.target.value })}
+                placeholder="Raw signal JSON…"
+                className="small-textarea mono-textarea"
+              />
+            )}
             <button className="action-button primary" onClick={() => void handleLaunchRun()} disabled={launching}>
               {launching ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
               {launching ? "Launching…" : "Launch Run"}
@@ -559,7 +661,11 @@ export default function App() {
               <button
                 key={run.run_id}
                 className={`list-card run-card ${activeRunId === run.run_id ? "selected" : ""}`}
-                onClick={() => setActiveRunId(run.run_id)}
+                onClick={() => {
+                  setActiveResearchSessionId("");
+                  setResearchDetail(null);
+                  setActiveRunId(run.run_id);
+                }}
               >
                 <div className="run-card-header">
                   <strong>{run.scenario_key ?? "manual"}</strong>
@@ -574,6 +680,34 @@ export default function App() {
               </button>
             ))}
             {runs.length === 0 && <EmptyState text="No runs yet" />}
+          </div>
+
+          <SectionTitle icon={<BookOpen size={15} />} title="Research (MiniMax)" />
+          <p className="helper-text" style={{ margin: "0 0 0.5rem" }}>
+            Autoresearch from <code>run_minimax_research.py</code> (file-backed sessions). Refresh the page after a CLI run
+            to list new sessions.
+          </p>
+          <div className="stack">
+            {researchSessions.map((s) => (
+              <button
+                key={s.session_id}
+                className={`list-card run-card ${activeResearchSessionId === s.session_id ? "selected" : ""}`}
+                type="button"
+                onClick={() => void handleSelectResearchSession(s.session_id)}
+              >
+                <div className="run-card-header">
+                  <strong>{s.directory.slice(0, 36)}{s.directory.length > 36 ? "…" : ""}</strong>
+                  <span className="run-stage-badge" data-stage="completed">
+                    {s.has_final_report ? "◆" : "○"}
+                  </span>
+                </div>
+                <div className="run-card-meta">
+                  <span>{s.research_intelligence ? humanize(s.research_intelligence.classification) : s.minimax_route ?? "—"}</span>
+                  <span>{relativeTime(s.updated_at)}</span>
+                </div>
+              </button>
+            ))}
+            {researchSessions.length === 0 && <EmptyState text="No research sessions yet" />}
           </div>
         </aside>
 
@@ -753,7 +887,17 @@ export default function App() {
         <aside className="right-rail panel">
           <div className="tab-strip">
             {(
-              ["overview", "evidence", "policy", "execution", "feedback", "vault", "merkle", "code"] as InspectorTab[]
+              [
+                "overview",
+                "evidence",
+                "policy",
+                "execution",
+                "feedback",
+                "vault",
+                "merkle",
+                "code",
+                "research",
+              ] as InspectorTab[]
             ).map((tab) => (
               <button
                 key={tab}
@@ -768,6 +912,7 @@ export default function App() {
           <Inspector
             tab={inspectorTab}
             run={activeRun}
+            researchDetail={researchDetail}
             vaultDocument={vaultDocument}
             vaultTree={vaultTree}
             merkleProof={merkleProof}

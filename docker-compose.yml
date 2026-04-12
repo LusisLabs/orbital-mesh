@@ -10,6 +10,7 @@ services:
       MESH_ENVIRONMENT: "${MESH_ENVIRONMENT:-production}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
+      MESH_RESEARCH_DIRECTORY: "${MESH_RESEARCH_DIRECTORY:-/app/.mesh-runtime-state/research}"
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"

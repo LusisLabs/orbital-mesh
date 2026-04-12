@@ -10,7 +10,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
 from shared.mesh_runtime import RuntimeConfig
@@ -59,6 +59,21 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/runs":
             self._send_json({"runs": self.server.coordinator.list_runs()})
+            return
+        if path == "/api/research-sessions":
+            self._send_json({"sessions": self.server.coordinator.list_research_sessions()})
+            return
+        if path == "/api/research-corpus":
+            self._send_json(self.server.coordinator.get_research_corpus())
+            return
+        if path.startswith("/api/research-sessions/"):
+            raw = path[len("/api/research-sessions/") :].strip("/")
+            session_id = unquote(raw)
+            detail = self.server.coordinator.get_research_session(session_id)
+            if detail is None:
+                self._send_json({"error": "research session not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(detail)
             return
         if path.startswith("/api/runs/") and path.endswith("/events"):
             run_id = path.split("/")[3]
@@ -130,7 +145,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(goal, status=HTTPStatus.CREATED)
             return
         if parsed.path == "/api/runs":
-            run = self.server.coordinator.create_run(payload)
+            try:
+                run = self.server.coordinator.create_run(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
         if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/steer"):

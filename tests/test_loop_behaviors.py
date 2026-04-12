@@ -487,6 +487,23 @@ class LoopBehaviorTests(unittest.TestCase):
             self.assertEqual(result["feedback"]["outcome"], "successful")
             self.assertIn("PARSE_TIMEOUT_MS = 80", (repo_path / "app" / "search.py").read_text())
 
+    def test_kubernetes_crashloop_application_error_without_patch_prefers_rollback(self) -> None:
+        signal = base_kubernetes_signal()
+        signal["related_context"]["code_remediation_candidate"] = False
+        for key in ("repo_path", "suspected_file", "allowed_paths", "test_commands", "patch_template"):
+            signal["related_context"].pop(key, None)
+        config = RuntimeConfig(
+            evaluation_mode="native",
+            orchestration_mode="native",
+            state_directory=self.temp_dir.name,
+        )
+
+        result = FirstSlicePipeline(config=config).run(signal)
+
+        self.assertEqual(result["decision"]["decision_type"], "rollback_deployment")
+        self.assertEqual(result["execution"]["applied_action"]["system"], "kubernetes_service")
+        self.assertEqual(result["execution"]["applied_action"]["action"], "rollback_deployment")
+
     def test_kubernetes_image_pull_failure_prefers_rollback(self) -> None:
         signal = base_kubernetes_signal()
         signal["deployment"]["rollout_status"] = "failed"
