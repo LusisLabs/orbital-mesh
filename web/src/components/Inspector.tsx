@@ -12,6 +12,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { formatDuration, formatTimestamp, humanize, riskColor, truncateHash } from "../lib/format";
 import type { InspectorTab, MerkleProof, ResearchIntelligence, ResearchSessionDetail, RunDetail, VaultTreeEntry } from "../types";
@@ -102,13 +104,13 @@ function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
         </div>
       ) : null}
       <div className="inspector-field-row">
-        {status ? <Badge label={status} color="#64c7d0" /> : null}
+        {status ? <Badge label={status} color="#41d6b1" /> : null}
         {route ? <Badge label={`route: ${route}`} color="#8b9bb4" /> : null}
         {model ? <Badge label={model} color="#6b8cae" /> : null}
       </div>
       {intelligence ? <ResearchIntelligencePanel intelligence={intelligence} /> : null}
       {detail.final_report_markdown ? (
-        <pre className="research-markdown">{detail.final_report_markdown}</pre>
+        <MarkdownDocument className="research-markdown markdown-document" content={detail.final_report_markdown} />
       ) : (
         <p className="muted">No synthesis/final-report.md yet.</p>
       )}
@@ -234,6 +236,21 @@ function JsonBlock({ data }: { data: unknown }) {
     <div className="inspector-json-wrap">
       <CopyButton text={text} />
       <pre className="inspector-json">{text}</pre>
+    </div>
+  );
+}
+
+function MarkdownDocument({ content, className }: { content: string; className?: string }) {
+  return (
+    <div className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -620,7 +637,7 @@ function VaultTab(props: InspectorProps) {
       )}
       <Section title="Document">
         {vaultDocument ? (
-          <pre className="vault-content">{vaultDocument}</pre>
+          <MarkdownDocument className="vault-content markdown-document" content={vaultDocument} />
         ) : (
           <p className="inspector-muted">No vault document loaded.</p>
         )}

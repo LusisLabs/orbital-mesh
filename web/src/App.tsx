@@ -14,18 +14,26 @@ import {
   Play,
   Plus,
   ShieldCheck,
+  SlidersHorizontal,
   TimerReset,
   Waves,
   Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Background, Controls, MiniMap, ReactFlow } from "@xyflow/react";
+import { Background, Handle, Position, ReactFlow, type NodeProps } from "@xyflow/react";
 
 import { api, connectRunStream, connectSystemStream, resolveBaseUrl } from "./api";
 import { Inspector } from "./components/Inspector";
 import { Toaster, useToast } from "./components/Toaster";
 import { formatTimestamp, humanize, relativeTime, safeJsonParse, stageIcon } from "./lib/format";
-import { buildRunGraph, toneForStage } from "./lib/runGraph";
+import {
+  buildArtifactGraph,
+  buildKubernetesGraph,
+  buildMerkleGraph,
+  buildRunGraph,
+  toneForStage,
+  type RunGraphNode,
+} from "./lib/runGraph";
 import type {
   ConnectionStatus,
   GoalRecord,
@@ -35,6 +43,7 @@ import type {
   ResearchSessionDetail,
   ResearchSessionRecord,
   RunDetail,
+  RunEventRecord,
   RunSessionRecord,
   ScenarioRecord,
   VaultTreeEntry,
@@ -66,6 +75,96 @@ const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
   steeringMode: "interruptible_auto",
 } as const;
 
+type RightRailTab = "steering" | InspectorTab;
+type CanvasMode = "flow" | "kubernetes" | "merkle" | "artifacts";
+
+const nodeTypes = {
+  runEvent: RunEventNode,
+};
+
+function rightRailTabLabel(tab: RightRailTab): string {
+  if (tab === "steering") return "Controls";
+  return humanize(tab);
+}
+
+function rightRailTabIcon(tab: RightRailTab): React.ReactNode {
+  switch (tab) {
+    case "overview":
+      return <CircleDot size={15} />;
+    case "steering":
+      return <SlidersHorizontal size={15} />;
+    case "evidence":
+      return <Activity size={15} />;
+    case "policy":
+      return <ShieldCheck size={15} />;
+    case "execution":
+      return <Play size={15} />;
+    case "feedback":
+      return <Waves size={15} />;
+    case "vault":
+      return <BookOpen size={15} />;
+    case "merkle":
+      return <Binary size={15} />;
+    case "code":
+      return <FolderGit2 size={15} />;
+    case "research":
+      return <Bot size={15} />;
+    default:
+      return <CircleDot size={15} />;
+  }
+}
+
+function canvasModeLabel(mode: CanvasMode): string {
+  switch (mode) {
+    case "flow":
+      return "Run Flow";
+    case "kubernetes":
+      return "Kubernetes";
+    case "merkle":
+      return "Merkle";
+    case "artifacts":
+      return "Artifacts";
+    default:
+      return "Canvas";
+  }
+}
+
+function canvasModeIcon(mode: CanvasMode, size = 14): React.ReactNode {
+  switch (mode) {
+    case "flow":
+      return <GitBranch size={size} />;
+    case "kubernetes":
+      return <Waves size={size} />;
+    case "merkle":
+      return <Binary size={size} />;
+    case "artifacts":
+      return <FolderGit2 size={size} />;
+    default:
+      return <CircleDot size={size} />;
+  }
+}
+
+function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
+  switch (artifactKey) {
+    case "input_signal":
+    case "integration_readiness":
+    case "normalized_event":
+    case "trigger":
+      return "evidence";
+    case "decision":
+    case "evaluation":
+    case "promptfoo_artifact":
+      return "policy";
+    case "execution":
+    case "goose_review":
+      return "execution";
+    case "feedback":
+      return "feedback";
+    default:
+      return "overview";
+  }
+}
+
 export default function App() {
   const [baseUrl] = useState(resolveBaseUrl);
 
@@ -91,9 +190,13 @@ export default function App() {
   const [overrideParamsDraft, setOverrideParamsDraft] = useState('{\n  "rollout_pct": 5\n}');
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [showOverrides, setShowOverrides] = useState(false);
+  const [leftRailOpen, setLeftRailOpen] = useState(true);
+  const [rightRailOpen, setRightRailOpen] = useState(true);
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>("flow");
 
   /* ── Inspector ── */
-  const [inspectorTab, setInspectorTab] = useState<InspectorTab>("overview");
+  const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
+  const [selectedEventId, setSelectedEventId] = useState("");
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
@@ -176,15 +279,17 @@ export default function App() {
       .then((doc) => setVaultDocument(doc.content))
       .catch(() => setVaultDocument(""));
 
-    const proofEvent = activeRun.events.find((e) =>
-      ["decision_ready", "evaluation_ready", "execution_recorded", "feedback_recorded"].includes(e.event_type),
-    );
-    if (proofEvent) {
-      void api.getMerkleProof(baseUrl, activeRun.run_id, proofEvent.event_id).then(setMerkleProof).catch(() => setMerkleProof(null));
+    const proofEventId =
+      selectedEventId ||
+      activeRun.events.find((e) =>
+        ["decision_ready", "evaluation_ready", "execution_recorded", "feedback_recorded"].includes(e.event_type),
+      )?.event_id;
+    if (proofEventId) {
+      void api.getMerkleProof(baseUrl, activeRun.run_id, proofEventId).then(setMerkleProof).catch(() => setMerkleProof(null));
     } else {
       setMerkleProof(null);
     }
-  }, [activeRun, baseUrl]);
+  }, [activeRun, baseUrl, selectedEventId]);
 
   useEffect(() => {
     if (!readiness?.gitnexus.ready || !readiness.gitnexus.url) return;
@@ -201,6 +306,19 @@ export default function App() {
       timelineRef.current.scrollTop = timelineRef.current.scrollHeight;
     }
   }, [activeRun?.events.length]);
+
+  useEffect(() => {
+    if (!activeRun?.events?.length) {
+      setSelectedEventId("");
+      return;
+    }
+    setSelectedEventId((current) => {
+      if (current && activeRun.events.some((event) => event.event_id === current)) {
+        return current;
+      }
+      return activeRun.latest_event_id ?? activeRun.events[activeRun.events.length - 1].event_id;
+    });
+  }, [activeRun]);
 
   /* ──────────── Actions ──────────── */
 
@@ -246,7 +364,7 @@ export default function App() {
   async function handleSelectResearchSession(sessionId: string) {
     setActiveRunId("");
     setActiveResearchSessionId(sessionId);
-    setInspectorTab("research");
+    setRightRailTab("research");
     try {
       const detail = await api.getResearchSession(baseUrl, sessionId);
       setResearchDetail(detail);
@@ -394,9 +512,82 @@ export default function App() {
 
   /* ──────────── Derived ──────────── */
 
-  const graph = useMemo(
-    () => buildRunGraph(activeRun?.events ?? []),
-    [activeRun?.events],
+  const flowCanvas = useMemo(
+    () => buildRunGraph(activeRun?.events ?? [], selectedEventId),
+    [activeRun?.events, selectedEventId],
+  );
+  const kubernetesCanvas = useMemo(
+    () =>
+      buildKubernetesGraph(
+        (activeRun?.artifacts?.input_signal ?? activeRun?.artifacts?.trigger ?? null) as Record<string, unknown> | null,
+      ),
+    [activeRun?.artifacts],
+  );
+  const merkleCanvas = useMemo(
+    () => buildMerkleGraph(activeRun?.merkle ?? null, merkleProof),
+    [activeRun?.merkle, merkleProof],
+  );
+  const artifactCanvas = useMemo(
+    () =>
+      buildArtifactGraph(
+        activeRun
+          ? {
+              artifacts: activeRun.artifacts,
+              stage: activeRun.stage,
+              status: activeRun.status,
+            }
+          : null,
+      ),
+    [activeRun],
+  );
+  const canvasGraph = useMemo(() => {
+    switch (canvasMode) {
+      case "kubernetes":
+        return kubernetesCanvas;
+      case "merkle":
+        return merkleCanvas;
+      case "artifacts":
+        return artifactCanvas;
+      case "flow":
+      default:
+        return flowCanvas;
+    }
+  }, [artifactCanvas, canvasMode, flowCanvas, kubernetesCanvas, merkleCanvas]);
+  const canvasAvailability = useMemo(
+    () => ({
+      flow: flowCanvas.nodes.length > 0,
+      kubernetes: kubernetesCanvas.nodes.length > 0,
+      merkle: merkleCanvas.nodes.length > 0,
+      artifacts: artifactCanvas.nodes.length > 0,
+    }),
+    [artifactCanvas.nodes.length, flowCanvas.nodes.length, kubernetesCanvas.nodes.length, merkleCanvas.nodes.length],
+  );
+  const canvasEmptyMessage = useMemo(() => {
+    switch (canvasMode) {
+      case "kubernetes":
+        return "This run does not include a Kubernetes deployment signal.";
+      case "merkle":
+        return "This run has no Merkle snapshot available yet.";
+      case "artifacts":
+        return "This run has not produced artifact snapshots yet.";
+      case "flow":
+      default:
+        return "Launch a run to see the execution graph.";
+    }
+  }, [canvasMode]);
+  const canvasFitPadding = canvasMode === "flow" ? 0.12 : canvasMode === "artifacts" ? 0.16 : 0.2;
+
+  const selectedEvent = useMemo(() => {
+    if (!activeRun?.events?.length) return null;
+    return activeRun.events.find((event) => event.event_id === selectedEventId) ?? activeRun.events[activeRun.events.length - 1];
+  }, [activeRun?.events, selectedEventId]);
+  const selectedEventInsights = useMemo(
+    () => (selectedEvent ? buildEventInsights(selectedEvent) : []),
+    [selectedEvent],
+  );
+  const selectedEventIndex = useMemo(
+    () => (selectedEvent && activeRun ? activeRun.events.findIndex((event) => event.event_id === selectedEvent.event_id) : -1),
+    [activeRun, selectedEvent],
   );
 
   const activeGoal = goals.find(
@@ -430,6 +621,26 @@ export default function App() {
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
 
+  useEffect(() => {
+    if (!activeRun) return;
+    if (canvasAvailability[canvasMode]) return;
+    if (canvasAvailability.flow) {
+      setCanvasMode("flow");
+      return;
+    }
+    if (canvasAvailability.artifacts) {
+      setCanvasMode("artifacts");
+      return;
+    }
+    if (canvasAvailability.kubernetes) {
+      setCanvasMode("kubernetes");
+      return;
+    }
+    if (canvasAvailability.merkle) {
+      setCanvasMode("merkle");
+    }
+  }, [activeRun, canvasAvailability, canvasMode]);
+
   /* ──────────── Render ──────────── */
 
   if (booting) {
@@ -448,13 +659,10 @@ export default function App() {
       {/* ─── Top Bar ─── */}
       <header className="topbar">
         <div className="topbar-brand">
-          <div className="brand-icon"><Zap size={20} /></div>
+          <div className="brand-icon"><Zap size={16} /></div>
           <div>
             <p className="eyebrow">Mesh Intelligence</p>
             <h1>Operator Control Plane</h1>
-            <p className="muted tagline" style={{ margin: "0.15rem 0 0", fontSize: "0.78rem", maxWidth: "28rem" }}>
-              Policy-guided, bounded remediation — evaluation-gated and steerable by default.
-            </p>
           </div>
         </div>
         <div className="topbar-grid">
@@ -484,19 +692,60 @@ export default function App() {
             tone={systemConnection === "connected" ? "good" : "warn"}
           />
         </div>
+        <div className="topbar-actions">
+          <button className="action-button compact" type="button" onClick={() => setLeftRailOpen((open) => !open)}>
+            {leftRailOpen ? "Hide Sessions" : "Show Sessions"}
+          </button>
+          <button className="action-button compact primary" type="button" onClick={() => setRightRailOpen((open) => !open)}>
+            <SlidersHorizontal size={13} />
+            Controls
+          </button>
+        </div>
       </header>
 
       {/* ─── Workspace ─── */}
-      <main className="workspace">
+      <main className={`workspace ${leftRailOpen ? "" : "workspace-left-collapsed"} ${rightRailOpen ? "" : "workspace-right-collapsed"}`}>
+        {!leftRailOpen && (
+          <button className="drawer-peek left" type="button" onClick={() => setLeftRailOpen(true)}>
+            Sessions
+          </button>
+        )}
 
         {/* ── Left Rail ── */}
+        {leftRailOpen && (
         <aside className="left-rail panel">
-          <SectionTitle icon={<Activity size={15} />} title="Integrations" />
+          <div className="rail-heading">
+            <SectionTitle icon={<GitBranch size={15} />} title="Sessions" />
+            <button className="icon-btn" type="button" onClick={() => setLeftRailOpen(false)} title="Hide sessions">
+              <ChevronDown size={14} className="rotate-90" />
+            </button>
+          </div>
+          <div className="session-summary">
+            <div>
+              <strong>{runs.length}</strong>
+              <span>Runs</span>
+            </div>
+            <div>
+              <strong>{researchSessions.length}</strong>
+              <span>Research</span>
+            </div>
+            <div>
+              <strong>{integrationsReady}/3</strong>
+              <span>Ready</span>
+            </div>
+          </div>
+
+          <details className="rail-disclosure">
+            <summary>
+              <span>Integrations</span>
+              <span>{integrationsReady}/3 ready</span>
+            </summary>
           <div className="readiness-grid">
             <ReadinessCard label="Promptfoo" status={readiness?.promptfoo} />
             <ReadinessCard label="Goose" status={readiness?.goose} />
             <ReadinessCard label="GitNexus" status={readiness?.gitnexus} />
           </div>
+          </details>
 
           <div className="section-header">
             <SectionTitle icon={<Binary size={15} />} title="Goals" />
@@ -655,7 +904,7 @@ export default function App() {
             </button>
           </div>
 
-          <SectionTitle icon={<GitBranch size={15} />} title="Run Queue" />
+          <SectionTitle icon={<GitBranch size={15} />} title="Run Sessions" />
           <div className="stack">
             {runs.map((run) => (
               <button
@@ -665,6 +914,7 @@ export default function App() {
                   setActiveResearchSessionId("");
                   setResearchDetail(null);
                   setActiveRunId(run.run_id);
+                  setRightRailTab("overview");
                 }}
               >
                 <div className="run-card-header">
@@ -675,6 +925,7 @@ export default function App() {
                 </div>
                 <div className="run-card-meta">
                   <span>{humanize(run.stage)}</span>
+                  <span>{run.latest_event_sequence} threads</span>
                   <span>{relativeTime(run.updated_at)}</span>
                 </div>
               </button>
@@ -710,155 +961,122 @@ export default function App() {
             {researchSessions.length === 0 && <EmptyState text="No research sessions yet" />}
           </div>
         </aside>
+        )}
 
         {/* ── Center Stage ── */}
-        <section className="center-stage">
-          <div className="panel center-header">
-            <div className="center-header-text">
-              <p className="eyebrow">Active Goal</p>
-              <h2>{activeGoal?.title ?? "No goal selected"}</h2>
-              <p className="muted">{activeGoal?.objective ?? "Create a goal or select the default goal to begin."}</p>
-              {activeRun?.stage === "awaiting_operator" && (
-                <div className={`run-gate-banner ${approvalCurrentlyBlocked ? "danger" : "warn"}`}>
-                  <AlertTriangle size={14} />
-                  <div>
-                    <strong>
-                      {approvalCurrentlyBlocked
-                        ? `Approval blocked: ${humanize(approvalRecommendation)}`
-                        : "Awaiting operator approval"}
-                    </strong>
-                    <p>
-                      {approvalCurrentlyBlocked
-                        ? "Execution is paused until you resolve the blocking evaluation issues or override the decision."
-                        : "This run is paused at the operator gate and can continue when approved."}
-                    </p>
-                    {approvalBlockingReasons.length > 0 && (
-                      <ul className="banner-reason-list">
-                        {approvalBlockingReasons.slice(0, 3).map((reason, index) => (
-                          <li key={`${reason}-${index}`}>{reason}</li>
-                        ))}
-                      </ul>
-                    )}
+        <section className="center-stage auto-canvas-stage">
+          <div className="panel center-header canvas-command-bar">
+            <div className="center-header-main">
+              <div className="center-header-text">
+                <p className="eyebrow">Active Goal</p>
+                <h2>{activeGoal?.title ?? "No goal selected"}</h2>
+                <p className="muted">{activeGoal?.objective ?? "Create a goal or select the default goal to begin."}</p>
+                {activeRun?.stage === "awaiting_operator" && (
+                  <div className={`run-gate-banner ${approvalCurrentlyBlocked ? "danger" : "warn"}`}>
+                    <AlertTriangle size={14} />
+                    <div>
+                      <strong>
+                        {approvalCurrentlyBlocked
+                          ? `Approval blocked: ${humanize(approvalRecommendation)}`
+                          : "Awaiting operator approval"}
+                      </strong>
+                      <p>
+                        {approvalCurrentlyBlocked
+                          ? "Execution is paused until you resolve the blocking evaluation issues or override the decision."
+                          : "This run is paused at the operator gate and can continue when approved."}
+                      </p>
+                      {approvalBlockingReasons.length > 0 && (
+                        <ul className="banner-reason-list">
+                          {approvalBlockingReasons.slice(0, 3).map((reason, index) => (
+                            <li key={`${reason}-${index}`}>{reason}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+              <div className="tab-strip canvas-mode-strip" role="tablist" aria-label="Canvas mode">
+                {(["flow", "kubernetes", "merkle", "artifacts"] as CanvasMode[]).map((mode) => (
+                  <button
+                    key={mode}
+                    className={canvasMode === mode ? "tab active" : "tab"}
+                    type="button"
+                    disabled={!canvasAvailability[mode]}
+                    onClick={() => setCanvasMode(mode)}
+                    title={
+                      canvasAvailability[mode]
+                        ? `${canvasModeLabel(mode)} canvas`
+                        : `${canvasModeLabel(mode)} unavailable for this run`
+                    }
+                  >
+                    {canvasModeIcon(mode)}
+                    {canvasModeLabel(mode)}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="status-row">
               <StatusChip label={activeRun ? humanize(activeRun.stage) : "Idle"} tone={toneForStage(activeRun?.stage ?? "queued")} />
               {activeRun?.latest_merkle_root && (
-                <StatusChip label={`⧫ ${activeRun.latest_merkle_root.slice(0, 10)}`} tone="#64c7d0" />
+                <StatusChip label={`⧫ ${activeRun.latest_merkle_root.slice(0, 10)}`} tone="#41d6b1" />
               )}
               <ConnectionDot status={systemConnection} label="System" />
               <ConnectionDot status={runConnection} label="Run" />
             </div>
           </div>
 
-          <div className="center-grid">
+          <div className="center-grid auto-canvas-grid">
             <div className="panel graph-panel">
-              <SectionTitle icon={<ArrowRight size={15} />} title="Run Graph" />
-              {activeRun && graph.nodes.length > 0 ? (
+              {activeRun && canvasGraph.nodes.length > 0 ? (
                 <ReactFlow
                   fitView
-                  nodes={graph.nodes}
-                  edges={graph.edges}
+                  fitViewOptions={{ padding: canvasFitPadding }}
+                  minZoom={canvasMode === "flow" ? 0.3 : 0.22}
+                  nodes={canvasGraph.nodes}
+                  edges={canvasGraph.edges}
+                  nodeTypes={nodeTypes}
                   nodesDraggable={false}
                   nodesConnectable={false}
                   elementsSelectable={false}
+                  onNodeClick={(_, node) => {
+                    const eventId = String(node.data?.eventId ?? "");
+                    if (eventId) setSelectedEventId(eventId);
+                    if (node.data?.nodeKind === "merkle") {
+                      setRightRailTab("merkle");
+                      return;
+                    }
+                    if (node.data?.nodeKind === "kubernetes") {
+                      setRightRailTab("evidence");
+                      return;
+                    }
+                    if (node.data?.nodeKind === "artifact") {
+                      setRightRailTab(inspectorTabForArtifact(String(node.data?.artifactKey ?? "")));
+                      return;
+                    }
+                    if (rightRailTab === "research") setRightRailTab("overview");
+                  }}
                   proOptions={{ hideAttribution: true }}
                 >
-                  <MiniMap pannable zoomable style={{ background: "rgba(8,14,23,0.9)" }} />
-                  <Controls showInteractive={false} />
                   <Background color="#1a2a38" gap={24} />
                 </ReactFlow>
               ) : (
-                <EmptyState text="Launch a run to see the execution graph." icon={<GitBranch size={28} strokeWidth={1.2} />} />
+                <EmptyState text={canvasEmptyMessage} icon={canvasModeIcon(canvasMode, 28)} />
               )}
             </div>
 
             <div className="panel timeline-panel">
-              <SectionTitle icon={<AlertTriangle size={15} />} title="Steering Console" />
-              <div className="steering-grid">
-                <SteerButton
-                  label="Approve"
-                  command="approve"
-                  active={steering}
-                  disabled={!activeRunId || activeRun?.stage !== "awaiting_operator" || approvalCurrentlyBlocked}
-                  primary
-                  onClick={handleSteer}
-                />
-                <SteerButton label="Resume" command="resume" active={steering} disabled={!activeRunId} onClick={handleSteer} />
-                <SteerButton label="Cancel" command="cancel" active={steering} disabled={!activeRunId} onClick={handleSteer} />
-                <SteerButton
-                  label={activeRun?.auto_mode ? "Set Gate" : "Set Auto"}
-                  command="set_auto_mode"
-                  active={steering}
-                  disabled={!activeRunId}
-                  onClick={(cmd) => handleSteer(cmd, { enabled: !(activeRun?.auto_mode ?? false) })}
-                />
-              </div>
-              <div className="stack">
-                <div className="note-row">
-                  <input
-                    value={noteDraft}
-                    onChange={(e) => setNoteDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && noteDraft.trim()) {
-                        void handleSteer("attach_note", { note: noteDraft.trim() });
-                        setNoteDraft("");
-                      }
-                    }}
-                    placeholder="Operator note…"
-                    disabled={!activeRunId}
-                  />
-                  <button
-                    className="action-button compact"
-                    disabled={!activeRunId || !noteDraft.trim()}
-                    onClick={() => {
-                      void handleSteer("attach_note", { note: noteDraft.trim() });
-                      setNoteDraft("");
-                    }}
-                  >
-                    Attach
-                  </button>
-                </div>
-                <button
-                  className="toggle-btn"
-                  onClick={() => setShowOverrides((v) => !v)}
-                >
-                  <ChevronDown size={14} className={showOverrides ? "rotate-180" : ""} />
-                  Advanced Overrides
-                </button>
-                {showOverrides && (
-                  <div className="stack animate-in">
-                    <textarea
-                      value={overrideDecisionDraft}
-                      onChange={(e) => setOverrideDecisionDraft(e.target.value)}
-                      placeholder="Decision override JSON"
-                      className="small-textarea mono-textarea"
-                    />
-                    <button className="action-button compact" disabled={!activeRunId} onClick={handleOverrideDecision}>
-                      Override Decision
-                    </button>
-                    <textarea
-                      value={overrideParamsDraft}
-                      onChange={(e) => setOverrideParamsDraft(e.target.value)}
-                      placeholder="Execution parameter override JSON"
-                      className="small-textarea mono-textarea"
-                    />
-                    <button className="action-button compact" disabled={!activeRunId} onClick={handleOverrideParams}>
-                      Override Params
-                    </button>
-                  </div>
-                )}
-              </div>
-
               <SectionTitle icon={<Activity size={15} />} title="Live Timeline" />
               <div className="timeline" ref={timelineRef}>
                 {(activeRun?.events ?? []).map((event, i) => (
-                  <div
+                  <button
                     key={event.event_id}
-                    className="timeline-card"
+                    className={`timeline-card timeline-card-button ${selectedEvent?.event_id === event.event_id ? "selected" : ""}`}
                     style={{ animationDelay: `${i * 40}ms` }}
+                    onClick={() => {
+                      setSelectedEventId(event.event_id);
+                      if (rightRailTab === "research") setRightRailTab("overview");
+                    }}
                   >
                     <div className="timeline-heading">
                       <div className="timeline-heading-left">
@@ -873,7 +1091,7 @@ export default function App() {
                     {event.summary && Object.keys(event.summary).length > 0 && (
                       <pre className="timeline-summary">{JSON.stringify(event.summary, null, 2)}</pre>
                     )}
-                  </div>
+                  </button>
                 ))}
                 {(!activeRun || activeRun.events.length === 0) && (
                   <EmptyState text="Events will appear here as the run progresses." />
@@ -884,11 +1102,27 @@ export default function App() {
         </section>
 
         {/* ── Right Rail ── */}
+        {!rightRailOpen && (
+          <button className="drawer-peek right" type="button" onClick={() => setRightRailOpen(true)}>
+            Controls
+          </button>
+        )}
+        {rightRailOpen && (
         <aside className="right-rail panel">
+          <div className="rail-heading">
+            <SectionTitle
+              icon={rightRailTabIcon(rightRailTab)}
+              title={rightRailTabLabel(rightRailTab)}
+            />
+            <button className="icon-btn" type="button" onClick={() => setRightRailOpen(false)} title="Hide controls">
+              <ChevronDown size={14} className="rotate-270" />
+            </button>
+          </div>
           <div className="tab-strip">
             {(
               [
                 "overview",
+                "steering",
                 "evidence",
                 "policy",
                 "execution",
@@ -897,40 +1131,391 @@ export default function App() {
                 "merkle",
                 "code",
                 "research",
-              ] as InspectorTab[]
+              ] as RightRailTab[]
             ).map((tab) => (
               <button
                 key={tab}
-                className={inspectorTab === tab ? "tab active" : "tab"}
-                onClick={() => setInspectorTab(tab)}
+                className={rightRailTab === tab ? "tab active" : "tab"}
+                onClick={() => setRightRailTab(tab)}
               >
-                {tab === "code" ? <FolderGit2 size={12} /> : null}
-                {humanize(tab)}
+                {rightRailTabIcon(tab)}
+                {rightRailTabLabel(tab)}
               </button>
             ))}
           </div>
-          <Inspector
-            tab={inspectorTab}
-            run={activeRun}
-            researchDetail={researchDetail}
-            vaultDocument={vaultDocument}
-            vaultTree={vaultTree}
-            merkleProof={merkleProof}
-            gitnexusInfo={gitnexusInfo}
-            gitnexusProcesses={gitnexusProcesses}
-            gitnexusSearch={gitnexusSearch}
-            gitnexusSearchResult={gitnexusSearchResult}
-            onGitnexusSearchChange={setGitnexusSearch}
-            onGitnexusSearch={handleGitNexusSearch}
-            onVaultSelect={handleVaultSelect}
-          />
+          {rightRailTab === "overview" ? (
+            <CanvasOverviewPanel
+              run={activeRun}
+              event={selectedEvent}
+              insights={selectedEventInsights}
+              eventIndex={selectedEventIndex}
+              eventCount={activeRun?.events.length ?? 0}
+              onJumpTab={(tab) => setRightRailTab(tab)}
+            />
+          ) : rightRailTab === "steering" ? (
+            <SteeringConsolePanel
+              activeRun={activeRun}
+              activeRunId={activeRunId}
+              activeEvent={selectedEvent}
+              active={steering}
+              approvalCurrentlyBlocked={approvalCurrentlyBlocked}
+              noteDraft={noteDraft}
+              onNoteDraftChange={setNoteDraft}
+              onSteer={handleSteer}
+              showOverrides={showOverrides}
+              onToggleOverrides={() => setShowOverrides((v) => !v)}
+              overrideDecisionDraft={overrideDecisionDraft}
+              onOverrideDecisionDraftChange={setOverrideDecisionDraft}
+              onOverrideDecision={handleOverrideDecision}
+              overrideParamsDraft={overrideParamsDraft}
+              onOverrideParamsDraftChange={setOverrideParamsDraft}
+              onOverrideParams={handleOverrideParams}
+            />
+          ) : (
+            <Inspector
+              tab={rightRailTab}
+              run={activeRun}
+              researchDetail={researchDetail}
+              vaultDocument={vaultDocument}
+              vaultTree={vaultTree}
+              merkleProof={merkleProof}
+              gitnexusInfo={gitnexusInfo}
+              gitnexusProcesses={gitnexusProcesses}
+              gitnexusSearch={gitnexusSearch}
+              gitnexusSearchResult={gitnexusSearchResult}
+              onGitnexusSearchChange={setGitnexusSearch}
+              onGitnexusSearch={handleGitNexusSearch}
+              onVaultSelect={handleVaultSelect}
+            />
+          )}
         </aside>
+        )}
       </main>
     </div>
   );
 }
 
 /* ──────────── Inline components ──────────── */
+
+function RunEventNode({ data, selected }: NodeProps<RunGraphNode>) {
+  const tone = typeof data.accent === "string" ? data.accent : toneForStage(String(data.stage));
+  const badgeLabel =
+    data.nodeKind === "run" && Number(data.sequence) > 0
+      ? String(data.sequence)
+      : data.nodeKind === "kubernetes"
+        ? "K8s"
+        : data.nodeKind === "merkle"
+          ? "Hash"
+          : "Data";
+  const meta = Array.isArray(data.meta)
+    ? data.meta.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 2)
+    : [];
+  const nodeTitle = typeof data.title === "string" ? data.title : String(data.eventType);
+  const statusLabel = typeof data.statusLabel === "string" ? data.statusLabel : humanize(String(data.stage));
+  const preview = typeof data.preview === "string" && data.preview.trim().length > 0 ? data.preview : "No additional detail";
+  const tooltipBits = [nodeTitle, statusLabel];
+  if (data.recordedAt) tooltipBits.push(formatTimestamp(String(data.recordedAt)));
+
+  return (
+    <div
+      className={`run-event-node ${selected ? "selected" : ""}`}
+      style={{ borderColor: tone, boxShadow: selected ? `0 0 0 1px ${tone}, 0 12px 28px ${tone}33` : undefined }}
+      title={tooltipBits.join(" • ")}
+    >
+      <Handle className="run-event-handle" type="target" position={Position.Left} isConnectable={false} />
+      <div className="run-event-node-header">
+        <span className="run-event-node-seq">{badgeLabel}</span>
+        <span className="run-event-node-stage" style={{ color: tone }}>
+          {statusLabel}
+        </span>
+      </div>
+      <strong className="run-event-node-title">{nodeTitle}</strong>
+      <span className="run-event-node-preview">{preview}</span>
+      {meta.length > 0 && (
+        <div className="run-event-node-meta">
+          {meta.map((entry) => (
+            <span key={entry}>{entry}</span>
+          ))}
+        </div>
+      )}
+      <Handle className="run-event-handle" type="source" position={Position.Right} isConnectable={false} />
+    </div>
+  );
+}
+
+function CanvasOverviewPanel({
+  run,
+  event,
+  insights,
+  eventIndex,
+  eventCount,
+  onJumpTab,
+}: {
+  run: RunDetail | null;
+  event: RunEventRecord | null;
+  insights: Array<{ label: string; value: string; tone?: string }>;
+  eventIndex: number;
+  eventCount: number;
+  onJumpTab: (tab: RightRailTab) => void;
+}) {
+  if (!run || !event) {
+    return <EmptyState text="Select a node to inspect its path, payload, and controls." />;
+  }
+
+  return (
+    <div className="inspector-scroll">
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Canvas Overview</p>
+            <h4>{humanize(event.event_type)}</h4>
+          </div>
+          <StatusChip label={humanize(event.stage)} tone={toneForStage(event.stage)} />
+        </div>
+        <div className="context-stat-grid">
+          <ContextStat label="Thread" value={`${eventIndex + 1}/${eventCount}`} />
+          <ContextStat label="Sequence" value={`#${event.sequence}`} />
+          <ContextStat label="Recorded" value={formatTimestamp(event.recorded_at)} />
+          <ContextStat label="Status" value={event.status ? humanize(event.status) : "Captured"} />
+        </div>
+      </section>
+
+      {insights.length > 0 && (
+        <section className="context-panel">
+          <SectionTitle icon={<CircleDot size={14} />} title="Salient Insights" />
+          <div className="context-insight-grid">
+            {insights.map((insight) => (
+              <div key={`${insight.label}-${insight.value}`} className="context-insight-card">
+                <span>{insight.label}</span>
+                <strong style={insight.tone ? { color: insight.tone } : undefined}>{insight.value}</strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="context-panel">
+        <SectionTitle icon={<ArrowRight size={14} />} title="Drill Down" />
+        <div className="context-action-row">
+          <button className="action-button compact" type="button" onClick={() => onJumpTab("steering")}>Open Steering</button>
+          <button className="action-button compact" type="button" onClick={() => onJumpTab("evidence")}>Evidence</button>
+          <button className="action-button compact" type="button" onClick={() => onJumpTab("policy")}>Policy</button>
+          <button className="action-button compact" type="button" onClick={() => onJumpTab("execution")}>Execution</button>
+        </div>
+      </section>
+
+      {event.summary && Object.keys(event.summary).length > 0 && (
+        <section className="context-panel">
+          <SectionTitle icon={<Activity size={14} />} title="Summary" />
+          <pre className="timeline-summary">{JSON.stringify(event.summary, null, 2)}</pre>
+        </section>
+      )}
+
+      <section className="context-panel">
+        <SectionTitle icon={<Binary size={14} />} title="Payload" />
+        <pre className="timeline-summary">{JSON.stringify(event.payload, null, 2)}</pre>
+      </section>
+
+      {(event.artifact_key || event.integration_name || event.merkle_leaf_hash) && (
+        <section className="context-panel">
+          <SectionTitle icon={<FolderGit2 size={14} />} title="Links" />
+          <div className="context-link-list">
+            {event.artifact_key ? <ContextLink label="Artifact" value={event.artifact_key} /> : null}
+            {event.integration_name ? <ContextLink label="Integration" value={event.integration_name} /> : null}
+            {event.merkle_leaf_hash ? <ContextLink label="Merkle Leaf" value={event.merkle_leaf_hash} mono /> : null}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function SteeringConsolePanel({
+  activeRun,
+  activeRunId,
+  activeEvent,
+  active,
+  approvalCurrentlyBlocked,
+  noteDraft,
+  onNoteDraftChange,
+  onSteer,
+  showOverrides,
+  onToggleOverrides,
+  overrideDecisionDraft,
+  onOverrideDecisionDraftChange,
+  onOverrideDecision,
+  overrideParamsDraft,
+  onOverrideParamsDraftChange,
+  onOverrideParams,
+}: {
+  activeRun: RunDetail | null;
+  activeRunId: string;
+  activeEvent: RunEventRecord | null;
+  active: string;
+  approvalCurrentlyBlocked: boolean;
+  noteDraft: string;
+  onNoteDraftChange: (value: string) => void;
+  onSteer: (command: string, payload?: Record<string, unknown>) => void;
+  showOverrides: boolean;
+  onToggleOverrides: () => void;
+  overrideDecisionDraft: string;
+  onOverrideDecisionDraftChange: (value: string) => void;
+  onOverrideDecision: () => void;
+  overrideParamsDraft: string;
+  onOverrideParamsDraftChange: (value: string) => void;
+  onOverrideParams: () => void;
+}) {
+  return (
+    <div className="inspector-scroll">
+      {activeEvent && (
+        <section className="context-panel">
+          <div className="context-panel-header">
+            <div>
+              <p className="eyebrow">Steering Context</p>
+              <h4>{humanize(activeEvent.event_type)}</h4>
+            </div>
+            <StatusChip label={humanize(activeEvent.stage)} tone={toneForStage(activeEvent.stage)} />
+          </div>
+          <p className="inspector-muted">
+            Targeting node #{activeEvent.sequence}. Commands act on the run while keeping this node as the active context anchor.
+          </p>
+        </section>
+      )}
+
+      <div className="steering-console">
+        <div className="steering-grid">
+          <SteerButton
+            label="Approve"
+            command="approve"
+            active={active}
+            disabled={!activeRunId || activeRun?.stage !== "awaiting_operator" || approvalCurrentlyBlocked}
+            primary
+            onClick={onSteer}
+          />
+          <SteerButton label="Resume" command="resume" active={active} disabled={!activeRunId} onClick={onSteer} />
+          <SteerButton label="Cancel" command="cancel" active={active} disabled={!activeRunId} onClick={onSteer} />
+          <SteerButton
+            label={activeRun?.auto_mode ? "Set Gate" : "Set Auto"}
+            command="set_auto_mode"
+            active={active}
+            disabled={!activeRunId}
+            onClick={(cmd) => onSteer(cmd, { enabled: !(activeRun?.auto_mode ?? false) })}
+          />
+        </div>
+        <div className="stack">
+          <div className="note-row">
+            <input
+              value={noteDraft}
+              onChange={(e) => onNoteDraftChange(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && noteDraft.trim()) {
+                  onSteer("attach_note", { note: noteDraft.trim() });
+                  onNoteDraftChange("");
+                }
+              }}
+              placeholder={activeEvent ? `Note for ${humanize(activeEvent.event_type)}…` : "Operator note…"}
+              disabled={!activeRunId}
+            />
+            <button
+              className="action-button compact"
+              disabled={!activeRunId || !noteDraft.trim()}
+              onClick={() => {
+                onSteer("attach_note", { note: noteDraft.trim() });
+                onNoteDraftChange("");
+              }}
+            >
+              Attach
+            </button>
+          </div>
+          <button className="toggle-btn" onClick={onToggleOverrides}>
+            <ChevronDown size={14} className={showOverrides ? "rotate-180" : ""} />
+            Advanced Overrides
+          </button>
+          {showOverrides && (
+            <div className="stack animate-in">
+              <textarea
+                value={overrideDecisionDraft}
+                onChange={(e) => onOverrideDecisionDraftChange(e.target.value)}
+                placeholder="Decision override JSON"
+                className="small-textarea mono-textarea"
+              />
+              <button className="action-button compact" disabled={!activeRunId} onClick={onOverrideDecision}>
+                Override Decision
+              </button>
+              <textarea
+                value={overrideParamsDraft}
+                onChange={(e) => onOverrideParamsDraftChange(e.target.value)}
+                placeholder="Execution parameter override JSON"
+                className="small-textarea mono-textarea"
+              />
+              <button className="action-button compact" disabled={!activeRunId} onClick={onOverrideParams}>
+                Override Params
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="context-stat-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ContextLink({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="context-link-row">
+      <span>{label}</span>
+      <strong className={mono ? "context-link-value mono" : "context-link-value"}>{value}</strong>
+    </div>
+  );
+}
+
+function buildEventInsights(event: RunEventRecord): Array<{ label: string; value: string; tone?: string }> {
+  const insights: Array<{ label: string; value: string; tone?: string }> = [];
+  const summaryEntries = event.summary ? Object.entries(event.summary) : [];
+  const payloadEntries = Object.entries(event.payload ?? {});
+
+  for (const [key, value] of summaryEntries) {
+    const preview = formatInsightValue(value);
+    if (preview) insights.push({ label: humanize(key), value: preview, tone: key.toLowerCase().includes("risk") ? "var(--accent-warm)" : undefined });
+  }
+
+  if (event.integration_name) insights.push({ label: "Integration", value: event.integration_name, tone: "var(--accent)" });
+  if (event.artifact_key) insights.push({ label: "Artifact", value: event.artifact_key });
+  if (event.status) insights.push({ label: "Status", value: humanize(event.status), tone: toneForStage(event.stage) });
+
+  for (const [key, value] of payloadEntries) {
+    if (summaryEntries.some(([summaryKey]) => summaryKey === key)) continue;
+    const preview = formatInsightValue(value);
+    if (preview) insights.push({ label: humanize(key), value: preview });
+  }
+
+  return insights.slice(0, 8);
+}
+
+function formatInsightValue(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "0 items";
+    if (value.every((entry) => typeof entry === "string" || typeof entry === "number")) {
+      return value.slice(0, 3).join(", ") + (value.length > 3 ? ` +${value.length - 3}` : "");
+    }
+    return `${value.length} items`;
+  }
+  if (typeof value === "object") {
+    return `${Object.keys(value as Record<string, unknown>).length} fields`;
+  }
+  return "";
+}
 
 function HeaderMetric({
   icon,
@@ -1014,14 +1599,16 @@ function InferenceMetric({
   warning: string | null;
   ready: boolean;
 }) {
+  const detail = [fallbackRoute ? `Fallback: ${fallbackRoute}` : null, warning].filter(Boolean).join(" | ");
   return (
-    <div className={`header-metric header-inference ${warning ? "danger" : ready ? "good" : "warn"}`}>
+    <div
+      className={`header-metric header-inference ${warning ? "danger" : ready ? "good" : "warn"}`}
+      title={detail || primaryRoute}
+    >
       <span className="header-metric-icon">{icon}</span>
       <div>
         <p>Inference Routing</p>
         <strong>{primaryRoute}</strong>
-        {fallbackRoute && <span className="header-metric-subline">Fallback: {fallbackRoute}</span>}
-        {warning && <span className="header-metric-warning">{warning}</span>}
       </div>
     </div>
   );
