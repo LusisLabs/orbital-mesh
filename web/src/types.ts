@@ -164,6 +164,7 @@ export interface IntegrationStatus {
 export interface IntegrationReadiness {
   checked_at: string;
   promptfoo: IntegrationStatus;
+  hermes: IntegrationStatus;
   goose: IntegrationStatus;
   gitnexus: IntegrationStatus;
   vault_path: string;

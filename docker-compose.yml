@@ -1,7 +1,66 @@
 services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.hermes
+      args:
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-main}"
+    image: "${HERMES_RUNTIME_IMAGE:-autoresearch-hermes-runtime:local}"
+    container_name: mesh-intelligence-hermes
+    working_dir: /workspace/mesh-intelligence
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p "$${HERMES_HOME}/cron" "$${HERMES_HOME}/sessions" "$${HERMES_HOME}/logs" "$${HERMES_HOME}/memories" "$${HERMES_HOME}/skills";
+        cat > "$${HERMES_HOME}/config.yaml" <<EOF
+        model:
+          default: "$${HERMES_MODEL:-MiniMax-M2.5}"
+          provider: "custom"
+          base_url: "$${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+        terminal:
+          backend: "local"
+          cwd: "."
+          timeout: 180
+          docker_mount_cwd_to_workspace: false
+          lifetime_seconds: 300
+          container_cpu: 1
+          container_memory: 5120
+          container_disk: 51200
+          container_persistent: true
+        EOF
+        touch "$${HERMES_HOME}/.env";
+        exec sleep infinity
+    environment:
+      HERMES_HOME: /workspace/mesh-intelligence/.hermes-local
+      HERMES_INFERENCE_PROVIDER: "${MESH_COMPOSE_HERMES_INFERENCE_PROVIDER:-openai}"
+      HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.5}"
+      LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.5}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+      OPENAI_HOST: "${OPENAI_HOST:-https://api.minimax.io/v1}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+      ANTHROPIC_HOST: "${ANTHROPIC_HOST:-}"
+      OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
+      GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
+    volumes:
+      - ./:/workspace/mesh-intelligence
+      - hermes_home:/workspace/mesh-intelligence/.hermes-local
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/opt/venv/bin/hermes", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
   mesh:
     build: .
     init: true
+    depends_on:
+      hermes:
+        condition: service_healthy
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
     environment:
@@ -14,8 +73,11 @@ services:
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"
+      MESH_HERMES_COMMAND: "${MESH_HERMES_COMMAND:-docker exec -w /workspace/mesh-intelligence -e HERMES_HOME=/workspace/mesh-intelligence/.hermes-local mesh-intelligence-hermes /opt/venv/bin/hermes}"
+      MESH_HERMES_COMMAND_TIMEOUT_SECONDS: "${MESH_HERMES_COMMAND_TIMEOUT_SECONDS:-180}"
       MESH_GOOSE_COMMAND: "${MESH_GOOSE_COMMAND:-goose}"
       MESH_GOOSE_COMMAND_TIMEOUT_SECONDS: "${MESH_GOOSE_COMMAND_TIMEOUT_SECONDS:-180}"
+      DOCKER_HOST: unix:///var/run/docker.sock
       MESH_GITNEXUS_DISABLE_AUTOSTART: "1"
       MESH_GITNEXUS_SIDECAR_URL: "${MESH_GITNEXUS_SIDECAR_URL:-http://host.docker.internal:4747}"
       MESH_ACCESS_LOG: "${MESH_ACCESS_LOG:-1}"
@@ -23,31 +85,32 @@ services:
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
       MESH_MAX_JSON_BODY_BYTES: "${MESH_MAX_JSON_BODY_BYTES:-1048576}"
       MESH_VAULT_AI_POSTPROCESS_ENABLED: "${MESH_VAULT_AI_POSTPROCESS_ENABLED:-0}"
-      HERMES_INFERENCE_PROVIDER: "${HERMES_INFERENCE_PROVIDER:-}"
-      HERMES_MODEL: "${HERMES_MODEL:-}"
-      LLM_MODEL: "${LLM_MODEL:-}"
-      GOOSE_PROVIDER: "${GOOSE_PROVIDER:-}"
-      GOOSE_MODEL: "${GOOSE_MODEL:-}"
-      GOOSE_FALLBACK_PROVIDER: "${GOOSE_FALLBACK_PROVIDER:-}"
-      GOOSE_FALLBACK_MODEL: "${GOOSE_FALLBACK_MODEL:-}"
+      HERMES_INFERENCE_PROVIDER: "${MESH_COMPOSE_HERMES_INFERENCE_PROVIDER:-openai}"
+      HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.5}"
+      LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.5}"
+      GOOSE_PROVIDER: "${MESH_COMPOSE_GOOSE_PROVIDER:-openai}"
+      GOOSE_MODEL: "${MESH_COMPOSE_GOOSE_MODEL:-MiniMax-M2.5}"
+      GOOSE_FALLBACK_PROVIDER: "${MESH_COMPOSE_GOOSE_FALLBACK_PROVIDER:-}"
+      GOOSE_FALLBACK_MODEL: "${MESH_COMPOSE_GOOSE_FALLBACK_MODEL:-MiniMax-M2.5}"
       GOOSE_PRIMARY_TIMEOUT_SECONDS: "${GOOSE_PRIMARY_TIMEOUT_SECONDS:-60}"
       GOOSE_OLLAMA_TIMEOUT_SECONDS: "${GOOSE_OLLAMA_TIMEOUT_SECONDS:-45}"
       GOOSE_FALLBACK_TIMEOUT_SECONDS: "${GOOSE_FALLBACK_TIMEOUT_SECONDS:-90}"
-      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
-      OPENAI_HOST: "${OPENAI_HOST:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+      OPENAI_HOST: "${OPENAI_HOST:-https://api.minimax.io/v1}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       ANTHROPIC_HOST: "${ANTHROPIC_HOST:-}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-      OLLAMA_HOST: "${OLLAMA_HOST:-http://host.docker.internal:11434}"
+      OLLAMA_HOST: "${MESH_COMPOSE_OLLAMA_HOST:-}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - mesh_runtime_state:/app/.mesh-runtime-state
       - goose_config:/root/.config/goose
       - ./:/workspace/mesh-intelligence
+      - ${HOME}/.docker/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
     logging:
       driver: local
@@ -62,5 +125,6 @@ services:
       start_period: 20s
 
 volumes:
+  hermes_home:
   mesh_runtime_state:
   goose_config:

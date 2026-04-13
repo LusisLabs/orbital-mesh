@@ -7,7 +7,7 @@ from shared.mesh_runtime import RuntimeConfig, bootstrap_integrations
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap Promptfoo, Goose, and GitNexus sidecar configuration.")
+    parser = argparse.ArgumentParser(description="Bootstrap Promptfoo, Hermes, Goose, and GitNexus sidecar configuration.")
     parser.add_argument(
         "--install-missing",
         action="store_true",

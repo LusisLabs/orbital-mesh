@@ -42,8 +42,8 @@ _ANCHOR_DEFINITIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "integration_modes",
-        "Native, Promptfoo, and Goose modes are separated",
-        ("promptfoo", "goose", "native", "orchestration_mode", "evaluation_mode"),
+        "Native, Promptfoo, Goose, and Hermes modes are separated",
+        ("promptfoo", "goose", "hermes", "native", "orchestration_mode", "evaluation_mode"),
     ),
 )
 

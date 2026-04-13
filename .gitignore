@@ -15,6 +15,7 @@ __pycache__/
 
 # Runtime state (local / Compose volume; do not commit)
 .mesh-runtime-state/
+.hermes-local/
 
 # Secrets
 .env

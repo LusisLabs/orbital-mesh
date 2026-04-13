@@ -164,6 +164,7 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
       return "policy";
     case "execution":
     case "goose_review":
+    case "hermes_review":
       return "execution";
     case "feedback":
       return "feedback";
@@ -682,7 +683,7 @@ export default function App() {
     approvalRecommendation !== "execute";
 
   const integrationsReady = readiness
-    ? [readiness.promptfoo, readiness.goose, readiness.gitnexus].filter((i) => i.ready).length
+    ? [readiness.promptfoo, readiness.hermes, readiness.goose, readiness.gitnexus].filter((i) => i.ready).length
     : 0;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
@@ -741,8 +742,8 @@ export default function App() {
           <HeaderMetric
             icon={<ShieldCheck size={16} />}
             label="Integrations"
-            value={`${integrationsReady}/3 ready`}
-            tone={integrationsReady === 3 ? "good" : integrationsReady > 0 ? "warn" : "danger"}
+            value={`${integrationsReady}/4 ready`}
+            tone={integrationsReady === 4 ? "good" : integrationsReady > 0 ? "warn" : "danger"}
           />
           <HeaderMetric
             icon={<CircleDot size={16} />}
@@ -801,7 +802,7 @@ export default function App() {
               <span>Research</span>
             </div>
             <div>
-              <strong>{integrationsReady}/3</strong>
+              <strong>{integrationsReady}/4</strong>
               <span>Ready</span>
             </div>
           </div>
@@ -809,10 +810,11 @@ export default function App() {
           <details className="rail-disclosure">
             <summary>
               <span>Integrations</span>
-              <span>{integrationsReady}/3 ready</span>
+              <span>{integrationsReady}/4 ready</span>
             </summary>
           <div className="readiness-grid">
             <ReadinessCard label="Promptfoo" status={readiness?.promptfoo} />
+            <ReadinessCard label="Hermes" status={readiness?.hermes} />
             <ReadinessCard label="Goose" status={readiness?.goose} />
             <ReadinessCard label="GitNexus" status={readiness?.gitnexus} />
           </div>

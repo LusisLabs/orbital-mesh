@@ -301,6 +301,7 @@ class RunCoordinator:
             payload=readiness_snapshot,
             summary={
                 "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
+                "hermes_ready": readiness_snapshot["hermes"]["ready"],
                 "goose_ready": readiness_snapshot["goose"]["ready"],
             },
             artifact_key="integration_readiness",
@@ -442,18 +443,20 @@ class RunCoordinator:
                 integration_name=run_config.orchestration_mode if run_config.orchestration_mode != "native" else None,
                 status=execution.status,
             )
-            if execution.external_refs.get("goose_review"):
-                self._set_artifact(run_id, "goose_review", execution.external_refs["goose_review"])
-                self.state_store.append_run_event(
-                    run_id,
-                    stage="executing",
-                    event_type=INTEGRATION_ARTIFACT_RECORDED,
-                    payload=execution.external_refs["goose_review"],
-                    summary={"approved": execution.external_refs["goose_review"].get("approved")},
-                    artifact_key="goose_review",
-                    integration_name="goose",
-                    status="recorded",
-                )
+            for artifact_key, integration_name in (("goose_review", "goose"), ("hermes_review", "hermes")):
+                review = execution.external_refs.get(artifact_key)
+                if review:
+                    self._set_artifact(run_id, artifact_key, review)
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="executing",
+                        event_type=INTEGRATION_ARTIFACT_RECORDED,
+                        payload=review,
+                        summary={"approved": review.get("approved")},
+                        artifact_key=artifact_key,
+                        integration_name=integration_name,
+                        status="recorded",
+                    )
 
             feedback = engine.feedback.record(trigger, decision, execution, normalized_event)
             self._set_artifact(run_id, "feedback", feedback.to_dict())

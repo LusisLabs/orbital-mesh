@@ -13,6 +13,7 @@ htmlcov
 .env.*
 !.env.example
 .mesh-runtime-state
+.hermes-local
 web/node_modules
 web/dist
 swarmclaw/node_modules
