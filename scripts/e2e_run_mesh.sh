@@ -76,7 +76,7 @@ for _ in range(5):
 else:
     raise SystemExit(f"run launch failed after retries: {last_error}")
 
-deadline = time.time() + 120
+deadline = time.time() + float(os.environ.get("E2E_RUN_TERMINAL_WAIT_SECONDS", "120"))
 terminal_stages = {"completed", "failed", "cancelled", "no_trigger"}
 while True:
     with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}", timeout=30) as response:

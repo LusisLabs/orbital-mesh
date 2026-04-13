@@ -12,7 +12,7 @@ from uuid import uuid4
 from .config import RuntimeConfig
 from .control_plane_models import GoalRecord, RunEvent, RunSession
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
-from .state import RuntimeStateStore
+from .state import RuntimeStateStore, parse_state_json_file
 from .vault import VaultManager
 
 
@@ -236,7 +236,7 @@ class _locked_json:
         fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
         self.handle.seek(0)
         raw = self.handle.read()
-        self.payload = json.loads(raw) if raw.strip() else {}
+        self.payload = parse_state_json_file(self.path, raw)
         return self.payload
 
     def __exit__(self, exc_type, exc, tb) -> None:

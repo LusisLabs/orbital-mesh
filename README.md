@@ -207,6 +207,10 @@ The browser UI is a React/Vite application under [`web/`](./web) using:
 - a dense operator shell and graph-driven center stage inspired by `mesh-llm`
 - server connection, status, and side-panel patterns inspired by `GitNexus`
 
+**Unified canvas** (center stage) composes run flow, Kubernetes context, Merkle, and artifacts on one graph; the graph panel has a **fullscreen** control (top-right) for focused inspection. Below: local control plane with the **Unified** tab active (example scenario `kubernetes_crashloop_patch`).
+
+![Operator control plane — unified canvas, goals, launch rail, and live timeline](./docs/images/operator-control-plane-unified.png)
+
 The layout is:
 
 - Left rail

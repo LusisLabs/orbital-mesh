@@ -18,7 +18,7 @@ const STAGE_ORDER = [
 ];
 
 export interface RunGraphNodeData extends Record<string, unknown> {
-  nodeKind: "run" | "kubernetes" | "merkle" | "artifact";
+  nodeKind: "run" | "kubernetes" | "merkle" | "artifact" | "section";
   title: string;
   statusLabel: string;
   accent: string;
@@ -341,6 +341,49 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
   return { nodes, edges };
 }
 
+export function buildUnifiedGraph(graphs: {
+  flow: CanvasGraph;
+  kubernetes: CanvasGraph;
+  merkle: CanvasGraph;
+  artifacts: CanvasGraph;
+}): CanvasGraph {
+  const flow = namespaceGraph(graphs.flow, "flow", { x: 0, y: 0 });
+  const flowBounds = graphBounds(flow.nodes);
+
+  const lowerY = flow.nodes.length > 0 ? flowBounds.maxY + 260 : 0;
+  const kubernetes = namespaceGraph(graphs.kubernetes, "kubernetes", { x: 0, y: lowerY });
+  const kubernetesBounds = graphBounds(kubernetes.nodes);
+
+  const merkleX = kubernetes.nodes.length > 0 ? Math.max(kubernetesBounds.maxX + 360, 920) : 0;
+  const merkle = namespaceGraph(graphs.merkle, "merkle", { x: merkleX, y: lowerY });
+  const merkleBounds = graphBounds(merkle.nodes);
+
+  const artifactY = Math.max(kubernetesBounds.maxY, merkleBounds.maxY, lowerY) + 260;
+  const artifacts = namespaceGraph(graphs.artifacts, "artifacts", { x: 0, y: artifactY });
+
+  const nodes = [
+    ...unifiedSectionNodes([
+      { graph: flow, id: "flow", title: "Run Flow", preview: "Stage-by-stage run event timeline", accent: "#65a7ff" },
+      { graph: kubernetes, id: "kubernetes", title: "Kubernetes", preview: "Cluster, namespace, deployment, pods, and events", accent: "#41d6b1" },
+      { graph: merkle, id: "merkle", title: "Merkle", preview: "Run log root, snapshot, and proof material", accent: "#8d8cff" },
+      { graph: artifacts, id: "artifacts", title: "Artifacts", preview: "Input, readiness, trigger, decision, execution, and feedback records", accent: "#f2b84b" },
+    ]),
+    ...flow.nodes,
+    ...kubernetes.nodes,
+    ...merkle.nodes,
+    ...artifacts.nodes,
+  ];
+  const edges = [
+    ...flow.edges,
+    ...kubernetes.edges,
+    ...merkle.edges,
+    ...artifacts.edges,
+    ...unifiedContextEdges(flow, kubernetes, merkle, artifacts),
+  ];
+
+  return { nodes, edges };
+}
+
 export function toneForStage(stage: string): string {
   if (stage === "completed") return "#83d37d";
   if (stage === "failed" || stage === "cancelled") return "#ff6b5f";
@@ -448,6 +491,98 @@ function canvasEdge(id: string, source: string, target: string, stroke: string, 
       opacity: 0.82,
     },
   };
+}
+
+function namespaceGraph(graph: CanvasGraph, prefix: string, offset: { x: number; y: number }): CanvasGraph {
+  return {
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      id: `${prefix}:${node.id}`,
+      position: {
+        x: node.position.x + offset.x,
+        y: node.position.y + offset.y,
+      },
+    })),
+    edges: graph.edges.map((edge) => ({
+      ...edge,
+      id: `${prefix}:${edge.id}`,
+      source: `${prefix}:${edge.source}`,
+      target: `${prefix}:${edge.target}`,
+    })),
+  };
+}
+
+function unifiedSectionNodes(sections: Array<{
+  graph: CanvasGraph;
+  id: string;
+  title: string;
+  preview: string;
+  accent: string;
+}>): RunGraphNode[] {
+  return sections
+    .filter((section) => section.graph.nodes.length > 0)
+    .map((section) => {
+      const firstNode = section.graph.nodes[0];
+      return canvasNode({
+        id: `section:${section.id}`,
+        kind: "section",
+        title: section.title,
+        statusLabel: "Unified Section",
+        preview: section.preview,
+        accent: section.accent,
+        meta: compact([`${section.graph.nodes.length} nodes`]),
+        position: { x: firstNode.position.x, y: firstNode.position.y - 150 },
+      });
+    });
+}
+
+function graphBounds(nodes: RunGraphNode[]): { maxX: number; maxY: number } {
+  if (nodes.length === 0) return { maxX: 0, maxY: 0 };
+  return nodes.reduce(
+    (bounds, node) => ({
+      maxX: Math.max(bounds.maxX, node.position.x + Number(node.style?.width ?? 204)),
+      maxY: Math.max(bounds.maxY, node.position.y + 110),
+    }),
+    { maxX: 0, maxY: 0 },
+  );
+}
+
+function unifiedContextEdges(
+  flow: CanvasGraph,
+  kubernetes: CanvasGraph,
+  merkle: CanvasGraph,
+  artifacts: CanvasGraph,
+): Edge[] {
+  const edges: Edge[] = [];
+  const nodeIds = new Set([...flow.nodes, ...kubernetes.nodes, ...merkle.nodes, ...artifacts.nodes].map((node) => node.id));
+  const artifactByKey = new Map<string, string>();
+
+  artifacts.nodes.forEach((node) => {
+    const key = node.data.artifactKey;
+    if (typeof key === "string" && key) artifactByKey.set(key, node.id);
+  });
+
+  flow.nodes.forEach((node) => {
+    const key = node.data.artifactKey;
+    if (typeof key !== "string" || !key) return;
+    const artifactNodeId = artifactByKey.get(key);
+    if (!artifactNodeId) return;
+    edges.push(canvasEdge(`unified:${node.id}-${artifactNodeId}`, node.id, artifactNodeId, String(node.data.accent || "#65a7ff"), true));
+  });
+
+  const inputSignalNodeId = artifactByKey.get("input_signal");
+  if (inputSignalNodeId && nodeIds.has("kubernetes:cluster")) {
+    edges.push(canvasEdge("unified:input-signal-kubernetes", inputSignalNodeId, "kubernetes:cluster", "#65a7ff", true));
+  }
+
+  const executionNodeId = artifactByKey.get("execution");
+  if (executionNodeId && nodeIds.has("merkle:merkle-root")) {
+    edges.push(canvasEdge("unified:execution-merkle-root", executionNodeId, "merkle:merkle-root", "#41d6b1", true));
+  } else if (flow.nodes.length > 0 && nodeIds.has("merkle:merkle-root")) {
+    edges.push(canvasEdge("unified:flow-merkle-root", flow.nodes[flow.nodes.length - 1].id, "merkle:merkle-root", "#41d6b1", true));
+  }
+
+  return edges;
 }
 
 function kubernetesTone(rolloutStatus?: string): string {

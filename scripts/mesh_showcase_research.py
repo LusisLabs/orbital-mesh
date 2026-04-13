@@ -230,13 +230,14 @@ def _write_manifest(
     modes_label: str,
     summaries: list[dict[str, Any]],
     *,
-    for_minimax: bool,
+    embed_minimax_question: bool,
+    pending_minimax_run: bool,
 ) -> None:
     base_q = (
         f"Empirical Mesh showcase ({modes_label}): multi-scenario pipeline digest — "
         "see synthesis/showcase-insights.md and data/run_summaries.json"
     )
-    if for_minimax:
+    if embed_minimax_question:
         blob = json.dumps(summaries, indent=2, sort_keys=True)
         if len(blob) > 14_000:
             blob = blob[:14_000] + "\n…[truncated]…\n"
@@ -249,12 +250,16 @@ def _write_manifest(
             "## Empirical run_summaries\n\n```json\n"
             f"{blob}\n```"
         )
+    if pending_minimax_run:
+        status = "showcase_ready_for_minimax"
+    else:
+        status = "showcase_complete"
     manifest = {
         "session_id": out_dir.name,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "owner": "mesh_showcase_research",
         "question": base_q,
-        "status": "showcase_complete" if not for_minimax else "showcase_ready_for_minimax",
+        "status": status,
         "topology": {"lead": "pipeline", "workers": []},
         "paths": {
             "session_dir": str(out_dir),
@@ -297,6 +302,12 @@ def main() -> None:
         action="store_true",
         help="After digest, run MiniMax multi-wave research on this session (needs API keys; see run_minimax_research.py)",
     )
+    parser.add_argument(
+        "--embed-minimax-prompt",
+        action="store_true",
+        help="Embed the long MiniMax-oriented empirical question in manifest.json but do not invoke MiniMax "
+        "(for external orchestrators such as overnight_mesh_autoresearch.py).",
+    )
     args = parser.parse_args()
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -326,7 +337,14 @@ def main() -> None:
         encoding="utf-8",
     )
     _write_insights_md(summaries, out_dir, modes_label)
-    _write_manifest(out_dir, modes_label, summaries, for_minimax=args.minimax)
+    embed = bool(args.minimax or args.embed_minimax_prompt)
+    _write_manifest(
+        out_dir,
+        modes_label,
+        summaries,
+        embed_minimax_question=embed,
+        pending_minimax_run=bool(args.minimax),
+    )
 
     print(out_dir)
     print((out_dir / "synthesis" / "showcase-insights.md").as_posix())

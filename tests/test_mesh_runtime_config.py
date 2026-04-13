@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from shared.mesh_runtime.config import DEFAULT_RESEARCH_DIRECTORY, DEFAULT_STATE_DIRECTORY, RuntimeConfig
+from shared.mesh_runtime.state import parse_state_json_file
 
 
 class RuntimeConfigPathTests(unittest.TestCase):
@@ -44,6 +47,20 @@ class RuntimeConfigPathTests(unittest.TestCase):
             cfg = RuntimeConfig.from_env()
         self.assertTrue(Path(cfg.research_directory).is_absolute())
         self.assertEqual(Path(cfg.research_directory), DEFAULT_RESEARCH_DIRECTORY.resolve())
+
+    def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run_sessions.json"
+            raw = '{"runs": [{"run_id": "x" INVALID}]}'
+            self.assertEqual(parse_state_json_file(path, raw), {})
+            backups = sorted(Path(tmp).glob("run_sessions.json.corrupt.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), raw)
+
+    def test_parse_state_json_file_valid_round_trip(self) -> None:
+        payload = {"runs": [{"run_id": "run_1"}]}
+        raw = json.dumps(payload)
+        self.assertEqual(parse_state_json_file(Path("/tmp/ignored.json"), raw), payload)
 
 
 if __name__ == "__main__":

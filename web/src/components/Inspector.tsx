@@ -43,7 +43,7 @@ export function Inspector(props: InspectorProps) {
         <div className="inspector-empty">
           <FileText size={32} strokeWidth={1.2} />
           <p>
-            Select a session under <strong>Research (MiniMax)</strong> in the left rail. These sessions are produced by{" "}
+            Select a session under <strong>Autonomous Research</strong> in the left rail. These sessions are produced by{" "}
             <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
             in the Run Queue.
           </p>

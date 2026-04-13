@@ -5,6 +5,7 @@ import {
   buildKubernetesGraph,
   buildMerkleGraph,
   buildRunGraph,
+  buildUnifiedGraph,
   toneForStage,
 } from "./runGraph";
 
@@ -135,5 +136,71 @@ describe("runGraph", () => {
     expect(merkleGraph.nodes.map((node) => node.id)).toContain("merkle-leaf");
     expect(artifactGraph.nodes[0].id).toBe("artifact-run");
     expect(artifactGraph.nodes.some((node) => node.data.artifactKey === "trigger")).toBe(true);
+  });
+
+  it("builds a unified canvas from run, kubernetes, merkle, and artifact graphs", () => {
+    const flow = buildRunGraph([
+      {
+        event_id: "evt-1",
+        run_id: "run-1",
+        sequence: 1,
+        stage: "queued",
+        event_type: "run_queued",
+        recorded_at: "2026-04-06T00:00:00Z",
+        payload: {},
+        artifact_key: "input_signal",
+      },
+      {
+        event_id: "evt-2",
+        run_id: "run-1",
+        sequence: 2,
+        stage: "completed",
+        event_type: "run_completed",
+        recorded_at: "2026-04-06T00:00:01Z",
+        payload: {},
+        artifact_key: "execution",
+      },
+    ]);
+    const kubernetes = buildKubernetesGraph({
+      signal_type: "kubernetes_deployment_issue",
+      cluster: "k3d-mesh-e2e",
+      namespace: "search",
+      service: "semantic-search",
+      deployment: {
+        name: "semantic-search",
+        rollout_status: "healthy",
+        available_replicas: 3,
+        desired_replicas: 3,
+      },
+    });
+    const merkle = buildMerkleGraph(
+      {
+        root_hash: "root-hash",
+        leaf_count: 2,
+        event_ids: ["evt-1", "evt-2"],
+      },
+      null,
+    );
+    const artifacts = buildArtifactGraph({
+      stage: "completed",
+      status: "completed",
+      artifacts: {
+        input_signal: { signal_type: "kubernetes_deployment_issue" },
+        execution: { status: "succeeded" },
+      },
+    });
+
+    const unified = buildUnifiedGraph({ flow, kubernetes, merkle, artifacts });
+
+    expect(unified.nodes.map((node) => node.id)).toContain("flow:evt-1");
+    expect(unified.nodes.map((node) => node.id)).toContain("section:flow");
+    expect(unified.nodes.map((node) => node.id)).toContain("section:kubernetes");
+    expect(unified.nodes.map((node) => node.id)).toContain("section:merkle");
+    expect(unified.nodes.map((node) => node.id)).toContain("section:artifacts");
+    expect(unified.nodes.map((node) => node.id)).toContain("kubernetes:cluster");
+    expect(unified.nodes.map((node) => node.id)).toContain("merkle:merkle-root");
+    expect(unified.nodes.map((node) => node.id)).toContain("artifacts:artifact-run");
+    expect(unified.edges.some((edge) => edge.id === "unified:input-signal-kubernetes")).toBe(true);
+    expect(unified.edges.some((edge) => edge.id === "unified:execution-merkle-root")).toBe(true);
   });
 });

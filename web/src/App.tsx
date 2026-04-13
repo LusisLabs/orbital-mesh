@@ -11,6 +11,8 @@ import {
   FolderGit2,
   GitBranch,
   Loader2,
+  Maximize2,
+  Minimize2,
   Play,
   Plus,
   ShieldCheck,
@@ -31,6 +33,7 @@ import {
   buildKubernetesGraph,
   buildMerkleGraph,
   buildRunGraph,
+  buildUnifiedGraph,
   toneForStage,
   type RunGraphNode,
 } from "./lib/runGraph";
@@ -76,7 +79,7 @@ const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
 } as const;
 
 type RightRailTab = "steering" | InspectorTab;
-type CanvasMode = "flow" | "kubernetes" | "merkle" | "artifacts";
+type CanvasMode = "unified" | "flow" | "kubernetes" | "merkle" | "artifacts";
 
 const nodeTypes = {
   runEvent: RunEventNode,
@@ -116,6 +119,8 @@ function rightRailTabIcon(tab: RightRailTab): React.ReactNode {
 
 function canvasModeLabel(mode: CanvasMode): string {
   switch (mode) {
+    case "unified":
+      return "Unified";
     case "flow":
       return "Run Flow";
     case "kubernetes":
@@ -131,6 +136,8 @@ function canvasModeLabel(mode: CanvasMode): string {
 
 function canvasModeIcon(mode: CanvasMode, size = 14): React.ReactNode {
   switch (mode) {
+    case "unified":
+      return <CircleDot size={size} />;
     case "flow":
       return <GitBranch size={size} />;
     case "kubernetes":
@@ -192,7 +199,7 @@ export default function App() {
   const [showOverrides, setShowOverrides] = useState(false);
   const [leftRailOpen, setLeftRailOpen] = useState(true);
   const [rightRailOpen, setRightRailOpen] = useState(true);
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>("flow");
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>("unified");
 
   /* ── Inspector ── */
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
@@ -220,8 +227,47 @@ export default function App() {
 
   /* ── Refs ── */
   const timelineRef = useRef<HTMLDivElement>(null);
+  const canvasPanelRef = useRef<HTMLDivElement>(null);
+  const [canvasFullscreen, setCanvasFullscreen] = useState(false);
+
+  const toggleCanvasFullscreen = useCallback(async () => {
+    const el = canvasPanelRef.current;
+    if (!el) return;
+    const doc = document as Document & {
+      webkitFullscreenElement?: Element | null;
+      webkitExitFullscreen?: () => Promise<void>;
+    };
+    const fsNow = document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+    try {
+      if (fsNow === el) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else await doc.webkitExitFullscreen?.();
+      } else {
+        const anyEl = el as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> };
+        if (anyEl.requestFullscreen) await anyEl.requestFullscreen();
+        else await anyEl.webkitRequestFullscreen?.();
+      }
+    } catch {
+      addToast({ variant: "warning", title: "Fullscreen unavailable", description: "Your browser blocked or does not support fullscreen for this panel." });
+    }
+  }, [addToast]);
 
   /* ──────────── Effects ──────────── */
+
+  useEffect(() => {
+    const sync = () => {
+      const panel = canvasPanelRef.current;
+      const doc = document as Document & { webkitFullscreenElement?: Element | null };
+      const fs = document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+      setCanvasFullscreen(panel ? fs === panel : false);
+    };
+    document.addEventListener("fullscreenchange", sync);
+    document.addEventListener("webkitfullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      document.removeEventListener("webkitfullscreenchange", sync);
+    };
+  }, []);
 
   useEffect(() => {
     void refreshBootstrap();
@@ -540,8 +586,20 @@ export default function App() {
       ),
     [activeRun],
   );
+  const unifiedCanvas = useMemo(
+    () =>
+      buildUnifiedGraph({
+        flow: flowCanvas,
+        kubernetes: kubernetesCanvas,
+        merkle: merkleCanvas,
+        artifacts: artifactCanvas,
+      }),
+    [artifactCanvas, flowCanvas, kubernetesCanvas, merkleCanvas],
+  );
   const canvasGraph = useMemo(() => {
     switch (canvasMode) {
+      case "unified":
+        return unifiedCanvas;
       case "kubernetes":
         return kubernetesCanvas;
       case "merkle":
@@ -552,18 +610,27 @@ export default function App() {
       default:
         return flowCanvas;
     }
-  }, [artifactCanvas, canvasMode, flowCanvas, kubernetesCanvas, merkleCanvas]);
+  }, [artifactCanvas, canvasMode, flowCanvas, kubernetesCanvas, merkleCanvas, unifiedCanvas]);
   const canvasAvailability = useMemo(
     () => ({
+      unified: unifiedCanvas.nodes.length > 0,
       flow: flowCanvas.nodes.length > 0,
       kubernetes: kubernetesCanvas.nodes.length > 0,
       merkle: merkleCanvas.nodes.length > 0,
       artifacts: artifactCanvas.nodes.length > 0,
     }),
-    [artifactCanvas.nodes.length, flowCanvas.nodes.length, kubernetesCanvas.nodes.length, merkleCanvas.nodes.length],
+    [
+      artifactCanvas.nodes.length,
+      flowCanvas.nodes.length,
+      kubernetesCanvas.nodes.length,
+      merkleCanvas.nodes.length,
+      unifiedCanvas.nodes.length,
+    ],
   );
   const canvasEmptyMessage = useMemo(() => {
     switch (canvasMode) {
+      case "unified":
+        return "Launch a run to see the unified execution canvas.";
       case "kubernetes":
         return "This run does not include a Kubernetes deployment signal.";
       case "merkle":
@@ -575,7 +642,7 @@ export default function App() {
         return "Launch a run to see the execution graph.";
     }
   }, [canvasMode]);
-  const canvasFitPadding = canvasMode === "flow" ? 0.12 : canvasMode === "artifacts" ? 0.16 : 0.2;
+  const canvasFitPadding = canvasMode === "unified" ? 0.08 : canvasMode === "flow" ? 0.12 : canvasMode === "artifacts" ? 0.16 : 0.2;
 
   const selectedEvent = useMemo(() => {
     if (!activeRun?.events?.length) return null;
@@ -624,6 +691,10 @@ export default function App() {
   useEffect(() => {
     if (!activeRun) return;
     if (canvasAvailability[canvasMode]) return;
+    if (canvasAvailability.unified) {
+      setCanvasMode("unified");
+      return;
+    }
     if (canvasAvailability.flow) {
       setCanvasMode("flow");
       return;
@@ -808,7 +879,7 @@ export default function App() {
                 <ShieldCheck size={14} />
                 Research Safe
               </button>
-              <p className="helper-text">Promptfoo + Goose + interruptible auto with no default pause points.</p>
+              <p className="helper-text">Evaluation + Orchestration + Interruptible Auto with no default pause points.</p>
             </div>
             <div className="select-wrap">
               <select
@@ -878,6 +949,7 @@ export default function App() {
               <div className="select-wrap">
                 <select value={launchDraft.orchestrationMode} onChange={(e) => setLaunchDraft({ ...launchDraft, orchestrationMode: e.target.value })}>
                   <option value="native">Orch: Native</option>
+                  <option value="hermes">Orch: Hermes</option>
                   <option value="goose">Orch: Goose</option>
                 </select>
                 <ChevronDown size={14} className="select-icon" />
@@ -933,7 +1005,7 @@ export default function App() {
             {runs.length === 0 && <EmptyState text="No runs yet" />}
           </div>
 
-          <SectionTitle icon={<BookOpen size={15} />} title="Research (MiniMax)" />
+          <SectionTitle icon={<BookOpen size={15} />} title="Autonomous Research" />
           <p className="helper-text" style={{ margin: "0 0 0.5rem" }}>
             Autoresearch from <code>run_minimax_research.py</code> (file-backed sessions). Refresh the page after a CLI run
             to list new sessions.
@@ -997,7 +1069,7 @@ export default function App() {
                 )}
               </div>
               <div className="tab-strip canvas-mode-strip" role="tablist" aria-label="Canvas mode">
-                {(["flow", "kubernetes", "merkle", "artifacts"] as CanvasMode[]).map((mode) => (
+                {(["unified", "flow", "kubernetes", "merkle", "artifacts"] as CanvasMode[]).map((mode) => (
                   <button
                     key={mode}
                     className={canvasMode === mode ? "tab active" : "tab"}
@@ -1027,12 +1099,23 @@ export default function App() {
           </div>
 
           <div className="center-grid auto-canvas-grid">
-            <div className="panel graph-panel">
+            <div ref={canvasPanelRef} className="panel graph-panel">
+              <div className="graph-panel-fs-toolbar">
+                <button
+                  type="button"
+                  className="icon-btn graph-panel-fs-btn"
+                  onClick={() => void toggleCanvasFullscreen()}
+                  title={canvasFullscreen ? "Exit canvas fullscreen (Esc)" : "Fullscreen canvas"}
+                  aria-pressed={canvasFullscreen}
+                >
+                  {canvasFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+                </button>
+              </div>
               {activeRun && canvasGraph.nodes.length > 0 ? (
                 <ReactFlow
                   fitView
                   fitViewOptions={{ padding: canvasFitPadding }}
-                  minZoom={canvasMode === "flow" ? 0.3 : 0.22}
+                  minZoom={canvasMode === "unified" ? 0.08 : canvasMode === "flow" ? 0.3 : 0.22}
                   nodes={canvasGraph.nodes}
                   edges={canvasGraph.edges}
                   nodeTypes={nodeTypes}
@@ -1204,8 +1287,10 @@ function RunEventNode({ data, selected }: NodeProps<RunGraphNode>) {
       ? String(data.sequence)
       : data.nodeKind === "kubernetes"
         ? "K8s"
-        : data.nodeKind === "merkle"
-          ? "Hash"
+      : data.nodeKind === "merkle"
+        ? "Hash"
+        : data.nodeKind === "section"
+          ? "View"
           : "Data";
   const meta = Array.isArray(data.meta)
     ? data.meta.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 2)
