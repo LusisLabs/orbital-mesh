@@ -30,10 +30,7 @@ class FeedbackService:
             check_10m.get("p95_latency_ms", observed_latency) < observed_latency
             and check_10m.get("error_rate", observed_error) < observed_error
         )
-        execution_refs = execution.external_refs if isinstance(execution.external_refs, dict) else {}
-        goose_review = execution_refs.get("goose_review", {})
-        hermes_review = execution_refs.get("hermes_review", {})
-        orchestration_review = hermes_review or goose_review
+        goose_review = execution.external_refs.get("goose_review", {}) if isinstance(execution.external_refs, dict) else {}
         successful_30m = (
             execution.status == "succeeded"
             and post_latency <= baseline_latency * 1.10
@@ -76,8 +73,7 @@ class FeedbackService:
                 "observed_time_to_effect": check_30m.get("observed_time_to_effect", "not_achieved"),
             },
             side_effects=check_30m.get("side_effects", [])
-            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else [])
-            + ([{"source": "hermes_review", "risk_flags": hermes_review.get("risk_flags", [])}] if hermes_review else []),
+            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else []),
             recommended_follow_up=recommended_follow_up,
             world_model_updates={
                 "causal_link_strength": 0.82 if successful_30m else 0.38,
@@ -85,7 +81,7 @@ class FeedbackService:
                 "service_recovery_pattern": _service_recovery_pattern(decision.decision_type, successful_30m),
                 "integration_signals": {
                     "evaluation_mode": execution.executor if execution.executor else "unknown",
-                    "orchestration_review_summary": orchestration_review.get("summary"),
+                    "goose_review_summary": goose_review.get("summary"),
                 },
             },
         )
@@ -101,12 +97,7 @@ class FeedbackService:
     ) -> FeedbackRecord:
         observations = normalized_event.payload.get("post_action_observations", {})
         check_30m = observations.get("30m", {})
-        if not check_30m:
-            check_30m = _kubernetes_feedback_fallback(execution)
-        execution_refs = execution.external_refs if isinstance(execution.external_refs, dict) else {}
-        goose_review = execution_refs.get("goose_review", {})
-        hermes_review = execution_refs.get("hermes_review", {})
-        orchestration_review = hermes_review or goose_review
+        goose_review = execution.external_refs.get("goose_review", {}) if isinstance(execution.external_refs, dict) else {}
         desired = int(check_30m.get("desired_replicas", trigger.metrics.get("desired_replicas") or 0))
         ready = int(check_30m.get("ready_replicas", 0))
         restart_delta = int(check_30m.get("restart_delta", trigger.metrics.get("restart_count_total") or 0))
@@ -139,15 +130,14 @@ class FeedbackService:
                 "observed_time_to_effect": check_30m.get("observed_time_to_effect", "not_achieved"),
             },
             side_effects=new_error_signatures
-            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else [])
-            + ([{"source": "hermes_review", "risk_flags": hermes_review.get("risk_flags", [])}] if hermes_review else []),
+            + ([{"source": "goose_review", "risk_flags": goose_review.get("risk_flags", [])}] if goose_review else []),
             world_model_updates={
                 "cluster_recovery_pattern": _service_recovery_pattern(decision.decision_type, successful),
                 "deployment_name": trigger.related_context.get("deployment_name"),
                 "namespace": trigger.related_context.get("namespace"),
                 "integration_signals": {
                     "executor": execution.executor,
-                    "orchestration_review_summary": orchestration_review.get("summary"),
+                    "goose_review_summary": goose_review.get("summary"),
                 },
             },
             recommended_follow_up=recommended_follow_up,
@@ -170,24 +160,3 @@ def _service_recovery_pattern(decision_type: str, successful: bool) -> str:
     if decision_type == "no_action":
         return "no_automated_change_recorded"
     return "human_review_required"
-
-
-def _kubernetes_feedback_fallback(execution: ExecutionRecord) -> dict:
-    if not isinstance(execution.external_refs, dict):
-        return {}
-    deployment_after = execution.external_refs.get("deployment_after")
-    if not isinstance(deployment_after, dict):
-        return {}
-    desired = int(deployment_after.get("desired_replicas") or 0)
-    available = int(deployment_after.get("available_replicas") or 0)
-    unavailable = int(deployment_after.get("unavailable_replicas") or 0)
-    rollout_status = "healthy" if desired > 0 and available >= desired and unavailable == 0 else "degraded"
-    return {
-        "measured_at": execution.external_refs.get("observed_at", datetime.now(timezone.utc).isoformat()),
-        "desired_replicas": desired,
-        "ready_replicas": available,
-        "restart_delta": 0,
-        "rollout_status": rollout_status,
-        "new_error_signatures": [],
-        "observed_time_to_effect": "immediate_post_action_snapshot",
-    }

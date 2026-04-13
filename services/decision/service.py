@@ -146,7 +146,6 @@ class DecisionService:
         test_commands = list(trigger.related_context.get("test_commands", []))
         patch_template = trigger.related_context.get("patch_template")
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
-        crashing_application_revision = "crash_loop" in error_signatures and "application_error" in error_signatures
 
         if (
             code_remediation_candidate
@@ -162,11 +161,11 @@ class DecisionService:
             risk_level = "medium"
             autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_repo_single_file"
-        elif "image_pull_failure" in error_signatures or rollout_status == "failed" or crashing_application_revision:
+        elif "image_pull_failure" in error_signatures or rollout_status == "failed":
             decision_type = "rollback_deployment"
-            confidence = 0.86 if crashing_application_revision else 0.9
+            confidence = 0.9
             risk_level = "medium"
-            autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+            autonomy_tier = "autonomous"
             blast_radius = "single_deployment"
         elif "crash_loop" in error_signatures or "probe_failure" in error_signatures or "oom_killed" in error_signatures:
             decision_type = "restart_deployment"
@@ -244,11 +243,9 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "rollback_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
-                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
-                "current_revision": trigger.related_context.get("release_id"),
-                "target_revision": trigger.related_context.get("previous_stable_revision"),
+                "revision": trigger.related_context.get("release_id"),
             },
             "rollback_plan": "reapply the unhealthy revision only after human review confirms the rollback was incorrect",
         }
@@ -258,7 +255,6 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "restart_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
-                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
             },

@@ -11,7 +11,6 @@ from unittest.mock import patch
 from services.evaluation.promptfoo_bridge import _parse_promptfoo_output
 from services.orchestrator.goose_adapter import GooseCliAdapter
 from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _run_goose_prompt
-from services.orchestrator.hermes_bridge import _parse_review_text as _parse_hermes_review_text
 from shared.mesh_runtime import RuntimeConfig, resolve_integrations_config
 from shared.mesh_runtime.integrations import build_readiness
 
@@ -39,6 +38,29 @@ class IntegrationsTests(unittest.TestCase):
                 check: bool = False,
                 timeout: int | float | None = None,
             ) -> subprocess.CompletedProcess[str]:
+                if args == ["/usr/local/bin/ollama", "list"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="NAME ID SIZE MODIFIED\nqwen2.5:0.5b abc 1 GB now\n",
+                        stderr="",
+                    )
+                if args[:2] == ["/opt/homebrew/bin/goose", "run"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "messages": [
+                                    {
+                                        "role": "assistant",
+                                        "content": [{"type": "text", "text": "ACK"}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
                 raise AssertionError(f"unexpected subprocess args: {args}")
 
             with (
@@ -50,8 +72,8 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("services.evaluation.promptfoo_bridge", resolved.promptfoo_command or "")
         self.assertIn("/usr/local/bin/promptfoo", resolved.promptfoo_command or "")
         self.assertIn("services.orchestrator.goose_bridge", resolved.goose_command or "")
-        self.assertNotIn("--provider ollama", resolved.goose_command or "")
-        self.assertNotIn("--model qwen2.5:0.5b", resolved.goose_command or "")
+        self.assertIn("--provider ollama", resolved.goose_command or "")
+        self.assertIn("--model qwen2.5:0.5b", resolved.goose_command or "")
 
     def test_promptfoo_output_parser_extracts_real_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -88,41 +110,6 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(artifact["passed"])
         self.assertEqual(artifact["score"], 0.88)
         self.assertEqual(artifact["assertions"][0]["reason"], "confidence meets minimum threshold")
-
-    def test_resolve_integrations_wraps_hermes_binary_with_bridge_command(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config = RuntimeConfig(
-                state_directory=temp_dir,
-                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
-            )
-
-            def fake_which(name: str) -> str | None:
-                mapping = {
-                    "promptfoo": "/usr/local/bin/promptfoo",
-                    "hermes": "/Users/test/.local/bin/hermes",
-                }
-                return mapping.get(name)
-
-            with patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which):
-                resolved = resolve_integrations_config(config)
-
-        self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
-        self.assertIn("/Users/test/.local/bin/hermes", resolved.hermes_command or "")
-
-    def test_resolve_integrations_wraps_complex_hermes_command_with_bridge_command(self) -> None:
-        config = RuntimeConfig(
-            hermes_command=(
-                "docker exec -w /workspace/mesh-intelligence "
-                "-e HERMES_HOME=/workspace/mesh-intelligence/.hermes-local "
-                "mesh-intelligence-hermes /opt/venv/bin/hermes"
-            )
-        )
-
-        resolved = resolve_integrations_config(config)
-
-        self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
-        self.assertIn("docker exec -w /workspace/mesh-intelligence", resolved.hermes_command or "")
-        self.assertIn("/opt/venv/bin/hermes", resolved.hermes_command or "")
 
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -185,7 +172,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("--provider openai", resolved.goose_command or "")
         self.assertIn("--model MiniMax-M2.5", resolved.goose_command or "")
 
-    def test_resolve_integrations_respects_explicit_local_ollama_with_openai_fallback(self) -> None:
+    def test_resolve_integrations_prefers_local_ollama_with_openai_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = RuntimeConfig(
                 state_directory=temp_dir,
@@ -413,29 +400,6 @@ class IntegrationsTests(unittest.TestCase):
 
     def test_goose_review_parser_accepts_json_review(self) -> None:
         review = _parse_review_text(
-            json.dumps(
-                {
-                    "approved": True,
-                    "summary": "bounded execution looks safe",
-                    "risk_flags": ["none"],
-                    "next_action": "proceed",
-                    "patch": {
-                        "target_file": "app/search.py",
-                        "find": "old",
-                        "replace": "new",
-                    },
-                    "test_commands": ["python3 -m unittest discover -s tests"],
-                }
-            )
-        )
-        self.assertTrue(review["approved"])
-        self.assertEqual(review["summary"], "bounded execution looks safe")
-        self.assertEqual(review["next_action"], "proceed")
-        self.assertEqual(review["patch"]["target_file"], "app/search.py")
-        self.assertEqual(review["test_commands"][0], "python3 -m unittest discover -s tests")
-
-    def test_hermes_review_parser_accepts_json_review(self) -> None:
-        review = _parse_hermes_review_text(
             json.dumps(
                 {
                     "approved": True,

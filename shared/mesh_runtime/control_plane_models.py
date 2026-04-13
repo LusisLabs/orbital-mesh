@@ -102,7 +102,6 @@ class IntegrationStatus(JsonModel):
 class IntegrationReadiness(JsonModel):
     checked_at: str
     promptfoo: IntegrationStatus
-    hermes: IntegrationStatus
     goose: IntegrationStatus
     gitnexus: IntegrationStatus
     vault_path: str
@@ -132,3 +131,4 @@ class MerkleProof(JsonModel):
     root_hash: str
     proof: list[MerkleProofStep]
     valid: bool
+

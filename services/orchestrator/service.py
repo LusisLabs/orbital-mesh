@@ -1,4 +1,4 @@
-"""Execute approved plans through bounded Goose or Hermes integration boundaries."""
+"""Execute approved plans through a Goose integration boundary."""
 
 from __future__ import annotations
 
@@ -16,13 +16,12 @@ from shared.mesh_runtime import (
 )
 
 from .goose_adapter import GooseAdapter, GooseCliAdapter, NativeGooseAdapter
-from .hermes_adapter import HermesAdapter, HermesCliAdapter
 
 
 class OrchestratorService:
     def __init__(
         self,
-        adapter: GooseAdapter | HermesAdapter | None = None,
+        adapter: GooseAdapter | None = None,
         config: RuntimeConfig | None = None,
         clock: Callable[[], float] | None = None,
         sleeper: Callable[[float], None] | None = None,
@@ -32,19 +31,14 @@ class OrchestratorService:
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
 
-    def _build_adapter(self) -> GooseAdapter | HermesAdapter:
-        resolved = resolve_integrations_config(self.config)
-        if self.config.orchestration_mode == "hermes":
-            return HermesCliAdapter(
-                command=resolved.hermes_command,
-                timeout_seconds=self.config.hermes_command_timeout_seconds,
-            )
+    def _build_adapter(self) -> GooseAdapter:
         if self.config.orchestration_mode == "goose":
+            resolved = resolve_integrations_config(self.config)
             return GooseCliAdapter(
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
-        return NativeGooseAdapter(config=self.config)
+        return NativeGooseAdapter()
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
         started_at = datetime.now(timezone.utc).isoformat()
