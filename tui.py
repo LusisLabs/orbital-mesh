@@ -384,7 +384,7 @@ class MeshOperatorTUI:
     def __init__(self, controller: MeshOperatorController):
         self.controller = controller
         self.evaluation_modes = ["native", "promptfoo"]
-        self.orchestration_modes = ["native", "goose"]
+        self.orchestration_modes = ["native", "goose", "hermes"]
         self.detail_tabs = ["overview", "evidence", "execution", "json"]
         self.evaluation_mode_index = 0
         self.orchestration_mode_index = 0

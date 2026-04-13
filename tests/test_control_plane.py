@@ -25,6 +25,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             server_port=0,
             vault_ai_postprocess_enabled=True,
             promptfoo_command="/missing/promptfoo",
+            hermes_command="/missing/hermes",
             goose_command="/missing/goose",
             gitnexus_sidecar_url="http://127.0.0.1:65535",
         )
@@ -316,6 +317,7 @@ class ControlPlaneApiTests(unittest.TestCase):
     def test_readiness_reports_missing_cli_integrations(self) -> None:
         readiness = self._request("GET", "/api/readiness")
         self.assertFalse(readiness["promptfoo"]["ready"])
+        self.assertFalse(readiness["hermes"]["ready"])
         self.assertFalse(readiness["goose"]["ready"])
         self.assertEqual(readiness["state_path"], self.temp_dir.name)
         self.assertEqual(readiness["vault_path"], str(Path(self.temp_dir.name) / "vault"))
@@ -329,6 +331,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             server_port=0,
             max_json_body_bytes=32,
             promptfoo_command="/missing/promptfoo",
+            hermes_command="/missing/hermes",
             goose_command="/missing/goose",
             gitnexus_sidecar_url="http://127.0.0.1:65535",
         )

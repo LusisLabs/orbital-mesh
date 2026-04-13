@@ -374,6 +374,46 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertGreater(result["run_metadata"]["stage_event_count"], 0)
         self.assertGreaterEqual(result["run_metadata"]["integration_artifact_count"], 2)
 
+    def test_hermes_cli_modes_execute_end_to_end(self) -> None:
+        signal = base_signal()
+        with tempfile.TemporaryDirectory() as state_dir:
+            config = RuntimeConfig(
+                evaluation_mode="promptfoo",
+                orchestration_mode="hermes",
+                state_directory=state_dir,
+                promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
+                hermes_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+            )
+            result = FirstSlicePipeline(config=config).run(signal)
+
+        self.assertEqual(result["evaluation"]["stage_results"]["promptfoo_quality"]["passed"], True)
+        self.assertIn("artifacts", result["evaluation"]["stage_results"]["promptfoo_quality"])
+        self.assertIn("assertion_results", result["evaluation"]["stage_results"]["promptfoo_quality"]["artifacts"])
+        self.assertEqual(result["execution"]["status"], "succeeded")
+        self.assertIn("audit_log_id", result["execution"]["external_refs"])
+        self.assertTrue(result["execution"]["external_refs"]["hermes_review"]["approved"])
+
+    def test_hermes_runtime_records_typed_stage_events_and_integration_artifacts(self) -> None:
+        signal = base_signal()
+        with tempfile.TemporaryDirectory() as state_dir:
+            config = RuntimeConfig(
+                evaluation_mode="promptfoo",
+                orchestration_mode="hermes",
+                state_directory=state_dir,
+                promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
+                hermes_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+            )
+            result = FirstSlicePipeline(config=config).run(signal)
+
+        event_types = [event["event_type"] for event in result["run_events"]]
+        self.assertIn("evaluation_ready", event_types)
+        self.assertIn("execution_recorded", event_types)
+        integration_events = [event for event in result["run_events"] if event.get("integration_name")]
+        self.assertTrue(any(event["integration_name"] == "promptfoo" for event in integration_events))
+        self.assertTrue(any(event["integration_name"] == "hermes" for event in integration_events))
+        self.assertGreater(result["run_metadata"]["stage_event_count"], 0)
+        self.assertGreaterEqual(result["run_metadata"]["integration_artifact_count"], 2)
+
     def test_goose_cli_can_apply_bounded_code_patch(self) -> None:
         signal = base_signal()
         fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
@@ -400,6 +440,48 @@ class LoopBehaviorTests(unittest.TestCase):
                 state_directory=temp_dir,
                 promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
                 goose_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+            )
+
+            result = FirstSlicePipeline(config=config).run(signal)
+
+            self.assertEqual(result["decision"]["decision_type"], "investigate_and_patch")
+            self.assertEqual(result["execution"]["status"], "succeeded")
+            self.assertEqual(
+                result["execution"]["applied_action"]["system"],
+                "repo_patch_service",
+            )
+            patched_file = repo_path / "app" / "search.py"
+            self.assertIn("PARSE_TIMEOUT_MS = 80", patched_file.read_text())
+            test_results = result["execution"]["external_refs"]["test_results"]
+            self.assertEqual(test_results[0]["returncode"], 0)
+            self.assertEqual(result["feedback"]["outcome"], "successful")
+
+    def test_hermes_cli_can_apply_bounded_code_patch(self) -> None:
+        signal = base_signal()
+        fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = Path(temp_dir) / "search_service"
+            shutil.copytree(fixture_repo, repo_path)
+            signal["related_context"].update(
+                {
+                    "code_remediation_candidate": True,
+                    "repo_path": str(repo_path),
+                    "suspected_file": "app/search.py",
+                    "allowed_paths": ["app/search.py"],
+                    "test_commands": ["python3 -m unittest discover -s tests"],
+                    "patch_template": {
+                        "target_file": "app/search.py",
+                        "find": "PARSE_TIMEOUT_MS = 100",
+                        "replace": "PARSE_TIMEOUT_MS = 80",
+                    },
+                }
+            )
+            config = RuntimeConfig(
+                evaluation_mode="promptfoo",
+                orchestration_mode="hermes",
+                state_directory=temp_dir,
+                promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
+                hermes_command=f"{sys.executable} -m services.orchestrator.cli_executor",
             )
 
             result = FirstSlicePipeline(config=config).run(signal)

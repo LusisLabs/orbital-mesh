@@ -57,10 +57,13 @@ The browser UI is the primary interface.
 - Mirrors that memory into a fixed Obsidian-compatible vault layout
 - Computes Merkle roots for canonical run events and returns proofs per event
 - Integrates with a managed local GitNexus sidecar for code/process context
-- Supports three runtime modes:
+- Supports two evaluation modes:
   - `native`
   - `promptfoo`
+- Supports three orchestration modes:
+  - `native`
   - `goose`
+  - `hermes`
 
 ## Runtime Model
 
@@ -91,17 +94,27 @@ Overrides always re-enter evaluation before execution. Approval never bypasses p
 
 ## Runtime Modes
 
-### `native`
+Runs choose one evaluation mode and one orchestration mode.
 
-Default local mode. Uses in-process adapters with real local persistence and audit semantics. This is the mode that works immediately without external CLIs.
+### Evaluation: `native`
 
-### `promptfoo`
+Default local evaluation path. Uses in-process policy and contract validation without external CLIs.
 
-CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the mesh evaluation contract. Readiness is reported explicitly through the API and UI.
+### Evaluation: `promptfoo`
 
-### `goose`
+CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the Mesh evaluation contract. Readiness is reported explicitly through the API and UI.
 
-CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Goose review step before bounded local actuation. When Ollama is installed, the bootstrap path prefers the first working local model, starting with `qwen2.5:0.5b`. Readiness is reported explicitly through the API and UI.
+### Orchestration: `native`
+
+Default local orchestration path. Uses in-process bounded actuators with the same audit and persistence semantics as the bridged modes.
+
+### Orchestration: `goose`
+
+CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Goose review step before bounded local actuation. Installed Ollama models are not auto-probed; provider inference only selects the OpenAI-compatible route when an endpoint such as `OPENAI_BASE_URL` is configured. Readiness is reported explicitly through the API and UI.
+
+### Orchestration: `hermes`
+
+CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Hermes review step before bounded local actuation. In Docker Compose, Hermes runs in its own sidecar container and Mesh reaches it through `docker exec`, so the control plane can offer Hermes without removing Goose.
 
 ## Repository Layout
 
@@ -160,7 +173,7 @@ This writes integration configuration to:
 .mesh-runtime-state/integrations.json
 ```
 
-The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo and Goose CLIs.
+The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs.
 
 ### 2. Install the browser UI dependencies
 
@@ -197,7 +210,8 @@ Use the left rail to:
 
 - select or create a goal
 - choose a fixture scenario or paste a raw signal JSON payload
-- select `native`, `promptfoo`, or `goose`
+- select an evaluation mode: `native` or `promptfoo`
+- select an orchestration mode: `native`, `goose`, or `hermes`
 - choose `approval_gate` or `interruptible_auto`
 
 ## Web Control Plane
@@ -368,8 +382,8 @@ python3 run_tui.py
 
 Mode toggles now use:
 
-- `native` / `promptfoo`
-- `native` / `goose`
+- evaluation: `native` / `promptfoo`
+- orchestration: `native` / `goose` / `hermes`
 
 The TUI is no longer the primary operator interface.
 
@@ -390,7 +404,10 @@ Supported configuration variables:
 - `MESH_DEFAULT_STEERING_MODE`
 - `MESH_DEFAULT_OPERATOR_PAUSE_POINT`
 - `MESH_PROMPTFOO_COMMAND`
+- `MESH_HERMES_COMMAND`
+- `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_COMMAND`
+- `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` — when `1`/`true`, `kubernetes_service` actions use live `kubectl` execution instead of the default mock adapter.
 - `MESH_KUBECTL_COMMAND` — override the `kubectl` command used for live Kubernetes execution.
 - `MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS` — timeout for `kubectl rollout status` after restart/rollback actions.
@@ -499,10 +516,11 @@ The mesh control plane is an **HTTP server without built-in authentication**. Pu
 
 ### Container (recommended)
 
-Build and run with Compose. The default stack starts only:
+Build and run with Compose. The default stack starts:
 
 1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
-2. **GitNexus is optional** — Compose no longer builds a `gitnexus` container. If you already have a GitNexus instance running on the host or elsewhere, point `MESH_GITNEXUS_SIDECAR_URL` at it. Otherwise the control plane still starts cleanly and GitNexus readiness simply reports unavailable.
+2. **`hermes`** — dedicated Hermes runtime sidecar built from `Dockerfile.hermes`. Compose keeps it alive and healthy, and `mesh` reaches it through `docker exec` using the default `MESH_HERMES_COMMAND`.
+3. **GitNexus is optional** — Compose no longer builds a `gitnexus` container. If you already have a GitNexus instance running on the host or elsewhere, point `MESH_GITNEXUS_SIDECAR_URL` at it. Otherwise the control plane still starts cleanly and GitNexus readiness simply reports unavailable.
 
 ```bash
 docker compose up --build -d
@@ -511,6 +529,7 @@ docker compose up --build -d
 Persistence:
 
 - **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
+- **Hermes** local state: volume `hermes_home` → `/workspace/mesh-intelligence/.hermes-local`
 - **Goose** profile/config: volume `goose_config` → `/root/.config/goose`
 - **Workspace mirror**: bind mount `./` → `/workspace/mesh-intelligence`
 
@@ -532,19 +551,22 @@ Inspect readiness from the running backend:
 curl http://127.0.0.1:8787/api/readiness
 ```
 
-By default, Promptfoo becomes ready automatically in the container. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as:
+By default, Promptfoo becomes ready automatically in the container. Hermes is built and started as a sidecar, then Mesh reaches it through `docker exec`. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route:
 
 ```bash
-export GOOSE_PROVIDER=openai
-export GOOSE_MODEL=gpt-4o-mini
+export MESH_COMPOSE_GOOSE_PROVIDER=openai
+export MESH_COMPOSE_GOOSE_MODEL=MiniMax-M2.5
+export OPENAI_BASE_URL=https://api.minimax.io/v1
 export OPENAI_API_KEY=...
 docker compose up --build -d
 ```
 
-If you prefer a local model, point Goose at Ollama running on the host:
+Ollama is opt-in only. Use it only if you explicitly want the local provider path:
 
 ```bash
-export OLLAMA_HOST=http://host.docker.internal:11434
+export MESH_COMPOSE_GOOSE_PROVIDER=ollama
+export MESH_COMPOSE_GOOSE_MODEL=gemma4:31b-it-q4_K_M
+export MESH_COMPOSE_OLLAMA_HOST=http://host.docker.internal:11434
 docker compose up --build -d
 ```
 
@@ -609,10 +631,11 @@ The stable local path is:
 1. `native` evaluation + `native` orchestration
 2. browser operator approval gate
 3. vault and Merkle inspection
-4. optional Promptfoo / Goose CLI enablement through `setup_integrations.py`
+4. optional Promptfoo / Goose / Hermes CLI enablement through `setup_integrations.py`
 
 ## Supporting Docs
 
 - [architecture.md](./architecture.md)
+- [docs/integrations.md](./docs/integrations.md)
 - [first-closed-loop-contract.md](./first-closed-loop-contract.md)
 - [docs/CODEX_RUN_SUMMARY.md](./docs/CODEX_RUN_SUMMARY.md)

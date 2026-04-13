@@ -35,7 +35,7 @@ WORKDIR /app
 
 RUN apt-get update \
   && apt-get upgrade -y \
-  && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
+  && apt-get install -y --no-install-recommends ca-certificates curl docker.io git libgomp1 \
   && arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
     amd64) kubectl_arch="amd64" ;; \

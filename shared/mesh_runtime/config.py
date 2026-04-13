@@ -47,6 +47,8 @@ class RuntimeConfig:
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
     promptfoo_command: str | None = None
+    hermes_command: str | None = None
+    hermes_command_timeout_seconds: int = 180
     goose_command: str | None = None
     goose_command_timeout_seconds: int = 180
     kubernetes_live_execution_enabled: bool = False
@@ -103,6 +105,8 @@ class RuntimeConfig:
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
+            hermes_command=os.getenv("MESH_HERMES_COMMAND") or None,
+            hermes_command_timeout_seconds=int(os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS", "180")),
             goose_command=os.getenv("MESH_GOOSE_COMMAND") or None,
             goose_command_timeout_seconds=int(
                 os.getenv(

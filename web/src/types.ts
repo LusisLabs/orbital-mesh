@@ -1,5 +1,5 @@
 export type SteeringMode = "approval_gate" | "interruptible_auto";
-export type RuntimeMode = "native" | "promptfoo" | "goose";
+export type RuntimeMode = "native" | "promptfoo" | "goose" | "hermes";
 export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 export type InspectorTab =
   | "overview"
@@ -164,6 +164,7 @@ export interface IntegrationStatus {
 export interface IntegrationReadiness {
   checked_at: string;
   promptfoo: IntegrationStatus;
+  hermes: IntegrationStatus;
   goose: IntegrationStatus;
   gitnexus: IntegrationStatus;
   vault_path: string;

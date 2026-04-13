@@ -289,6 +289,7 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
     ["promptfoo_artifact", "Promptfoo Artifact", "#f2b84b"],
     ["execution", "Execution", "#41d6b1"],
     ["goose_review", "Goose Review", "#57d5c8"],
+    ["hermes_review", "Hermes Review", "#4aa8ff"],
     ["feedback", "Feedback", "#83d37d"],
   ] as const;
 
