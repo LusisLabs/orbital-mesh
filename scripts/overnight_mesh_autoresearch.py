@@ -93,7 +93,15 @@ def _minimax_env_configured() -> bool:
 
 
 def _ollama_host() -> str:
-    return (os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434").rstrip("/")
+    """Ollama API base. ``host.docker.internal`` only resolves inside Docker — use loopback on the host."""
+    raw = (
+        (os.environ.get("OVERNIGHT_OLLAMA_HOST") or os.environ.get("OLLAMA_HOST") or "http://127.0.0.1:11434")
+        .strip()
+        .rstrip("/")
+    )
+    if "host.docker.internal" in raw.lower():
+        return "http://127.0.0.1:11434"
+    return raw or "http://127.0.0.1:11434"
 
 
 def _ollama_chat_timeout_seconds() -> int:

@@ -45,15 +45,17 @@ Use this when you want **long-form research driven entirely by MiniMax’s OpenA
 OpenAI-compatible (preferred if `OPENAI_API_KEY` is set):
 
 ```bash
-export OPENAI_API_KEY="your-minimax-api-key"
+export OPENAI_API_KEY="sk-cp-BtCZiQAcJhik8WqvgKopHXmznaPLJhW7ylNGFhRci7zx31nCnMB0v-457xXvpv4JlQ0uAC2iI69e4hCJyejZySrCrLylqFVr_xbtVzd9dAsuHFAtILeAfjY"
 export OPENAI_BASE_URL="https://api.minimax.io/v1"
+# Set a MiniMax model id here; do not rely on GOOSE_MODEL/HERMES_MODEL (often Ollama) — the MiniMax API will 400.
+export MINIMAX_MODEL="MiniMax-M2.7"
 ```
 
 Anthropic-compatible fallback (used when OpenAI keys are unset—matches typical Mesh `.env`):
 
 ```bash
 export ANTHROPIC_BASE_URL="https://api.minimax.io/anthropic"
-export ANTHROPIC_API_KEY="your-minimax-api-key"
+export ANTHROPIC_API_KEY="sk-cp-BtCZiQAcJhik8WqvgKopHXmznaPLJhW7ylNGFhRci7zx31nCnMB0v-457xXvpv4JlQ0uAC2iI69e4hCJyejZySrCrLylqFVr_xbtVzd9dAsuHFAtILeAfjY"
 # Optional: stronger model for research quality
 export MINIMAX_MODEL="MiniMax-M2.7"
 ```

@@ -20,14 +20,15 @@ def minimax_anthropic_base_url() -> str:
 
 
 def minimax_model() -> str:
-    return (
-        os.getenv("MINIMAX_MODEL")
-        or os.getenv("HERMES_MODEL")
-        or os.getenv("LLM_MODEL")
-        or os.getenv("GOOSE_MODEL")
-        or os.getenv("ANTHROPIC_MODEL")
-        or "MiniMax-M2.5"
-    )
+    """Model id for MiniMax HTTP APIs only.
+
+    Do **not** fall back to GOOSE_MODEL / HERMES_MODEL / LLM_MODEL: those often name local Ollama tags
+    (e.g. ``gemma4:31b-it-q4_K_M``) and MiniMax returns HTTP 400 ``unknown model``.
+    """
+    explicit = (os.getenv("MINIMAX_MODEL") or "").strip()
+    if explicit:
+        return explicit
+    return (os.getenv("MINIMAX_DEFAULT_MODEL") or "MiniMax-M2.5").strip() or "MiniMax-M2.5"
 
 
 def _openai_api_key() -> str | None:
