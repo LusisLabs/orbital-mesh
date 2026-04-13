@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,7 +23,7 @@ import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -120,6 +121,63 @@ def _build_scenarios() -> list[tuple[str, Callable[[], dict]]]:
     ]
 
 
+def holistic_eval_orchestration_pairs() -> list[tuple[str, str]]:
+    """Semi-aggressive coverage: native + promptfoo × native + goose (Hermes/Goose path when goose)."""
+    return [
+        ("native", "native"),
+        ("native", "goose"),
+        ("promptfoo", "native"),
+        ("promptfoo", "goose"),
+    ]
+
+
+def _matrix_row_label(name: str, evaluation_mode: str, orchestration_mode: str) -> str:
+    return f"{name}__eval-{evaluation_mode}_orch-{orchestration_mode}"
+
+
+def _run_holistic_matrix_summaries(
+    scenarios: Sequence[tuple[str, Callable[[], dict]]],
+    pairs: Sequence[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    summaries: list[dict[str, Any]] = []
+    for evaluation_mode, orchestration_mode in pairs:
+        for name, builder in scenarios:
+            label = _matrix_row_label(name, evaluation_mode, orchestration_mode)
+            try:
+                row = _run_scenario(
+                    name,
+                    builder,
+                    evaluation_mode=evaluation_mode,
+                    orchestration_mode=orchestration_mode,
+                )
+                row["matrix_row"] = label
+                summaries.append(row)
+            except Exception as exc:  # noqa: BLE001 — collect errors per cell, keep sweep going
+                summaries.append(
+                    {
+                        "matrix_row": label,
+                        "scenario": name,
+                        "evaluation_mode": evaluation_mode,
+                        "orchestration_mode": orchestration_mode,
+                        "error": f"{type(exc).__name__}: {exc}"[:800],
+                        "elapsed_ms": 0.0,
+                        "trigger_emitted": False,
+                        "trigger_type": None,
+                        "decision_type": None,
+                        "evaluation_recommendation": None,
+                        "evaluation_passed": None,
+                        "execution_status": None,
+                        "feedback_outcome": None,
+                        "stage_event_count": 0,
+                        "event_chain": [],
+                        "integration_artifacts": [],
+                        "run_id": None,
+                        "blocking_reasons": None,
+                    }
+                )
+    return summaries
+
+
 def _write_insights_md(summaries: list[dict[str, Any]], out_dir: Path, modes_label: str) -> None:
     synth = out_dir / "synthesis"
     synth.mkdir(parents=True, exist_ok=True)
@@ -136,20 +194,26 @@ def _write_insights_md(summaries: list[dict[str, Any]], out_dir: Path, modes_lab
         "",
         "## Run table",
         "",
-        "| Scenario | Trigger? | Decision | Eval | Execution | Feedback | Events | ms |",
-        "|----------|----------|----------|------|-----------|----------|--------|-----|",
+        "| Matrix row | Eval | Orch | Trigger? | Decision | Eval rec | Execution | Feedback | Events | ms |",
+        "|--------------|------|------|----------|----------|----------|-----------|----------|--------|-----|",
     ]
     for s in summaries:
+        row_label = str(s.get("matrix_row") or s.get("scenario") or "—")
+        err = s.get("error")
+        if err:
+            row_label = f"{row_label} (ERROR)"
         lines.append(
-            "| {scenario} | {te} | {dt} | {er} | {xs} | {fo} | {ec} | {ms} |".format(
-                scenario=s["scenario"],
-                te="yes" if s["trigger_emitted"] else "no",
+            "| {mr} | {ev} | {oc} | {te} | {dt} | {er} | {xs} | {fo} | {ec} | {ms} |".format(
+                mr=row_label.replace("|", "\\|"),
+                ev=s.get("evaluation_mode") or "—",
+                oc=s.get("orchestration_mode") or "—",
+                te="yes" if s.get("trigger_emitted") else "no",
                 dt=s.get("decision_type") or "—",
                 er=s.get("evaluation_recommendation") or "—",
                 xs=s.get("execution_status") or "—",
                 fo=s.get("feedback_outcome") or "—",
-                ec=s["stage_event_count"],
-                ms=s["elapsed_ms"],
+                ec=s.get("stage_event_count", 0),
+                ms=s.get("elapsed_ms", 0),
             )
         )
     lines.extend(
@@ -160,10 +224,15 @@ def _write_insights_md(summaries: list[dict[str, Any]], out_dir: Path, modes_lab
         ]
     )
     for s in summaries:
-        lines.append(f"### {s['scenario']}")
+        head = str(s.get("matrix_row") or s.get("scenario") or "run")
+        lines.append(f"### {head}")
+        if s.get("error"):
+            lines.append("")
+            lines.append(f"_Pipeline error:_ `{s['error']}`")
         lines.append("")
         lines.append("```")
-        lines.append(" → ".join(s["event_chain"]) if s["event_chain"] else "(no events)")
+        ec = s.get("event_chain") or []
+        lines.append(" → ".join(ec) if isinstance(ec, list) and ec else "(no events)")
         lines.append("```")
         lines.append("")
     any_rejected = any(s.get("execution_status") == "rejected" for s in summaries)
@@ -206,8 +275,7 @@ def _write_insights_md(summaries: list[dict[str, Any]], out_dir: Path, modes_lab
     lines.extend(
         [
             "6. **Richer modes** — The same runner supports `native` / `promptfoo` evaluation and `native` / `goose` "
-            "orchestration; re-run with `--evaluation-mode promptfoo` or `--orchestration-mode goose` when those "
-            "integrations are configured.",
+            "orchestration. Use `--holistic-matrix` to sweep all four combinations across every signal fixture in one session.",
             "",
             f"**Modes this digest:** {modes_label}",
             "",
@@ -239,8 +307,9 @@ def _write_manifest(
     )
     if embed_minimax_question:
         blob = json.dumps(summaries, indent=2, sort_keys=True)
-        if len(blob) > 14_000:
-            blob = blob[:14_000] + "\n…[truncated]…\n"
+        cap = 28_000 if len(summaries) > 6 else 14_000
+        if len(blob) > cap:
+            blob = blob[:cap] + "\n…[truncated]…\n"
         base_q = (
             "You are synthesizing a strategic narrative for Mesh Intelligence using **only** the empirical JSON below "
             "(from real `FirstSlicePipeline` runs: ingest→trigger→decision→evaluation→orchestration→feedback). "
@@ -267,6 +336,7 @@ def _write_manifest(
             "synthesis_dir": str(out_dir / "synthesis"),
         },
         "mesh_showcase_modes": modes_label,
+        "holistic_matrix": any("matrix_row" in s for s in summaries),
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     (out_dir / "README.md").write_text(
@@ -308,6 +378,12 @@ def main() -> None:
         help="Embed the long MiniMax-oriented empirical question in manifest.json but do not invoke MiniMax "
         "(for external orchestrators such as overnight_mesh_autoresearch.py).",
     )
+    parser.add_argument(
+        "--holistic-matrix",
+        action="store_true",
+        help="Sweep evaluation ∈ {native, promptfoo} × orchestration ∈ {native, goose} across all built-in "
+        "scenarios (12 FirstSlicePipeline runs). Ignores single --evaluation-mode / --orchestration-mode flags.",
+    )
     args = parser.parse_args()
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -320,17 +396,33 @@ def main() -> None:
     data_dir = out_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    modes_label = f"evaluation={args.evaluation_mode}, orchestration={args.orchestration_mode}"
-    summaries: list[dict[str, Any]] = []
-    for name, builder in _build_scenarios():
-        summaries.append(
-            _run_scenario(
-                name,
-                builder,
-                evaluation_mode=args.evaluation_mode,
-                orchestration_mode=args.orchestration_mode,
+    scenarios = _build_scenarios()
+    if args.holistic_matrix:
+        if os.environ.get("MESH_SHOWCASE_HOLISTIC_FAST", "").lower() in ("1", "true", "yes"):
+            pairs = [("native", "native")]
+            modes_label = (
+                f"holistic_matrix FAST {len(pairs)}×{len(scenarios)}={len(pairs) * len(scenarios)} "
+                "(MESH_SHOWCASE_HOLISTIC_FAST=1)"
             )
-        )
+        else:
+            pairs = holistic_eval_orchestration_pairs()
+            modes_label = (
+                f"holistic_matrix {len(pairs)}×{len(scenarios)}={len(pairs) * len(scenarios)} "
+                "runs (eval×orch × fixtures)"
+            )
+        summaries = _run_holistic_matrix_summaries(scenarios, pairs)
+    else:
+        modes_label = f"evaluation={args.evaluation_mode}, orchestration={args.orchestration_mode}"
+        summaries = []
+        for name, builder in scenarios:
+            summaries.append(
+                _run_scenario(
+                    name,
+                    builder,
+                    evaluation_mode=args.evaluation_mode,
+                    orchestration_mode=args.orchestration_mode,
+                )
+            )
 
     (data_dir / "run_summaries.json").write_text(
         json.dumps(summaries, indent=2, sort_keys=True) + "\n",
