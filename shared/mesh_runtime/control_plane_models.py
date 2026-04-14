@@ -87,6 +87,40 @@ class SteeringCommand(JsonModel):
 
 
 @dataclass
+class AgentAttempt(JsonModel):
+    attempt_id: str
+    task_id: str
+    run_id: str
+    agent: str
+    adapter: str
+    status: str
+    started_at: str
+    completed_at: str
+    summary: str
+    changed_files: list[str] = field(default_factory=list)
+    test_results: list[dict[str, Any]] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    recommended_action: str = "human_review"
+    output: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentTask(JsonModel):
+    task_id: str
+    run_id: str
+    kind: str
+    status: str
+    created_at: str
+    updated_at: str
+    allowed_paths: list[str] = field(default_factory=list)
+    test_commands: list[str] = field(default_factory=list)
+    kubernetes_scope: dict[str, Any] = field(default_factory=dict)
+    agents: list[str] = field(default_factory=list)
+    attempts: list[AgentAttempt] = field(default_factory=list)
+    selected_attempt_id: str | None = None
+
+
+@dataclass
 class IntegrationStatus(JsonModel):
     name: str
     ready: bool
@@ -104,6 +138,9 @@ class IntegrationReadiness(JsonModel):
     promptfoo: IntegrationStatus
     hermes: IntegrationStatus
     goose: IntegrationStatus
+    evo: IntegrationStatus
+    latentmas: IntegrationStatus
+    deepagents: IntegrationStatus
     gitnexus: IntegrationStatus
     vault_path: str
     state_path: str

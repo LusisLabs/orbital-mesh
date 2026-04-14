@@ -112,6 +112,10 @@ export const api = {
     return request<MerkleSnapshot>(baseUrl, `/api/runs/${runId}/merkle`);
   },
 
+  getAgentTasks(baseUrl: string, runId: string) {
+    return request<{ tasks: import("./types").AgentTask[] }>(baseUrl, `/api/runs/${runId}/agent-tasks`);
+  },
+
   getMerkleProof(baseUrl: string, runId: string, eventId: string) {
     return request<MerkleProof>(baseUrl, `/api/runs/${runId}/merkle/proof/${eventId}`);
   },

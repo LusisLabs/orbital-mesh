@@ -27,6 +27,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             promptfoo_command="/missing/promptfoo",
             hermes_command="/missing/hermes",
             goose_command="/missing/goose",
+            evo_command="/missing/evo",
             gitnexus_sidecar_url="http://127.0.0.1:65535",
         )
         self.server, self.thread = start_server_in_thread(self.config, start_sidecar=False)
@@ -195,6 +196,70 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
         self.assertNotEqual(completed["status"], "awaiting_operator")
 
+    def test_agent_mesh_tasks_are_recorded_and_exposed(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        tasks = completed["artifacts"]["agent_tasks"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(
+            [attempt["agent"] for attempt in tasks[0]["attempts"]],
+            ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
+        )
+        evo_attempt = tasks[0]["attempts"][-1]
+        self.assertEqual(evo_attempt["adapter"], "native_contract")
+        self.assertEqual(evo_attempt["recommended_action"], "human_review")
+        self.assertIn("evo_cli_missing", evo_attempt["risk_flags"])
+        self.assertTrue(tasks[0]["selected_attempt_id"])
+
+        api_tasks = self._request("GET", f"/api/runs/{run['run_id']}/agent-tasks")["tasks"]
+        self.assertEqual(api_tasks[0]["task_id"], tasks[0]["task_id"])
+
+        agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
+        self.assertTrue(agent_events)
+        self.assertEqual(agent_events[-1]["integration_name"], "agent_mesh")
+
+        agent_note_path = f"Agents/{run['run_id']}.md"
+        document = self._request(
+            "GET",
+            f"/api/vault/document?{urlencode({'path': agent_note_path})}",
+        )
+        self.assertIn("Agent Mesh", document["content"])
+        self.assertIn("native_contract", document["content"])
+        self.assertIn("\"agent\": \"evo\"", document["content"])
+
+    def test_latentmas_unavailable_does_not_block_control_plane_run(self) -> None:
+        self.server.config.latentmas_enabled = True
+        self.server.config.latentmas_url = "http://127.0.0.1:9"
+        self.server.config.latentmas_timeout_seconds = 0.2
+        self.server.coordinator.config.latentmas_enabled = True
+        self.server.coordinator.config.latentmas_url = "http://127.0.0.1:9"
+        self.server.coordinator.config.latentmas_timeout_seconds = 0.2
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+        self.assertEqual(attempts[0]["agent"], "latentmas")
+        self.assertEqual(attempts[0]["status"], "failed")
+        self.assertEqual(attempts[0]["risk_flags"], ["latentmas_unavailable"])
+        self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
+
     def test_kubernetes_fixture_repo_placeholder_resolves_before_evaluation(self) -> None:
         run = self._request(
             "POST",
@@ -319,8 +384,107 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertFalse(readiness["promptfoo"]["ready"])
         self.assertFalse(readiness["hermes"]["ready"])
         self.assertFalse(readiness["goose"]["ready"])
+        self.assertFalse(readiness["evo"]["ready"])
+        self.assertEqual(readiness["evo"]["detail"], "command not found")
+        self.assertFalse(readiness["latentmas"]["ready"])
+        self.assertEqual(readiness["latentmas"]["detail"], "disabled")
+        self.assertFalse(readiness["deepagents"]["ready"])
+        self.assertIn("not deepagents", readiness["deepagents"]["detail"].lower())
         self.assertEqual(readiness["state_path"], self.temp_dir.name)
         self.assertEqual(readiness["vault_path"], str(Path(self.temp_dir.name) / "vault"))
+
+    def test_unknown_scenario_key_returns_400_json(self) -> None:
+        request = Request(
+            f"{self.base_url}/api/runs",
+            data=json.dumps(
+                {
+                    "scenario_key": "does_not_exist_fixture",
+                    "evaluation_mode": "native",
+                    "orchestration_mode": "native",
+                    "steering_mode": "interruptible_auto",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(request, timeout=10)
+        err = ctx.exception
+        self.assertEqual(err.code, 400)
+        body = json.loads(err.read().decode("utf-8"))
+        self.assertIn("error", body)
+        self.assertIn("does_not_exist_fixture", body["error"])
+
+    def test_steering_rejects_decision_override_before_evaluation_gate(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+                "pause_points": ["trigger_ready", "evaluation_ready"],
+            },
+        )
+        paused = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator"
+            and payload.get("pending_pause_stage") == "trigger_ready",
+        )
+        self.assertEqual(paused["pending_pause_stage"], "trigger_ready")
+        bad = Request(
+            f"{self.base_url}/api/runs/{run['run_id']}/steer",
+            data=json.dumps(
+                {
+                    "command": "override_decision",
+                    "decision_type": "disable_flag",
+                    "summary": "should not apply at trigger",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(bad, timeout=10)
+        self.assertEqual(ctx.exception.code, 400)
+
+        cancel = Request(
+            f"{self.base_url}/api/runs/{run['run_id']}/steer",
+            data=json.dumps({"command": "cancel"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(cancel, timeout=10) as response:
+            self.assertEqual(response.status, 200)
+        cancelled = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "cancelled",
+            timeout_seconds=15.0,
+        )
+        self.assertEqual(cancelled["status"], "cancelled")
+
+    def test_steering_rejects_commands_on_terminal_run(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        bad = Request(
+            f"{self.base_url}/api/runs/{run['run_id']}/steer",
+            data=json.dumps({"command": "approve"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(bad, timeout=10)
+        self.assertEqual(ctx.exception.code, 400)
 
     def test_rejects_oversized_json_payload(self) -> None:
         limited = RuntimeConfig(

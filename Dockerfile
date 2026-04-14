@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 FROM node:22-bookworm-slim AS web
 WORKDIR /web
 COPY web/package.json web/package-lock.json ./
@@ -24,7 +22,7 @@ RUN apt-get update \
     arm64) goose_arch="aarch64" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
-  && curl -fsSL -o /tmp/goose.tar.bz2 "https://github.com/aaif-goose/goose/releases/download/stable/goose-${goose_arch}-unknown-linux-gnu.tar.bz2" \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/goose.tar.bz2 "https://github.com/aaif-goose/goose/releases/download/stable/goose-${goose_arch}-unknown-linux-gnu.tar.bz2" \
   && tar -xjf /tmp/goose.tar.bz2 -C /tmp \
   && install -m 755 /tmp/goose /usr/local/bin/goose \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
@@ -32,6 +30,9 @@ RUN apt-get update \
 
 FROM python:3.12-slim-bookworm
 WORKDIR /app
+
+ARG MESH_BUILD_VERSION=dev
+ARG MESH_BUILD_COMMIT=unknown
 
 RUN apt-get update \
   && apt-get upgrade -y \
@@ -42,7 +43,7 @@ RUN apt-get update \
     arm64) kubectl_arch="arm64" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
-  && curl -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.5/bin/linux/${kubectl_arch}/kubectl" \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.5/bin/linux/${kubectl_arch}/kubectl" \
   && chmod +x /usr/local/bin/kubectl \
   && python3 -m pip install --no-cache-dir --upgrade pip \
   && rm -rf /var/lib/apt/lists/*
@@ -61,12 +62,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MESH_ENVIRONMENT=production \
     MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
     MESH_ACCESS_LOG=1 \
-    MESH_STRUCTURED_LOGS=1
+    MESH_STRUCTURED_LOGS=1 \
+    MESH_BUILD_VERSION=$MESH_BUILD_VERSION \
+    MESH_BUILD_COMMIT=$MESH_BUILD_COMMIT
 
 COPY --from=web /web/dist ./web/dist
 COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py setup_integrations.py ./
 COPY shared ./shared
 COPY services ./services
+COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
+RUN python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" /app/deepagents/libs/deepagents
 COPY scaffold ./scaffold
 COPY fixtures ./fixtures
 COPY policies ./policies

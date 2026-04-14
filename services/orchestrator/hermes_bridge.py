@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -26,6 +27,15 @@ HERMES_CODE_PATCH_SYSTEM_PROMPT = (
     '"patch": {"target_file": string, "find": string, "replace": string}, "test_commands": string[]}. '
     "Do not include markdown."
 )
+
+
+def _hermes_chat_timeout_seconds() -> float:
+    raw = (
+        os.getenv("MESH_HERMES_RUN_TIMEOUT_SECONDS")
+        or os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS")
+        or "180"
+    )
+    return float(raw)
 
 
 def main() -> None:
@@ -191,7 +201,7 @@ def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=_hermes_chat_timeout_seconds(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -242,7 +252,7 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=_hermes_chat_timeout_seconds(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {

@@ -1,0 +1,41 @@
+{
+  "name": "mesh-intelligence",
+  "version": "0.1.0",
+  "description": "Connect Codex to a Mesh Intelligence control plane as a bounded read-only worker.",
+  "author": {
+    "name": "Mesh Intelligence maintainers",
+    "email": "maintainers@example.com",
+    "url": "https://github.com/hyperstrategy/mesh-intelligence"
+  },
+  "homepage": "https://github.com/hyperstrategy/mesh-intelligence/blob/main/docs/agent-mesh.md",
+  "repository": "https://github.com/hyperstrategy/mesh-intelligence",
+  "license": "MIT",
+  "keywords": [
+    "mesh-intelligence",
+    "control-plane",
+    "codex",
+    "agent-mesh"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Mesh Intelligence",
+    "shortDescription": "Connect Codex to a Mesh control plane",
+    "longDescription": "Use Mesh Intelligence as the supervised control plane for incident, research, Kubernetes, and agent-task state. Codex reads Mesh state and returns proposals while Mesh retains policy, audit, smoke, and production execution gates.",
+    "developerName": "Mesh Intelligence maintainers",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read Mesh health and readiness",
+      "Summarize runs and agent tasks",
+      "Prepare bounded worker proposals"
+    ],
+    "websiteURL": "https://github.com/hyperstrategy/mesh-intelligence",
+    "privacyPolicyURL": "https://github.com/hyperstrategy/mesh-intelligence",
+    "termsOfServiceURL": "https://github.com/hyperstrategy/mesh-intelligence",
+    "defaultPrompt": [
+      "Connect to Mesh and summarize the latest run.",
+      "Review Mesh agent tasks for a run.",
+      "Check Mesh readiness and production gates."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

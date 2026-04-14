@@ -24,11 +24,14 @@ GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 HERMES_BRIDGE_MODULE = "services.orchestrator.hermes_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
+
+
 @dataclass
 class IntegrationsConfig:
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     goose_command: str | None = None
+    evo_command: str | None = None
     gitnexus_sidecar_url: str | None = None
     gitnexus_sidecar_command: str | None = None
 
@@ -37,6 +40,7 @@ class IntegrationsConfig:
             "promptfoo_command": self.promptfoo_command,
             "hermes_command": self.hermes_command,
             "goose_command": self.goose_command,
+            "evo_command": self.evo_command,
             "gitnexus_sidecar_url": self.gitnexus_sidecar_url,
             "gitnexus_sidecar_command": self.gitnexus_sidecar_command,
         }
@@ -51,6 +55,7 @@ def load_integrations_config(path: str | Path) -> IntegrationsConfig:
         promptfoo_command=raw.get("promptfoo_command"),
         hermes_command=raw.get("hermes_command"),
         goose_command=raw.get("goose_command"),
+        evo_command=raw.get("evo_command"),
         gitnexus_sidecar_url=raw.get("gitnexus_sidecar_url"),
         gitnexus_sidecar_command=raw.get("gitnexus_sidecar_command"),
     )
@@ -76,6 +81,7 @@ def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsCo
         promptfoo_command=_resolve_promptfoo_command(runtime_config.promptfoo_command or loaded.promptfoo_command),
         hermes_command=_resolve_hermes_command(runtime_config.hermes_command or loaded.hermes_command),
         goose_command=_resolve_goose_command(runtime_config.goose_command or loaded.goose_command),
+        evo_command=_resolve_evo_command(runtime_config.evo_command or loaded.evo_command),
         gitnexus_sidecar_url=runtime_config.gitnexus_sidecar_url
         or loaded.gitnexus_sidecar_url
         or f"http://127.0.0.1:{DEFAULT_GITNEXUS_PORT}",
@@ -94,6 +100,9 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
     promptfoo_status = _command_status("promptfoo", resolved.promptfoo_command)
     hermes_status = _command_status("hermes", resolved.hermes_command)
     goose_status = _command_status("goose", resolved.goose_command)
+    evo_status = build_evo_status(runtime_config, resolved.evo_command)
+    latentmas_status = _latentmas_status(runtime_config)
+    deepagents_status = _deepagents_status(runtime_config)
     gitnexus_status = IntegrationStatus(
         name="gitnexus",
         ready=gitnexus_ready,
@@ -106,6 +115,9 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
         promptfoo=promptfoo_status,
         hermes=hermes_status,
         goose=goose_status,
+        evo=evo_status,
+        latentmas=latentmas_status,
+        deepagents=deepagents_status,
         gitnexus=gitnexus_status,
         vault_path=runtime_config.vault_path,
         state_path=runtime_config.state_directory,
@@ -173,6 +185,9 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
     goose_warnings = _goose_warnings(current.goose_command)
     for warning in goose_warnings:
         actions.append(f"warning: {warning}")
+    evo_detail = _describe_evo_command(current.evo_command)
+    if evo_detail:
+        actions.append(evo_detail)
 
     save_integrations_config(runtime_config.integrations_config_path, current)
 
@@ -180,6 +195,7 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
         "promptfoo": _smoke_check_with_fallback(current.promptfoo_command, [["--healthcheck"], ["--version"]]),
         "hermes": _smoke_check_with_fallback(current.hermes_command, [["--healthcheck"], ["--version"]]),
         "goose": _smoke_check_with_fallback(current.goose_command, [["--healthcheck"], ["--version"]]),
+        "evo": _evo_smoke_check(current.evo_command, runtime_config.evo_command_timeout_seconds),
     }
     guidance = {
         "promptfoo": (
@@ -194,6 +210,11 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
             "Install Goose CLI from the official Block Goose distribution if missing. "
             "For automatic provider inference, set an OpenAI-compatible MiniMax endpoint via "
             "`OPENAI_BASE_URL` plus a model such as `GOOSE_MODEL=MiniMax-M2.5`."
+        ),
+        "evo": (
+            "Install `evo-hq-cli` globally or set `MESH_EVO_COMMAND` to a local command such as "
+            "`uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo`. Mesh only probes "
+            "`evo --version` in this proposal-lane integration."
         ),
     }
     return {
@@ -248,7 +269,94 @@ def _command_status(name: str, command: str | None) -> IntegrationStatus:
     return IntegrationStatus(name=name, ready=ok, detail=detail, command=command)
 
 
-def _smoke_check(command: str | None, extra_args: list[str]) -> tuple[bool, str]:
+def build_evo_status(runtime_config: RuntimeConfig, command: str | None = None) -> IntegrationStatus:
+    resolved_command = command if command is not None else resolve_integrations_config(runtime_config).evo_command
+    ok, detail = _evo_smoke_check(resolved_command, runtime_config.evo_command_timeout_seconds)
+    return IntegrationStatus(name="evo", ready=ok, detail=detail, command=resolved_command)
+
+
+def _evo_smoke_check(command: str | None, timeout_seconds: int | float) -> tuple[bool, str]:
+    if not command:
+        return False, "command not configured"
+    executable = shlex.split(command)[0]
+    binary = executable if os.path.isabs(executable) else shutil.which(executable)
+    if binary is None and not Path(executable).exists():
+        return False, "command not found"
+    ok, detail = _smoke_check(command, ["--version"], timeout=timeout_seconds)
+    if not ok:
+        return False, detail
+    if "evo-hq-cli" not in detail:
+        return False, f"unexpected evo package: {detail}"
+    return True, detail
+
+
+def _deepagents_env_warnings(model: str) -> list[str]:
+    warnings: list[str] = []
+    lower = model.lower()
+    if lower.startswith("openai:") and not (os.getenv("OPENAI_API_KEY") or "").strip():
+        warnings.append("OPENAI_API_KEY is not set for openai Deep Agents models")
+    if lower.startswith("anthropic:") and not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
+        warnings.append("ANTHROPIC_API_KEY is not set for anthropic Deep Agents models")
+    return warnings
+
+
+def _deepagents_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
+    if runtime_config.agent_fabric_mode != "deepagents":
+        return IntegrationStatus(
+            name="deepagents",
+            ready=False,
+            detail="disabled (MESH_AGENT_FABRIC_MODE is not deepagents)",
+        )
+    try:
+        import deepagents  # noqa: F401
+    except ImportError:
+        return IntegrationStatus(
+            name="deepagents",
+            ready=False,
+            detail="deepagents package is not installed or not on PYTHONPATH",
+        )
+    warnings = _deepagents_env_warnings(runtime_config.mesh_deepagents_model)
+    detail = (
+        f"fabric=deepagents model={runtime_config.mesh_deepagents_model} "
+        f"workspace={runtime_config.mesh_deepagents_workspace_root}"
+    )
+    return IntegrationStatus(
+        name="deepagents",
+        ready=True,
+        detail=detail,
+        warnings=warnings,
+    )
+
+
+def _latentmas_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
+    if not runtime_config.latentmas_enabled:
+        return IntegrationStatus(
+            name="latentmas",
+            ready=False,
+            detail="disabled",
+            url=runtime_config.latentmas_url,
+        )
+    if not runtime_config.latentmas_url:
+        return IntegrationStatus(
+            name="latentmas",
+            ready=False,
+            detail="enabled but MESH_LATENTMAS_URL is not configured",
+        )
+    health_url = f"{runtime_config.latentmas_url.rstrip('/')}/health"
+    ready = _url_responds(health_url)
+    return IntegrationStatus(
+        name="latentmas",
+        ready=ready,
+        detail="sidecar reachable" if ready else "sidecar unavailable",
+        url=runtime_config.latentmas_url,
+    )
+
+
+def _smoke_check(
+    command: str | None,
+    extra_args: list[str],
+    timeout: int | float = 20,
+) -> tuple[bool, str]:
     if not command:
         return False, "command not configured"
     try:
@@ -257,8 +365,10 @@ def _smoke_check(command: str | None, extra_args: list[str]) -> tuple[bool, str]
             capture_output=True,
             text=True,
             check=False,
-            timeout=20,
+            timeout=timeout,
         )
+    except FileNotFoundError:
+        return False, "command not found"
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     if completed.returncode != 0:
@@ -311,6 +421,12 @@ def _resolve_goose_command(command: str | None) -> str | None:
         fallback_provider=fallback_provider,
         fallback_model=fallback_model,
     )
+
+
+def _resolve_evo_command(command: str | None) -> str | None:
+    if command:
+        return command
+    return shutil.which("evo")
 
 
 def _resolve_vendor_binary(command: str | None, executable_name: str) -> str | None:
@@ -390,6 +506,12 @@ def _describe_hermes_command(command: str | None) -> str | None:
     if forwarded:
         return f"configured Hermes bridge for {forwarded}"
     return "configured Hermes bridge"
+
+
+def _describe_evo_command(command: str | None) -> str | None:
+    if not command:
+        return None
+    return f"configured Evo proposal lane for {command}"
 
 
 def _goose_routes(command: str | None) -> tuple[str | None, str | None]:
@@ -486,7 +608,7 @@ def _url_responds(url: str) -> bool:
     try:
         with urlopen(url, timeout=2) as response:
             return 200 <= response.status < 300
-    except (URLError, ValueError):
+    except (URLError, ValueError, TimeoutError, OSError):
         return False
 
 

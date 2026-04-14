@@ -46,7 +46,15 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
-            self._send_json({"status": "ok", "timestamp": _timestamp()})
+            self._send_json(
+                {
+                    "status": "ok",
+                    "timestamp": _timestamp(),
+                    "environment": self.server.config.environment,
+                    "version": self.server.config.build_version,
+                    "commit": self.server.config.build_commit,
+                }
+            )
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
@@ -85,6 +93,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             run_id = path.split("/")[3]
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
+            return
+        if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
+            run_id = path.split("/")[3]
+            try:
+                self._send_json({"tasks": self.server.coordinator.list_agent_tasks(run_id)})
+            except KeyError:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
@@ -149,6 +164,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 run = self.server.coordinator.create_run(payload)
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:  # pragma: no cover - defensive; avoid empty TCP replies to clients
+                _LOG.exception("POST /api/runs failed: %s", exc)
+                self._send_json(
+                    {"error": "run creation failed", "detail": str(exc)},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return

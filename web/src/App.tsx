@@ -48,6 +48,7 @@ import type {
   RunDetail,
   RunEventRecord,
   RunSessionRecord,
+  AgentTask,
   ScenarioRecord,
   VaultTreeEntry,
 } from "./types";
@@ -104,6 +105,8 @@ function rightRailTabIcon(tab: RightRailTab): React.ReactNode {
       return <Play size={15} />;
     case "feedback":
       return <Waves size={15} />;
+    case "agents":
+      return <Bot size={15} />;
     case "vault":
       return <BookOpen size={15} />;
     case "merkle":
@@ -166,6 +169,9 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
     case "goose_review":
     case "hermes_review":
       return "execution";
+    case "agent_tasks":
+    case "agents":
+      return "agents";
     case "feedback":
       return "feedback";
     default:
@@ -682,9 +688,19 @@ export default function App() {
     approvalRecommendation !== "" &&
     approvalRecommendation !== "execute";
 
-  const integrationsReady = readiness
-    ? [readiness.promptfoo, readiness.hermes, readiness.goose, readiness.gitnexus].filter((i) => i.ready).length
-    : 0;
+  const readinessItems = readiness
+    ? [
+        readiness.promptfoo,
+        readiness.hermes,
+        readiness.goose,
+        readiness.evo,
+        readiness.latentmas,
+        readiness.deepagents,
+        readiness.gitnexus,
+      ]
+    : [];
+  const integrationsReady = readinessItems.filter((i) => i?.ready).length;
+  const integrationsTotal = readinessItems.length || 7;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -742,8 +758,8 @@ export default function App() {
           <HeaderMetric
             icon={<ShieldCheck size={16} />}
             label="Integrations"
-            value={`${integrationsReady}/4 ready`}
-            tone={integrationsReady === 4 ? "good" : integrationsReady > 0 ? "warn" : "danger"}
+            value={`${integrationsReady}/${integrationsTotal} ready`}
+            tone={integrationsReady === integrationsTotal ? "good" : integrationsReady > 0 ? "warn" : "danger"}
           />
           <HeaderMetric
             icon={<CircleDot size={16} />}
@@ -802,7 +818,7 @@ export default function App() {
               <span>Research</span>
             </div>
             <div>
-              <strong>{integrationsReady}/4</strong>
+              <strong>{integrationsReady}/{integrationsTotal}</strong>
               <span>Ready</span>
             </div>
           </div>
@@ -810,12 +826,14 @@ export default function App() {
           <details className="rail-disclosure">
             <summary>
               <span>Integrations</span>
-              <span>{integrationsReady}/4 ready</span>
+              <span>{integrationsReady}/{integrationsTotal} ready</span>
             </summary>
           <div className="readiness-grid">
             <ReadinessCard label="Promptfoo" status={readiness?.promptfoo} />
             <ReadinessCard label="Hermes" status={readiness?.hermes} />
             <ReadinessCard label="Goose" status={readiness?.goose} />
+            <ReadinessCard label="Evo" status={readiness?.evo} />
+            <ReadinessCard label="LatentMAS" status={readiness?.latentmas} />
             <ReadinessCard label="GitNexus" status={readiness?.gitnexus} />
           </div>
           </details>
@@ -1211,6 +1229,7 @@ export default function App() {
                 "evidence",
                 "policy",
                 "execution",
+                "agents",
                 "feedback",
                 "vault",
                 "merkle",
@@ -1256,6 +1275,8 @@ export default function App() {
               onOverrideParamsDraftChange={setOverrideParamsDraft}
               onOverrideParams={handleOverrideParams}
             />
+          ) : rightRailTab === "agents" ? (
+            <AgentMeshPanel run={activeRun} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -1542,6 +1563,119 @@ function SteeringConsolePanel({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AgentMeshPanel({ run }: { run: RunDetail | null }) {
+  const tasks = Array.isArray(run?.artifacts?.agent_tasks)
+    ? (run?.artifacts?.agent_tasks as AgentTask[])
+    : [];
+
+  if (!run) {
+    return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
+  }
+  if (tasks.length === 0) {
+    return (
+      <div className="inspector-scroll">
+        <section className="context-panel">
+          <SectionTitle icon={<Bot size={14} />} title="Agent Mesh" />
+          <p className="inspector-muted">
+            No agent tasks recorded yet. Launch a run that reaches decision and evaluation.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inspector-scroll">
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Agent Mesh</p>
+            <h4>{tasks.length} task{tasks.length === 1 ? "" : "s"} recorded</h4>
+          </div>
+          <StatusChip label="Read Only" tone="#41d6b1" />
+        </div>
+        <p className="inspector-muted">
+          Workers produce proposals and risk signals. Mesh keeps policy, tests, audit, Kubernetes actuation, and production promotion gates.
+        </p>
+      </section>
+
+      {tasks.map((task) => (
+        <section key={task.task_id} className="context-panel">
+          <div className="context-panel-header">
+            <div>
+              <p className="eyebrow">{humanize(task.kind)}</p>
+              <h4>{task.task_id}</h4>
+            </div>
+            <StatusChip label={humanize(task.status)} tone={task.status === "completed" ? "#41d6b1" : "#f2b84b"} />
+          </div>
+          <div className="context-stat-grid">
+            <ContextStat label="Workers" value={String(task.attempts.length)} />
+            <ContextStat label="Selected" value={task.selected_attempt_id ? task.selected_attempt_id.split("_").slice(-2, -1)[0] ?? "set" : "none"} />
+            <ContextStat label="Paths" value={String(task.allowed_paths.length)} />
+            <ContextStat label="Tests" value={String(task.test_commands.length)} />
+          </div>
+          {Object.keys(task.kubernetes_scope ?? {}).length > 0 && (
+            <div className="context-link-list">
+              {Object.entries(task.kubernetes_scope).map(([key, value]) => (
+                value ? <ContextLink key={key} label={humanize(key)} value={String(value)} /> : null
+              ))}
+            </div>
+          )}
+          <div className="agent-attempt-grid">
+            {task.attempts.map((attempt) => {
+              const selected = attempt.attempt_id === task.selected_attempt_id;
+              const blocked = attempt.risk_flags.length > 0;
+              const metrics =
+                attempt.output && typeof attempt.output.metrics === "object" && attempt.output.metrics !== null
+                  ? (attempt.output.metrics as Record<string, unknown>)
+                  : null;
+              return (
+                <article key={attempt.attempt_id} className={`agent-attempt-card ${selected ? "selected" : ""}`}>
+                  <div className="agent-attempt-header">
+                    <strong>{humanize(attempt.agent)}</strong>
+                    <span className={blocked ? "agent-risk-badge warn" : "agent-risk-badge good"}>
+                      {blocked ? "gated" : humanize(attempt.status)}
+                    </span>
+                  </div>
+                  <p>{attempt.summary}</p>
+                  <div className="context-link-list compact">
+                    <ContextLink label="Action" value={humanize(attempt.recommended_action)} />
+                    <ContextLink label="Adapter" value={attempt.adapter} />
+                    {typeof attempt.output?.confidence === "number" && (
+                      <ContextLink label="Confidence" value={`${Math.round(attempt.output.confidence * 100)}%`} />
+                    )}
+                    {metrics?.model_name != null && <ContextLink label="Model" value={String(metrics.model_name)} />}
+                    {typeof metrics?.elapsed_time_sec === "number" && (
+                      <ContextLink label="Latency" value={`${metrics.elapsed_time_sec}s`} />
+                    )}
+                  </div>
+                  {attempt.risk_flags.length > 0 && (
+                    <div className="readiness-warning">
+                      {attempt.risk_flags.map((flag) => humanize(flag)).join(", ")}
+                    </div>
+                  )}
+                  {attempt.changed_files.length > 0 && (
+                    <pre className="timeline-summary">{attempt.changed_files.join("\n")}</pre>
+                  )}
+                  {attempt.test_results.length > 0 && (
+                    <pre className="timeline-summary">{JSON.stringify(attempt.test_results, null, 2)}</pre>
+                  )}
+                  {typeof attempt.output?.workspace_path === "string" && attempt.output.workspace_path ? (
+                    <ContextLink label="Workspace" value={String(attempt.output.workspace_path)} />
+                  ) : null}
+                  {typeof attempt.output?.diff === "string" && attempt.output.diff.trim() !== "" ? (
+                    <pre className="timeline-summary">{String(attempt.output.diff)}</pre>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

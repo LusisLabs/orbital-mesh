@@ -64,6 +64,7 @@ The browser UI is the primary interface.
   - `native`
   - `goose`
   - `hermes`
+- Reports proposal-lane readiness for Evo without letting Evo mutate the repo from Mesh.
 
 ## Runtime Model
 
@@ -116,6 +117,10 @@ CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge
 
 CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Hermes review step before bounded local actuation. In Docker Compose, Hermes runs in its own sidecar container and Mesh reaches it through `docker exec`, so the control plane can offer Hermes without removing Goose.
 
+### Proposal lane: `evo`
+
+Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--version`, requires the output to identify `evo-hq-cli`, and records an agent-task recommendation for bounded code-remediation runs. Mesh does not run `evo init`, `evo new`, `evo run`, `evo optimize`, git worktree commands, or subagents.
+
 ## Repository Layout
 
 ```text
@@ -127,7 +132,7 @@ mesh-intelligence/
 ├── run_server.py                    # browser control-plane entrypoint
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
-├── setup_integrations.py            # bootstrap Promptfoo / Goose / GitNexus config
+├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo / GitNexus config
 ├── swarmclaw/                       # optional Next.js operator stack (separate surface)
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
@@ -173,7 +178,7 @@ This writes integration configuration to:
 .mesh-runtime-state/integrations.json
 ```
 
-The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs.
+The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Evo is resolved as a proposal-lane CLI only; use `MESH_EVO_COMMAND=evo` for a global `evo-hq-cli` install or `MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"` for the vendored source when `uv` is available.
 
 ### 2. Install the browser UI dependencies
 
@@ -407,11 +412,19 @@ Supported configuration variables:
 - `MESH_INTEGRATIONS_CONFIG_PATH`
 - `MESH_DEFAULT_STEERING_MODE`
 - `MESH_DEFAULT_OPERATOR_PAUSE_POINT`
+- `MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE`
+- `MESH_INCIDENT_CREDENTIALS_AVAILABLE`
+- `MESH_AUDIT_LOGGING_AVAILABLE`
+- `MESH_MAX_TRANSIENT_RETRIES`
+- `MESH_MAX_RETRY_WINDOW_SECONDS`
+- `MESH_GOOSE_TIMEOUT_SECONDS`
 - `MESH_PROMPTFOO_COMMAND`
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_COMMAND`
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
+- `MESH_EVO_COMMAND` — optional Evo proposal-lane command; must resolve to `evo-hq-cli`.
+- `MESH_EVO_COMMAND_TIMEOUT_SECONDS` — timeout for the Evo `--version` readiness probe.
 - `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` — when `1`/`true`, `kubernetes_service` actions use live `kubectl` execution instead of the default mock adapter.
 - `MESH_KUBECTL_COMMAND` — override the `kubectl` command used for live Kubernetes execution.
 - `MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS` — timeout for `kubectl rollout status` after restart/rollback actions.
@@ -423,6 +436,15 @@ Supported configuration variables:
 - `MESH_MAX_JSON_BODY_BYTES` — max `Content-Length` for JSON `POST` bodies (default `1048576`; use `0` to disable the limit).
 - `MESH_SECURITY_HEADERS` — when `true` (default), sends `X-Content-Type-Options` and `Referrer-Policy` on HTTP responses.
 - `MESH_ACCESS_LOG` — when `1`/`true`, enables access logging via Python’s logging module (configure handlers as needed for your environment).
+- `MESH_STRUCTURED_LOGS` — when `1`/`true`, emits runtime events as JSON lines on stderr.
+- `MESH_VAULT_AI_POSTPROCESS_ENABLED` — defaults off; when enabled, Goose may generate vault insights after runs.
+- `MESH_BUILD_VERSION` and `MESH_BUILD_COMMIT` — surfaced by `/api/health` for release traceability.
+- `MESH_IMAGE_TAG` and `GIT_COMMIT` — back-compat aliases used for `/api/health` when `MESH_BUILD_VERSION` / `MESH_BUILD_COMMIT` are unset.
+- `MESH_GOOSE_RUN_TIMEOUT_SECONDS` — optional fixed timeout for each bridge-internal `goose run`; if unset, provider-specific `GOOSE_*_TIMEOUT_SECONDS` values apply.
+- `MESH_HERMES_RUN_TIMEOUT_SECONDS` — optional fixed timeout for bridge-internal Hermes chat; defaults to `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`.
+- `GOOSE_PROVIDER`, `GOOSE_MODEL`, `GOOSE_PRIMARY_TIMEOUT_SECONDS`, `GOOSE_OLLAMA_TIMEOUT_SECONDS`, `GOOSE_FALLBACK_PROVIDER`, `GOOSE_FALLBACK_MODEL`, `GOOSE_FALLBACK_TIMEOUT_SECONDS`
+- `OPENAI_BASE_URL`, `OPENAI_HOST`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_HOST`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`
+- `MINIMAX_MODEL`, `MINIMAX_CHAT_TIMEOUT_SECONDS`, `MESH_MINIMAX_TIMEOUT_SECONDS`, `MINIMAX_WAVE3_TIMEOUT_SECONDS`
 
 See [`.env.example`](./.env.example) for a ready-to-copy template.
 
@@ -520,7 +542,29 @@ The mesh control plane is an **HTTP server without built-in authentication**. Pu
 
 ### Container (recommended)
 
-Build and run with Compose. The default stack starts:
+Use `docker-compose.prod.yml` for production-like deployments. It does not bind-mount the repo or Docker socket. It requires explicit platform-secret injection for `OPENAI_API_KEY`, a read-only kubeconfig host path, and narrow Kubernetes context/namespace allowlists:
+
+```bash
+export MESH_BUILD_VERSION="$(git describe --tags --always --dirty)"
+export MESH_BUILD_COMMIT="$(git rev-parse HEAD)"
+export MESH_KUBECONFIG_HOST_PATH=/etc/mesh/kubeconfig
+export MESH_KUBERNETES_ALLOWED_CONTEXTS=prod-us-east-1
+export MESH_KUBERNETES_ALLOWED_NAMESPACES=mesh-targets
+export OPENAI_API_KEY=...
+docker compose -f docker-compose.prod.yml up --build -d
+./scripts/prod_smoke.sh
+```
+
+Secrets to inject through the target platform secret store:
+
+- `OPENAI_API_KEY` for the default MiniMax OpenAI-compatible Goose route.
+- `ANTHROPIC_API_KEY` only when using Anthropic-compatible MiniMax routes.
+- `GOOGLE_API_KEY` and `OPENROUTER_API_KEY` only when those providers are explicitly selected.
+- kubeconfig content at `MESH_KUBECONFIG_HOST_PATH`; mount it read-only.
+
+Platform choice is intentionally not hard-coded. For a single VM, run this compose file behind Caddy/nginx with TLS and authentication. For AWS ECS, Fly.io, or Kubernetes, translate the same env contract, state volume, kubeconfig secret, health check, and `/api/health` probe into the platform’s native constructs.
+
+The default `docker-compose.yml` stack is the developer/local-e2e stack. It starts:
 
 1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
 2. **`hermes`** — dedicated Hermes runtime sidecar built from `Dockerfile.hermes`. Compose keeps it alive and healthy, and `mesh` reaches it through `docker exec` using the default `MESH_HERMES_COMMAND`.
@@ -530,7 +574,7 @@ Build and run with Compose. The default stack starts:
 docker compose up --build -d
 ```
 
-Persistence:
+Developer stack persistence:
 
 - **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
 - **Hermes** local state: volume `hermes_home` → `/workspace/mesh-intelligence/.hermes-local`
@@ -555,7 +599,7 @@ Inspect readiness from the running backend:
 curl http://127.0.0.1:8787/api/readiness
 ```
 
-By default, Promptfoo becomes ready automatically in the container. Hermes is built and started as a sidecar, then Mesh reaches it through `docker exec`. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route:
+By default, Promptfoo becomes ready automatically in the container. Hermes is built and started as a sidecar, then Mesh reaches it through `docker exec`. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route. Evo reports unavailable unless you provide `MESH_EVO_COMMAND`; Mesh does not auto-install Evo.
 
 ```bash
 export MESH_COMPOSE_GOOSE_PROVIDER=openai
@@ -596,6 +640,23 @@ Or blank the variable out if you do not want the sidecar integration at all.
 
 Health: `GET /api/health` on mesh; GitNexus exposes `GET /api/info` for quick probes (Docker Compose uses this). `GET /api/heartbeat` is Server-Sent Events and is not suitable for typical HTTP health checks.
 
+Hermes in the developer stack is reached through `docker exec`, which requires a Docker socket mount in the `mesh` container. Do not carry that socket mount into production unless the deployment’s threat model explicitly accepts container-root access to the host Docker daemon. The production compose file leaves Hermes unconfigured by default; use Goose in the application image or run a hardened Hermes topology outside the mesh container boundary before enabling `MESH_HERMES_COMMAND`.
+
+If the demo requires Hermes through Docker exec, use the explicit override rather than modifying the baseline production file:
+
+```bash
+export MESH_DOCKER_SOCKET_HOST_PATH=/var/run/docker.sock
+export MESH_HERMES_CONTAINER_NAME=mesh-intelligence-hermes-prod
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.hermes.yml up --build -d
+MESH_SMOKE_HERMES=1 ./scripts/prod_smoke.sh
+```
+
+This topology gives the mesh container access to the host Docker socket so it can run `docker exec` into the Hermes container. Treat that as privileged host control. Keep it demo-scoped or replace it with a networked Hermes service before using it as a long-lived production topology.
+
+`./scripts/prod_smoke.sh` uses `MESH_SMOKE_HTTP_TIMEOUT_SECONDS=30` by default because `/api/readiness` probes Goose, Hermes, and Promptfoo. Increase it for slow first-boot hosts; lower it only when readiness dependencies are already warm.
+
+The image currently runs as root because the bundled Goose profile path, Docker CLI compatibility for the developer Hermes path, and kubectl default config path are root-oriented. The production compose file compensates with read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, explicit volumes, and no Docker socket. Moving the image to a non-root UID requires validating Goose profile writes and kubectl config paths under that UID.
+
 **Native GitNexus beside native Python:** in one terminal `npx -y gitnexus@latest serve` (or `gitnexus serve` if installed globally), in another set `MESH_GITNEXUS_SIDECAR_URL=http://127.0.0.1:4747` and run `python3 run_server.py`.
 
 ### Bare metal
@@ -635,11 +696,17 @@ The stable local path is:
 1. `native` evaluation + `native` orchestration
 2. browser operator approval gate
 3. vault and Merkle inspection
-4. optional Promptfoo / Goose / Hermes CLI enablement through `setup_integrations.py`
+4. optional Promptfoo / Goose / Hermes / Evo CLI enablement through `setup_integrations.py`
 
 ## Supporting Docs
 
 - [architecture.md](./architecture.md)
+- [docs/foundations.md](./docs/foundations.md)
 - [docs/integrations.md](./docs/integrations.md)
+- [docs/agent-mesh.md](./docs/agent-mesh.md)
+- [docs/research-intelligence.md](./docs/research-intelligence.md)
+- [docs/production-live-runbook.md](./docs/production-live-runbook.md)
+- [docs/ui-auto-canvas-workspace.md](./docs/ui-auto-canvas-workspace.md)
+- [docs/small-business-thesis.md](./docs/small-business-thesis.md)
 - [first-closed-loop-contract.md](./first-closed-loop-contract.md)
 - [docs/CODEX_RUN_SUMMARY.md](./docs/CODEX_RUN_SUMMARY.md)

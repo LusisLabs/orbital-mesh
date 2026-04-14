@@ -7,6 +7,7 @@ export type InspectorTab =
   | "policy"
   | "execution"
   | "feedback"
+  | "agents"
   | "vault"
   | "merkle"
   | "code"
@@ -49,6 +50,38 @@ export interface RunEventRecord {
   artifact_key?: string | null;
   integration_name?: string | null;
   status?: string | null;
+}
+
+export interface AgentAttempt {
+  attempt_id: string;
+  task_id: string;
+  run_id: string;
+  agent: "latentmas" | "goose" | "hermes" | "codex" | "claudecode" | "openclaw" | "evo" | string;
+  adapter: string;
+  status: string;
+  started_at: string;
+  completed_at: string;
+  summary: string;
+  changed_files: string[];
+  test_results: Array<Record<string, unknown>>;
+  risk_flags: string[];
+  recommended_action: string;
+  output: Record<string, unknown>;
+}
+
+export interface AgentTask {
+  task_id: string;
+  run_id: string;
+  kind: "root_cause" | "patch" | "review" | "rollback_plan" | string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  allowed_paths: string[];
+  test_commands: string[];
+  kubernetes_scope: Record<string, unknown>;
+  agents: string[];
+  attempts: AgentAttempt[];
+  selected_attempt_id?: string | null;
 }
 
 /** Goose / MiniMax autoresearch filesystem session (not a Mesh pipeline run). */
@@ -166,6 +199,9 @@ export interface IntegrationReadiness {
   promptfoo: IntegrationStatus;
   hermes: IntegrationStatus;
   goose: IntegrationStatus;
+  evo: IntegrationStatus;
+  latentmas: IntegrationStatus;
+  deepagents: IntegrationStatus;
   gitnexus: IntegrationStatus;
   vault_path: string;
   state_path: string;

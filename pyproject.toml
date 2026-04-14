@@ -7,6 +7,13 @@ name = "mesh-intelligence"
 version = "0.1.0"
 description = "Python multi-service closed-loop platform scaffold"
 requires-python = ">=3.11"
+dependencies = [
+  "deepagents",
+  "langchain-openai>=1.0.0,<2.0.0",
+]
+
+[tool.uv.sources]
+deepagents = { path = "deepagents/libs/deepagents", editable = true }
 
 [tool.setuptools]
 packages = [

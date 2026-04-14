@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shutil
 import threading
@@ -14,7 +15,10 @@ from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
 from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
+from services.orchestrator.agent_mesh import AgentMeshService
+from services.orchestrator.evo_launcher import EvoLaunchService
 from shared.mesh_runtime import (
+    AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,
     DECISION_READY,
     EVALUATION_READY,
@@ -30,6 +34,7 @@ from shared.mesh_runtime import (
     RUN_QUEUED,
     RuntimeConfig,
     STEERING_COMMAND,
+    STEERING_REJECTED,
     TRIGGER_READY,
     Decision,
     EvaluationResult,
@@ -74,7 +79,58 @@ ALLOWED_STEERING_COMMANDS = {
     "override_decision",
     "override_execution_parameters",
     "attach_note",
+    "launch_evo",
 }
+
+# Operator steering is analogous to activation steering: early / late interventions have different
+# leverage and failure modes. Decision-changing commands are restricted to pre-execution gates so we
+# do not "perturb late layers" after execution has run (incoherent or misleading audit trails).
+_STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_execution_parameters"})
+_STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
+_STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
+
+
+def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
+
+
+def _validate_steering_command(session: RunSession, command_type: str, command_payload: dict[str, Any]) -> None:
+    if _steering_command_payload_bytes(command_payload) > _STEERING_PAYLOAD_CAP_BYTES:
+        raise ValueError(
+            f"steering payload exceeds {_STEERING_PAYLOAD_CAP_BYTES} bytes "
+            "(cap from MESH_MAX_STEERING_PAYLOAD_BYTES)"
+        )
+    if session.stage in TERMINAL_STAGES:
+        if command_type == "launch_evo" and session.stage == "completed":
+            return
+        if command_type != "attach_note":
+            raise ValueError(
+                f"steering command {command_type!r} is not allowed after run is {session.stage!r}; "
+                "only attach_note is permitted."
+            )
+        return
+    if command_type == "launch_evo":
+        effective = session.pending_pause_stage or session.stage
+        if effective != "evaluation_ready":
+            raise ValueError(
+                f"steering command {command_type!r} is not allowed at stage {effective!r} "
+                f"(run stage {session.stage!r}). "
+                "Evo launch is accepted only when the run is paused at evaluation_ready or after completion."
+            )
+        return
+    effective = session.pending_pause_stage or session.stage
+    if command_type not in _STEERING_DECISION_COMMANDS:
+        return
+    if effective in _STEERING_EARLY_STAGES or effective == "feedback_ready" or session.stage in {
+        "executing",
+        "feedback_ready",
+    }:
+        raise ValueError(
+            f"steering command {command_type!r} is not allowed at stage {effective!r} "
+            f"(run stage {session.stage!r}). "
+            "Decision and execution-parameter overrides are only accepted when the run is paused at "
+            "evaluation_ready, before actuation."
+        )
 
 
 class RunControl:
@@ -94,6 +150,8 @@ class RunCoordinator:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or ControlPlaneStateStore(self.config)
         self.sidecar = GitNexusSidecarManager(self.config)
+        self.agent_mesh = AgentMeshService(config=self.config)
+        self.evo_launcher = EvoLaunchService(self.config)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
         self.state_store.ensure_default_goal()
@@ -252,6 +310,13 @@ class RunCoordinator:
             "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
         }
 
+    def list_agent_tasks(self, run_id: str) -> list[dict[str, Any]]:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            raise KeyError(run_id)
+        tasks = session.artifacts.get("agent_tasks", [])
+        return list(tasks) if isinstance(tasks, list) else []
+
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         steering_mode = payload.get("steering_mode", self.config.default_steering_mode)
         auto_mode = steering_mode == "interruptible_auto"
@@ -303,6 +368,7 @@ class RunCoordinator:
                 "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
                 "hermes_ready": readiness_snapshot["hermes"]["ready"],
                 "goose_ready": readiness_snapshot["goose"]["ready"],
+                "evo_ready": readiness_snapshot["evo"]["ready"],
             },
             artifact_key="integration_readiness",
             status="captured",
@@ -324,12 +390,14 @@ class RunCoordinator:
         control = self.controls.get(run_id)
         if session is None or control is None:
             raise KeyError(run_id)
+        command_payload = {key: value for key, value in payload.items() if key != "command"}
+        _validate_steering_command(session, command_type, command_payload)
         command = SteeringCommand(
             command_id=f"cmd_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{len(session.operator_notes) + 1}",
             run_id=run_id,
             command_type=command_type,
             issued_at=_timestamp(),
-            payload={key: value for key, value in payload.items() if key != "command"},
+            payload=command_payload,
         )
         self.state_store.append_run_event(
             run_id,
@@ -340,6 +408,9 @@ class RunCoordinator:
             artifact_key="operator_command",
             status="received",
         )
+        if command_type == "launch_evo":
+            self._launch_evo(run_id, session, command_payload)
+            return self.get_run(run_id) or session.to_dict()
         if command_type == "attach_note" and command.payload.get("note"):
             session.operator_notes.append(command.payload["note"])
             session.updated_at = _timestamp()
@@ -399,7 +470,38 @@ class RunCoordinator:
                 artifact_key="trigger",
                 status="recorded",
             )
-            self._wait_if_needed(run_id, "trigger_ready", trigger=trigger, decision=None, evaluation=None)
+            while True:
+                trigger_wait = self._wait_if_needed(
+                    run_id, "trigger_ready", trigger=trigger, decision=None, evaluation=None
+                )
+                if trigger_wait["action"] == "cancel":
+                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="cancelled",
+                        event_type=RUN_CANCELLED,
+                        payload={"reason": "operator_cancelled"},
+                        summary={"status": "cancelled"},
+                        status="cancelled",
+                    )
+                    return
+                if trigger_wait["action"] == "override":
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="trigger_ready",
+                        event_type=STEERING_REJECTED,
+                        payload={
+                            "reason": "override_before_decision",
+                            "detail": (
+                                "Decision overrides are not valid before evaluation_ready; "
+                                "command drained from queue."
+                            ),
+                        },
+                        summary={"status": "rejected"},
+                        status="rejected",
+                    )
+                    continue
+                break
 
             decision = engine.decision.decide(trigger)
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
@@ -470,16 +572,34 @@ class RunCoordinator:
                 artifact_key="feedback",
                 status=feedback.outcome,
             )
-            wait_feedback = self._wait_if_needed(
-                run_id,
-                "feedback_ready",
-                trigger=trigger,
-                decision=decision,
-                evaluation=evaluation,
-            )
-            if wait_feedback["action"] == "cancel":
-                self._update_session(run_id, stage="cancelled", status="cancelled")
-                return
+            while True:
+                wait_feedback = self._wait_if_needed(
+                    run_id,
+                    "feedback_ready",
+                    trigger=trigger,
+                    decision=decision,
+                    evaluation=evaluation,
+                )
+                if wait_feedback["action"] == "cancel":
+                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    return
+                if wait_feedback["action"] == "override":
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="feedback_ready",
+                        event_type=STEERING_REJECTED,
+                        payload={
+                            "reason": "override_after_execution",
+                            "detail": (
+                                "Decision-changing steering after actuation is rejected "
+                                "(late intervention would corrupt the run record)."
+                            ),
+                        },
+                        summary={"status": "rejected"},
+                        status="rejected",
+                    )
+                    continue
+                break
             self._update_session(run_id, stage="completed", status="completed")
             self.state_store.append_run_event(
                 run_id,
@@ -552,6 +672,27 @@ class RunCoordinator:
                 integration_name="promptfoo",
                 status="recorded",
             )
+        tasks = self.agent_mesh.build_tasks(
+            run_id=run_id,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+        )
+        task_payload = [task.to_dict() for task in tasks]
+        self._set_artifact(run_id, "agent_tasks", task_payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="evaluation_ready",
+            event_type=AGENT_TASK_RECORDED,
+            payload={"tasks": task_payload},
+            summary={
+                "tasks": len(task_payload),
+                "agents": sum(len(task.get("attempts", [])) for task in task_payload),
+            },
+            artifact_key="agent_tasks",
+            integration_name="agent_mesh",
+            status="recorded",
+        )
         return evaluation
 
     def _wait_if_needed(
@@ -688,7 +829,14 @@ class RunCoordinator:
             return self._resolve_live_kubernetes_signal(live_kubernetes)
         scenario_key = payload.get("scenario_key")
         if scenario_key:
-            signal = self._resolve_signal_placeholders(copy.deepcopy(load_fixture("signals", f"{scenario_key}.json")))
+            fixture_name = f"{scenario_key}.json"
+            try:
+                raw = copy.deepcopy(load_fixture("signals", fixture_name))
+            except FileNotFoundError as exc:
+                raise ValueError(
+                    f"unknown scenario_key {scenario_key!r}: missing fixtures/signals/{fixture_name}"
+                ) from exc
+            signal = self._resolve_signal_placeholders(raw)
             signal["signal_id"] = f"{signal['signal_id']}_{uuid4().hex[:10]}"
             return signal
         raise ValueError("scenario_key or signal_payload is required")

@@ -12,6 +12,7 @@
 #   - OVERNIGHT_HTTP_FULL_MATRIX=1: each cycle POST live K8s + both scenario_keys × 4 mode pairs (12 HTTP runs)
 #   - OVERNIGHT_HTTP_PER_RUN_TIMEOUT_SECONDS: per-run wait when using holistic HTTP (default 300)
 #   - MESH_SHOWCASE_HOLISTIC_FAST=1: dev/CI shortcut — only native+native × 3 fixtures in mesh_showcase --holistic-matrix
+#   - OVERNIGHT_EVOLVE_PRIOR_MAX_CHARS, OVERNIGHT_MINIMAX_CHAT_TIMEOUT_SECONDS (see overnight_mesh_autoresearch.py header)
 #
 # Environment: see overnight_mesh_autoresearch.py module docstring (OVERNIGHT_* vars).
 #

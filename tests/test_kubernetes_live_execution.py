@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from services.actuators.service import KubernetesAdapter
+from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
 from services.pipeline import FirstSlicePipeline
 from shared.mesh_runtime import RuntimeConfig
 
@@ -115,6 +116,14 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
             self.assertEqual(signal["related_context"]["kube_context"], "k3d-mesh-e2e")
             self.assertTrue(signal["related_context"]["code_remediation_candidate"])
             self.assertEqual(signal["related_context"]["patch_template"]["target_file"], "app/search.py")
+
+    def test_collect_kubernetes_signal_rejects_missing_kubectl(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "kubectl command not found"):
+            collect_kubernetes_signal(
+                deployment_name="semantic-search",
+                namespace="search",
+                kubectl_command="definitely-missing-kubectl-for-mesh",
+            )
 
     def test_pipeline_uses_live_snapshot_for_kubernetes_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

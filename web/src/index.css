@@ -1750,6 +1750,10 @@ code {
   gap: 0.4rem;
 }
 
+.context-link-list.compact {
+  gap: 0.24rem;
+}
+
 .context-link-row {
   display: grid;
   gap: 0.16rem;
@@ -1774,6 +1778,58 @@ code {
   margin-bottom: 0.9rem;
   padding-bottom: 0.85rem;
   border-bottom: 1px solid rgba(232, 226, 211, 0.1);
+}
+
+.agent-attempt-grid {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.agent-attempt-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(232, 226, 211, 0.08);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.agent-attempt-card.selected {
+  border-color: rgba(65, 214, 177, 0.45);
+  background: rgba(65, 214, 177, 0.06);
+}
+
+.agent-attempt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.agent-attempt-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.agent-risk-badge {
+  padding: 0.16rem 0.36rem;
+  border: 1px solid rgba(232, 226, 211, 0.12);
+  border-radius: 6px;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.agent-risk-badge.good {
+  color: var(--accent-good);
+  border-color: rgba(127, 182, 133, 0.35);
+}
+
+.agent-risk-badge.warn {
+  color: var(--accent-warm);
+  border-color: rgba(240, 190, 106, 0.35);
 }
 
 .right-rail .tab-strip {

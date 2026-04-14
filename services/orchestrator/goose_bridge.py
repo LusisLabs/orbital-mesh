@@ -186,7 +186,14 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
 
 
 def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
-    payload, error = _run_goose_prompt(args, prompt, GOOSE_SYSTEM_PROMPT)
+    return _run_goose_review_cli(args, prompt, system_prompt=GOOSE_SYSTEM_PROMPT)
+
+
+def _run_goose_review_cli(
+    args: argparse.Namespace, prompt: str, *, system_prompt: str
+) -> dict[str, object]:
+    """Run Goose once and parse approval JSON (shared by incident review and execution review)."""
+    payload, error = _run_goose_prompt(args, prompt, system_prompt)
     if payload is None:
         return error or {
             "approved": False,
@@ -319,6 +326,9 @@ def _profiles_for_prompt(args: argparse.Namespace) -> list[tuple[str | None, str
 
 
 def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
+    explicit = (os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS") or "").strip()
+    if explicit:
+        return int(float(explicit))
     if is_fallback:
         return int(os.getenv("GOOSE_FALLBACK_TIMEOUT_SECONDS", "90"))
     if provider == "ollama":

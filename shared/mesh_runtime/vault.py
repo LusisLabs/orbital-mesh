@@ -16,6 +16,7 @@ VAULT_DIRECTORIES = (
     "Evaluations",
     "Executions",
     "Feedback",
+    "Agents",
     "Merkle",
     "Notes",
     "Insights",
@@ -81,6 +82,7 @@ class VaultManager:
             f"- Evaluation: {self._artifact_link('Evaluations', session.run_id)}",
             f"- Execution: {self._artifact_link('Executions', session.run_id)}",
             f"- Feedback: {self._artifact_link('Feedback', session.run_id)}",
+            f"- Agents: {self._artifact_link('Agents', session.run_id)}",
             f"- Merkle: {self._artifact_link('Merkle', session.run_id)}",
             f"- Notes: {self._artifact_link('Notes', session.run_id)}",
             f"- Insights: {self._artifact_link('Insights', session.run_id)}",
@@ -110,6 +112,10 @@ class VaultManager:
         self._write_markdown(
             self._artifact_path("Feedback", session.run_id),
             self._artifact_document("Feedback", session.artifacts.get("feedback")),
+        )
+        self._write_markdown(
+            self._artifact_path("Agents", session.run_id),
+            self._artifact_document("Agent Mesh", {"tasks": session.artifacts.get("agent_tasks", [])}),
         )
         self._write_markdown(
             self._artifact_path("Merkle", session.run_id),

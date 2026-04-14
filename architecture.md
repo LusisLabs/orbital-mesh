@@ -2,15 +2,16 @@
 
 ## Scope
 
-`mesh-intelligence` is a bounded closed-loop remediation system for feature-flag performance
-regressions. It is an operator control plane with a fixed action surface, not a general autonomous
-platform for arbitrary infra changes, code changes, or open-ended planning.
+`mesh-intelligence` is a bounded closed-loop remediation system for feature-flag and Kubernetes
+deployment regressions. It is an operator control plane with a fixed action surface, not a general
+autonomous platform for arbitrary infra changes, code changes, or open-ended planning.
 
 ## Current Runtime Shape
 
 ```mermaid
 flowchart LR
     raw[Telemetry + Flag + Release Context] --> ingest[IngestService]
+    k8s[Live Kubernetes Snapshot] --> ingest
     ingest --> trigger[TriggerService]
     trigger -->|valid regression| decision[DecisionService]
     decision --> evaluation[EvaluationService]
@@ -27,6 +28,14 @@ flowchart LR
 ```
 
 ## Main Layers
+
+### Production boundary
+
+- Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
+- The static web bundle is served from `MESH_WEB_ASSET_PATH` and calls the same HTTP API under `/api/*`.
+- Persistent state lives under `MESH_STATE_DIRECTORY`; autoresearch sessions live under `MESH_RESEARCH_DIRECTORY`; vault artifacts live under `MESH_VAULT_PATH`.
+- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; GitNexus and Hermes are optional external integration boundaries.
+- Kubernetes is a foundational production path, but it has two separate requirements: the runtime must have a kubeconfig/context that passes the allowlists, and the API server endpoint inside that kubeconfig must be reachable from the container namespace. Local `localhost` kubeconfig server URLs generally fail inside containers unless rewritten to a container-reachable host, as the e2e scripts do for k3d.
 
 ### 1. Core remediation loop
 
@@ -158,6 +167,10 @@ sequenceDiagram
   capture structured review metadata, and then perform bounded local actuation.
 - `native` mode keeps everything local and in-process while using the same contracts and
   persistence model.
+- Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
+  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, and OpenClaw. These
+  artifacts let agents plug into Mesh without getting production write access; Mesh still owns
+  evaluation, tests, audit, Kubernetes actuation, and promotion gates.
 
 ## Run Lifecycle
 
