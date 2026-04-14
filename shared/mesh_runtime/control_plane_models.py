@@ -141,7 +141,6 @@ class IntegrationReadiness(JsonModel):
     evo: IntegrationStatus
     latentmas: IntegrationStatus
     deepagents: IntegrationStatus
-    gitnexus: IntegrationStatus
     vault_path: str
     state_path: str
     integrations_config_path: str

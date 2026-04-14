@@ -49,6 +49,7 @@ import type {
   RunEventRecord,
   RunSessionRecord,
   AgentTask,
+  EvoLaunchRecord,
   ScenarioRecord,
   VaultTreeEntry,
 } from "./types";
@@ -214,10 +215,6 @@ export default function App() {
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
-  const [gitnexusInfo, setGitnexusInfo] = useState<Record<string, unknown> | null>(null);
-  const [gitnexusProcesses, setGitnexusProcesses] = useState<Record<string, unknown> | null>(null);
-  const [gitnexusSearch, setGitnexusSearch] = useState("feature flag remediation");
-  const [gitnexusSearchResult, setGitnexusSearchResult] = useState<Record<string, unknown> | null>(null);
 
   /* ── Connection ── */
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
@@ -343,12 +340,6 @@ export default function App() {
       setMerkleProof(null);
     }
   }, [activeRun, baseUrl, selectedEventId]);
-
-  useEffect(() => {
-    if (!readiness?.gitnexus.ready || !readiness.gitnexus.url) return;
-    void api.getGitNexusInfo(readiness.gitnexus.url).then(setGitnexusInfo).catch(() => setGitnexusInfo(null));
-    void api.getGitNexusProcesses(readiness.gitnexus.url).then(setGitnexusProcesses).catch(() => setGitnexusProcesses(null));
-  }, [readiness?.gitnexus.ready, readiness?.gitnexus.url]);
 
   useEffect(() => {
     void api.getVaultTree(baseUrl).then((r) => setVaultTree(r.tree)).catch(() => setVaultTree(null));
@@ -518,7 +509,10 @@ export default function App() {
       try {
         await api.steerRun(baseUrl, activeRunId, { command, ...payload });
         await loadRun(activeRunId);
-        addToast({ variant: "success", title: `Run ${humanize(command).toLowerCase()}d` });
+        addToast({
+          variant: "success",
+          title: command === "launch_evo" ? "Evo launch requested" : `Run ${humanize(command).toLowerCase()}d`,
+        });
       } catch (error) {
         addToast({ variant: "error", title: `Steer failed`, description: error instanceof Error ? error.message : "Unknown error" });
       } finally {
@@ -527,16 +521,6 @@ export default function App() {
     },
     [activeRunId, baseUrl, addToast], // eslint-disable-line react-hooks/exhaustive-deps
   );
-
-  async function handleGitNexusSearch() {
-    if (!readiness?.gitnexus.url) return;
-    try {
-      const result = await api.searchGitNexus(readiness.gitnexus.url, gitnexusSearch);
-      setGitnexusSearchResult(result);
-    } catch (error) {
-      setGitnexusSearchResult({ error: error instanceof Error ? error.message : "Search failed" });
-    }
-  }
 
   function handleVaultSelect(path: string) {
     void api
@@ -696,11 +680,10 @@ export default function App() {
         readiness.evo,
         readiness.latentmas,
         readiness.deepagents,
-        readiness.gitnexus,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 7;
+  const integrationsTotal = readinessItems.length || 6;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -834,7 +817,6 @@ export default function App() {
             <ReadinessCard label="Goose" status={readiness?.goose} />
             <ReadinessCard label="Evo" status={readiness?.evo} />
             <ReadinessCard label="LatentMAS" status={readiness?.latentmas} />
-            <ReadinessCard label="GitNexus" status={readiness?.gitnexus} />
           </div>
           </details>
 
@@ -1276,7 +1258,7 @@ export default function App() {
               onOverrideParams={handleOverrideParams}
             />
           ) : rightRailTab === "agents" ? (
-            <AgentMeshPanel run={activeRun} />
+            <AgentMeshPanel run={activeRun} active={steering} onSteer={handleSteer} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -1285,12 +1267,6 @@ export default function App() {
               vaultDocument={vaultDocument}
               vaultTree={vaultTree}
               merkleProof={merkleProof}
-              gitnexusInfo={gitnexusInfo}
-              gitnexusProcesses={gitnexusProcesses}
-              gitnexusSearch={gitnexusSearch}
-              gitnexusSearchResult={gitnexusSearchResult}
-              onGitnexusSearchChange={setGitnexusSearch}
-              onGitnexusSearch={handleGitNexusSearch}
               onVaultSelect={handleVaultSelect}
             />
           )}
@@ -1567,10 +1543,36 @@ function SteeringConsolePanel({
   );
 }
 
-function AgentMeshPanel({ run }: { run: RunDetail | null }) {
+function AgentMeshPanel({
+  run,
+  active,
+  onSteer,
+}: {
+  run: RunDetail | null;
+  active: string;
+  onSteer: (command: string, payload?: Record<string, unknown>) => void;
+}) {
   const tasks = Array.isArray(run?.artifacts?.agent_tasks)
     ? (run?.artifacts?.agent_tasks as AgentTask[])
     : [];
+  const evoLaunches = Array.isArray((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] } | undefined)?.launches)
+    ? (((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] }).launches ?? []) as EvoLaunchRecord[])
+    : [];
+  const defaultTargetPath = tasks.flatMap((task) => task.allowed_paths)[0] ?? "";
+  const defaultGateCommand = tasks.flatMap((task) => task.test_commands)[0] ?? "";
+  const [targetPath, setTargetPath] = useState(defaultTargetPath);
+  const [benchmarkCommand, setBenchmarkCommand] = useState("");
+  const [metric, setMetric] = useState("max");
+  const [instrumentationMode, setInstrumentationMode] = useState("inline");
+  const [gateCommand, setGateCommand] = useState(defaultGateCommand);
+
+  useEffect(() => {
+    setTargetPath(defaultTargetPath);
+    setGateCommand(defaultGateCommand);
+    setBenchmarkCommand("");
+    setMetric("max");
+    setInstrumentationMode("inline");
+  }, [run?.run_id, defaultTargetPath, defaultGateCommand]);
 
   if (!run) {
     return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
@@ -1601,6 +1603,86 @@ function AgentMeshPanel({ run }: { run: RunDetail | null }) {
         <p className="inspector-muted">
           Workers produce proposals and risk signals. Mesh keeps policy, tests, audit, Kubernetes actuation, and production promotion gates.
         </p>
+      </section>
+
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Evo Launch</p>
+            <h4>Operator-triggered discovery bootstrap</h4>
+          </div>
+          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#f2b84b" : "#41d6b1"} />
+        </div>
+        <div className="stack">
+          <input
+            value={targetPath}
+            onChange={(e) => setTargetPath(e.target.value)}
+            placeholder="Target path"
+            disabled={!defaultTargetPath || active === "launch_evo"}
+          />
+          <textarea
+            value={benchmarkCommand}
+            onChange={(e) => setBenchmarkCommand(e.target.value)}
+            placeholder="Benchmark command (required unless the repo already contains .evo/meta.json)"
+            className="small-textarea mono-textarea"
+            disabled={active === "launch_evo"}
+          />
+          <div className="steering-grid">
+            <select value={metric} onChange={(e) => setMetric(e.target.value)} disabled={active === "launch_evo"}>
+              <option value="max">Metric: max</option>
+              <option value="min">Metric: min</option>
+            </select>
+            <select
+              value={instrumentationMode}
+              onChange={(e) => setInstrumentationMode(e.target.value)}
+              disabled={active === "launch_evo"}
+            >
+              <option value="inline">Instrumentation: inline</option>
+              <option value="sdk">Instrumentation: sdk</option>
+            </select>
+          </div>
+          <input
+            value={gateCommand}
+            onChange={(e) => setGateCommand(e.target.value)}
+            placeholder="Gate command"
+            disabled={active === "launch_evo"}
+          />
+          <button
+            className="action-button compact"
+            disabled={!targetPath.trim() || !gateCommand.trim() || active === "launch_evo"}
+            onClick={() =>
+              onSteer("launch_evo", {
+                target_path: targetPath.trim(),
+                benchmark_command: benchmarkCommand.trim() || undefined,
+                metric,
+                instrumentation_mode: instrumentationMode,
+                gate_command: gateCommand.trim(),
+              })
+            }
+          >
+            Launch Evo
+          </button>
+          {evoLaunches.length > 0 && (
+            <div className="stack">
+              {evoLaunches.map((launch) => (
+                <article key={launch.launch_id} className="agent-attempt-card">
+                  <div className="agent-attempt-header">
+                    <strong>{humanize(launch.action)}</strong>
+                    <span className={launch.status === "completed" ? "agent-risk-badge good" : launch.status === "failed" ? "agent-risk-badge warn" : "agent-risk-badge"}>
+                      {humanize(launch.status)}
+                    </span>
+                  </div>
+                  <div className="context-link-list compact">
+                    <ContextLink label="Target" value={launch.target_path} mono />
+                    {launch.experiment_id ? <ContextLink label="Experiment" value={launch.experiment_id} mono /> : null}
+                    {launch.dashboard_url ? <ContextLink label="Dashboard" value={launch.dashboard_url} mono /> : null}
+                  </div>
+                  {launch.error ? <div className="readiness-warning">{launch.error}</div> : null}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       {tasks.map((task) => (

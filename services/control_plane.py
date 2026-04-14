@@ -43,7 +43,7 @@ from shared.mesh_runtime import (
 )
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
-from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.integrations import build_readiness
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -149,7 +149,6 @@ class RunCoordinator:
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or ControlPlaneStateStore(self.config)
-        self.sidecar = GitNexusSidecarManager(self.config)
         self.agent_mesh = AgentMeshService(config=self.config)
         self.evo_launcher = EvoLaunchService(self.config)
         self.controls: dict[str, RunControl] = {}
@@ -157,7 +156,7 @@ class RunCoordinator:
         self.state_store.ensure_default_goal()
 
     def ensure_sidecar(self) -> bool:
-        return self.sidecar.ensure_running()
+        return False
 
     def build_readiness(self) -> dict[str, Any]:
         return build_readiness(self.config).to_dict()
@@ -800,6 +799,164 @@ class RunCoordinator:
             if "rollback_plan" in payload:
                 data["execution_plan"]["rollback_plan"] = payload["rollback_plan"]
         return Decision.from_dict(data)
+
+    def _launch_evo(self, run_id: str, session: RunSession, payload: dict[str, Any]) -> None:
+        launch_request = self._validate_evo_launch_request(run_id, session, payload)
+        launch_id = f"evo_{run_id}_{uuid4().hex[:8]}"
+        queued = {
+            "launch_id": launch_id,
+            "action": "status" if launch_request["workspace_detected"] else "discover_bootstrap",
+            "status": "queued",
+            "requested_at": _timestamp(),
+            "repo_path": launch_request["repo_path"],
+            "target_path": launch_request["target_path"],
+            "benchmark_command": launch_request["benchmark_command"],
+            "metric": launch_request["metric"],
+            "instrumentation_mode": launch_request["instrumentation_mode"],
+            "gate_command": launch_request["gate_command"],
+            "workspace_detected": launch_request["workspace_detected"],
+            "dashboard_url": None,
+            "steps": [],
+            "error": None,
+        }
+        self._upsert_evo_launch(run_id, queued)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=queued,
+            summary={"status": "queued", "action": queued["action"]},
+            artifact_key="evo_launches",
+            integration_name="evo",
+            status="queued",
+        )
+
+        def runner() -> None:
+            running = {**queued, "status": "running", "started_at": _timestamp()}
+            self._upsert_evo_launch(run_id, running)
+            current = self.state_store.get_run_session(run_id)
+            self.state_store.append_run_event(
+                run_id,
+                stage=current.stage if current else session.stage,
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=running,
+                summary={"status": "running", "action": running["action"]},
+                artifact_key="evo_launches",
+                integration_name="evo",
+                status="running",
+            )
+            finished = self.evo_launcher.run_launch(
+                run_id=run_id,
+                repo_path=launch_request["repo_path"],
+                target_path=launch_request["target_path"],
+                benchmark_command=launch_request["benchmark_command"],
+                metric=launch_request["metric"],
+                instrumentation_mode=launch_request["instrumentation_mode"],
+                gate_command=launch_request["gate_command"],
+                note=launch_request["note"],
+            )
+            finished["launch_id"] = launch_id
+            self._upsert_evo_launch(run_id, finished)
+            latest = self.state_store.get_run_session(run_id)
+            self.state_store.append_run_event(
+                run_id,
+                stage=latest.stage if latest else session.stage,
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=finished,
+                summary={"status": finished["status"], "action": finished["action"]},
+                artifact_key="evo_launches",
+                integration_name="evo",
+                status=finished["status"],
+            )
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _validate_evo_launch_request(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        readiness = build_readiness(self.config)
+        if not readiness.evo.ready:
+            raise ValueError(f"Evo is not ready: {readiness.evo.detail}")
+        decision_payload = session.artifacts.get("decision") if isinstance(session.artifacts, dict) else None
+        if not isinstance(decision_payload, dict):
+            raise ValueError("run does not have a decision artifact")
+        trigger_payload = session.artifacts.get("trigger") if isinstance(session.artifacts, dict) else None
+        input_payload = session.artifacts.get("input_signal") if isinstance(session.artifacts, dict) else None
+        related_context: dict[str, Any] = {}
+        for candidate in (trigger_payload, input_payload):
+            if isinstance(candidate, dict) and isinstance(candidate.get("related_context"), dict):
+                related_context = candidate["related_context"]
+                break
+        execution_plan = decision_payload.get("execution_plan")
+        if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
+            raise ValueError("Evo launch is only supported for repo_patch_service runs")
+        parameters = execution_plan.get("parameters")
+        if not isinstance(parameters, dict):
+            raise ValueError("run decision is missing execution parameters")
+        repo_path = str(parameters.get("repo_path") or related_context.get("repo_path") or "").strip()
+        if not repo_path:
+            raise ValueError("run does not define a repo_path for Evo")
+        allowed_paths_raw = parameters.get("allowed_paths") if isinstance(parameters.get("allowed_paths"), list) else related_context.get("allowed_paths") or []
+        allowed_paths = [str(path) for path in allowed_paths_raw if str(path).strip()]
+        if not allowed_paths:
+            raise ValueError("run does not define allowed_paths for Evo")
+        test_commands_raw = parameters.get("test_commands") if isinstance(parameters.get("test_commands"), list) else related_context.get("test_commands") or []
+        test_commands = [str(command) for command in test_commands_raw if str(command).strip()]
+        if not test_commands:
+            raise ValueError("run does not define test_commands for Evo")
+        target_path = str(payload.get("target_path") or allowed_paths[0]).strip()
+        if target_path not in allowed_paths:
+            raise ValueError("target_path must be one of the run's allowed_paths")
+        repo = Path(repo_path).resolve()
+        if not repo.exists():
+            raise ValueError("repo_path does not exist")
+        workspace_detected = (repo / ".evo" / "meta.json").is_file()
+        benchmark_command = str(payload.get("benchmark_command") or "").strip() or None
+        if not workspace_detected and not benchmark_command:
+            raise ValueError("benchmark_command is required when the repo does not already contain an Evo workspace")
+        metric = str(payload.get("metric") or "max").strip()
+        if metric not in {"max", "min"}:
+            raise ValueError("metric must be `max` or `min`")
+        instrumentation_mode = str(payload.get("instrumentation_mode") or "inline").strip()
+        if instrumentation_mode not in {"sdk", "inline"}:
+            raise ValueError("instrumentation_mode must be `sdk` or `inline`")
+        gate_command = str(payload.get("gate_command") or test_commands[0]).strip()
+        if not gate_command:
+            raise ValueError("gate_command is required")
+        return {
+            "run_id": run_id,
+            "repo_path": str(repo),
+            "target_path": target_path,
+            "benchmark_command": benchmark_command,
+            "metric": metric,
+            "instrumentation_mode": instrumentation_mode,
+            "gate_command": gate_command,
+            "workspace_detected": workspace_detected,
+            "note": str(payload.get("note") or "mesh: bounded discover bootstrap").strip(),
+        }
+
+    def _upsert_evo_launch(self, run_id: str, launch: dict[str, Any]) -> None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return
+        artifact = session.artifacts.get("evo_launches")
+        launches = artifact.get("launches", []) if isinstance(artifact, dict) else []
+        updated: list[dict[str, Any]] = []
+        found = False
+        for existing in launches:
+            if isinstance(existing, dict) and existing.get("launch_id") == launch.get("launch_id"):
+                updated.append(launch)
+                found = True
+            elif isinstance(existing, dict):
+                updated.append(existing)
+        if not found:
+            updated.insert(0, launch)
+        session.artifacts["evo_launches"] = {"launches": updated}
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
 
     def _set_artifact(self, run_id: str, key: str, value: dict[str, Any]) -> None:
         session = self.state_store.get_run_session(run_id)

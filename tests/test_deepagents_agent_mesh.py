@@ -40,7 +40,6 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
             hermes_command="/missing/hermes",
             goose_command="/missing/goose",
             evo_command="/missing/evo",
-            gitnexus_sidecar_url="http://127.0.0.1:65535",
             mesh_deepagents_workspace_root=str(Path(self.temp_dir.name) / "da-ws"),
         )
 
@@ -296,7 +295,6 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                 hermes_command="/missing/hermes",
                 goose_command="/missing/goose",
                 evo_command="/missing/evo",
-                gitnexus_sidecar_url="http://127.0.0.1:65535",
                 agent_fabric_mode="deepagents",
             )
 

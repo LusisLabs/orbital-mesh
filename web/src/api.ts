@@ -128,21 +128,6 @@ export const api = {
     const query = new URLSearchParams({ path });
     return request<{ path: string; content: string }>(baseUrl, `/api/vault/document?${query.toString()}`);
   },
-
-  getGitNexusInfo(url: string) {
-    return request<Record<string, unknown>>(url, "/api/info");
-  },
-
-  getGitNexusProcesses(url: string) {
-    return request<Record<string, unknown>>(url, "/api/processes");
-  },
-
-  searchGitNexus(url: string, query: string) {
-    return request<Record<string, unknown>>(url, "/api/search", {
-      method: "POST",
-      body: JSON.stringify({ query, mode: "bm25", limit: 8 }),
-    });
-  },
 };
 
 export function connectSystemStream(

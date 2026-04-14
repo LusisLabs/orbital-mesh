@@ -9,8 +9,18 @@ from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path
 from typing import Any
 
-from langchain.chat_models import init_chat_model
-from langchain_core.messages import HumanMessage
+try:
+    from langchain.chat_models import init_chat_model
+except ImportError:  # pragma: no cover - optional dependency for deepagents fabric
+    def init_chat_model(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError("langchain is not installed")
+
+try:
+    from langchain_core.messages import HumanMessage
+except ImportError:  # pragma: no cover - optional dependency for deepagents fabric
+    class HumanMessage:  # type: ignore[override]
+        def __init__(self, *, content: str):
+            self.content = content
 
 from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger
 from shared.mesh_runtime.agent_workers import build_agent_attempt

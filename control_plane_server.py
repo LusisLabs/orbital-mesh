@@ -329,12 +329,10 @@ def build_server(config: RuntimeConfig | None = None) -> MeshControlPlaneServer:
 
 def serve_forever(config: RuntimeConfig | None = None, start_sidecar: bool = True) -> MeshControlPlaneServer:
     server = build_server(config)
-    if start_sidecar:
-        server.coordinator.ensure_sidecar()
     try:
         server.serve_forever()
     finally:
-        server.coordinator.sidecar.stop()
+        server.server_close()
     return server
 
 
@@ -343,8 +341,6 @@ def start_server_in_thread(
     start_sidecar: bool = True,
 ) -> tuple[MeshControlPlaneServer, threading.Thread]:
     server = build_server(config)
-    if start_sidecar:
-        server.coordinator.ensure_sidecar()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread

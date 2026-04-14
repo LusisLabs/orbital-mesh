@@ -1,6 +1,7 @@
 FROM python:3.11-slim-bookworm
 
-ARG HERMES_AGENT_REF=main
+ARG HERMES_AGENT_REF=1525624904159e7c2d6ac3feef951e27ad0d23bb
+ARG UV_VERSION=0.11.6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -9,9 +10,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git build-essential ripgrep \
-  && curl -LsSf https://astral.sh/uv/install.sh | sh \
-  && git clone --depth 1 --branch "${HERMES_AGENT_REF}" https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent \
+  && curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+  && git init /opt/hermes-agent \
   && cd /opt/hermes-agent \
+  && git remote add origin https://github.com/NousResearch/hermes-agent.git \
+  && git fetch --depth 1 origin "${HERMES_AGENT_REF}" \
+  && git checkout --detach FETCH_HEAD \
   && uv venv venv --python 3.11 \
   && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
   && mkdir -p /opt/venv/bin /workspace/mesh-intelligence/.hermes-local \

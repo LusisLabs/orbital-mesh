@@ -1,16 +1,15 @@
 # syntax=docker/dockerfile:1
-# GitNexus HTTP sidecar (`gitnexus serve`) for mesh-intelligence readiness + browser UI bridge.
-#
-# Use Ubuntu 24.04 (not Debian Bookworm): gitnexus ships native bindings that need libstdc++
-# with GLIBCXX_3.4.31+, which Bookworm's default libstdc++ does not provide on arm64/amd64.
+# GitNexus HTTP sidecar for the all-in-one local stack.
 
 FROM ubuntu:24.04
+
+ARG GITNEXUS_VERSION=1.6.1
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl python3 make g++ \
   && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
   && apt-get install -y --no-install-recommends nodejs \
-  && npm install -g gitnexus@latest \
+  && npm install -g "gitnexus@${GITNEXUS_VERSION}" \
   && apt-get purge -y make g++ \
   && apt-get autoremove -y \
   && rm -rf /var/lib/apt/lists/* \
@@ -21,7 +20,6 @@ EXPOSE 4747
 
 ENV NODE_ENV=production
 
-# `/api/heartbeat` is SSE (long-lived); use `/api/info` for probes.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=10 \
   CMD node -e "fetch('http://127.0.0.1:4747/api/info').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

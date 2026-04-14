@@ -7,8 +7,7 @@ It is safe for local production-like validation. Do not expose the control plane
 ## 1. Preconditions
 
 - Docker Desktop or Docker Engine with Compose v2.
-- `k3d` for the local Kubernetes cluster.
-- `kubectl` on the host.
+- Host access to the Docker socket path mounted into `mesh` for the all-in-one Hermes sidecar path (`/var/run/docker.sock` by default).
 - Node 22 for CI and Docker web builds.
 - Python 3.12 for CI and the backend runtime image.
 
@@ -33,29 +32,27 @@ Expected result:
 ## 3. Start Docker-Native E2E
 
 ```bash
-./scripts/e2e_up.sh
+docker compose -f docker-compose.stack.yml up --build
 ```
+
+This is the all-in-one local stack. The full topology, variables, volumes, optional LatentMAS/Deep Agents lanes, teardown, and troubleshooting are documented in [`docs/all-in-one-compose-stack.md`](./all-in-one-compose-stack.md).
 
 This does the following:
 
-- Creates or reuses a `k3d` cluster named `mesh-e2e`.
+- Starts a K3s API inside Compose.
+- Writes kubeconfig into a shared Docker volume and rewrites it to the compose-reachable endpoint `https://k3s:6443`.
 - Creates the `search` namespace.
 - Deploys `semantic-search` as a healthy baseline Deployment.
-- Writes `.mesh-runtime-state/e2e/kubeconfig`.
-- Rewrites the kubeconfig server endpoint for container access.
-- Points `MESH_RESEARCH_DIRECTORY` at the host workspace research corpus through `/workspace/mesh-intelligence/.mesh-runtime-state/research`.
-- Starts Mesh with:
-  - `docker-compose.yml`
-  - `docker-compose.e2e.yml`
-  - live Kubernetes execution enabled
-  - context allowlist `k3d-mesh-e2e`
-  - namespace allowlist `search`
+- Starts Mesh with live Kubernetes execution enabled, allowlist context `mesh-compose`, and allowlist namespace `search`.
+- Runs `mesh-smoke`, which checks readiness, seeds a CrashLoop deployment failure, launches a live run, and exits non-zero if recovery fails.
 
 Control plane:
 
 ```text
 http://127.0.0.1:8787
 ```
+
+The previous host-driven `./scripts/e2e_up.sh` path remains available when you want manual `k3d` control or a host kubeconfig artifact.
 
 ## 4. Seed A Live Failure
 
@@ -77,6 +74,8 @@ Return to healthy baseline:
 ./scripts/e2e_seed_failure.sh healthy
 ```
 
+The all-in-one stack already seeds a CrashLoop and launches a live run through `mesh-smoke`. Use the commands below when you want to rerun or change the scenario manually.
+
 ## 5. Launch Mesh Against The Live Cluster
 
 CLI path:
@@ -91,7 +90,7 @@ Browser path:
 2. In the launch panel, select `Signal: Live Kubernetes Deployment`.
 3. Use deployment `semantic-search`.
 4. Use namespace `search`.
-5. Use kube context `k3d-mesh-e2e`.
+5. Use kube context `mesh-compose`.
 6. Use `native` evaluation and `native` orchestration.
 7. Keep `MESH_AGENT_FABRIC_MODE=native` for live Kubernetes validation unless you are explicitly testing proposal lanes only.
 8. Use `interruptible_auto` only in this bounded local e2e environment.
@@ -141,6 +140,7 @@ Container logs:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.e2e.yml logs --tail=200 mesh
+docker compose -f docker-compose.stack.yml logs --tail=200 mesh
 ```
 
 ## 7. Rollback Scope
@@ -193,7 +193,7 @@ docker compose -f docker-compose.prod.yml up --build -d
 MESH_SMOKE_BASE_URL=http://127.0.0.1:8787 ./scripts/prod_smoke.sh
 ```
 
-The smoke script defaults to `MESH_SMOKE_HTTP_TIMEOUT_SECONDS=30`. Keep that default for Hermes docker-exec or other cold readiness probes; set a larger value on slow hosts rather than treating a readiness timeout as a successful deploy.
+The smoke script defaults to `MESH_SMOKE_HTTP_TIMEOUT_SECONDS=30`. Keep that default for cold readiness probes; set a larger value on slow hosts rather than treating a readiness timeout as a successful deploy.
 
 Terminate TLS and enforce authentication in Caddy, nginx, a cloud load balancer, or an internal private network. The app does not implement authn/authz.
 
@@ -237,7 +237,7 @@ Live Kubernetes execution requires both layers:
 - Runtime identity: kubeconfig/context must exist inside the container and `MESH_KUBERNETES_ALLOWED_CONTEXTS` / `MESH_KUBERNETES_ALLOWED_NAMESPACES` must include the target.
 - Network reachability: the kubeconfig server endpoint must be reachable from inside the mesh container. `https://127.0.0.1:...` usually points at the container itself, not the host or cluster API.
 
-For k3d local validation, use `./scripts/e2e_up.sh`; it rewrites the kubeconfig endpoint for container access. For production, use a real routable API endpoint or in-cluster service DNS when running mesh inside Kubernetes.
+For the one-command local stack, use `docker-compose.stack.yml`; it rewrites kubeconfig to the compose-reachable endpoint automatically. For the legacy host-driven path, `./scripts/e2e_up.sh` still rewrites the kubeconfig endpoint for container access. For production, use a real routable API endpoint or in-cluster service DNS when running mesh inside Kubernetes.
 
 ## 13. Hermes And Goose Break Glass
 
@@ -245,23 +245,14 @@ Goose is bundled in the mesh image. If `/api/readiness` reports Goose unavailabl
 
 If `/api/readiness` reports Deep Agents warnings, verify `MESH_AGENT_FABRIC_MODE`, the selected `MESH_DEEPAGENTS_MODEL`, the provider API key for that model family, and that `/app/.mesh-runtime-state/deepagents` is writable by the container user.
 
-Hermes is disabled in `docker-compose.prod.yml` by default. The developer stack reaches Hermes through `docker exec`, which requires Docker socket access from the mesh container and is not a safe default. If that topology is deliberately enabled for a demo, use the explicit override:
-
-```bash
-export MESH_DOCKER_SOCKET_HOST_PATH=/var/run/docker.sock
-export MESH_HERMES_CONTAINER_NAME=mesh-intelligence-hermes-prod
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.hermes.yml up --build -d
-MESH_SMOKE_HERMES=1 ./scripts/prod_smoke.sh
-```
-
-Restrict host access, log the acceptance in the deployment threat model, and run a smoke check through `/api/readiness` before allowing automatic orchestration.
+Hermes runs as a dedicated sidecar in the all-in-one stack and is reached through `MESH_HERMES_COMMAND=${MESH_STACK_HERMES_COMMAND:-docker exec ... mesh-intelligence-hermes-stack /opt/venv/bin/hermes}`. If readiness still reports Hermes unavailable, verify the Docker socket mount, the Hermes container health, and the configured stack-scoped Hermes command.
 
 Deep Agents is still proposal-only in this topology. Do not widen it into direct Kubernetes access, direct repo writes, or Mesh actuation.
 
 ## 14. Teardown
 
 ```bash
-./scripts/e2e_down.sh
+docker compose -f docker-compose.stack.yml down -v
 ```
 
-This stops the Compose stack and deletes the `k3d` cluster.
+This stops the all-in-one Compose stack and removes its named volumes. Use `./scripts/e2e_down.sh` only for the legacy host-driven `k3d` path.

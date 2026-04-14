@@ -146,18 +146,13 @@ class IntegrationsTests(unittest.TestCase):
 
     def test_resolve_integrations_wraps_complex_hermes_command_with_bridge_command(self) -> None:
         config = RuntimeConfig(
-            hermes_command=(
-                "docker exec -w /workspace/mesh-intelligence "
-                "-e HERMES_HOME=/workspace/mesh-intelligence/.hermes-local "
-                "mesh-intelligence-hermes /opt/venv/bin/hermes"
-            )
+            hermes_command="hermes"
         )
 
         resolved = resolve_integrations_config(config)
 
         self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
-        self.assertIn("docker exec -w /workspace/mesh-intelligence", resolved.hermes_command or "")
-        self.assertIn("/opt/venv/bin/hermes", resolved.hermes_command or "")
+        self.assertIn("--hermes-command hermes", resolved.hermes_command or "")
 
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

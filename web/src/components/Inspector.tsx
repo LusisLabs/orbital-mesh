@@ -5,9 +5,7 @@ import {
   Copy,
   ExternalLink,
   FileText,
-  FolderGit2,
   Hash,
-  Search,
   Shield,
   XCircle,
 } from "lucide-react";
@@ -25,12 +23,6 @@ interface InspectorProps {
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
   merkleProof: MerkleProof | null;
-  gitnexusInfo: Record<string, unknown> | null;
-  gitnexusProcesses: Record<string, unknown> | null;
-  gitnexusSearch: string;
-  gitnexusSearchResult: Record<string, unknown> | null;
-  onGitnexusSearchChange: (value: string) => void;
-  onGitnexusSearch: () => void;
   onVaultSelect: (path: string) => void;
 }
 
@@ -78,7 +70,7 @@ export function Inspector(props: InspectorProps) {
     case "merkle":
       return <MerkleTab run={run} merkleProof={props.merkleProof} />;
     case "code":
-      return <CodeTab {...props} />;
+      return <CodeTab />;
     default:
       return null;
   }
@@ -722,48 +714,15 @@ function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerklePr
   );
 }
 
-/* ─── Code (GitNexus) ─── */
+/* ─── Code ─── */
 
-function CodeTab(props: InspectorProps) {
-  const { gitnexusInfo, gitnexusProcesses, gitnexusSearch, gitnexusSearchResult, onGitnexusSearchChange, onGitnexusSearch } = props;
-
+function CodeTab() {
   return (
     <div className="inspector-scroll">
-      <Section title="GitNexus Search">
-        <div className="gitnexus-search-bar">
-          <Search size={14} />
-          <input
-            value={gitnexusSearch}
-            onChange={(e) => onGitnexusSearchChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onGitnexusSearch()}
-            placeholder="Search code intelligence…"
-          />
-          <button className="action-button compact" onClick={onGitnexusSearch}>
-            <FolderGit2 size={14} />
-            Query
-          </button>
-        </div>
-        {gitnexusSearchResult && <JsonBlock data={gitnexusSearchResult} />}
-      </Section>
-
-      {gitnexusInfo && (
-        <Section title="Repository Info">
-          <JsonBlock data={gitnexusInfo} />
-        </Section>
-      )}
-
-      {gitnexusProcesses && (
-        <Section title="Execution Flows">
-          <JsonBlock data={gitnexusProcesses} />
-        </Section>
-      )}
-
-      {!gitnexusInfo && !gitnexusProcesses && (
-        <div className="inspector-empty compact">
-          <Code size={24} strokeWidth={1.2} />
-          <p>GitNexus sidecar not connected.</p>
-        </div>
-      )}
+      <div className="inspector-empty compact">
+        <Code size={24} strokeWidth={1.2} />
+        <p>Code-side external integrations were removed from this stack.</p>
+      </div>
     </div>
   );
 }

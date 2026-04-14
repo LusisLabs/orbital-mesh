@@ -141,7 +141,42 @@ MESH_EVO_COMMAND=evo
 MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"
 ```
 
-Mesh never runs Evo optimization commands in this phase. Do not call `evo init`, `evo new`, `evo run`, `evo optimize`, git worktree commands, or subagents from the Mesh control plane.
+Normal run processing does not invoke Evo. Evo commands are only reachable through an explicit steering command.
+
+## Evo Launch Steering
+
+Mesh exposes a bounded operator-triggered launch path:
+
+```json
+{
+  "command": "launch_evo",
+  "target_path": "app/search.py",
+  "benchmark_command": "python3 benchmark.py --target {target}",
+  "instrumentation_mode": "inline",
+  "metric": "max",
+  "gate_command": "python3 -m unittest discover -s tests"
+}
+```
+
+Execution rules:
+
+- accepted only when a run is paused at `evaluation_ready` or after the run has already completed
+- requires `evo.ready == true`
+- requires a `repo_patch_service` decision with `repo_path`, `allowed_paths`, and `test_commands`
+- requires `target_path` to be one of the run's `allowed_paths`
+- requires `benchmark_command` when the repo does not already contain `.evo/meta.json`
+
+Artifact shape:
+
+- run artifact key: `evo_launches`
+- vault note: `Evo/<run_id>.md`
+- event stream: `integration_name="evo"` with queued, running, and completed or failed records
+
+Boundaries:
+
+- Mesh may run `evo status` for an existing workspace or `evo init`, `evo new`, and `evo run` for an operator-approved bounded bootstrap.
+- Mesh does not run `evo optimize`, create PRs, merge changes, or promote anything to production.
+- Mesh requires a clean git worktree before Evo bootstrap.
 
 ## LatentMAS Sidecar
 
@@ -171,6 +206,12 @@ Run the opt-in Docker profile:
 docker compose -f docker-compose.yml -f docker-compose.latentmas.yml --profile latentmas up --build
 ```
 
+In the all-in-one stack, use the stack profile and set Mesh to expect LatentMAS readiness:
+
+```bash
+COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docker-compose.stack.yml up --build
+```
+
 The sidecar exposes:
 
 ```text
@@ -186,6 +227,12 @@ Deep Agents is disabled unless:
 
 ```bash
 MESH_AGENT_FABRIC_MODE=deepagents
+```
+
+In the all-in-one stack, enable it through the stack-scoped variable so the smoke verifier also expects Deep Agents readiness:
+
+```bash
+MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
 ```
 
 Optional controls:

@@ -34,8 +34,29 @@ flowchart LR
 - Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
 - The static web bundle is served from `MESH_WEB_ASSET_PATH` and calls the same HTTP API under `/api/*`.
 - Persistent state lives under `MESH_STATE_DIRECTORY`; autoresearch sessions live under `MESH_RESEARCH_DIRECTORY`; vault artifacts live under `MESH_VAULT_PATH`.
-- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; GitNexus and Hermes are optional external integration boundaries.
+- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; Hermes is an optional external integration boundary.
 - Kubernetes is a foundational production path, but it has two separate requirements: the runtime must have a kubeconfig/context that passes the allowlists, and the API server endpoint inside that kubeconfig must be reachable from the container namespace. Local `localhost` kubeconfig server URLs generally fail inside containers unless rewritten to a container-reachable host, as the e2e scripts do for k3d.
+
+### Local all-in-one topology
+
+`docker-compose.stack.yml` is the local whole-system topology. It runs Mesh, dedicated Hermes and GitNexus sidecars, embedded k3s, a one-shot Kubernetes bootstrap job, and a one-shot smoke verifier in one Compose project.
+
+```mermaid
+flowchart LR
+    operator[Operator Browser] --> mesh[Mesh API + UI]
+    smoke[mesh-smoke] --> mesh
+    smoke --> k8s[k3s API]
+    bootstrap[mesh-kube-bootstrap] --> k8s
+    mesh --> k8s
+    mesh --> hermes[Hermes Sidecar]
+    mesh --> gitnexus[GitNexus Sidecar]
+    mesh --> state[mesh_runtime_state]
+    mesh --> kubeconfig[mesh_kubeconfig]
+    k8s --> kubeconfig
+    latentmas[LatentMAS Profile] -. optional .-> mesh
+```
+
+This topology is not the production template. It intentionally uses a privileged k3s container, repository bind mounts, a Docker socket mount for the Hermes sidecar command path, and local published ports so the complete system can be launched and tested from one command. The production-like template remains `docker-compose.prod.yml`, which removes the repository bind mount and Docker socket and requires externally provided kubeconfig and allowlists.
 
 ### 1. Core remediation loop
 
@@ -68,7 +89,7 @@ runs **in-process** on that payload, then `TriggerService` and the rest of the l
 | Method | Path | Role |
 | --- | --- | --- |
 | `GET` | `/api/health` | Liveness probe |
-| `GET` | `/api/readiness` | Integration readiness (Promptfoo, Goose, GitNexus, etc.) |
+| `GET` | `/api/readiness` | Integration readiness (Promptfoo, Goose, Hermes, etc.) |
 | `GET` | `/api/scenarios` | List fixture-backed scenario keys |
 | `GET` | `/api/goals` | List goals |
 | `POST` | `/api/goals` | Create a goal |

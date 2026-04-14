@@ -14,6 +14,7 @@ RUN npm install -g promptfoo@0.121.3 \
   && rm -rf /root/.npm
 
 FROM debian:12-slim AS goose
+ARG GOOSE_VERSION=v1.30.0
 RUN apt-get update \
   && apt-get install -y --no-install-recommends bzip2 ca-certificates curl \
   && arch="$(dpkg --print-architecture)" \
@@ -22,7 +23,7 @@ RUN apt-get update \
     arm64) goose_arch="aarch64" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
-  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/goose.tar.bz2 "https://github.com/aaif-goose/goose/releases/download/stable/goose-${goose_arch}-unknown-linux-gnu.tar.bz2" \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/goose.tar.bz2 "https://github.com/aaif-goose/goose/releases/download/${GOOSE_VERSION}/goose-${goose_arch}-unknown-linux-gnu.tar.bz2" \
   && tar -xjf /tmp/goose.tar.bz2 -C /tmp \
   && install -m 755 /tmp/goose /usr/local/bin/goose \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
@@ -33,6 +34,8 @@ WORKDIR /app
 
 ARG MESH_BUILD_VERSION=dev
 ARG MESH_BUILD_COMMIT=unknown
+ARG HERMES_AGENT_REF=1525624904159e7c2d6ac3feef951e27ad0d23bb
+ARG UV_VERSION=0.11.6
 
 RUN apt-get update \
   && apt-get upgrade -y \
@@ -56,11 +59,26 @@ COPY --from=goose /usr/local/bin/goose /usr/local/bin/goose
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    MESH_SERVER_HOST=0.0.0.0 \
+    HERMES_HOME=/workspace/mesh-intelligence/.hermes-local \
+    PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
+
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+  && git init /opt/hermes-agent \
+  && cd /opt/hermes-agent \
+  && git remote add origin https://github.com/NousResearch/hermes-agent.git \
+  && git fetch --depth 1 origin "${HERMES_AGENT_REF}" \
+  && git checkout --detach FETCH_HEAD \
+  && uv venv venv --python 3.11 \
+  && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
+  && mkdir -p /opt/venv/bin /workspace/mesh-intelligence/.hermes-local \
+  && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
+  && ln -sf /opt/hermes-agent/venv/bin/hermes /usr/local/bin/hermes \
+  && rm -rf /var/lib/apt/lists/* /root/.cache
+
+ENV MESH_SERVER_HOST=0.0.0.0 \
     MESH_SERVER_PORT=8787 \
     MESH_WEB_ASSET_PATH=/app/web/dist \
     MESH_ENVIRONMENT=production \
-    MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
     MESH_ACCESS_LOG=1 \
     MESH_STRUCTURED_LOGS=1 \
     MESH_BUILD_VERSION=$MESH_BUILD_VERSION \
@@ -71,7 +89,8 @@ COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py 
 COPY shared ./shared
 COPY services ./services
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
-RUN python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" /app/deepagents/libs/deepagents
+# Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" /app/deepagents/libs/deepagents
 COPY scaffold ./scaffold
 COPY fixtures ./fixtures
 COPY policies ./policies
@@ -79,6 +98,6 @@ COPY policies ./policies
 EXPOSE 8787
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=4)"
+  CMD /usr/local/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=4)"
 
-CMD ["sh", "-lc", "python3 setup_integrations.py && exec python3 run_server.py"]
+CMD ["sh", "-lc", "/usr/local/bin/python3 setup_integrations.py && exec /usr/local/bin/python3 run_server.py"]

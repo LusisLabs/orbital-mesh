@@ -1198,23 +1198,6 @@ code {
   margin: 1rem 0;
 }
 
-/* ─── GitNexus ─── */
-
-.gitnexus-search-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.3rem 0.5rem 0.3rem 0.7rem;
-  border-radius: var(--radius);
-  border: 1px solid var(--panel-border);
-  background: rgba(7, 12, 20, 0.7);
-  transition: border-color 0.15s ease;
-}
-
-.gitnexus-search-bar:focus-within { border-color: var(--accent); }
-.gitnexus-search-bar input { border: none; background: transparent; flex: 1; padding: 0.35rem 0; }
-.gitnexus-search-bar input:focus { box-shadow: none; }
-
 /* ─── Copy Button ─── */
 
 .copy-btn {

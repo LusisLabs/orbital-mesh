@@ -5,6 +5,9 @@ services:
       args:
         MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
         MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
     image: "${MESH_IMAGE:-mesh-intelligence:${MESH_BUILD_VERSION:-dev}}"
     init: true
     ports:
@@ -15,6 +18,7 @@ services:
       MESH_ENVIRONMENT: "${MESH_ENVIRONMENT:-production}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
+      HERMES_HOME: /workspace/mesh-intelligence/.hermes-local
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
@@ -24,10 +28,8 @@ services:
       MESH_GOOSE_RUN_TIMEOUT_SECONDS: "${MESH_GOOSE_RUN_TIMEOUT_SECONDS:-180}"
       MESH_EVO_COMMAND: "${MESH_EVO_COMMAND:-}"
       MESH_EVO_COMMAND_TIMEOUT_SECONDS: "${MESH_EVO_COMMAND_TIMEOUT_SECONDS:-60}"
-      MESH_HERMES_COMMAND: "${MESH_HERMES_COMMAND:-}"
+      MESH_HERMES_COMMAND: "${MESH_HERMES_COMMAND:-hermes}"
       MESH_HERMES_COMMAND_TIMEOUT_SECONDS: "${MESH_HERMES_COMMAND_TIMEOUT_SECONDS:-180}"
-      MESH_GITNEXUS_DISABLE_AUTOSTART: "${MESH_GITNEXUS_DISABLE_AUTOSTART:-1}"
-      MESH_GITNEXUS_SIDECAR_URL: "${MESH_GITNEXUS_SIDECAR_URL:-}"
       MESH_ACCESS_LOG: "${MESH_ACCESS_LOG:-1}"
       MESH_STRUCTURED_LOGS: "${MESH_STRUCTURED_LOGS:-1}"
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
@@ -56,6 +58,7 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
     volumes:
       - mesh_runtime_state:/app/.mesh-runtime-state
+      - hermes_home:/workspace/mesh-intelligence/.hermes-local
       - goose_config:/root/.config/goose
       - "${MESH_KUBECONFIG_HOST_PATH:?set host kubeconfig path}:/run/secrets/mesh-kubeconfig:ro"
     restart: unless-stopped
@@ -82,4 +85,5 @@ services:
 
 volumes:
   mesh_runtime_state:
+  hermes_home:
   goose_config:

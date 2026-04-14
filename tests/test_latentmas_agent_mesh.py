@@ -27,7 +27,6 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             promptfoo_command="/missing/promptfoo",
             hermes_command="/missing/hermes",
             goose_command="/missing/goose",
-            gitnexus_sidecar_url="http://127.0.0.1:65535",
         )
 
     def tearDown(self) -> None:

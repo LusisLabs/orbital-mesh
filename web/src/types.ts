@@ -84,6 +84,32 @@ export interface AgentTask {
   selected_attempt_id?: string | null;
 }
 
+export interface EvoLaunchRecord {
+  launch_id: string;
+  action: string;
+  status: string;
+  requested_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  repo_path: string;
+  target_path: string;
+  benchmark_command?: string | null;
+  metric?: string | null;
+  instrumentation_mode?: string | null;
+  gate_command?: string | null;
+  workspace_detected: boolean;
+  dashboard_url?: string | null;
+  steps: Array<{
+    argv: string[];
+    returncode: number;
+    stdout: string;
+    stderr: string;
+    duration_seconds: number;
+  }>;
+  experiment_id?: string | null;
+  error?: string | null;
+}
+
 /** Goose / MiniMax autoresearch filesystem session (not a Mesh pipeline run). */
 export interface ResearchSessionRecord {
   session_id: string;
@@ -202,7 +228,6 @@ export interface IntegrationReadiness {
   evo: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
-  gitnexus: IntegrationStatus;
   vault_path: string;
   state_path: string;
   integrations_config_path: string;

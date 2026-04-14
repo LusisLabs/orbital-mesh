@@ -59,9 +59,6 @@ class RuntimeConfig:
     kubernetes_rollout_timeout_seconds: int = 120
     kubernetes_allowed_contexts: tuple[str, ...] = ()
     kubernetes_allowed_namespaces: tuple[str, ...] = ()
-    gitnexus_sidecar_url: str | None = None
-    gitnexus_sidecar_command: str | None = None
-    gitnexus_disable_autostart: bool = False
     max_json_body_bytes: int = 1_048_576
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
@@ -142,10 +139,6 @@ class RuntimeConfig:
             kubernetes_rollout_timeout_seconds=int(os.getenv("MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS", "120")),
             kubernetes_allowed_contexts=_csv_env("MESH_KUBERNETES_ALLOWED_CONTEXTS"),
             kubernetes_allowed_namespaces=_csv_env("MESH_KUBERNETES_ALLOWED_NAMESPACES"),
-            gitnexus_sidecar_url=os.getenv("MESH_GITNEXUS_SIDECAR_URL") or None,
-            gitnexus_sidecar_command=os.getenv("MESH_GITNEXUS_SIDECAR_COMMAND") or None,
-            gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()
-            in ("1", "true", "yes"),
             max_json_body_bytes=int(os.getenv("MESH_MAX_JSON_BODY_BYTES", "1048576")),
             access_log_enabled=os.getenv("MESH_ACCESS_LOG", "").lower() in ("1", "true", "yes"),
             security_headers_enabled=os.getenv("MESH_SECURITY_HEADERS", "true").lower()

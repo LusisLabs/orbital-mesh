@@ -56,7 +56,7 @@ The browser UI is the primary interface.
 - Persists goals, runs, notes, and artifact state in structured runtime storage
 - Mirrors that memory into a fixed Obsidian-compatible vault layout
 - Computes Merkle roots for canonical run events and returns proofs per event
-- Integrates with a managed local GitNexus sidecar for code/process context
+- Integrates with a local code/process inspection surface for repository context
 - Supports two evaluation modes:
   - `native`
   - `promptfoo`
@@ -64,7 +64,7 @@ The browser UI is the primary interface.
   - `native`
   - `goose`
   - `hermes`
-- Reports proposal-lane readiness for Evo without letting Evo mutate the repo from Mesh.
+- Reports proposal-lane readiness for Evo and supports explicit operator-triggered Evo bootstrap/status for bounded repo patch runs.
 
 ## Runtime Model
 
@@ -115,11 +115,11 @@ CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge
 
 ### Orchestration: `hermes`
 
-CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Hermes review step before bounded local actuation. In Docker Compose, Hermes runs in its own sidecar container and Mesh reaches it through `docker exec`, so the control plane can offer Hermes without removing Goose.
+CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Hermes review step before bounded local actuation. The default image bundles the Hermes CLI, so the control plane can offer Hermes without a Docker socket or separate sidecar.
 
 ### Proposal lane: `evo`
 
-Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--version`, requires the output to identify `evo-hq-cli`, and records an agent-task recommendation for bounded code-remediation runs. Mesh does not run `evo init`, `evo new`, `evo run`, `evo optimize`, git worktree commands, or subagents.
+Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--version`, requires the output to identify `evo-hq-cli`, and records an agent-task recommendation for bounded code-remediation runs. Normal run progression does not invoke Evo. A separate operator steering command can launch a bounded Evo bootstrap or status check for eligible repo patch runs.
 
 ## Repository Layout
 
@@ -127,12 +127,13 @@ Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--ver
 mesh-intelligence/
 ├── Dockerfile                       # production image (Vite UI + Python server)
 ├── docker-compose.yml               # persisted state volume + health checks
+├── docker-compose.stack.yml         # all-in-one local Mesh + sidecars + k3s + smoke stack
 ├── .env.example                     # configuration template
 ├── control_plane_server.py          # local HTTP + SSE server
 ├── run_server.py                    # browser control-plane entrypoint
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
-├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo / GitNexus config
+├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo config
 ├── swarmclaw/                       # optional Next.js operator stack (separate surface)
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
@@ -159,6 +160,27 @@ mesh-intelligence/
 ```
 
 ## Quick Start
+
+### One-command full stack
+
+Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster, and an automated smoke run in one environment:
+
+```bash
+docker compose -f docker-compose.stack.yml up --build
+```
+
+This starts Mesh, a dedicated Hermes sidecar, a GitNexus sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The control plane is available at `http://127.0.0.1:8787`.
+
+Optional lanes:
+
+```bash
+COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docker-compose.stack.yml up --build
+MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
+```
+
+Full runbook: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
+
+Manual local server path:
 
 ### 1. Install and verify integrations
 
@@ -224,7 +246,7 @@ Use the left rail to:
 The browser UI is a React/Vite application under [`web/`](./web) using:
 
 - a dense operator shell and graph-driven center stage inspired by `mesh-llm`
-- server connection, status, and side-panel patterns inspired by `GitNexus`
+- server connection, status, and side-panel patterns tuned for the operator workflow
 
 **Unified canvas** (center stage) composes run flow, Kubernetes context, Merkle, and artifacts on one graph; the graph panel has a **fullscreen** control (top-right) for focused inspection. Below: local control plane with the **Unified** tab active (example scenario `kubernetes_crashloop_patch`).
 
@@ -252,7 +274,7 @@ The layout is:
   - feedback
   - vault preview
   - Merkle proof
-  - GitNexus-backed code/process context
+  - code/process context
 
 The active run is preserved in URL state with `?run=<run_id>`.
 
@@ -346,6 +368,21 @@ Live Kubernetes deployment harvesting is also supported:
 }
 ```
 
+Evo can also be launched explicitly for an eligible repo patch run:
+
+```json
+{
+  "command": "launch_evo",
+  "target_path": "app/search.py",
+  "benchmark_command": "python3 benchmark.py --target {target}",
+  "instrumentation_mode": "inline",
+  "metric": "max",
+  "gate_command": "python3 -m unittest discover -s tests"
+}
+```
+
+`launch_evo` is accepted only when a run is paused at `evaluation_ready` or after completion. It requires `evo.ready`, a `repo_patch_service` decision, explicit repo boundaries, and a clean git worktree before bootstrap.
+
 ## Vault Layout
 
 Run and goal memory are mirrored to:
@@ -362,6 +399,7 @@ Fixed directories:
 - `Evaluations/`
 - `Executions/`
 - `Feedback/`
+- `Evo/`
 - `Merkle/`
 - `Notes/`
 
@@ -370,6 +408,7 @@ Each run writes:
 - a run note linking the goal and stage artifacts
 - JSON-backed artifact notes for decision, evaluation, execution, and feedback
 - operator notes
+- Evo launch notes when present
 - a Merkle note containing the current root and event IDs
 
 ## Merkle Event Ledger
@@ -430,9 +469,6 @@ Supported configuration variables:
 - `MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS` — timeout for `kubectl rollout status` after restart/rollback actions.
 - `MESH_KUBERNETES_ALLOWED_CONTEXTS` — comma-separated allowlist of kube contexts permitted for live execution.
 - `MESH_KUBERNETES_ALLOWED_NAMESPACES` — comma-separated allowlist of namespaces permitted for live execution.
-- `MESH_GITNEXUS_SIDECAR_URL`
-- `MESH_GITNEXUS_SIDECAR_COMMAND`
-- `MESH_GITNEXUS_DISABLE_AUTOSTART` — when `1`/`true`, never infer a local GitNexus CLI command from the filesystem (recommended in containers unless you mount a GitNexus tree).
 - `MESH_MAX_JSON_BODY_BYTES` — max `Content-Length` for JSON `POST` bodies (default `1048576`; use `0` to disable the limit).
 - `MESH_SECURITY_HEADERS` — when `true` (default), sends `X-Content-Type-Options` and `Referrer-Policy` on HTTP responses.
 - `MESH_ACCESS_LOG` — when `1`/`true`, enables access logging via Python’s logging module (configure handlers as needed for your environment).
@@ -475,7 +511,15 @@ The browser UI can also launch a run directly from a live deployment now. In the
 
 ### Docker-Native Local E2E
 
-For a polished local loop, use `k3d` for the cluster and Docker Compose for Mesh:
+Use the all-in-one stack for the current single-command local validation path:
+
+```bash
+docker compose -f docker-compose.stack.yml up --build
+```
+
+That path embeds k3s in Compose, starts the sidecars, seeds the `semantic-search` Deployment, and runs the smoke verifier automatically. See [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
+
+The legacy host-driven loop remains available when you want manual `k3d` control and a host kubeconfig artifact:
 
 1. Bring up the healthy baseline cluster and Mesh stack:
 
@@ -564,11 +608,45 @@ Secrets to inject through the target platform secret store:
 
 Platform choice is intentionally not hard-coded. For a single VM, run this compose file behind Caddy/nginx with TLS and authentication. For AWS ECS, Fly.io, or Kubernetes, translate the same env contract, state volume, kubeconfig secret, health check, and `/api/health` probe into the platform’s native constructs.
 
-The default `docker-compose.yml` stack is the developer/local-e2e stack. It starts:
+For a single-command local environment that includes sidecars, a live Kubernetes cluster, and an automated end-to-end smoke run, use `docker-compose.stack.yml`:
+
+```bash
+docker compose -f docker-compose.stack.yml up --build
+```
+
+Full operational context, topology, variables, volumes, teardown, and troubleshooting live in [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
+
+That stack starts:
+
+1. **`k3s`** — local Kubernetes API on **6443** inside the compose graph.
+2. **`mesh-kube-bootstrap`** — one-shot job that rewrites kubeconfig to `https://k3s:6443`, creates namespace `search`, deploys `semantic-search`, and normalizes the kube context to `mesh-compose`.
+3. **`mesh`** — browser control plane and Python backend on **8787**, with live Kubernetes execution enabled and deterministic native agent-task lanes enabled by default in this topology.
+4. **`hermes`** — dedicated Hermes runtime sidecar reached through `docker exec`.
+5. **`gitnexus`** — local GitNexus HTTP sidecar on **4747**.
+6. **`mesh-smoke`** — one-shot verifier that checks readiness, seeds a CrashLoop, launches a live Mesh run, and exits non-zero if bounded recovery fails.
+
+Optional GPU worker lane:
+
+```bash
+COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docker-compose.stack.yml up --build
+```
+
+Optional Deep Agents proposal fabric:
+
+```bash
+MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
+```
+
+Smoke result:
+
+```bash
+docker compose -f docker-compose.stack.yml logs mesh-smoke
+```
+
+The default `docker-compose.yml` stack remains the lighter developer/manual stack. It starts:
 
 1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
-2. **`hermes`** — dedicated Hermes runtime sidecar built from `Dockerfile.hermes`. Compose keeps it alive and healthy, and `mesh` reaches it through `docker exec` using the default `MESH_HERMES_COMMAND`.
-3. **GitNexus is optional** — Compose no longer builds a `gitnexus` container. If you already have a GitNexus instance running on the host or elsewhere, point `MESH_GITNEXUS_SIDECAR_URL` at it. Otherwise the control plane still starts cleanly and GitNexus readiness simply reports unavailable.
+2. **Hermes in-image** — the same mesh container includes the Hermes CLI, with local Hermes state persisted in `hermes_home`.
 
 ```bash
 docker compose up --build -d
@@ -599,7 +677,7 @@ Inspect readiness from the running backend:
 curl http://127.0.0.1:8787/api/readiness
 ```
 
-By default, Promptfoo becomes ready automatically in the container. Hermes is built and started as a sidecar, then Mesh reaches it through `docker exec`. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route. Evo reports unavailable unless you provide `MESH_EVO_COMMAND`; Mesh does not auto-install Evo.
+By default, Promptfoo becomes ready automatically in the container. Hermes is installed in the image and reports ready when the configured `MESH_HERMES_COMMAND` can reach the CLI. Goose is installed in the image and reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route. Evo reports unavailable unless you provide `MESH_EVO_COMMAND`; Mesh does not auto-install Evo.
 
 ```bash
 export MESH_COMPOSE_GOOSE_PROVIDER=openai
@@ -624,40 +702,11 @@ For repo-patch and Kubernetes/code-remediation style flows, use repo paths from 
 /workspace/mesh-intelligence/fixtures/codebases/search_service
 ```
 
-Optional GitNexus on the host:
-
-```bash
-npx -y gitnexus@latest serve
-```
-
-Then keep:
-
-```bash
-MESH_GITNEXUS_SIDECAR_URL=http://host.docker.internal:4747
-```
-
-Or blank the variable out if you do not want the sidecar integration at all.
-
-Health: `GET /api/health` on mesh; GitNexus exposes `GET /api/info` for quick probes (Docker Compose uses this). `GET /api/heartbeat` is Server-Sent Events and is not suitable for typical HTTP health checks.
-
-Hermes in the developer stack is reached through `docker exec`, which requires a Docker socket mount in the `mesh` container. Do not carry that socket mount into production unless the deployment’s threat model explicitly accepts container-root access to the host Docker daemon. The production compose file leaves Hermes unconfigured by default; use Goose in the application image or run a hardened Hermes topology outside the mesh container boundary before enabling `MESH_HERMES_COMMAND`.
-
-If the demo requires Hermes through Docker exec, use the explicit override rather than modifying the baseline production file:
-
-```bash
-export MESH_DOCKER_SOCKET_HOST_PATH=/var/run/docker.sock
-export MESH_HERMES_CONTAINER_NAME=mesh-intelligence-hermes-prod
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.hermes.yml up --build -d
-MESH_SMOKE_HERMES=1 ./scripts/prod_smoke.sh
-```
-
-This topology gives the mesh container access to the host Docker socket so it can run `docker exec` into the Hermes container. Treat that as privileged host control. Keep it demo-scoped or replace it with a networked Hermes service before using it as a long-lived production topology.
+Health: `GET /api/health` on mesh. `GET /api/readiness` is the integration probe and may take longer because it checks the configured CLIs.
 
 `./scripts/prod_smoke.sh` uses `MESH_SMOKE_HTTP_TIMEOUT_SECONDS=30` by default because `/api/readiness` probes Goose, Hermes, and Promptfoo. Increase it for slow first-boot hosts; lower it only when readiness dependencies are already warm.
 
-The image currently runs as root because the bundled Goose profile path, Docker CLI compatibility for the developer Hermes path, and kubectl default config path are root-oriented. The production compose file compensates with read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, explicit volumes, and no Docker socket. Moving the image to a non-root UID requires validating Goose profile writes and kubectl config paths under that UID.
-
-**Native GitNexus beside native Python:** in one terminal `npx -y gitnexus@latest serve` (or `gitnexus serve` if installed globally), in another set `MESH_GITNEXUS_SIDECAR_URL=http://127.0.0.1:4747` and run `python3 run_server.py`.
+The image currently runs as root because the bundled Goose profile path and kubectl default config path are root-oriented. The production compose file compensates with read-only root filesystem, dropped Linux capabilities, `no-new-privileges`, and explicit volumes. Moving the image to a non-root UID requires validating Goose profile writes and kubectl config paths under that UID.
 
 ### Bare metal
 
