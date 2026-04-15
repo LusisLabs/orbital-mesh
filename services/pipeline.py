@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from services.runtime import MeshRuntimeEngine
+
+if TYPE_CHECKING:
+    from services.decision.service import DecisionService
+    from services.evaluation.service import EvaluationService
+    from services.feedback.service import FeedbackService
+    from services.ingest.service import IngestService
+    from services.orchestrator.service import OrchestratorService
+    from services.trigger.service import TriggerService
 
 
 class FirstSlicePipeline:

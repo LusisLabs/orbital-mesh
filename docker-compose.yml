@@ -58,6 +58,14 @@ services:
   mesh:
     build: .
     init: true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
     depends_on:
       hermes:
         condition: service_healthy

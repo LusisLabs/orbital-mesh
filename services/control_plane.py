@@ -34,9 +34,14 @@ from shared.mesh_runtime import (
     Trigger,
     load_fixture,
 )
-from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
+from shared.mesh_runtime.control_plane_models import GoalRecord, SteeringCommand
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.research import (
+    build_research_corpus_intelligence,
+    build_research_session_intelligence,
+    sanitize_research_markdown,
+)
 
 
 ALLOWED_STAGES = {
@@ -85,6 +90,7 @@ class RunCoordinator:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or ControlPlaneStateStore(self.config)
         self.sidecar = GitNexusSidecarManager(self.config)
+        self._lock = threading.Lock()
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
         self.state_store.ensure_default_goal()
@@ -127,6 +133,56 @@ class RunCoordinator:
             )
         return scenarios
 
+    def list_research_sessions(self) -> list[dict[str, Any]]:
+        research_root = Path(self.config.research_directory)
+        if not research_root.is_dir():
+            return []
+        sessions: list[dict[str, Any]] = []
+        for session_dir in sorted((p for p in research_root.iterdir() if p.is_dir()), reverse=True):
+            manifest_path = session_dir / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            final_report = session_dir / "synthesis" / "final-report.md"
+            intelligence = build_research_session_intelligence(session_dir, manifest)
+            sessions.append({
+                **manifest,
+                "has_final_report": final_report.is_file(),
+                "research_intelligence": intelligence,
+            })
+        return sessions
+
+    def get_research_session(self, session_id: str) -> dict[str, Any] | None:
+        research_root = Path(self.config.research_directory)
+        session_dir = research_root / session_id
+        if not session_dir.is_dir():
+            return None
+        manifest_path = session_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        final_report_path = session_dir / "synthesis" / "final-report.md"
+        final_report_markdown: str | None = None
+        if final_report_path.is_file():
+            raw = final_report_path.read_text(encoding="utf-8", errors="replace")
+            final_report_markdown = sanitize_research_markdown(raw)
+        intelligence = build_research_session_intelligence(session_dir, manifest)
+        return {
+            **manifest,
+            "final_report_markdown": final_report_markdown,
+            "research_intelligence": intelligence,
+        }
+
+    def get_research_corpus(self) -> dict[str, Any]:
+        research_root = Path(self.config.research_directory)
+        return build_research_corpus_intelligence(research_root)
+
     def list_goals(self) -> list[dict[str, Any]]:
         return [goal.to_dict() for goal in self.state_store.list_goals()]
 
@@ -167,8 +223,8 @@ class RunCoordinator:
         )
         pause_points = self._normalize_pause_points(raw_pause_points)
         goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
-        scenario_key = payload.get("scenario_key")
         signal_payload = self._resolve_signal(payload)
+        scenario_key = payload.get("scenario_key")
         run_config = replace(
             self.config,
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
@@ -185,7 +241,8 @@ class RunCoordinator:
             orchestration_mode=run_config.orchestration_mode,
             artifacts={"input_signal": signal_payload, "integration_readiness": readiness_snapshot},
         )
-        self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
+        with self._lock:
+            self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
@@ -216,7 +273,8 @@ class RunCoordinator:
             args=(session.run_id, run_config, signal_payload, scenario_key),
             daemon=True,
         )
-        self._threads[session.run_id] = worker
+        with self._lock:
+            self._threads[session.run_id] = worker
         worker.start()
         return self.get_run(session.run_id) or session.to_dict()
 
@@ -225,7 +283,8 @@ class RunCoordinator:
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
         session = self.state_store.get_run_session(run_id)
-        control = self.controls.get(run_id)
+        with self._lock:
+            control = self.controls.get(run_id)
         if session is None or control is None:
             raise KeyError(run_id)
         command = SteeringCommand(
@@ -401,6 +460,9 @@ class RunCoordinator:
                 summary={"status": "failed"},
                 status="failed",
             )
+        finally:
+            with self._lock:
+                self._threads.pop(run_id, None)
 
     def _record_decision_and_evaluation(
         self,
@@ -585,12 +647,30 @@ class RunCoordinator:
     def _resolve_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("signal_payload"), dict):
             return self._resolve_signal_placeholders(copy.deepcopy(payload["signal_payload"]))
+        live_signal = payload.get("live_signal")
+        if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
+            return self._collect_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
         if scenario_key:
             signal = self._resolve_signal_placeholders(copy.deepcopy(load_fixture("signals", f"{scenario_key}.json")))
             signal["signal_id"] = f"{signal['signal_id']}_{uuid4().hex[:10]}"
             return signal
         raise ValueError("scenario_key or signal_payload is required")
+
+    def _collect_live_kubernetes_signal(self, live_signal: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
+
+        signal = collect_kubernetes_signal(
+            deployment_name=live_signal["deployment_name"],
+            namespace=live_signal.get("namespace", "default"),
+            kube_context=live_signal.get("kube_context"),
+            environment=live_signal.get("environment", "local"),
+            kubectl_command=self.config.kubectl_command,
+        )
+        ns = live_signal.get("namespace", "default")
+        name = live_signal["deployment_name"]
+        payload["scenario_key"] = f"live_kubernetes:{ns}/{name}"
+        return signal
 
     def _resolve_signal_placeholders(self, signal: dict[str, Any]) -> dict[str, Any]:
         related_context = signal.get("related_context")

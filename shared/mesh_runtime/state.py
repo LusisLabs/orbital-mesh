@@ -36,6 +36,19 @@ class RunRecord:
     integration_artifact_count: int = 0
 
 
+def parse_state_json_file(path: Path, raw: str) -> dict[str, Any]:
+    """Parse JSON from *raw*, returning {} on failure and writing a .corrupt backup."""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        backup = path.with_suffix(
+            f"{path.suffix}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+        )
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text(raw, encoding="utf-8")
+        return {}
+
+
 class RuntimeStateStore:
     def __init__(self, state_directory: str | Path):
         self.state_directory = Path(state_directory)

@@ -243,6 +243,7 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "rollback_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
                 "revision": trigger.related_context.get("release_id"),
@@ -255,6 +256,7 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "restart_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
             },

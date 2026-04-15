@@ -10,7 +10,7 @@ from pathlib import Path
 
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from services.actuators.repo_patch import RepoPatchAdapter
-from shared.mesh_runtime import Decision
+from shared.mesh_runtime import Decision, RuntimeConfig
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
@@ -33,10 +33,11 @@ class GooseAdapter:
 
 
 class NativeGooseAdapter(GooseAdapter):
-    def __init__(self) -> None:
+    def __init__(self, config: RuntimeConfig | None = None) -> None:
+        self.config = config
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
-        self.kubernetes = KubernetesAdapter()
+        self.kubernetes = KubernetesAdapter(config=config)
         self.audit_logs = AuditLogAdapter()
         self.repo_patch = RepoPatchAdapter()
 
