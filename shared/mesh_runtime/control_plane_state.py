@@ -6,7 +6,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 from uuid import uuid4
 
 from .config import RuntimeConfig

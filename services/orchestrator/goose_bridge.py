@@ -217,7 +217,23 @@ def _review_execution(args: argparse.Namespace, idempotency_key: str, decision: 
         if decision.execution_plan["system"] == "repo_patch_service"
         else GOOSE_SYSTEM_PROMPT
     )
-    return _run_goose_review_cli(args, prompt, system_prompt=system)
+    payload, error = _run_goose_prompt(args, prompt, system)
+    if payload is None:
+        return error or {
+            "approved": False,
+            "summary": "goose run failed",
+            "risk_flags": ["cli_error"],
+            "next_action": "human_review",
+        }
+    text = _assistant_text(payload)
+    if not text:
+        return {
+            "approved": False,
+            "summary": "goose did not return assistant text",
+            "risk_flags": ["empty_response"],
+            "next_action": "human_review",
+        }
+    return _parse_review_text(text)
 
 
 def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, object]:

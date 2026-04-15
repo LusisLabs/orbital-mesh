@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -30,6 +31,13 @@ class IntegrationsTests(unittest.TestCase):
                     "ollama": "/usr/local/bin/ollama",
                 }
                 return mapping.get(name)
+
+            # Set env vars so goose profile resolution picks up ollama
+            ollama_env = {
+                "GOOSE_PROVIDER": "ollama",
+                "GOOSE_MODEL": "qwen2.5:0.5b",
+                "OLLAMA_HOST": "http://127.0.0.1:11434",
+            }
 
             def fake_run(
                 args: list[str],
@@ -66,6 +74,7 @@ class IntegrationsTests(unittest.TestCase):
             with (
                 patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which),
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run),
+                patch.dict(os.environ, ollama_env),
             ):
                 resolved = resolve_integrations_config(config)
 

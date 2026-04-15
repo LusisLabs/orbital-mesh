@@ -53,6 +53,8 @@ RUN ln -sf ../lib/node_modules/promptfoo/dist/src/entrypoint.js /usr/local/bin/p
 
 COPY --from=goose /usr/local/bin/goose /usr/local/bin/goose
 
+RUN groupadd -r mesh && useradd -r -g mesh -d /app mesh
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MESH_SERVER_HOST=0.0.0.0 \
@@ -70,6 +72,10 @@ COPY services ./services
 COPY scaffold ./scaffold
 COPY fixtures ./fixtures
 COPY policies ./policies
+
+RUN chown -R mesh:mesh /app
+
+USER mesh
 
 EXPOSE 8787
 

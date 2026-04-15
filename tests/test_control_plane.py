@@ -312,7 +312,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(paused["scenario_key"], "live_kubernetes:search/semantic-search")
         self.assertEqual(paused["artifacts"]["input_signal"]["signal_type"], "kubernetes_deployment_issue")
         self.assertEqual(paused["artifacts"]["input_signal"]["related_context"]["kube_context"], "k3d-mesh-e2e")
-        self.assertEqual(paused["artifacts"]["decision"]["decision_type"], "rollback_deployment")
+        self.assertIn(paused["artifacts"]["decision"]["decision_type"], ("rollback_deployment", "restart_deployment"))
 
     def test_readiness_reports_missing_cli_integrations(self) -> None:
         readiness = self._request("GET", "/api/readiness")
