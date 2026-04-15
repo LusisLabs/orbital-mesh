@@ -35,8 +35,12 @@ from shared.mesh_runtime import (
     load_fixture,
 )
 from shared.mesh_runtime.control_plane_models import GoalRecord, SteeringCommand
+from services.signal_correlator import SignalCorrelator
+from services.watch_daemon import WatchDaemon, WatchTarget
+from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -90,13 +94,61 @@ class RunCoordinator:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or ControlPlaneStateStore(self.config)
         self.sidecar = GitNexusSidecarManager(self.config)
+        self.learning_store = LearningStore(self.config.state_directory)
+        self.context_store = ContextStore(self.config.state_directory)
         self._lock = threading.Lock()
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._watch_daemon: WatchDaemon | None = None
+        if self.config.watch_enabled and self.config.watch_targets:
+            targets = [
+                WatchTarget(
+                    deployment_name=t["deployment_name"],
+                    namespace=t.get("namespace", "default"),
+                    kube_context=t.get("kube_context"),
+                )
+                for t in self.config.watch_targets
+            ]
+            correlator = None
+            if self.config.correlation_enabled:
+                correlator = SignalCorrelator(
+                    window_seconds=self.config.correlation_window_seconds,
+                    min_signals=self.config.correlation_min_signals,
+                )
+            self._watch_daemon = WatchDaemon(
+                coordinator=self,
+                targets=targets,
+                interval_seconds=self.config.watch_interval_seconds,
+                default_cooldown_seconds=self.config.watch_cooldown_seconds,
+                correlator=correlator,
+            )
         self.state_store.ensure_default_goal()
 
     def ensure_sidecar(self) -> bool:
         return self.sidecar.ensure_running()
+
+    def start_watch_daemon(self) -> None:
+        if self._watch_daemon is not None:
+            self._watch_daemon.start()
+
+    def watch_status(self) -> dict[str, Any]:
+        if self._watch_daemon is None:
+            return {"running": False, "targets": [], "enabled": False}
+        return {**self._watch_daemon.status(), "enabled": True}
+
+    def watch_start(self) -> dict[str, Any]:
+        if self._watch_daemon is not None:
+            self._watch_daemon.start()
+        return self.watch_status()
+
+    def watch_stop(self) -> dict[str, Any]:
+        if self._watch_daemon is not None:
+            self._watch_daemon.stop()
+        return self.watch_status()
+
+    def stop_watch_daemon(self) -> None:
+        if self._watch_daemon is not None:
+            self._watch_daemon.stop()
 
     def build_readiness(self) -> dict[str, Any]:
         return build_readiness(self.config).to_dict()
@@ -322,7 +374,12 @@ class RunCoordinator:
         session = self.state_store.get_run_session(run_id)
         if session is None:
             return
-        engine = MeshRuntimeEngine(config=run_config, state_store=self.state_store.runtime_store)
+        engine = MeshRuntimeEngine(
+            config=run_config,
+            state_store=self.state_store.runtime_store,
+            learning_store=self.learning_store,
+            context_store=self.context_store,
+        )
         try:
             self._update_session(run_id, stage="ingesting", status="running")
             normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
@@ -450,6 +507,7 @@ class RunCoordinator:
                 summary={"status": "completed"},
                 status="completed",
             )
+            self._record_learning(trigger, decision, feedback, run_id)
         except Exception as exc:
             self._update_session(run_id, stage="failed", status="failed", error=str(exc))
             self.state_store.append_run_event(
@@ -463,6 +521,27 @@ class RunCoordinator:
         finally:
             with self._lock:
                 self._threads.pop(run_id, None)
+
+    def _record_learning(
+        self,
+        trigger: Trigger,
+        decision: Decision,
+        feedback: Any,
+        run_id: str,
+    ) -> None:
+        try:
+            self.learning_store.record_outcome(
+                decision_type=decision.decision_type,
+                service=trigger.service,
+                endpoint=trigger.endpoint,
+                outcome=feedback.outcome,
+                world_model_updates=feedback.world_model_updates if hasattr(feedback, "world_model_updates") else {},
+            )
+            completed_session = self.state_store.get_run_session(run_id)
+            if completed_session:
+                self.context_store.update_from_run(completed_session.to_dict())
+        except Exception:
+            pass
 
     def _record_decision_and_evaluation(
         self,

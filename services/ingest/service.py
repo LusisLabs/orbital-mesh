@@ -2,12 +2,20 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shared.mesh_runtime import EventEnvelope, validate_payload
 
 from .kubernetes_summary import summarize_kubernetes_logs
 
+if TYPE_CHECKING:
+    from shared.mesh_runtime.learning import LearningStore
+
 
 class IngestService:
+    def __init__(self, learning_store: LearningStore | None = None) -> None:
+        self.learning_store = learning_store
+
     def normalize_signal(self, raw_signal: dict) -> EventEnvelope:
         if raw_signal.get("signal_type") == "kubernetes_deployment_issue":
             validate_payload("kubernetes-signal.schema.json", raw_signal)
@@ -21,6 +29,7 @@ class IngestService:
                 "cluster_access_available": True,
             }
             related_context.update(raw_signal.get("related_context", {}))
+            self._enrich_from_learning(related_context, raw_signal.get("service", ""), raw_signal.get("endpoint"))
             deployment = raw_signal["deployment"]
             log_summary = summarize_kubernetes_logs(raw_signal["logs"], raw_signal["events"], raw_signal["pods"])
             return EventEnvelope(
@@ -73,6 +82,12 @@ class IngestService:
             "audit_logging_available": True,
         }
         related_context.update(raw_signal.get("related_context", {}))
+        self._enrich_from_learning(
+            related_context,
+            raw_signal.get("service", ""),
+            raw_signal.get("endpoint"),
+            flag_key=feature_flag.get("flag_key"),
+        )
 
         return EventEnvelope(
             event_type="normalized_signal",
@@ -109,3 +124,17 @@ class IngestService:
                 "flag_key": feature_flag["flag_key"],
             },
         )
+
+    def _enrich_from_learning(
+        self,
+        related_context: dict,
+        service: str,
+        endpoint: str | None = None,
+        flag_key: str | None = None,
+    ) -> None:
+        if self.learning_store is None or not service:
+            return
+        enrichment = self.learning_store.enrich_context(service, endpoint, flag_key)
+        for key in ("similar_prior_cases", "rollbacks_last_24h", "regressions_last_7d"):
+            if related_context.get(key, 0) == 0 and enrichment.get(key, 0) > 0:
+                related_context[key] = enrichment[key]
