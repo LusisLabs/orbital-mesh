@@ -77,7 +77,7 @@ export function Inspector(props: InspectorProps) {
 }
 
 function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
-  const m = detail.manifest;
+  const m = detail.manifest && typeof detail.manifest === "object" ? detail.manifest : detail;
   const q = typeof m.question === "string" ? m.question : "";
   const status = typeof m.status === "string" ? m.status : "";
   const route = typeof m.minimax_route === "string" ? m.minimax_route : "";
