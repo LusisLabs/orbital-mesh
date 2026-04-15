@@ -168,3 +168,4 @@ class MerkleProof(JsonModel):
     root_hash: str
     proof: list[MerkleProofStep]
     valid: bool
+

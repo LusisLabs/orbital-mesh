@@ -13,7 +13,7 @@ Why this loop first:
 - it is driven by telemetry the system already expects to ingest
 - it has a narrow and reversible action surface
 - it produces measurable results within minutes
-- it fits the existing Promptfoo quality-gate plus Goose or Hermes execution review models
+- it fits the existing Promptfoo quality-gate and Goose execution model
 
 ## Loop Goal
 

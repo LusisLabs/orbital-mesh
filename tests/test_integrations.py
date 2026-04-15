@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -33,6 +34,13 @@ class IntegrationsTests(unittest.TestCase):
                 }
                 return mapping.get(name)
 
+            # Set env vars so goose profile resolution picks up ollama
+            ollama_env = {
+                "GOOSE_PROVIDER": "ollama",
+                "GOOSE_MODEL": "qwen2.5:0.5b",
+                "OLLAMA_HOST": "http://127.0.0.1:11434",
+            }
+
             def fake_run(
                 args: list[str],
                 capture_output: bool = False,
@@ -40,19 +48,43 @@ class IntegrationsTests(unittest.TestCase):
                 check: bool = False,
                 timeout: int | float | None = None,
             ) -> subprocess.CompletedProcess[str]:
+                if args == ["/usr/local/bin/ollama", "list"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout="NAME ID SIZE MODIFIED\nqwen2.5:0.5b abc 1 GB now\n",
+                        stderr="",
+                    )
+                if args[:2] == ["/opt/homebrew/bin/goose", "run"]:
+                    return subprocess.CompletedProcess(
+                        args=args,
+                        returncode=0,
+                        stdout=json.dumps(
+                            {
+                                "messages": [
+                                    {
+                                        "role": "assistant",
+                                        "content": [{"type": "text", "text": "ACK"}],
+                                    }
+                                ]
+                            }
+                        ),
+                        stderr="",
+                    )
                 raise AssertionError(f"unexpected subprocess args: {args}")
 
             with (
                 patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which),
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run),
+                patch.dict(os.environ, ollama_env),
             ):
                 resolved = resolve_integrations_config(config)
 
         self.assertIn("services.evaluation.promptfoo_bridge", resolved.promptfoo_command or "")
         self.assertIn("/usr/local/bin/promptfoo", resolved.promptfoo_command or "")
         self.assertIn("services.orchestrator.goose_bridge", resolved.goose_command or "")
-        self.assertNotIn("--provider ollama", resolved.goose_command or "")
-        self.assertNotIn("--model qwen2.5:0.5b", resolved.goose_command or "")
+        self.assertIn("--provider ollama", resolved.goose_command or "")
+        self.assertIn("--model qwen2.5:0.5b", resolved.goose_command or "")
         self.assertIsNone(resolved.evo_command)
 
     def test_resolve_integrations_respects_evo_env_saved_config_and_path(self) -> None:
@@ -153,7 +185,6 @@ class IntegrationsTests(unittest.TestCase):
 
         self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
         self.assertIn("--hermes-command hermes", resolved.hermes_command or "")
-
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_path = Path(temp_dir) / "results.json"
@@ -215,7 +246,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("--provider openai", resolved.goose_command or "")
         self.assertIn("--model MiniMax-M2.5", resolved.goose_command or "")
 
-    def test_resolve_integrations_respects_explicit_local_ollama_with_openai_fallback(self) -> None:
+    def test_resolve_integrations_prefers_local_ollama_with_openai_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = RuntimeConfig(
                 state_directory=temp_dir,
@@ -620,29 +651,6 @@ class IntegrationsTests(unittest.TestCase):
 
     def test_goose_review_parser_accepts_json_review(self) -> None:
         review = _parse_review_text(
-            json.dumps(
-                {
-                    "approved": True,
-                    "summary": "bounded execution looks safe",
-                    "risk_flags": ["none"],
-                    "next_action": "proceed",
-                    "patch": {
-                        "target_file": "app/search.py",
-                        "find": "old",
-                        "replace": "new",
-                    },
-                    "test_commands": ["python3 -m unittest discover -s tests"],
-                }
-            )
-        )
-        self.assertTrue(review["approved"])
-        self.assertEqual(review["summary"], "bounded execution looks safe")
-        self.assertEqual(review["next_action"], "proceed")
-        self.assertEqual(review["patch"]["target_file"], "app/search.py")
-        self.assertEqual(review["test_commands"][0], "python3 -m unittest discover -s tests")
-
-    def test_hermes_review_parser_accepts_json_review(self) -> None:
-        review = _parse_hermes_review_text(
             json.dumps(
                 {
                     "approved": True,

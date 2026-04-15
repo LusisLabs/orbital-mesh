@@ -41,9 +41,13 @@ from shared.mesh_runtime import (
     Trigger,
     load_fixture,
 )
-from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
+from shared.mesh_runtime.control_plane_models import GoalRecord, SteeringCommand
+from services.signal_correlator import SignalCorrelator
+from services.watch_daemon import WatchDaemon, WatchTarget
+from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
-from shared.mesh_runtime.integrations import build_readiness
+from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -68,8 +72,6 @@ ALLOWED_STAGES = {
 
 PAUSEABLE_STAGES = {"trigger_ready", "decision_ready", "evaluation_ready", "feedback_ready"}
 TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger"}
-_RESEARCH_SESSION_ID_OK = re.compile(r"^[a-zA-Z0-9_.-]+$")
-
 ALLOWED_STEERING_COMMANDS = {
     "approve",
     "cancel",
@@ -149,14 +151,64 @@ class RunCoordinator:
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or ControlPlaneStateStore(self.config)
+        self.sidecar = GitNexusSidecarManager(self.config)
+        self.learning_store = LearningStore(self.config.state_directory)
+        self.context_store = ContextStore(self.config.state_directory)
+        self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config)
         self.evo_launcher = EvoLaunchService(self.config)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._watch_daemon: WatchDaemon | None = None
+        if self.config.watch_enabled and self.config.watch_targets:
+            targets = [
+                WatchTarget(
+                    deployment_name=t["deployment_name"],
+                    namespace=t.get("namespace", "default"),
+                    kube_context=t.get("kube_context"),
+                )
+                for t in self.config.watch_targets
+            ]
+            correlator = None
+            if self.config.correlation_enabled:
+                correlator = SignalCorrelator(
+                    window_seconds=self.config.correlation_window_seconds,
+                    min_signals=self.config.correlation_min_signals,
+                )
+            self._watch_daemon = WatchDaemon(
+                coordinator=self,
+                targets=targets,
+                interval_seconds=self.config.watch_interval_seconds,
+                default_cooldown_seconds=self.config.watch_cooldown_seconds,
+                correlator=correlator,
+            )
         self.state_store.ensure_default_goal()
 
     def ensure_sidecar(self) -> bool:
-        return False
+        return self.sidecar.ensure_running()
+
+    def start_watch_daemon(self) -> None:
+        if self._watch_daemon is not None:
+            self._watch_daemon.start()
+
+    def watch_status(self) -> dict[str, Any]:
+        if self._watch_daemon is None:
+            return {"running": False, "targets": [], "enabled": False}
+        return {**self._watch_daemon.status(), "enabled": True}
+
+    def watch_start(self) -> dict[str, Any]:
+        if self._watch_daemon is not None:
+            self._watch_daemon.start()
+        return self.watch_status()
+
+    def watch_stop(self) -> dict[str, Any]:
+        if self._watch_daemon is not None:
+            self._watch_daemon.stop()
+        return self.watch_status()
+
+    def stop_watch_daemon(self) -> None:
+        if self._watch_daemon is not None:
+            self._watch_daemon.stop()
 
     def build_readiness(self) -> dict[str, Any]:
         return build_readiness(self.config).to_dict()
@@ -193,6 +245,56 @@ class RunCoordinator:
             )
         return scenarios
 
+    def list_research_sessions(self) -> list[dict[str, Any]]:
+        research_root = Path(self.config.research_directory)
+        if not research_root.is_dir():
+            return []
+        sessions: list[dict[str, Any]] = []
+        for session_dir in sorted((p for p in research_root.iterdir() if p.is_dir()), reverse=True):
+            manifest_path = session_dir / "manifest.json"
+            if not manifest_path.is_file():
+                continue
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            final_report = session_dir / "synthesis" / "final-report.md"
+            intelligence = build_research_session_intelligence(session_dir, manifest)
+            sessions.append({
+                **manifest,
+                "has_final_report": final_report.is_file(),
+                "research_intelligence": intelligence,
+            })
+        return sessions
+
+    def get_research_session(self, session_id: str) -> dict[str, Any] | None:
+        research_root = Path(self.config.research_directory)
+        session_dir = research_root / session_id
+        if not session_dir.is_dir():
+            return None
+        manifest_path = session_dir / "manifest.json"
+        if not manifest_path.is_file():
+            return None
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        final_report_path = session_dir / "synthesis" / "final-report.md"
+        final_report_markdown: str | None = None
+        if final_report_path.is_file():
+            raw = final_report_path.read_text(encoding="utf-8", errors="replace")
+            final_report_markdown = sanitize_research_markdown(raw)
+        intelligence = build_research_session_intelligence(session_dir, manifest)
+        return {
+            **manifest,
+            "final_report_markdown": final_report_markdown,
+            "research_intelligence": intelligence,
+        }
+
+    def get_research_corpus(self) -> dict[str, Any]:
+        research_root = Path(self.config.research_directory)
+        return build_research_corpus_intelligence(research_root)
+
     def list_goals(self) -> list[dict[str, Any]]:
         return [goal.to_dict() for goal in self.state_store.list_goals()]
 
@@ -212,92 +314,6 @@ class RunCoordinator:
 
     def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         return [session.to_dict() for session in self.state_store.list_run_sessions(limit=limit)]
-
-    def list_research_sessions(self, limit: int = 40) -> list[dict[str, Any]]:
-        """Goose/MiniMax autoresearch sessions under research_directory (filesystem, not Mesh pipeline runs)."""
-        root = Path(self.config.research_directory)
-        if not root.is_dir():
-            return []
-        rows: list[tuple[float, dict[str, Any]]] = []
-        for path in root.iterdir():
-            if not path.is_dir():
-                continue
-            manifest_path = path / "manifest.json"
-            if not manifest_path.is_file():
-                continue
-            try:
-                manifest = json.loads(manifest_path.read_text())
-            except json.JSONDecodeError:
-                continue
-            synth = path / "synthesis" / "final-report.md"
-            mtime = synth.stat().st_mtime if synth.is_file() else manifest_path.stat().st_mtime
-            sid = str(manifest.get("session_id") or path.name)
-            intelligence = build_research_session_intelligence(path, manifest, max_chars=120_000)
-            rows.append(
-                (
-                    mtime,
-                    {
-                        "session_id": sid,
-                        "directory": path.name,
-                        "question": str(manifest.get("question", ""))[:500],
-                        "status": str(manifest.get("status", "")),
-                        "minimax_model": manifest.get("minimax_model"),
-                        "minimax_route": manifest.get("minimax_route"),
-                        "goose": manifest.get("goose"),
-                        "updated_at": datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat(),
-                        "has_final_report": synth.is_file(),
-                        "research_intelligence": {
-                            "classification": intelligence["classification"],
-                            "repo_grounding_score": intelligence["repo_grounding_score"],
-                            "off_domain_score": intelligence["off_domain_score"],
-                            "flags": intelligence["flags"],
-                            "anchors": intelligence["anchors"][:4],
-                        },
-                    },
-                )
-            )
-        rows.sort(key=lambda x: x[0], reverse=True)
-        return [item[1] for item in rows[:limit]]
-
-    def get_research_corpus(self) -> dict[str, Any]:
-        root = Path(self.config.research_directory)
-        return build_research_corpus_intelligence(root)
-
-    def get_research_session(self, session_id: str) -> dict[str, Any] | None:
-        if not session_id or not _RESEARCH_SESSION_ID_OK.match(session_id):
-            return None
-        root = Path(self.config.research_directory)
-        if not root.is_dir():
-            return None
-        for path in root.iterdir():
-            if not path.is_dir():
-                continue
-            manifest_path = path / "manifest.json"
-            if not manifest_path.is_file():
-                continue
-            try:
-                manifest = json.loads(manifest_path.read_text())
-            except json.JSONDecodeError:
-                continue
-            sid = str(manifest.get("session_id") or path.name)
-            if sid != session_id and path.name != session_id:
-                continue
-            synth = path / "synthesis" / "final-report.md"
-            report: str | None = None
-            if synth.is_file():
-                report = sanitize_research_markdown(synth.read_text(encoding="utf-8", errors="replace"))
-                if len(report) > 800_000:
-                    report = report[:800_000] + "\n\n[truncated]\n"
-            intelligence = build_research_session_intelligence(path, manifest)
-            return {
-                "session_id": sid,
-                "directory": path.name,
-                "manifest": manifest,
-                "final_report_markdown": report,
-                "final_report_relative": "synthesis/final-report.md" if synth.is_file() else None,
-                "research_intelligence": intelligence,
-            }
-        return None
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
@@ -326,8 +342,8 @@ class RunCoordinator:
         )
         pause_points = self._normalize_pause_points(raw_pause_points)
         goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
-        scenario_key = self._resolve_run_label(payload)
         signal_payload = self._resolve_signal(payload)
+        scenario_key = payload.get("scenario_key")
         run_config = replace(
             self.config,
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
@@ -344,7 +360,8 @@ class RunCoordinator:
             orchestration_mode=run_config.orchestration_mode,
             artifacts={"input_signal": signal_payload, "integration_readiness": readiness_snapshot},
         )
-        self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
+        with self._lock:
+            self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
@@ -365,7 +382,6 @@ class RunCoordinator:
             payload=readiness_snapshot,
             summary={
                 "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
-                "hermes_ready": readiness_snapshot["hermes"]["ready"],
                 "goose_ready": readiness_snapshot["goose"]["ready"],
                 "evo_ready": readiness_snapshot["evo"]["ready"],
             },
@@ -377,7 +393,8 @@ class RunCoordinator:
             args=(session.run_id, run_config, signal_payload, scenario_key),
             daemon=True,
         )
-        self._threads[session.run_id] = worker
+        with self._lock:
+            self._threads[session.run_id] = worker
         worker.start()
         return self.get_run(session.run_id) or session.to_dict()
 
@@ -386,7 +403,8 @@ class RunCoordinator:
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
         session = self.state_store.get_run_session(run_id)
-        control = self.controls.get(run_id)
+        with self._lock:
+            control = self.controls.get(run_id)
         if session is None or control is None:
             raise KeyError(run_id)
         command_payload = {key: value for key, value in payload.items() if key != "command"}
@@ -429,7 +447,12 @@ class RunCoordinator:
         session = self.state_store.get_run_session(run_id)
         if session is None:
             return
-        engine = MeshRuntimeEngine(config=run_config, state_store=self.state_store.runtime_store)
+        engine = MeshRuntimeEngine(
+            config=run_config,
+            state_store=self.state_store.runtime_store,
+            learning_store=self.learning_store,
+            context_store=self.context_store,
+        )
         try:
             self._update_session(run_id, stage="ingesting", status="running")
             normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
@@ -446,7 +469,6 @@ class RunCoordinator:
 
             trigger = engine.trigger.detect(normalized_event)
             if trigger is None:
-                self._update_session(run_id, stage="no_trigger", status="completed")
                 self.state_store.append_run_event(
                     run_id,
                     stage="no_trigger",
@@ -455,7 +477,7 @@ class RunCoordinator:
                     summary={"status": "completed"},
                     status="completed",
                 )
-                self._update_session(run_id, stage="completed", status="completed")
+                self._update_session(run_id, stage="no_trigger", status="completed")
                 return
 
             self._set_artifact(run_id, "trigger", trigger.to_dict())
@@ -474,7 +496,6 @@ class RunCoordinator:
                     run_id, "trigger_ready", trigger=trigger, decision=None, evaluation=None
                 )
                 if trigger_wait["action"] == "cancel":
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
                     self.state_store.append_run_event(
                         run_id,
                         stage="cancelled",
@@ -483,6 +504,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
+                    self._update_session(run_id, stage="cancelled", status="cancelled")
                     return
                 if trigger_wait["action"] == "override":
                     self.state_store.append_run_event(
@@ -510,7 +532,6 @@ class RunCoordinator:
                 if outcome["action"] == "continue":
                     break
                 if outcome["action"] == "cancel":
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
                     self.state_store.append_run_event(
                         run_id,
                         stage="cancelled",
@@ -519,6 +540,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
+                    self._update_session(run_id, stage="cancelled", status="cancelled")
                     return
                 if outcome["action"] == "override":
                     decision = self._apply_override(decision, outcome["payload"])
@@ -544,20 +566,18 @@ class RunCoordinator:
                 integration_name=run_config.orchestration_mode if run_config.orchestration_mode != "native" else None,
                 status=execution.status,
             )
-            for artifact_key, integration_name in (("goose_review", "goose"), ("hermes_review", "hermes")):
-                review = execution.external_refs.get(artifact_key)
-                if review:
-                    self._set_artifact(run_id, artifact_key, review)
-                    self.state_store.append_run_event(
-                        run_id,
-                        stage="executing",
-                        event_type=INTEGRATION_ARTIFACT_RECORDED,
-                        payload=review,
-                        summary={"approved": review.get("approved")},
-                        artifact_key=artifact_key,
-                        integration_name=integration_name,
-                        status="recorded",
-                    )
+            if execution.external_refs.get("goose_review"):
+                self._set_artifact(run_id, "goose_review", execution.external_refs["goose_review"])
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="executing",
+                    event_type=INTEGRATION_ARTIFACT_RECORDED,
+                    payload=execution.external_refs["goose_review"],
+                    summary={"approved": execution.external_refs["goose_review"].get("approved")},
+                    artifact_key="goose_review",
+                    integration_name="goose",
+                    status="recorded",
+                )
 
             feedback = engine.feedback.record(trigger, decision, execution, normalized_event)
             self._set_artifact(run_id, "feedback", feedback.to_dict())
@@ -580,6 +600,14 @@ class RunCoordinator:
                     evaluation=evaluation,
                 )
                 if wait_feedback["action"] == "cancel":
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="cancelled",
+                        event_type=RUN_CANCELLED,
+                        payload={"reason": "operator_cancelled"},
+                        summary={"status": "cancelled"},
+                        status="cancelled",
+                    )
                     self._update_session(run_id, stage="cancelled", status="cancelled")
                     return
                 if wait_feedback["action"] == "override":
@@ -599,7 +627,6 @@ class RunCoordinator:
                     )
                     continue
                 break
-            self._update_session(run_id, stage="completed", status="completed")
             self.state_store.append_run_event(
                 run_id,
                 stage="completed",
@@ -608,8 +635,9 @@ class RunCoordinator:
                 summary={"status": "completed"},
                 status="completed",
             )
+            self._update_session(run_id, stage="completed", status="completed")
+            self._record_learning(trigger, decision, feedback, run_id)
         except Exception as exc:
-            self._update_session(run_id, stage="failed", status="failed", error=str(exc))
             self.state_store.append_run_event(
                 run_id,
                 stage="failed",
@@ -618,6 +646,31 @@ class RunCoordinator:
                 summary={"status": "failed"},
                 status="failed",
             )
+            self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+        finally:
+            with self._lock:
+                self._threads.pop(run_id, None)
+
+    def _record_learning(
+        self,
+        trigger: Trigger,
+        decision: Decision,
+        feedback: Any,
+        run_id: str,
+    ) -> None:
+        try:
+            self.learning_store.record_outcome(
+                decision_type=decision.decision_type,
+                service=trigger.service,
+                endpoint=trigger.endpoint,
+                outcome=feedback.outcome,
+                world_model_updates=feedback.world_model_updates if hasattr(feedback, "world_model_updates") else {},
+            )
+            completed_session = self.state_store.get_run_session(run_id)
+            if completed_session:
+                self.context_store.update_from_run(completed_session.to_dict())
+        except Exception:
+            pass
 
     def _record_decision_and_evaluation(
         self,
@@ -981,9 +1034,9 @@ class RunCoordinator:
     def _resolve_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("signal_payload"), dict):
             return self._resolve_signal_placeholders(copy.deepcopy(payload["signal_payload"]))
-        live_kubernetes = payload.get("live_signal")
-        if isinstance(live_kubernetes, dict) and live_kubernetes.get("source") == "kubernetes":
-            return self._resolve_live_kubernetes_signal(live_kubernetes)
+        live_signal = payload.get("live_signal")
+        if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
+            return self._collect_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
         if scenario_key:
             fixture_name = f"{scenario_key}.json"
@@ -998,51 +1051,20 @@ class RunCoordinator:
             return signal
         raise ValueError("scenario_key or signal_payload is required")
 
-    def _resolve_live_kubernetes_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
-        deployment_name = str(payload.get("deployment_name") or "").strip()
-        if not deployment_name:
-            raise ValueError("live kubernetes signal requires deployment_name")
-        namespace = str(payload.get("namespace") or "default").strip() or "default"
-        patch_template = payload.get("patch_template")
-        if patch_template is not None and not isinstance(patch_template, dict):
-            raise ValueError("live kubernetes patch_template must be an object when provided")
-        try:
-            signal = collect_kubernetes_signal(
-                deployment_name=deployment_name,
-                namespace=namespace,
-                kube_context=payload.get("kube_context"),
-                environment=str(payload.get("environment") or self.config.environment),
-                cluster_label=payload.get("cluster_label"),
-                service=payload.get("service"),
-                kubectl_command=str(payload.get("kubectl_command") or self.config.kubectl_command),
-                tail_lines=int(payload.get("tail_lines") or 20),
-                max_log_pods=int(payload.get("max_log_pods") or 3),
-                repo_path=payload.get("repo_path"),
-                suspected_file=payload.get("suspected_file"),
-                allowed_paths=list(payload.get("allowed_paths") or []),
-                test_commands=list(payload.get("test_commands") or []),
-                patch_template={
-                    "target_file": patch_template.get("target_file"),
-                    "find": patch_template.get("find"),
-                    "replace": patch_template.get("replace"),
-                }
-                if isinstance(patch_template, dict)
-                else None,
-            )
-        except RuntimeError as exc:
-            raise ValueError(f"live kubernetes signal collection failed: {exc}") from exc
-        return self._resolve_signal_placeholders(signal)
+    def _collect_live_kubernetes_signal(self, live_signal: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
 
-    def _resolve_run_label(self, payload: dict[str, Any]) -> str | None:
-        scenario_key = payload.get("scenario_key")
-        if isinstance(scenario_key, str) and scenario_key:
-            return scenario_key
-        live_kubernetes = payload.get("live_signal")
-        if isinstance(live_kubernetes, dict) and live_kubernetes.get("source") == "kubernetes":
-            namespace = str(live_kubernetes.get("namespace") or "default")
-            deployment_name = str(live_kubernetes.get("deployment_name") or "deployment")
-            return f"live_kubernetes:{namespace}/{deployment_name}"
-        return None
+        signal = collect_kubernetes_signal(
+            deployment_name=live_signal["deployment_name"],
+            namespace=live_signal.get("namespace", "default"),
+            kube_context=live_signal.get("kube_context"),
+            environment=live_signal.get("environment", "local"),
+            kubectl_command=self.config.kubectl_command,
+        )
+        ns = live_signal.get("namespace", "default")
+        name = live_signal["deployment_name"]
+        payload["scenario_key"] = f"live_kubernetes:{ns}/{name}"
+        return signal
 
     def _resolve_signal_placeholders(self, signal: dict[str, Any]) -> dict[str, Any]:
         related_context = signal.get("related_context")

@@ -19,7 +19,6 @@ flowchart LR
     evaluation -->|execute| orchestrator[OrchestratorService]
     evaluation -->|human_review or reject| operator[Operator Review Route]
     orchestrator --> goose[Goose Bridge]
-    orchestrator --> hermes[Hermes Bridge]
     orchestrator --> actuators[Bounded Local Actuators]
     orchestrator --> feedback[FeedbackService]
     feedback --> state[Run State + Event Log]
@@ -67,7 +66,7 @@ This topology is not the production template. It intentionally uses a privileged
 - `DecisionService` produces exactly one bounded decision from the allowed set:
   `no_action`, `reduce_rollout`, `disable_flag`, `escalate`.
 - `EvaluationService` merges policy and business gates with Promptfoo-backed quality artifacts.
-- `OrchestratorService` executes only approved actions and attaches Goose- or Hermes-backed review artifacts.
+- `OrchestratorService` executes only approved actions and attaches Goose-backed review artifacts.
 - `FeedbackService` evaluates `T+10m` and `T+30m` outcomes and writes bounded world-model updates.
 
 ### 2. Control plane
@@ -184,8 +183,6 @@ sequenceDiagram
   parse exported JSON, and return structured evaluation artifacts.
 - `goose` mode uses `services/orchestrator/goose_bridge.py` to run a real Goose review step,
   capture structured review metadata, and then perform bounded local actuation.
-- `hermes` mode uses `services/orchestrator/hermes_bridge.py` to run a real Hermes review step,
-  capture structured review metadata, and then perform bounded local actuation.
 - `native` mode keeps everything local and in-process while using the same contracts and
   persistence model.
 - Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
@@ -263,7 +260,6 @@ These schemas back the Python contract models in `shared/mesh_runtime/contracts.
 
 - Real Promptfoo CLI-backed evaluation bridge: yes
 - Real Goose CLI-backed review bridge: yes
-- Real Hermes CLI-backed review bridge: yes
 - Replay-friendly typed run-event log: yes
 - Durable local run state and vault mirroring: yes
 - External message bus or database projection: no

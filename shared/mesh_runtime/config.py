@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -15,16 +16,37 @@ DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
-    """Resolve MESH_* paths relative to the repository root (not the process cwd).
-
-    Relative entries in .env (for example ``.mesh-runtime-state``) must match where
-    CLI tools write state (e.g. research sessions) regardless of cwd.
-    """
     value = (raw or "").strip() or default
     p = Path(value)
     if p.is_absolute():
         return str(p.resolve())
     return str((_REPO_ROOT / p).resolve())
+
+
+def _derive_research_directory(state_directory: str, explicit: str | None) -> str:
+    if explicit is not None:
+        return explicit
+    return str(Path(state_directory) / "research")
+
+
+def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
+    if not raw:
+        return ()
+    try:
+        targets = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return ()
+    if not isinstance(targets, list):
+        return ()
+    return tuple(t for t in targets if isinstance(t, dict) and "deployment_name" in t)
+
+
+def _resolve_relative_path(raw: str, anchor: Path = _REPO_ROOT) -> str:
+    """Convert a relative path to absolute, anchored at the repo root."""
+    p = Path(raw)
+    if p.is_absolute():
+        return raw
+    return str((anchor / p).resolve())
 
 
 @dataclass
@@ -39,7 +61,7 @@ class RuntimeConfig:
     max_retry_window_seconds: int = 60
     goose_timeout_seconds: int = 180
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
-    research_directory: str | None = None
+    research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
     server_port: int = 8787
     web_asset_path: str = str(DEFAULT_WEB_ASSET_PATH)
@@ -59,6 +81,9 @@ class RuntimeConfig:
     kubernetes_rollout_timeout_seconds: int = 120
     kubernetes_allowed_contexts: tuple[str, ...] = ()
     kubernetes_allowed_namespaces: tuple[str, ...] = ()
+    gitnexus_sidecar_url: str | None = None
+    gitnexus_sidecar_command: str | None = None
+    gitnexus_disable_autostart: bool = False
     max_json_body_bytes: int = 1_048_576
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
@@ -80,13 +105,40 @@ class RuntimeConfig:
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
     mesh_deepagents_max_artifact_chars: int = 20_000
+    sse_max_connection_seconds: int = 1800
+    watch_enabled: bool = False
+    watch_interval_seconds: int = 60
+    watch_cooldown_seconds: int = 300
+    watch_targets: tuple[dict[str, str], ...] = ()
+    llm_escalation_enabled: bool = False
+    llm_escalation_provider: str = "goose"
+    llm_escalation_model: str | None = None
+    llm_escalation_timeout_seconds: int = 30
+    correlation_enabled: bool = False
+    correlation_window_seconds: int = 300
+    correlation_min_signals: int = 2
 
     def __post_init__(self) -> None:
-        if self.research_directory is None:
+        if not (0 <= self.server_port <= 65535):
+            raise ValueError(f"server_port must be 0-65535, got {self.server_port}")
+        if self.max_transient_retries < 0:
+            raise ValueError(f"max_transient_retries must be >= 0, got {self.max_transient_retries}")
+        if self.max_json_body_bytes < 0:
+            raise ValueError(f"max_json_body_bytes must be >= 0, got {self.max_json_body_bytes}")
+        if self.watch_interval_seconds < 10:
+            raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
+        if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
             self.research_directory = str(Path(self.state_directory) / "research")
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
+        state_directory = _resolve_relative_path(
+            os.getenv("MESH_STATE_DIRECTORY", str(DEFAULT_STATE_DIRECTORY))
+        )
+        raw_research = os.getenv("MESH_RESEARCH_DIRECTORY")
+        research_directory = (
+            _resolve_relative_path(raw_research) if raw_research else str(Path(state_directory) / "research")
+        )
         return cls(
             environment=os.getenv("MESH_ENVIRONMENT", "local"),
             evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "native"),
@@ -97,27 +149,15 @@ class RuntimeConfig:
             max_transient_retries=int(os.getenv("MESH_MAX_TRANSIENT_RETRIES", "2")),
             max_retry_window_seconds=int(os.getenv("MESH_MAX_RETRY_WINDOW_SECONDS", "60")),
             goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
-            state_directory=_env_path_anchored_to_repo(
-                os.getenv("MESH_STATE_DIRECTORY"),
-                default=str(DEFAULT_STATE_DIRECTORY),
-            ),
-            research_directory=_env_path_anchored_to_repo(
-                os.getenv("MESH_RESEARCH_DIRECTORY"),
-                default=str(DEFAULT_RESEARCH_DIRECTORY),
-            ),
+            state_directory=state_directory,
+            research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),
             server_port=int(os.getenv("MESH_SERVER_PORT", "8787")),
-            web_asset_path=_env_path_anchored_to_repo(
-                os.getenv("MESH_WEB_ASSET_PATH"),
-                default=str(DEFAULT_WEB_ASSET_PATH),
-            ),
-            vault_path=_env_path_anchored_to_repo(
-                os.getenv("MESH_VAULT_PATH"),
-                default=str(DEFAULT_VAULT_PATH),
-            ),
-            integrations_config_path=_env_path_anchored_to_repo(
-                os.getenv("MESH_INTEGRATIONS_CONFIG_PATH"),
-                default=str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
+            web_asset_path=os.getenv("MESH_WEB_ASSET_PATH", str(DEFAULT_WEB_ASSET_PATH)),
+            vault_path=os.getenv("MESH_VAULT_PATH", str(DEFAULT_VAULT_PATH)),
+            integrations_config_path=os.getenv(
+                "MESH_INTEGRATIONS_CONFIG_PATH",
+                str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
             ),
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
@@ -139,6 +179,10 @@ class RuntimeConfig:
             kubernetes_rollout_timeout_seconds=int(os.getenv("MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS", "120")),
             kubernetes_allowed_contexts=_csv_env("MESH_KUBERNETES_ALLOWED_CONTEXTS"),
             kubernetes_allowed_namespaces=_csv_env("MESH_KUBERNETES_ALLOWED_NAMESPACES"),
+            gitnexus_sidecar_url=os.getenv("MESH_GITNEXUS_SIDECAR_URL") or None,
+            gitnexus_sidecar_command=os.getenv("MESH_GITNEXUS_SIDECAR_COMMAND") or None,
+            gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()
+            in ("1", "true", "yes"),
             max_json_body_bytes=int(os.getenv("MESH_MAX_JSON_BODY_BYTES", "1048576")),
             access_log_enabled=os.getenv("MESH_ACCESS_LOG", "").lower() in ("1", "true", "yes"),
             security_headers_enabled=os.getenv("MESH_SECURITY_HEADERS", "true").lower()
@@ -165,6 +209,19 @@ class RuntimeConfig:
                 default=str(DEFAULT_DEEPAGENTS_WORKSPACE),
             ),
             mesh_deepagents_max_artifact_chars=int(os.getenv("MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS", "20000")),
+            watch_enabled=os.getenv("MESH_WATCH_ENABLED", "").lower() in ("1", "true", "yes"),
+            watch_interval_seconds=int(os.getenv("MESH_WATCH_INTERVAL_SECONDS", "60")),
+            watch_cooldown_seconds=int(os.getenv("MESH_WATCH_COOLDOWN_SECONDS", "300")),
+            watch_targets=_parse_watch_targets(os.getenv("MESH_WATCH_TARGETS")),
+            llm_escalation_enabled=os.getenv("MESH_LLM_ESCALATION_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_escalation_provider=os.getenv("MESH_LLM_ESCALATION_PROVIDER", "goose"),
+            llm_escalation_model=os.getenv("MESH_LLM_ESCALATION_MODEL") or None,
+            llm_escalation_timeout_seconds=int(os.getenv("MESH_LLM_ESCALATION_TIMEOUT_SECONDS", "30")),
+            correlation_enabled=os.getenv("MESH_CORRELATION_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            correlation_window_seconds=int(os.getenv("MESH_CORRELATION_WINDOW_SECONDS", "300")),
+            correlation_min_signals=int(os.getenv("MESH_CORRELATION_MIN_SIGNALS", "2")),
         )
 
 

@@ -165,7 +165,6 @@ export interface ResearchCorpusIntelligence {
   drift_sessions: Array<{ session_id: string; directory: string; off_domain_terms: string[] }>;
   next_actions: string[];
 }
-
 export interface RunSessionRecord {
   run_id: string;
   created_at: string;

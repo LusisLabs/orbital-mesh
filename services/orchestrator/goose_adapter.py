@@ -34,10 +34,10 @@ class GooseAdapter:
 
 class NativeGooseAdapter(GooseAdapter):
     def __init__(self, config: RuntimeConfig | None = None) -> None:
-        self.config = config or RuntimeConfig.from_env()
+        self.config = config
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
-        self.kubernetes = KubernetesAdapter(config=self.config)
+        self.kubernetes = KubernetesAdapter(config=config)
         self.audit_logs = AuditLogAdapter()
         self.repo_patch = RepoPatchAdapter()
 

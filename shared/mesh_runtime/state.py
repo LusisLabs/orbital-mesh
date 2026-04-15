@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 import shutil
 from copy import deepcopy
 from dataclasses import dataclass
@@ -11,23 +10,6 @@ from typing import Any
 from uuid import uuid4
 
 import fcntl
-
-_LOG = logging.getLogger(__name__)
-
-
-def parse_state_json_file(path: Path, raw: str) -> dict[str, Any]:
-    """Parse JSON from a state file; on failure back up raw bytes and return {}."""
-    if not raw.strip():
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        backup = path.parent / f"{path.name}.corrupt.{stamp}"
-        backup.write_text(raw, encoding="utf-8")
-        _LOG.warning("Unparseable JSON in %s (%s); backed up to %s and reset.", path, exc, backup)
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 @dataclass
@@ -52,6 +34,19 @@ class RunRecord:
     trigger_emitted: bool
     stage_event_count: int = 0
     integration_artifact_count: int = 0
+
+
+def parse_state_json_file(path: Path, raw: str) -> dict[str, Any]:
+    """Parse JSON from *raw*, returning {} on failure and writing a .corrupt backup."""
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        backup = path.with_suffix(
+            f"{path.suffix}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
+        )
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_text(raw, encoding="utf-8")
+        return {}
 
 
 class RuntimeStateStore:
@@ -170,7 +165,7 @@ class RuntimeStateStore:
             fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
             self.handle.seek(0)
             raw = self.handle.read()
-            self.payload = parse_state_json_file(self.path, raw)
+            self.payload = json.loads(raw) if raw.strip() else {}
             return self.payload
 
         def __exit__(self, exc_type, exc, tb) -> None:

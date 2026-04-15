@@ -18,6 +18,9 @@ from .config import RuntimeConfig
 from .control_plane_models import IntegrationReadiness, IntegrationStatus
 
 
+DEFAULT_GITNEXUS_PORT = 4747
+# GitNexus exposes `/api/heartbeat` as SSE (long-lived); use `/api/info` for probes.
+GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 HERMES_BRIDGE_MODULE = "services.orchestrator.hermes_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
@@ -29,6 +32,8 @@ class IntegrationsConfig:
     hermes_command: str | None = None
     goose_command: str | None = None
     evo_command: str | None = None
+    gitnexus_sidecar_url: str | None = None
+    gitnexus_sidecar_command: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +41,8 @@ class IntegrationsConfig:
             "hermes_command": self.hermes_command,
             "goose_command": self.goose_command,
             "evo_command": self.evo_command,
+            "gitnexus_sidecar_url": self.gitnexus_sidecar_url,
+            "gitnexus_sidecar_command": self.gitnexus_sidecar_command,
         }
 
 
@@ -49,6 +56,8 @@ def load_integrations_config(path: str | Path) -> IntegrationsConfig:
         hermes_command=raw.get("hermes_command"),
         goose_command=raw.get("goose_command"),
         evo_command=raw.get("evo_command"),
+        gitnexus_sidecar_url=raw.get("gitnexus_sidecar_url"),
+        gitnexus_sidecar_command=raw.get("gitnexus_sidecar_command"),
     )
 
 
@@ -60,11 +69,23 @@ def save_integrations_config(path: str | Path, config: IntegrationsConfig) -> No
 
 def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsConfig:
     loaded = load_integrations_config(runtime_config.integrations_config_path)
+    if runtime_config.gitnexus_disable_autostart:
+        gitnexus_command = runtime_config.gitnexus_sidecar_command or loaded.gitnexus_sidecar_command
+    else:
+        gitnexus_command = (
+            runtime_config.gitnexus_sidecar_command
+            or loaded.gitnexus_sidecar_command
+            or _default_gitnexus_command()
+        )
     return IntegrationsConfig(
         promptfoo_command=_resolve_promptfoo_command(runtime_config.promptfoo_command or loaded.promptfoo_command),
         hermes_command=_resolve_hermes_command(runtime_config.hermes_command or loaded.hermes_command),
         goose_command=_resolve_goose_command(runtime_config.goose_command or loaded.goose_command),
         evo_command=_resolve_evo_command(runtime_config.evo_command or loaded.evo_command),
+        gitnexus_sidecar_url=runtime_config.gitnexus_sidecar_url
+        or loaded.gitnexus_sidecar_url
+        or f"http://127.0.0.1:{DEFAULT_GITNEXUS_PORT}",
+        gitnexus_sidecar_command=gitnexus_command,
     )
 
 
@@ -150,6 +171,57 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
         "warnings": {"goose": goose_warnings},
         "guidance": guidance,
     }
+
+
+class GitNexusSidecarManager:
+    def __init__(self, runtime_config: RuntimeConfig):
+        self.runtime_config = runtime_config
+        self._process: subprocess.Popen[str] | None = None
+
+    def ensure_running(self) -> bool:
+        resolved = resolve_integrations_config(self.runtime_config)
+        base = resolved.gitnexus_sidecar_url.rstrip("/") if resolved.gitnexus_sidecar_url else ""
+        live_url = f"{base}{GITNEXUS_LIVENESS_PATH}"
+        if resolved.gitnexus_sidecar_url and _url_responds(live_url):
+            return True
+        if not resolved.gitnexus_sidecar_command:
+            return False
+        if self._process is not None and self._process.poll() is None:
+            return _wait_for_url(live_url, timeout_seconds=8)
+
+        stdout_path = Path(self.runtime_config.state_directory) / "gitnexus-sidecar.log"
+        stdout_path.parent.mkdir(parents=True, exist_ok=True)
+        log_handle = stdout_path.open("a", encoding="utf-8")
+        repo_root = Path(__file__).resolve().parents[2]
+        self._process = subprocess.Popen(
+            shlex.split(resolved.gitnexus_sidecar_command),
+            cwd=repo_root,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return _wait_for_url(live_url, timeout_seconds=8)
+
+    def stop(self) -> None:
+        if self._process is None:
+            return
+        if self._process.poll() is None:
+            self._process.terminate()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+
+
+def _default_gitnexus_command() -> str | None:
+    here = Path(__file__).resolve()
+    candidate_roots = (here.parents[2], here.parents[3])
+    for root in candidate_roots:
+        tsx = root / "GitNexus" / "gitnexus" / "node_modules" / ".bin" / "tsx"
+        cli_entry = root / "GitNexus" / "gitnexus" / "src" / "cli" / "index.ts"
+        if tsx.is_file() and cli_entry.is_file():
+            return f"{tsx} {cli_entry} serve --host 127.0.0.1 --port {DEFAULT_GITNEXUS_PORT}"
+    return None
 
 
 def _command_status(name: str, command: str | None) -> IntegrationStatus:

@@ -57,6 +57,8 @@ RUN ln -sf ../lib/node_modules/promptfoo/dist/src/entrypoint.js /usr/local/bin/p
 
 COPY --from=goose /usr/local/bin/goose /usr/local/bin/goose
 
+RUN groupadd -r mesh && useradd -r -g mesh -d /app mesh
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HERMES_HOME=/workspace/mesh-intelligence/.hermes-local \
@@ -94,6 +96,10 @@ RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.
 COPY scaffold ./scaffold
 COPY fixtures ./fixtures
 COPY policies ./policies
+
+RUN chown -R mesh:mesh /app
+
+USER mesh
 
 EXPOSE 8787
 

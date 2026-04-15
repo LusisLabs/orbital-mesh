@@ -141,11 +141,11 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
 
             result = FirstSlicePipeline(config=config).run(_raw_kubernetes_signal(), scenario_name="live-k8s")
 
-            self.assertEqual(result["decision"]["decision_type"], "rollback_deployment")
+            self.assertEqual(result["decision"]["decision_type"], "restart_deployment")
             self.assertEqual(result["execution"]["status"], "succeeded")
             self.assertTrue(result["execution"]["external_refs"]["live_execution"])
             state = json.loads(Path(temp_dir, "fake-kubectl-state.json").read_text())
-            self.assertEqual(state["actions"][0]["action"], "undo")
+            self.assertEqual(state["actions"][0]["action"], "restart")
             self.assertEqual(state["actions"][1]["action"], "status")
             self.assertEqual(result["feedback"]["outcome"], "successful")
             self.assertEqual(result["feedback"]["recommended_follow_up"], "record_rollout_recovery")
@@ -418,7 +418,16 @@ def _raw_kubernetes_signal() -> dict:
             "audit_logging_available": True,
             "kube_context": "k3d-mesh-e2e",
         },
-        "post_action_observations": {},
+        "post_action_observations": {
+            "30m": {
+                "rollout_status": "healthy",
+                "desired_replicas": 3,
+                "ready_replicas": 3,
+                "restart_delta": 0,
+                "new_error_signatures": [],
+                "measured_at": "2026-04-08T12:35:00Z",
+            },
+        },
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
@@ -10,12 +11,18 @@ from services.orchestrator.service import OrchestratorService
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 
+if TYPE_CHECKING:
+    from shared.mesh_runtime.context_store import ContextStore
+    from shared.mesh_runtime.learning import LearningStore
+
 
 class MeshRuntimeEngine:
     def __init__(
         self,
         config: RuntimeConfig | None = None,
         state_store: RuntimeStateStore | None = None,
+        learning_store: LearningStore | None = None,
+        context_store: ContextStore | None = None,
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
         decision: DecisionService | None = None,
@@ -25,9 +32,22 @@ class MeshRuntimeEngine:
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
-        self.ingest = ingest or IngestService()
+        self.learning_store = learning_store
+        self.context_store = context_store
+        self.ingest = ingest or IngestService(learning_store=learning_store)
         self.trigger = trigger or TriggerService()
-        self.decision = decision or DecisionService()
+        escalation_reasoner = None
+        if self.config.llm_escalation_enabled and (learning_store or context_store):
+            from services.decision.llm_reasoning import EscalationReasoner
+            escalation_reasoner = EscalationReasoner(
+                config=self.config,
+                context_store=context_store,
+                learning_store=learning_store,
+            )
+        self.decision = decision or DecisionService(
+            learning_store=learning_store,
+            escalation_reasoner=escalation_reasoner,
+        )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
         self.feedback = feedback or FeedbackService()
@@ -114,18 +134,16 @@ class MeshRuntimeEngine:
             integration_name=self.config.orchestration_mode if self.config.orchestration_mode != "native" else None,
             status=execution.status,
         )
-        execution_refs = execution.external_refs if isinstance(execution.external_refs, dict) else {}
-        for artifact_key, integration_name in (("goose_review", "goose"), ("hermes_review", "hermes")):
-            review = execution_refs.get(artifact_key)
-            if review:
-                record_event(
-                    "executing",
-                    "integration_artifact_recorded",
-                    review,
-                    artifact_key=artifact_key,
-                    integration_name=integration_name,
-                    status="recorded",
-                )
+        goose_review = execution.external_refs.get("goose_review") if isinstance(execution.external_refs, dict) else None
+        if goose_review:
+            record_event(
+                "executing",
+                "integration_artifact_recorded",
+                goose_review,
+                artifact_key="goose_review",
+                integration_name="goose",
+                status="recorded",
+            )
         feedback = self.feedback.record(trigger, decision, execution, normalized_event)
         record_event(
             "feedback_ready",
@@ -151,3 +169,4 @@ class MeshRuntimeEngine:
         )
         result["run_metadata"] = run_record.__dict__
         return result
+

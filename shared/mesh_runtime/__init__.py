@@ -1,4 +1,6 @@
 from .config import RuntimeConfig
+from .context_store import ContextStore
+from .learning import LearningStore
 from .control_plane_models import (
     AgentAttempt,
     AgentTask,
@@ -23,6 +25,7 @@ from .contracts import (
 from .events import EventEnvelope
 from .fixtures import load_fixture
 from .integrations import (
+    GitNexusSidecarManager,
     IntegrationsConfig,
     bootstrap_integrations,
     build_evo_status,
