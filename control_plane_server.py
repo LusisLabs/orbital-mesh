@@ -138,6 +138,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload)
             return
+        if path == "/api/watch/status":
+            self._send_json(self.server.coordinator.watch_status())
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -185,6 +188,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             payload = self._read_json_body()
         except (json.JSONDecodeError, ValueError):
             self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path == "/api/watch/start":
+            self._send_json(self.server.coordinator.watch_start())
+            return
+        if parsed.path == "/api/watch/stop":
+            self._send_json(self.server.coordinator.watch_stop())
             return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
@@ -390,9 +399,11 @@ def serve_forever(config: RuntimeConfig | None = None, start_sidecar: bool = Tru
     server = build_server(config)
     if start_sidecar:
         server.coordinator.ensure_sidecar()
+    server.coordinator.start_watch_daemon()
     try:
         server.serve_forever()
     finally:
+        server.coordinator.stop_watch_daemon()
         server.coordinator.sidecar.stop()
     return server
 

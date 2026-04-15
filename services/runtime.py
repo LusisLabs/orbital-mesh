@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
@@ -10,12 +11,18 @@ from services.orchestrator.service import OrchestratorService
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 
+if TYPE_CHECKING:
+    from shared.mesh_runtime.context_store import ContextStore
+    from shared.mesh_runtime.learning import LearningStore
+
 
 class MeshRuntimeEngine:
     def __init__(
         self,
         config: RuntimeConfig | None = None,
         state_store: RuntimeStateStore | None = None,
+        learning_store: LearningStore | None = None,
+        context_store: ContextStore | None = None,
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
         decision: DecisionService | None = None,
@@ -25,9 +32,22 @@ class MeshRuntimeEngine:
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
-        self.ingest = ingest or IngestService()
+        self.learning_store = learning_store
+        self.context_store = context_store
+        self.ingest = ingest or IngestService(learning_store=learning_store)
         self.trigger = trigger or TriggerService()
-        self.decision = decision or DecisionService()
+        escalation_reasoner = None
+        if self.config.llm_escalation_enabled and (learning_store or context_store):
+            from services.decision.llm_reasoning import EscalationReasoner
+            escalation_reasoner = EscalationReasoner(
+                config=self.config,
+                context_store=context_store,
+                learning_store=learning_store,
+            )
+        self.decision = decision or DecisionService(
+            learning_store=learning_store,
+            escalation_reasoner=escalation_reasoner,
+        )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
         self.feedback = feedback or FeedbackService()

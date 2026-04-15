@@ -2,10 +2,33 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shared.mesh_runtime import Decision, Trigger, load_policy
+
+if TYPE_CHECKING:
+    from services.decision.llm_reasoning import EscalationReasoner
+    from shared.mesh_runtime.learning import LearningStore
+
+
+_LLM_ALLOWED_ACTIONS = frozenset({
+    "reduce_rollout",
+    "disable_flag",
+    "restart_deployment",
+    "rollback_deployment",
+    "no_action",
+})
 
 
 class DecisionService:
+    def __init__(
+        self,
+        learning_store: LearningStore | None = None,
+        escalation_reasoner: EscalationReasoner | None = None,
+    ) -> None:
+        self.learning_store = learning_store
+        self.escalation_reasoner = escalation_reasoner
+
     def decide(self, trigger: Trigger) -> Decision:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             return self._decide_kubernetes(trigger)
@@ -78,12 +101,27 @@ class DecisionService:
             confidence = min(confidence, 0.7)
             risk_level = "medium"
 
+        historical_rate = None
+        if self.learning_store is not None:
+            historical_rate = self.learning_store.get_historical_success_rate(decision_type, trigger.service)
         confidence = _adjust_confidence(
             confidence,
             similar_prior_cases=similar_prior_cases,
             flag_causality_confidence=flag_causality_confidence,
             trigger_signals=trigger_signals,
+            historical_success_rate=historical_rate,
         )
+
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
 
         autonomy_tier = "autonomous"
         if decision_type == "escalate":
@@ -179,6 +217,23 @@ class DecisionService:
             risk_level = "high"
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
+
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+
+        correlation = trigger.related_context.get("correlation", {})
+        if correlation.get("type") in ("blast_wave", "cascading"):
+            autonomy_tier = "approval_required"
 
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
@@ -435,6 +490,7 @@ def _adjust_confidence(
     similar_prior_cases: int,
     flag_causality_confidence: float | None,
     trigger_signals: list[str],
+    historical_success_rate: float | None = None,
 ) -> float:
     adjusted = base_confidence
     if similar_prior_cases > 0:
@@ -443,4 +499,9 @@ def _adjust_confidence(
         adjusted += max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1
     if len(trigger_signals) >= 2:
         adjusted += 0.01
+    if historical_success_rate is not None:
+        if historical_success_rate >= 0.8:
+            adjusted += 0.02
+        elif historical_success_rate < 0.4:
+            adjusted -= 0.03
     return max(0.5, min(round(adjusted, 2), 0.95))
