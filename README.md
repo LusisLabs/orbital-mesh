@@ -1,244 +1,152 @@
 # Mesh Intelligence
 
-`mesh-intelligence` is a local agentic operations control plane for bounded closed-loop remediation. It ingests infrastructure signals, decides on a remediation path, evaluates the decision against policy and quality gates, pauses for operator steering before actuation by default, executes through a bounded orchestration layer, records feedback, persists run memory into an Obsidian-compatible vault, and exposes continuous Merkle roots and proofs for the run log.
+Bounded closed-loop remediation control plane. Ingests infrastructure signals, decides on a remediation path, evaluates against policy gates, pauses for operator approval, executes through a constrained orchestration layer, records feedback, and persists every run into a Merkle-rooted event ledger and Obsidian-compatible vault.
 
----
-## Tldr
-Ingress: client starts run via POST /api/runs using signal_payload or scenario_key.
-Ingest stage: IngestService.normalize_signal(...) creates normalized event envelope.
-Trigger stage: TriggerService.detect(...) decides if signal is actionable.
-no trigger -> run ends no_trigger/completed
-Decision stage: DecisionService.decide(...) picks bounded action (no_action, reduce_rollout, disable_flag, escalate, etc.).
-Evaluation stage: EvaluationService.evaluate(...) applies policy/business/quality checks (Promptfoo when enabled).
-Operator gate: enters awaiting_operator if required by steering mode/pause points.
-Execution stage: OrchestratorService.execute(...) calls native path or Goose bridge/adapter.
-Feedback stage: FeedbackService.record(...) writes outcome signals (10m/30m observations, recurrence/guardrails).
-Persistence/streaming: each stage emits typed events, persisted + streamed over SSE, mirrored to vault, Merkle updated.
----
+## How It Works
 
-The system now ships with two operator surfaces:
+```
+Signal → Ingest → Trigger → Decision → Evaluation → Operator Gate → Execution → Feedback
+```
 
-- Browser-first control plane served by `run_server.py`
-- Curses TUI served by `run_tui.py` for terminal-native inspection
+1. **Ingest** — normalizes a raw infrastructure signal into a canonical envelope.
+2. **Trigger** — decides whether the signal is actionable. If not, the run ends immediately.
+3. **Decision** — picks a bounded action: `reduce_rollout`, `disable_flag`, `restart_deployment`, `rollback_deployment`, `escalate`, or `no_action`.
+4. **Evaluation** — applies policy, business, and quality checks. Optionally delegates to Promptfoo.
+5. **Operator gate** — pauses for human approval (default) or proceeds automatically depending on steering mode.
+6. **Execution** — actuates through the native adapter, Goose bridge, or Goose CLI.
+7. **Feedback** — writes outcome signals (10m/30m observations, recurrence checks, guardrail results).
 
-The browser UI is the primary interface.
+Each stage emits typed events that are persisted to disk, streamed over SSE, mirrored to the vault, and included in the Merkle tree.
 
-## What It Does
+## Run Lifecycle
 
-- Runs the existing feature-flag remediation loop end to end
-- Streams stage-by-stage run updates through HTTP + SSE
-- Pauses at the approval gate before execution by default
-- Supports bounded steering commands while a run is in progress
-- Persists goals, runs, notes, and artifact state in structured runtime storage
-- Mirrors that memory into a fixed Obsidian-compatible vault layout
-- Computes Merkle roots for canonical run events and returns proofs per event
-- Integrates with a managed local GitNexus sidecar for code/process context
-- Supports three runtime modes:
-  - `native`
-  - `promptfoo`
-  - `goose`
+```
+queued → ingesting → trigger_ready → decision_ready → evaluation_ready
+       → awaiting_operator → executing → feedback_ready → completed
+```
 
-## Runtime Model
+Terminal states: `completed`, `failed`, `cancelled`, `no_trigger`.
 
-Each run advances through explicit stages:
+Steering commands while a run is in progress:
 
-1. `queued`
-2. `ingesting`
-3. `trigger_ready` or `no_trigger`
-4. `decision_ready`
-5. `evaluation_ready`
-6. `awaiting_operator`
-7. `executing`
-8. `feedback_ready`
-9. `completed`, `failed`, or `cancelled`
+| Command | Effect |
+|---------|--------|
+| `approve` | Release the operator gate |
+| `cancel` | Abort the run |
+| `pause_after_stage` | Insert a pause before a future stage |
+| `resume` | Continue from a pause |
+| `set_auto_mode` | Toggle automatic approval |
+| `override_decision` | Replace the decision (re-enters evaluation) |
+| `override_execution_parameters` | Modify execution params (re-enters evaluation) |
+| `attach_note` | Append an operator note to the run |
 
-Steering is bounded. Supported commands are:
-
-- `approve`
-- `cancel`
-- `pause_after_stage`
-- `resume`
-- `set_auto_mode`
-- `override_decision`
-- `override_execution_parameters`
-- `attach_note`
-
-Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
+Overrides always re-enter evaluation. Approval never bypasses policy validation.
 
 ## Runtime Modes
 
-### `native`
-
-Default local mode. Uses in-process adapters with real local persistence and audit semantics. This is the mode that works immediately without external CLIs.
-
-### `promptfoo`
-
-CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the mesh evaluation contract. Readiness is reported explicitly through the API and UI.
-
-### `goose`
-
-CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Goose review step before bounded local actuation. When Ollama is installed, the bootstrap path prefers the first working local model, starting with `qwen2.5:0.5b`. Readiness is reported explicitly through the API and UI.
+| Mode | Layer | Description |
+|------|-------|-------------|
+| `native` | Evaluation + Orchestration | In-process adapters with local persistence. Works immediately, no external CLIs. |
+| `promptfoo` | Evaluation | Runs a real Promptfoo eval via CLI bridge. |
+| `goose` | Orchestration | Runs a Goose review step before bounded actuation. Supports OpenAI, Anthropic, and Ollama providers with fallback. |
 
 ## Repository Layout
 
-```text
+```
 mesh-intelligence/
-├── Dockerfile                       # production image (Vite UI + Python server)
-├── docker-compose.yml               # persisted state volume + health checks
-├── .env.example                     # configuration template
-├── control_plane_server.py          # local HTTP + SSE server
-├── run_server.py                    # browser control-plane entrypoint
-├── run_first_slice.py               # synchronous stdin/stdout loop runner
-├── run_tui.py                       # terminal UI entrypoint
-├── setup_integrations.py            # bootstrap Promptfoo / Goose / GitNexus config
-├── swarmclaw/                       # optional Next.js operator stack (separate surface)
+├── control_plane_server.py          # HTTP + SSE server
+├── run_server.py                    # Server entrypoint with graceful shutdown
+├── run_first_slice.py               # Synchronous stdin/stdout pipeline runner
+├── run_tui.py                       # Terminal UI (curses)
+├── setup_integrations.py            # Bootstrap Promptfoo / Goose / GitNexus config
 ├── services/
-│   ├── control_plane.py             # long-lived coordinator and steering logic
-│   ├── runtime.py                   # shared stage primitives used by pipeline + coordinator
-│   ├── pipeline.py                  # synchronous convenience wrapper
+│   ├── control_plane.py             # Run coordinator, steering, thread management
+│   ├── runtime.py                   # Shared stage primitives
+│   ├── pipeline.py                  # Synchronous pipeline wrapper
+│   ├── ingest/
+│   ├── trigger/
+│   ├── decision/
 │   ├── evaluation/
 │   ├── orchestrator/
 │   ├── feedback/
-│   ├── decision/
-│   ├── trigger/
-│   └── ingest/
+│   └── actuators/                   # Feature flag, incident, Kubernetes, repo-patch adapters
 ├── shared/mesh_runtime/
-│   ├── config.py
-│   ├── control_plane_models.py
-│   ├── control_plane_state.py
-│   ├── integrations.py
-│   ├── merkle.py
-│   ├── vault.py
-│   └── state.py
-├── web/                             # React/Vite browser control plane
-├── fixtures/
-├── policies/
-└── tests/
+│   ├── config.py                    # RuntimeConfig with env-var binding
+│   ├── state.py                     # File-backed state store
+│   ├── control_plane_state.py       # Goals, runs, events persistence
+│   ├── control_plane_models.py      # Dataclasses for runs, events, goals
+│   ├── merkle.py                    # Merkle tree construction and proofs
+│   ├── vault.py                     # Obsidian-compatible vault writer
+│   └── integrations.py              # Integration discovery and readiness
+├── web/                             # React + Vite browser UI
+├── fixtures/                        # Signal fixtures and test codebases
+├── policies/                        # Policy definitions (autonomy, rollback, protected-scope)
+├── scripts/                         # Operational scripts (e2e, research)
+├── tests/
+├── Dockerfile                       # Multi-stage production image, non-root
+├── docker-compose.yml               # Compose stack with resource limits
+├── pyproject.toml                    # Ruff lint config
+└── .env.example                     # Configuration template
 ```
 
 ## Quick Start
 
-### 1. Install and verify integrations
+### 1. Bootstrap integrations
 
 ```bash
 python3 setup_integrations.py
-```
-
-Optional install attempt for supported dependencies:
-
-```bash
+# Optional: attempt to install missing CLIs
 python3 setup_integrations.py --install-missing
 ```
 
-This writes integration configuration to:
+Writes integration config to `.mesh-runtime-state/integrations.json`.
 
-```text
-.mesh-runtime-state/integrations.json
-```
-
-The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo and Goose CLIs.
-
-### 2. Install the browser UI dependencies
+### 2. Build the browser UI
 
 ```bash
-cd web
-npm install
-npm run build
-cd ..
+cd web && npm install && npm run build && cd ..
 ```
 
-### 3. Start the local control plane
+### 3. Start the server
 
 ```bash
 python3 run_server.py
 ```
 
-Default server address:
+Open `http://127.0.0.1:8787` in a browser.
 
-```text
-http://127.0.0.1:8787
+### 4. Run from the browser
+
+Use the left rail to select a goal, choose a scenario or paste a raw signal, pick runtime modes (`native`/`promptfoo`/`goose`), and set the steering mode (`approval_gate` or `interruptible_auto`).
+
+### 5. Run from the command line
+
+```bash
+python3 run_first_slice.py < fixtures/signals/search_latency_regression.json
 ```
-
-### 4. Open the browser
-
-Point the browser at:
-
-```text
-http://127.0.0.1:8787
-```
-
-### 5. Launch a run
-
-Use the left rail to:
-
-- select or create a goal
-- choose a fixture scenario or paste a raw signal JSON payload
-- select `native`, `promptfoo`, or `goose`
-- choose `approval_gate` or `interruptible_auto`
-
-## Web Control Plane
-
-The browser UI is a React/Vite application under [`web/`](./web) using:
-
-- a dense operator shell and graph-driven center stage inspired by `mesh-llm`
-- server connection, status, and side-panel patterns inspired by `GitNexus`
-
-The layout is:
-
-- Left rail
-  - goals
-  - scenarios
-  - integration readiness
-  - run queue
-- Center
-  - active goal
-  - live run graph
-  - steering console
-  - timeline
-- Right inspector
-  - overview
-  - evidence
-  - policy
-  - execution
-  - feedback
-  - vault preview
-  - Merkle proof
-  - GitNexus-backed code/process context
-
-The active run is preserved in URL state with `?run=<run_id>`.
 
 ## HTTP API
 
-Implemented routes:
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/readiness` | Integration readiness |
+| `GET` | `/api/scenarios` | List available fixture scenarios |
+| `GET` | `/api/goals` | List goals |
+| `POST` | `/api/goals` | Create a goal |
+| `GET` | `/api/runs` | List runs |
+| `POST` | `/api/runs` | Create a run |
+| `GET` | `/api/runs/:id` | Get run details |
+| `POST` | `/api/runs/:id/steer` | Send a steering command |
+| `GET` | `/api/runs/:id/events` | List run events |
+| `GET` | `/api/runs/:id/merkle` | Merkle snapshot |
+| `GET` | `/api/runs/:id/merkle/proof/:event_id` | Merkle proof for a single event |
+| `GET` | `/api/stream/runs/:id` | SSE stream for a run |
+| `GET` | `/api/stream/system` | SSE stream for system-wide events |
+| `GET` | `/api/vault/tree` | Vault file listing |
+| `GET` | `/api/vault/document` | Read a vault document |
 
-- `GET /api/health`
-- `GET /api/readiness`
-- `GET /api/scenarios`
-- `GET /api/goals`
-- `POST /api/goals`
-- `GET /api/runs`
-- `POST /api/runs`
-- `GET /api/runs/:id`
-- `POST /api/runs/:id/steer`
-- `GET /api/runs/:id/events`
-- `GET /api/runs/:id/merkle`
-- `GET /api/runs/:id/merkle/proof/:event_id`
-- `GET /api/stream/runs/:id`
-- `GET /api/stream/system`
-- `GET /api/vault/tree`
-- `GET /api/vault/document`
-
-### Create Goal
-
-```json
-{
-  "title": "Protect search latency",
-  "objective": "Pause every risky remediation before execution.",
-  "success_criteria": ["approval gate pauses", "vault notes written"]
-}
-```
-
-### Create Run
+### Create a run
 
 ```json
 {
@@ -250,14 +158,12 @@ Implemented routes:
 }
 ```
 
-Raw signal payloads are also supported:
+Or with a raw signal payload:
 
 ```json
 {
   "goal_id": "goal_default",
-  "signal_payload": {
-    "...": "full signal payload"
-  },
+  "signal_payload": { "..." : "full signal" },
   "evaluation_mode": "native",
   "orchestration_mode": "native",
   "steering_mode": "interruptible_auto",
@@ -265,133 +171,65 @@ Raw signal payloads are also supported:
 }
 ```
 
-### Steering Command
+### Steering command
 
 ```json
 {
   "command": "override_execution_parameters",
-  "parameters": {
-    "rollout_pct": 5
-  }
+  "parameters": { "rollout_pct": 5 }
 }
 ```
 
-## Vault Layout
+## Vault
 
-Run and goal memory are mirrored to:
+Run and goal memory are mirrored to `.mesh-runtime-state/vault/` in an Obsidian-compatible layout:
 
-```text
-.mesh-runtime-state/vault/
+```
+vault/
+├── Goals/
+├── Runs/
+├── Decisions/
+├── Evaluations/
+├── Executions/
+├── Feedback/
+├── Merkle/
+└── Notes/
 ```
 
-Fixed directories:
-
-- `Goals/`
-- `Runs/`
-- `Decisions/`
-- `Evaluations/`
-- `Executions/`
-- `Feedback/`
-- `Merkle/`
-- `Notes/`
-
-Each run writes:
-
-- a run note linking the goal and stage artifacts
-- JSON-backed artifact notes for decision, evaluation, execution, and feedback
-- operator notes
-- a Merkle note containing the current root and event IDs
+Each run produces a run note, JSON artifact notes (decision, evaluation, execution, feedback), operator notes, and a Merkle note with the current root and event list.
 
 ## Merkle Event Ledger
 
-Every canonical run event is hashed as a leaf. The server recomputes the root whenever a new event is appended. The API exposes:
+Every run event is hashed as a leaf. The root is recomputed on each append. The API exposes the current root, full event list, and per-event inclusion proofs. This is for run inspection and auditability, not blockchain settlement.
 
-- current root and event list
-- per-event proofs for decision, evaluation, execution, and feedback events
+## Production Deployment
 
-This is intended for run inspection and auditability, not blockchain settlement.
-
-## TUI
-
-The TUI remains available as a local terminal companion:
-
-```bash
-python3 run_tui.py
-```
-
-Mode toggles now use:
-
-- `native` / `promptfoo`
-- `native` / `goose`
-
-The TUI is no longer the primary operator interface.
-
-## Environment Variables
-
-Supported configuration variables:
-
-- `MESH_ENVIRONMENT`
-- `MESH_EVALUATION_MODE`
-- `MESH_ORCHESTRATION_MODE`
-- `MESH_STATE_DIRECTORY`
-- `MESH_SERVER_HOST`
-- `MESH_SERVER_PORT`
-- `MESH_WEB_ASSET_PATH`
-- `MESH_VAULT_PATH`
-- `MESH_INTEGRATIONS_CONFIG_PATH`
-- `MESH_DEFAULT_STEERING_MODE`
-- `MESH_DEFAULT_OPERATOR_PAUSE_POINT`
-- `MESH_PROMPTFOO_COMMAND`
-- `MESH_GOOSE_COMMAND`
-- `MESH_GITNEXUS_SIDECAR_URL`
-- `MESH_GITNEXUS_SIDECAR_COMMAND`
-- `MESH_GITNEXUS_DISABLE_AUTOSTART` — when `1`/`true`, never infer a local GitNexus CLI command from the filesystem (recommended in containers unless you mount a GitNexus tree).
-- `MESH_MAX_JSON_BODY_BYTES` — max `Content-Length` for JSON `POST` bodies (default `1048576`; use `0` to disable the limit).
-- `MESH_SECURITY_HEADERS` — when `true` (default), sends `X-Content-Type-Options` and `Referrer-Policy` on HTTP responses.
-- `MESH_ACCESS_LOG` — when `1`/`true`, enables access logging via Python’s logging module (configure handlers as needed for your environment).
-
-See [`.env.example`](./.env.example) for a ready-to-copy template.
-
-## Production deployment
-
-The mesh control plane is an **HTTP server without built-in authentication**. Put it behind a reverse proxy or private network, terminate TLS at the edge, and enforce auth at that layer before exposing it publicly.
+The server has no built-in authentication. Place it behind a reverse proxy, terminate TLS at the edge, and enforce auth before exposing it publicly.
 
 ### Container (recommended)
-
-Build and run with Compose. The default stack starts only:
-
-1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
-2. **GitNexus is optional** — Compose no longer builds a `gitnexus` container. If you already have a GitNexus instance running on the host or elsewhere, point `MESH_GITNEXUS_SIDECAR_URL` at it. Otherwise the control plane still starts cleanly and GitNexus readiness simply reports unavailable.
 
 ```bash
 docker compose up --build -d
 ```
 
-Persistence:
+The image:
+- Bundles Promptfoo and Goose
+- Runs as a non-root `mesh` user
+- Writes `integrations.json` during boot
+- Resource limits: 2G memory, 2 CPUs (configurable in `docker-compose.yml`)
 
-- **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
-- **Goose** profile/config: volume `goose_config` → `/root/.config/goose`
-- **Workspace mirror**: bind mount `./` → `/workspace/mesh-intelligence`
+Volumes:
+- `mesh_runtime_state` → `/app/.mesh-runtime-state`
+- `goose_config` → `/root/.config/goose`
+- Bind mount `./` → `/workspace/mesh-intelligence`
 
-Override ports if needed:
+Override the published port:
 
 ```bash
 MESH_PUBLISH_PORT=18080 docker compose up --build -d
 ```
 
-Real-time logs:
-
-```bash
-docker compose logs -f mesh
-```
-
-Inspect readiness from the running backend:
-
-```bash
-curl http://127.0.0.1:8787/api/readiness
-```
-
-By default, Promptfoo becomes ready automatically in the container. Goose is also installed in the image, but it only reports ready after you provide a working provider configuration such as:
+Configure Goose with an API provider:
 
 ```bash
 export GOOSE_PROVIDER=openai
@@ -400,90 +238,76 @@ export OPENAI_API_KEY=...
 docker compose up --build -d
 ```
 
-If you prefer a local model, point Goose at Ollama running on the host:
+Or point at a local Ollama:
 
 ```bash
 export OLLAMA_HOST=http://host.docker.internal:11434
 docker compose up --build -d
 ```
 
-For repo-patch and Kubernetes/code-remediation style flows, use repo paths from inside the container namespace, for example:
-
-```text
-/workspace/mesh-intelligence/fixtures/codebases/search_service
-```
-
-Optional GitNexus on the host:
+Optional GitNexus sidecar:
 
 ```bash
+# On the host
 npx -y gitnexus@latest serve
-```
-
-Then keep:
-
-```bash
+# Set in .env
 MESH_GITNEXUS_SIDECAR_URL=http://host.docker.internal:4747
 ```
 
-Or blank the variable out if you do not want the sidecar integration at all.
-
-Health: `GET /api/health` on mesh; GitNexus exposes `GET /api/info` for quick probes (Docker Compose uses this). `GET /api/heartbeat` is Server-Sent Events and is not suitable for typical HTTP health checks.
-
-**Native GitNexus beside native Python:** in one terminal `npx -y gitnexus@latest serve` (or `gitnexus serve` if installed globally), in another set `MESH_GITNEXUS_SIDECAR_URL=http://127.0.0.1:4747` and run `python3 run_server.py`.
-
 ### Bare metal
 
-1. Build the browser bundle: `cd web && npm ci && npm run build`.
-2. Set `MESH_WEB_ASSET_PATH` to the absolute path of `web/dist` if it is not adjacent to the Python tree.
-3. Bind `MESH_SERVER_HOST` to `0.0.0.0` only on trusted networks; otherwise keep the default loopback binding and front with a reverse proxy on the same host.
-4. Enable access logs in production if desired: `MESH_ACCESS_LOG=1` (Python logging; ensure your process supervisor captures stdout/stderr).
+1. Build the UI: `cd web && npm ci && npm run build`
+2. Set `MESH_WEB_ASSET_PATH` if `web/dist` is not adjacent to the Python tree.
+3. Keep `MESH_SERVER_HOST=127.0.0.1` unless on a trusted network.
+4. Enable access logs: `MESH_ACCESS_LOG=1`
 
-## Kubernetes test system
+## Security
 
-For a full-loop Kubernetes test environment, use a local cluster (`kind`, `minikube`, or Docker Desktop Kubernetes) and deploy the stack with the included manifests.
+The production-hardened server includes:
 
-### 1. Build + deploy
+- Safe URL path segment parsing (no raw index access)
+- Path traversal protection on the vault document endpoint
+- Request body size limits (`MESH_MAX_JSON_BODY_BYTES`, default 1MB)
+- `X-Content-Type-Options: nosniff` and `X-Frame-Options: DENY` headers
+- CORS preflight handling
+- SSE stream timeout (`MESH_SSE_MAX_CONNECTION_SECONDS`, default 30min)
+- Graceful shutdown on SIGTERM/SIGINT
+- Thread-safe run coordination with lock-protected state
+- Corrupt state file recovery with automatic backup
 
-```bash
-bash scripts/deploy_k8s_test.sh
-```
+## Environment Variables
 
-This script:
+See [`.env.example`](./.env.example) for the full list with comments. Key variables:
 
-- builds `mesh-intelligence:dev`
-- loads it into `kind` automatically when current context is `kind-*`
-- applies manifests from `deploy/k8s`
-- waits for deployment rollout
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MESH_SERVER_HOST` | `127.0.0.1` | Bind address |
+| `MESH_SERVER_PORT` | `8787` | Bind port |
+| `MESH_ENVIRONMENT` | `local` | Environment tag |
+| `MESH_EVALUATION_MODE` | `native` | `native` or `promptfoo` |
+| `MESH_ORCHESTRATION_MODE` | `native` | `native` or `goose` |
+| `MESH_DEFAULT_STEERING_MODE` | `approval_gate` | `approval_gate` or `interruptible_auto` |
+| `MESH_STATE_DIRECTORY` | `.mesh-runtime-state` | Persistence root |
+| `MESH_MAX_JSON_BODY_BYTES` | `1048576` | Max POST body size |
+| `MESH_SECURITY_HEADERS` | `true` | Send security response headers |
+| `MESH_ACCESS_LOG` | `false` | Enable request logging |
+| `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` | `false` | Enable live kubectl actuation |
+| `MESH_KUBERNETES_ALLOWED_CONTEXTS` | (none) | Comma-separated allowed kube contexts |
+| `MESH_KUBERNETES_ALLOWED_NAMESPACES` | (none) | Comma-separated allowed namespaces |
 
-### 2. Access the control plane
+## Development
 
-```bash
-kubectl -n mesh-intelligence port-forward svc/mesh-intelligence 8787:8787
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8787
-```
-
-### 3. Run whole-loop smoke test
-
-In another terminal (while port-forward is active):
-
-```bash
-python3 scripts/run_whole_loop_smoke.py
-```
-
-The smoke run starts the `kubernetes_crashloop_patch` scenario through the HTTP control plane, pauses at the approval gate, approves execution, waits for completion, and verifies a Merkle proof.
-
-## Development Commands
-
-### Python
+### Tests
 
 ```bash
-python3 -m unittest discover -s tests
-python3 run_first_slice.py < fixtures/signals/search_latency_regression.json
+python3 -m unittest discover -s tests -v
+```
+
+### Lint
+
+```bash
+pip install ruff
+ruff check .
 ```
 
 ### Web
@@ -492,25 +316,12 @@ python3 run_first_slice.py < fixtures/signals/search_latency_regression.json
 cd web
 npm test
 npm run build
+npx tsc --noEmit   # type check
 ```
 
-## Verification Status
-
-The current implementation is verified by:
-
-- Python unit and integration coverage across pipeline behavior and HTTP control-plane flows
-- frontend unit tests for run graph generation
-- production frontend build
-
-The stable local path is:
-
-1. `native` evaluation + `native` orchestration
-2. browser operator approval gate
-3. vault and Merkle inspection
-4. optional Promptfoo / Goose CLI enablement through `setup_integrations.py`
-
-## Supporting Docs
+## Docs
 
 - [architecture.md](./architecture.md)
 - [first-closed-loop-contract.md](./first-closed-loop-contract.md)
 - [docs/CODEX_RUN_SUMMARY.md](./docs/CODEX_RUN_SUMMARY.md)
+
