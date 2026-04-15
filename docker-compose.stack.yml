@@ -29,16 +29,23 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  gitnexus:
-    build:
-      context: .
-      dockerfile: Dockerfile.stack.gitnexus
-      args:
-        GITNEXUS_VERSION: "${GITNEXUS_VERSION:-1.6.1}"
-    image: "${MESH_GITNEXUS_IMAGE:-mesh-intelligence-gitnexus:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-gitnexus
+  postgres:
+    image: "${MESH_POSTGRES_IMAGE:-postgres:16-alpine}"
+    container_name: mesh-intelligence-postgres
+    environment:
+      POSTGRES_DB: "${MESH_POSTGRES_DB:-mesh}"
+      POSTGRES_USER: "${MESH_POSTGRES_USER:-mesh}"
+      POSTGRES_PASSWORD: "${MESH_POSTGRES_PASSWORD:-mesh}"
     ports:
-      - "${MESH_GITNEXUS_PUBLISH_PORT:-4747}:4747"
+      - "${MESH_POSTGRES_PUBLISH_PORT:-5432}:5432"
+    volumes:
+      - mesh_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   hermes:
@@ -80,11 +87,9 @@ services:
       HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.7}"
       LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.7}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
-      OPENAI_HOST: "${OPENAI_HOST:-https://api.minimax.io/v1}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
-      ANTHROPIC_HOST: "${ANTHROPIC_HOST:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
     volumes:
@@ -109,6 +114,9 @@ services:
         GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
     image: "${MESH_STACK_IMAGE:-mesh-intelligence-stack:${MESH_BUILD_VERSION:-dev}}"
     container_name: mesh-intelligence-kube-bootstrap
+    # Same image defaults to USER mesh; k3s writes kubeconfig as root on this volume, so kubectl
+    # cannot create kubeconfig.lock unless we run this one-shot bootstrap as root.
+    user: "0:0"
     depends_on:
       k3s:
         condition: service_healthy
@@ -140,18 +148,20 @@ services:
     container_name: mesh-intelligence-stack
     init: true
     depends_on:
-      gitnexus:
-        condition: service_healthy
       hermes:
         condition: service_healthy
       mesh-kube-bootstrap:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
     environment:
       MESH_SERVER_HOST: "${MESH_SERVER_HOST:-0.0.0.0}"
       MESH_SERVER_PORT: "${MESH_SERVER_PORT:-8787}"
       MESH_ENVIRONMENT: "${MESH_ENVIRONMENT:-production}"
+      MESH_STATE_BACKEND: "${MESH_STATE_BACKEND:-file}"
+      MESH_DATABASE_URL: "${MESH_DATABASE_URL:-postgresql://mesh:mesh@postgres:5432/mesh}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
@@ -166,7 +176,7 @@ services:
       MESH_EVO_COMMAND_TIMEOUT_SECONDS: "${MESH_EVO_COMMAND_TIMEOUT_SECONDS:-60}"
       DOCKER_HOST: unix:///var/run/docker.sock
       MESH_GITNEXUS_DISABLE_AUTOSTART: "1"
-      MESH_GITNEXUS_SIDECAR_URL: "${MESH_STACK_GITNEXUS_URL:-http://gitnexus:4747}"
+      MESH_GITNEXUS_SIDECAR_URL: "${MESH_STACK_GITNEXUS_URL:-}"
       MESH_ACCESS_LOG: "${MESH_ACCESS_LOG:-1}"
       MESH_STRUCTURED_LOGS: "${MESH_STRUCTURED_LOGS:-1}"
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
@@ -188,11 +198,9 @@ services:
       GOOSE_OLLAMA_TIMEOUT_SECONDS: "${GOOSE_OLLAMA_TIMEOUT_SECONDS:-45}"
       GOOSE_FALLBACK_TIMEOUT_SECONDS: "${GOOSE_FALLBACK_TIMEOUT_SECONDS:-90}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
-      OPENAI_HOST: "${OPENAI_HOST:-https://api.minimax.io/v1}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
-      ANTHROPIC_HOST: "${ANTHROPIC_HOST:-}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OLLAMA_HOST: "${MESH_COMPOSE_OLLAMA_HOST:-}"
@@ -273,12 +281,15 @@ services:
     profiles: ["latentmas"]
     build:
       context: .
-      dockerfile: Dockerfile.latentmas
+      dockerfile: "${MESH_LATENTMAS_DOCKERFILE:-Dockerfile.latentmas}"
     image: "${MESH_LATENTMAS_IMAGE:-mesh-intelligence-latentmas:${MESH_BUILD_VERSION:-dev}}"
     container_name: mesh-intelligence-latentmas
     environment:
       MESH_LATENTMAS_URL: "http://0.0.0.0:8791"
       MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
+      # Docker Desktop (macOS/Windows): use Dockerfile.latentmas.cpu and cpu — no Metal inside Linux VMs.
+      # Apple Silicon Metal (MPS): run `python -m services.orchestrator.latentmas_server` on the host with
+      # MESH_LATENTMAS_DEVICE=mps and point Mesh at http://host.docker.internal:8791 .
       MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
       MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
       MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
@@ -298,13 +309,6 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: ["gpu"]
 
 volumes:
   goose_config:
@@ -313,3 +317,4 @@ volumes:
   latentmas_hf_cache:
   mesh_kubeconfig:
   mesh_runtime_state:
+  mesh_postgres_data:

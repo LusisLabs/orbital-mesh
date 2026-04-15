@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import os
-import re
 import shutil
 import threading
 from collections import deque
@@ -14,7 +14,6 @@ from typing import Any
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
-from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.evo_launcher import EvoLaunchService
 from shared.mesh_runtime import (
@@ -41,11 +40,12 @@ from shared.mesh_runtime import (
     Trigger,
     load_fixture,
 )
-from shared.mesh_runtime.control_plane_models import GoalRecord, SteeringCommand
+from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
 from services.signal_correlator import SignalCorrelator
 from services.watch_daemon import WatchDaemon, WatchTarget
 from shared.mesh_runtime.context_store import ContextStore
-from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
+from shared.mesh_runtime.mesh_state_store import MeshStateStore
+from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
 from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.research import (
@@ -54,21 +54,6 @@ from shared.mesh_runtime.research import (
     sanitize_research_markdown,
 )
 
-
-ALLOWED_STAGES = {
-    "queued",
-    "ingesting",
-    "trigger_ready",
-    "no_trigger",
-    "decision_ready",
-    "evaluation_ready",
-    "awaiting_operator",
-    "executing",
-    "feedback_ready",
-    "completed",
-    "failed",
-    "cancelled",
-}
 
 PAUSEABLE_STAGES = {"trigger_ready", "decision_ready", "evaluation_ready", "feedback_ready"}
 TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger"}
@@ -90,6 +75,7 @@ ALLOWED_STEERING_COMMANDS = {
 _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_execution_parameters"})
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
+_LOG = logging.getLogger("mesh.control_plane")
 
 
 def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
@@ -147,12 +133,12 @@ class RunCoordinator:
     def __init__(
         self,
         config: RuntimeConfig | None = None,
-        state_store: ControlPlaneStateStore | None = None,
+        state_store: MeshStateStore | None = None,
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
-        self.state_store = state_store or ControlPlaneStateStore(self.config)
+        self.state_store = state_store or build_mesh_state_store(self.config)
         self.sidecar = GitNexusSidecarManager(self.config)
-        self.learning_store = LearningStore(self.config.state_directory)
+        self.learning_store = LearningStore(self.config.state_directory, state_store=self.state_store)
         self.context_store = ContextStore(self.config.state_directory)
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config)
@@ -416,7 +402,7 @@ class RunCoordinator:
             issued_at=_timestamp(),
             payload=command_payload,
         )
-        self.state_store.append_run_event(
+        command_event = self.state_store.append_run_event(
             run_id,
             stage=session.stage,
             event_type=STEERING_COMMAND,
@@ -424,6 +410,16 @@ class RunCoordinator:
             summary={"command": command_type},
             artifact_key="operator_command",
             status="received",
+        )
+        self.state_store.record_approval(
+            run_id,
+            {
+                "event_id": command_event.event_id,
+                "command_id": command.command_id,
+                "command_type": command.command_type,
+                "issued_at": command.issued_at,
+                "payload": command.payload,
+            },
         )
         if command_type == "launch_evo":
             self._launch_evo(run_id, session, command_payload)
@@ -670,7 +666,7 @@ class RunCoordinator:
             if completed_session:
                 self.context_store.update_from_run(completed_session.to_dict())
         except Exception:
-            pass
+            _LOG.exception("Learning persistence failed for run %s", run_id)
 
     def _record_decision_and_evaluation(
         self,

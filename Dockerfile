@@ -1,8 +1,14 @@
 FROM node:22-bookworm-slim AS web
-WORKDIR /web
+WORKDIR /repo/web
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends python3 \
+  && rm -rf /var/lib/apt/lists/*
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
 COPY web/ ./
+COPY scripts/generate_control_plane_contracts.py /repo/scripts/generate_control_plane_contracts.py
+COPY shared /repo/shared
+COPY scaffold /repo/scaffold
 RUN npm run build
 
 FROM node:22-bookworm-slim AS promptfoo
@@ -39,7 +45,7 @@ ARG UV_VERSION=0.11.6
 
 RUN apt-get update \
   && apt-get upgrade -y \
-  && apt-get install -y --no-install-recommends ca-certificates curl docker.io git libgomp1 \
+  && apt-get install -y --no-install-recommends ca-certificates curl docker.io git gosu libgomp1 \
   && arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
     amd64) kubectl_arch="amd64" ;; \
@@ -86,18 +92,21 @@ ENV MESH_SERVER_HOST=0.0.0.0 \
     MESH_BUILD_VERSION=$MESH_BUILD_VERSION \
     MESH_BUILD_COMMIT=$MESH_BUILD_COMMIT
 
-COPY --from=web /web/dist ./web/dist
+COPY --from=web /repo/web/dist ./web/dist
 COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py setup_integrations.py ./
+COPY scripts/compose_mesh_entrypoint.sh /usr/local/bin/compose_mesh_entrypoint.sh
 COPY shared ./shared
 COPY services ./services
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
 COPY scaffold ./scaffold
+COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies
 
 RUN chown -R mesh:mesh /app
+RUN chmod +x /usr/local/bin/compose_mesh_entrypoint.sh
 
 USER mesh
 
@@ -106,4 +115,6 @@ EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD /usr/local/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=4)"
 
-CMD ["sh", "-lc", "/usr/local/bin/python3 setup_integrations.py && exec /usr/local/bin/python3 run_server.py"]
+USER root
+
+CMD ["/usr/local/bin/compose_mesh_entrypoint.sh"]

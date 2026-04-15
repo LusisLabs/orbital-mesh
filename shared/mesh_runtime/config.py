@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -21,13 +21,6 @@ def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
     if p.is_absolute():
         return str(p.resolve())
     return str((_REPO_ROOT / p).resolve())
-
-
-def _derive_research_directory(state_directory: str, explicit: str | None) -> str:
-    if explicit is not None:
-        return explicit
-    return str(Path(state_directory) / "research")
-
 
 def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
     if not raw:
@@ -60,6 +53,8 @@ class RuntimeConfig:
     max_transient_retries: int = 2
     max_retry_window_seconds: int = 60
     goose_timeout_seconds: int = 180
+    state_backend: str = "file"
+    database_url: str | None = None
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
@@ -149,6 +144,8 @@ class RuntimeConfig:
             max_transient_retries=int(os.getenv("MESH_MAX_TRANSIENT_RETRIES", "2")),
             max_retry_window_seconds=int(os.getenv("MESH_MAX_RETRY_WINDOW_SECONDS", "60")),
             goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
+            state_backend=_normalize_state_backend(os.getenv("MESH_STATE_BACKEND", "file")),
+            database_url=os.getenv("MESH_DATABASE_URL") or None,
             state_directory=state_directory,
             research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),
@@ -235,3 +232,10 @@ def _csv_env(name: str) -> tuple[str, ...]:
 def _normalize_agent_fabric_mode(raw: str) -> str:
     mode = (raw or "native").strip().lower()
     return mode if mode in ("native", "deepagents") else "native"
+
+
+def _normalize_state_backend(raw: str) -> str:
+    backend = (raw or "file").strip().lower()
+    if backend not in ("file", "postgres"):
+        raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
+    return backend

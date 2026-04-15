@@ -1,0 +1,93 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Protocol
+
+from .control_plane_models import GoalRecord, MerkleProof, MerkleSnapshot, RunEvent, RunSession
+from .state import RuntimeStateStore
+
+
+@dataclass(frozen=True)
+class RunFilters:
+    limit: int = 50
+    status: str | None = None
+    stage: str | None = None
+    goal_id: str | None = None
+
+
+class MeshStateStore(Protocol):
+    runtime_store: RuntimeStateStore
+
+    def ensure_default_goal(self) -> GoalRecord: ...
+
+    def list_goals(self) -> list[GoalRecord]: ...
+
+    def save_goal(self, goal: GoalRecord) -> GoalRecord: ...
+
+    def create_run_session(
+        self,
+        goal_id: str | None,
+        scenario_key: str | None,
+        steering_mode: str,
+        auto_mode: bool,
+        pause_points: list[str],
+        evaluation_mode: str,
+        orchestration_mode: str,
+        artifacts: dict[str, Any],
+    ) -> RunSession: ...
+
+    def create_run(self, *args: Any, **kwargs: Any) -> RunSession: ...
+
+    def get_run_session(self, run_id: str) -> RunSession | None: ...
+
+    def get_run(self, run_id: str) -> RunSession | None: ...
+
+    def list_run_sessions(self, limit: int = 50) -> list[RunSession]: ...
+
+    def list_runs(self, filters: RunFilters | None = None) -> list[RunSession]: ...
+
+    def save_run_session(self, session: RunSession) -> RunSession: ...
+
+    def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession: ...
+
+    def append_run_event(
+        self,
+        run_id: str,
+        stage: str,
+        event_type: str,
+        payload: dict[str, Any],
+        summary: dict[str, Any] | None = None,
+        artifact_key: str | None = None,
+        integration_name: str | None = None,
+        status: str | None = None,
+    ) -> RunEvent: ...
+
+    def append_event(self, run_id: str, event: RunEvent) -> RunEvent: ...
+
+    def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]: ...
+
+    def list_events(self, run_id: str) -> list[RunEvent]: ...
+
+    def get_merkle_snapshot(self, run_id: str) -> MerkleSnapshot: ...
+
+    def get_merkle_proof(self, run_id: str, event_id: str) -> MerkleProof | None: ...
+
+    def record_operator_note(self, run_id: str, note: str) -> RunSession | None: ...
+
+    def record_approval(self, run_id: str, approval: dict[str, Any]) -> None: ...
+
+    def record_learning_outcome(self, outcome: dict[str, Any]) -> None: ...
+
+    def get_learning_context(self, service: str, endpoint: str | None = None) -> dict[str, Any]: ...
+
+    def get_historical_success_rate(self, decision_type: str, service: str | None = None) -> float | None: ...
+
+    def get_recovery_patterns(self, service: str | None = None) -> dict[str, int]: ...
+
+    def put_artifact(self, artifact: dict[str, Any]) -> None: ...
+
+    def search_memory(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]: ...
+
+    def tree(self) -> list[dict[str, Any]]: ...
+
+    def read_document(self, relative_path: str) -> dict[str, str]: ...

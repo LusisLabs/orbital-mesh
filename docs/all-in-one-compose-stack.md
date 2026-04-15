@@ -1,13 +1,12 @@
 # All-In-One Docker Compose Stack
 
-`docker-compose.stack.yml` is the canonical local environment for launching Mesh, its local sidecars, an embedded Kubernetes control plane, and an automated live-remediation smoke run with one Compose command.
+`docker-compose.stack.yml` is the canonical local environment for launching Mesh, its required local sidecars, an embedded Kubernetes control plane, and an automated live-remediation smoke run with one Compose command.
 
 Use this stack when you need to validate the whole system contract at once:
 
 - Mesh HTTP API and browser control plane.
 - Promptfoo, Goose, and Hermes readiness.
 - Dedicated Hermes sidecar.
-- Dedicated GitNexus sidecar.
 - Embedded k3s cluster with a seeded `semantic-search` Deployment.
 - Live Kubernetes execution through the same Mesh rollout path used by production-like runs.
 - Optional LatentMAS GPU inference sidecar.
@@ -47,6 +46,16 @@ Enable the LatentMAS GPU worker sidecar:
 COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docker-compose.stack.yml up --build
 ```
 
+**Apple Silicon / Docker Desktop:** Linux containers do not see Metal. Use the CPU image and device (no NVIDIA `deploy` block in the stack file):
+
+```bash
+MESH_LATENTMAS_DOCKERFILE=Dockerfile.latentmas.cpu MESH_LATENTMAS_DEVICE=cpu \
+  COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 \
+  docker compose -f docker-compose.stack.yml up --build
+```
+
+**Metal (MPS) on macOS:** run LatentMAS on the host (`MESH_LATENTMAS_DEVICE=mps`, `python -m services.orchestrator.latentmas_server`) and set `MESH_STACK_LATENTMAS_URL=http://host.docker.internal:8791` for Mesh. **Linux + NVIDIA + CUDA:** keep `Dockerfile.latentmas`, set `MESH_LATENTMAS_DEVICE=cuda`, and add `-f docker-compose.latentmas-nvidia.yml` so Compose requests the GPU.
+
 Enable Deep Agents proposal lanes:
 
 ```bash
@@ -66,21 +75,22 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 | Service | Role | Published port | Persistence |
 | --- | --- | --- | --- |
 | `k3s` | Embedded Kubernetes API used for local live execution | `${MESH_K3S_API_PUBLISH_PORT:-6443}` | `k3s_server_data`, `mesh_kubeconfig` |
+| `postgres` | Local Postgres for production-style persistence testing | `${MESH_POSTGRES_PUBLISH_PORT:-5432}` | `mesh_postgres_data` |
 | `mesh-kube-bootstrap` | One-shot kubeconfig rewrite, namespace creation, and baseline Deployment seed | none | `mesh_kubeconfig` |
 | `mesh` | Mesh API, UI, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, `mesh_kubeconfig` |
 | `hermes` | Dedicated Hermes runtime sidecar reached by `MESH_HERMES_COMMAND` through `docker exec` | none | `hermes_home` |
-| `gitnexus` | Local GitNexus HTTP sidecar | `${MESH_GITNEXUS_PUBLISH_PORT:-4747}` | container filesystem |
 | `mesh-smoke` | One-shot readiness and live-remediation verifier | none | `mesh_kubeconfig` |
 | `latentmas` | Optional GPU inference sidecar | `${MESH_LATENTMAS_PUBLISH_PORT:-8791}` | `latentmas_hf_cache` |
 
 ## Boot Sequence
 
-1. Compose builds `mesh-intelligence-stack`, `mesh-intelligence-hermes`, and `mesh-intelligence-gitnexus`.
+1. Compose builds `mesh-intelligence-stack` and `mesh-intelligence-hermes`.
 2. `k3s` starts a single-node Kubernetes API and writes kubeconfig to the shared `mesh_kubeconfig` volume.
-3. `mesh-kube-bootstrap` waits for k3s health, rewrites the kubeconfig API endpoint to `https://k3s:6443`, creates context `mesh-compose`, creates namespace `search`, and applies a healthy `semantic-search` Deployment.
-4. `gitnexus` and `hermes` must report healthy before `mesh` starts.
-5. `mesh` starts with live Kubernetes execution enabled, `KUBECONFIG=/mesh-kubeconfig/kubeconfig`, allowed context `mesh-compose`, and allowed namespace `search`.
-6. `mesh-smoke` waits for Mesh health, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
+3. `postgres` starts for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
+4. `mesh-kube-bootstrap` waits for k3s health, rewrites the kubeconfig API endpoint to `https://k3s:6443`, creates context `mesh-compose`, creates namespace `search`, and applies a healthy `semantic-search` Deployment.
+5. `hermes` must report healthy before `mesh` starts.
+6. `mesh` starts with live Kubernetes execution enabled, `KUBECONFIG=/mesh-kubeconfig/kubeconfig`, allowed context `mesh-compose`, and allowed namespace `search`.
+7. `mesh-smoke` waits for Mesh health, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
 
 ## Smoke Contract
 
@@ -142,7 +152,9 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | --- | --- | --- |
 | `MESH_PUBLISH_PORT` | `8787` | Host port for Mesh HTTP/UI |
 | `MESH_K3S_API_PUBLISH_PORT` | `6443` | Host port for the local k3s API |
-| `MESH_GITNEXUS_PUBLISH_PORT` | `4747` | Host port for GitNexus |
+| `MESH_POSTGRES_PUBLISH_PORT` | `5432` | Host port for local Postgres |
+| `MESH_STATE_BACKEND` | `file` | `file` or `postgres` runtime state backend |
+| `MESH_DATABASE_URL` | `postgresql://mesh:mesh@postgres:5432/mesh` | Postgres/Supabase connection URL |
 | `MESH_LATENTMAS_PUBLISH_PORT` | `8791` | Host port for optional LatentMAS |
 | `MESH_STACK_KUBE_CONTEXT` | `mesh-compose` | Normalized kube context in the shared kubeconfig |
 | `MESH_STACK_NAMESPACE` | `search` | Seeded namespace and Mesh allowlist |
@@ -153,6 +165,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_ENABLE_LATENTMAS` | `0` | Enables Mesh readiness expectation for LatentMAS |
 | `MESH_STACK_LATENTMAS_URL` | `http://latentmas:8791` | Mesh-to-sidecar LatentMAS URL |
 | `MESH_STACK_HERMES_COMMAND` | `docker exec ... mesh-intelligence-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
+| `MESH_STACK_GITNEXUS_URL` | empty | Optional external GitNexus sidecar URL |
 | `MESH_STACK_SMOKE_EVALUATION_MODE` | `native` | Smoke run evaluation mode |
 | `MESH_STACK_SMOKE_ORCHESTRATION_MODE` | `native` | Smoke run orchestration mode |
 | `MESH_STACK_SMOKE_STEERING_MODE` | `interruptible_auto` | Smoke run steering mode |
@@ -160,7 +173,6 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `HERMES_AGENT_REF` | `1525624904159e7c2d6ac3feef951e27ad0d23bb` | Pinned Hermes Agent git ref used by mesh and Hermes images |
 | `UV_VERSION` | `0.11.6` | Pinned uv installer version used by mesh and Hermes images |
 | `GOOSE_VERSION` | `v1.30.0` | Pinned Goose release used by the mesh image |
-| `GITNEXUS_VERSION` | `1.6.1` | Pinned GitNexus npm version used by the sidecar image |
 
 Provider variables such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MESH_COMPOSE_GOOSE_PROVIDER`, `MESH_COMPOSE_GOOSE_MODEL`, `MESH_COMPOSE_HERMES_INFERENCE_PROVIDER`, and `MESH_COMPOSE_HERMES_MODEL` are passed through to the relevant containers. The default smoke path does not require model credentials because it runs native evaluation and native orchestration.
 
@@ -171,6 +183,7 @@ Provider variables such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MESH_COMPOSE_GO
 | `mesh_runtime_state` | Runs, goals, vault, Merkle proofs, readiness snapshots, research sessions, Deep Agents sandboxes |
 | `mesh_kubeconfig` | k3s-generated kubeconfig rewritten for the Compose network |
 | `k3s_server_data` | k3s server state |
+| `mesh_postgres_data` | Local Postgres data for `MESH_STATE_BACKEND=postgres` tests |
 | `goose_config` | Goose config inside the Mesh container |
 | `hermes_home` | Hermes sidecar config, sessions, logs, memories, and skills |
 | `latentmas_hf_cache` | Hugging Face model cache for the optional LatentMAS sidecar |
@@ -223,7 +236,7 @@ Common failure modes:
 - `k3s` never becomes healthy: Docker must support privileged containers. Docker Desktop must have enough CPU and memory for k3s plus the Mesh image.
 - Bootstrap cannot reach Kubernetes: the kubeconfig volume may contain stale data. Run `docker compose -f docker-compose.stack.yml down -v` and start again.
 - `hermes` is unavailable: verify `mesh-intelligence-hermes-stack` is healthy and the Mesh container can access the mounted Docker socket.
-- `gitnexus` is unavailable: verify port `4747` is free or override `MESH_GITNEXUS_PUBLISH_PORT`.
+- GitNexus is unavailable: the stack does not start GitNexus by default. Start it externally and set `MESH_STACK_GITNEXUS_URL` if repository-context inspection is required.
 - Deep Agents readiness fails: provide the provider API key for the selected `MESH_DEEPAGENTS_MODEL`, or run the default native fabric.
 - LatentMAS readiness fails: use the `latentmas` profile, provide GPU-capable Docker runtime if `MESH_LATENTMAS_DEVICE=cuda`, or keep `MESH_STACK_ENABLE_LATENTMAS=0`.
 

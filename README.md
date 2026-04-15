@@ -169,7 +169,7 @@ Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster,
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, a dedicated Hermes sidecar, a GitNexus sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The control plane is available at `http://127.0.0.1:8787`.
+This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The control plane is available at `http://127.0.0.1:8787`.
 
 Optional lanes:
 
@@ -442,6 +442,8 @@ Supported configuration variables:
 - `MESH_ENVIRONMENT`
 - `MESH_EVALUATION_MODE`
 - `MESH_ORCHESTRATION_MODE`
+- `MESH_STATE_BACKEND` — `file` (default) keeps local `.mesh-runtime-state`; `postgres` stores canonical run state in Postgres.
+- `MESH_DATABASE_URL` — Postgres/Supabase connection string used when `MESH_STATE_BACKEND=postgres`.
 - `MESH_STATE_DIRECTORY`
 - `MESH_RESEARCH_DIRECTORY` — autoresearch import root for `/api/research-sessions` and `/api/research-corpus`; defaults to `<state>/research`.
 - `MESH_SERVER_HOST`
@@ -479,10 +481,12 @@ Supported configuration variables:
 - `MESH_GOOSE_RUN_TIMEOUT_SECONDS` — optional fixed timeout for each bridge-internal `goose run`; if unset, provider-specific `GOOSE_*_TIMEOUT_SECONDS` values apply.
 - `MESH_HERMES_RUN_TIMEOUT_SECONDS` — optional fixed timeout for bridge-internal Hermes chat; defaults to `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`.
 - `GOOSE_PROVIDER`, `GOOSE_MODEL`, `GOOSE_PRIMARY_TIMEOUT_SECONDS`, `GOOSE_OLLAMA_TIMEOUT_SECONDS`, `GOOSE_FALLBACK_PROVIDER`, `GOOSE_FALLBACK_MODEL`, `GOOSE_FALLBACK_TIMEOUT_SECONDS`
-- `OPENAI_BASE_URL`, `OPENAI_HOST`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_HOST`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`
+- `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`
 - `MINIMAX_MODEL`, `MINIMAX_CHAT_TIMEOUT_SECONDS`, `MESH_MINIMAX_TIMEOUT_SECONDS`, `MINIMAX_WAVE3_TIMEOUT_SECONDS`
 
 See [`.env.example`](./.env.example) for a ready-to-copy template.
+
+Postgres-backed production persistence is documented in [`docs/postgres-persistence.md`](./docs/postgres-persistence.md).
 
 ### Live Kubernetes E2E
 
@@ -619,11 +623,13 @@ Full operational context, topology, variables, volumes, teardown, and troublesho
 That stack starts:
 
 1. **`k3s`** — local Kubernetes API on **6443** inside the compose graph.
-2. **`mesh-kube-bootstrap`** — one-shot job that rewrites kubeconfig to `https://k3s:6443`, creates namespace `search`, deploys `semantic-search`, and normalizes the kube context to `mesh-compose`.
-3. **`mesh`** — browser control plane and Python backend on **8787**, with live Kubernetes execution enabled and deterministic native agent-task lanes enabled by default in this topology.
-4. **`hermes`** — dedicated Hermes runtime sidecar reached through `docker exec`.
-5. **`gitnexus`** — local GitNexus HTTP sidecar on **4747**.
+2. **`postgres`** — local Postgres on **5432** for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
+3. **`mesh-kube-bootstrap`** — one-shot job that rewrites kubeconfig to `https://k3s:6443`, creates namespace `search`, deploys `semantic-search`, and normalizes the kube context to `mesh-compose`.
+4. **`mesh`** — browser control plane and Python backend on **8787**, with live Kubernetes execution enabled and deterministic native agent-task lanes enabled by default in this topology.
+5. **`hermes`** — dedicated Hermes runtime sidecar reached through `docker exec`.
 6. **`mesh-smoke`** — one-shot verifier that checks readiness, seeds a CrashLoop, launches a live Mesh run, and exits non-zero if bounded recovery fails.
+
+GitNexus is not started by this stack. Point `MESH_STACK_GITNEXUS_URL` at an external GitNexus sidecar if repository-context inspection is needed.
 
 Optional GPU worker lane:
 

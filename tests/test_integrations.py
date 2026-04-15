@@ -13,7 +13,7 @@ from services.evaluation.promptfoo_bridge import _parse_promptfoo_output
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.goose_adapter import GooseCliAdapter
 from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _profile_timeout_seconds, _run_goose_prompt
-from services.orchestrator.hermes_bridge import _hermes_chat_timeout_seconds, _parse_review_text as _parse_hermes_review_text
+from services.orchestrator.hermes_bridge import _hermes_chat_timeout_seconds
 from shared.mesh_runtime import Decision, EvaluationResult, IntegrationsConfig, RuntimeConfig, Trigger, resolve_integrations_config, save_integrations_config
 from shared.mesh_runtime.integrations import build_readiness
 
@@ -387,7 +387,7 @@ class IntegrationsTests(unittest.TestCase):
         with patch.dict("os.environ", {"MESH_HERMES_COMMAND_TIMEOUT_SECONDS": "180"}, clear=False):
             self.assertEqual(_hermes_chat_timeout_seconds(), 180.0)
 
-    def test_goose_openai_profile_maps_base_url_to_host(self) -> None:
+    def test_goose_openai_profile_preserves_base_url_without_host_alias(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -397,7 +397,8 @@ class IntegrationsTests(unittest.TestCase):
         ):
             env = _command_env("openai")
 
-        self.assertEqual(env["OPENAI_HOST"], "https://api.minimax.io/v1")
+        self.assertEqual(env["OPENAI_BASE_URL"], "https://api.minimax.io/v1")
+        self.assertNotIn("OPENAI_HOST", env)
 
     def test_parse_review_text_accepts_fenced_json(self) -> None:
         parsed = _parse_review_text(
@@ -409,7 +410,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(parsed["approved"])
         self.assertEqual(parsed["summary"], "Proceed")
 
-    def test_goose_anthropic_profile_maps_base_url_to_host(self) -> None:
+    def test_goose_anthropic_profile_preserves_base_url_without_host_alias(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -419,7 +420,8 @@ class IntegrationsTests(unittest.TestCase):
         ):
             env = _command_env("anthropic")
 
-        self.assertEqual(env["ANTHROPIC_HOST"], "https://api.minimax.io/anthropic")
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://api.minimax.io/anthropic")
+        self.assertNotIn("ANTHROPIC_HOST", env)
 
     def test_readiness_warns_when_ollama_model_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

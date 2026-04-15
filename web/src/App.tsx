@@ -183,7 +183,6 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
 export default function App() {
   const [baseUrl] = useState(resolveBaseUrl);
 
-  /* ── Core data ── */
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
@@ -197,7 +196,6 @@ export default function App() {
   );
   const [selectedGoalId, setSelectedGoalId] = useState("");
 
-  /* ── Forms ── */
   const [goalDraft, setGoalDraft] = useState(DEFAULT_GOAL_DRAFT);
   const [launchDraft, setLaunchDraft] = useState(DEFAULT_LAUNCH_DRAFT);
   const [noteDraft, setNoteDraft] = useState("");
@@ -209,27 +207,22 @@ export default function App() {
   const [rightRailOpen, setRightRailOpen] = useState(true);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("unified");
 
-  /* ── Inspector ── */
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
 
-  /* ── Connection ── */
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
 
-  /* ── Loading ── */
   const [booting, setBooting] = useState(true);
   const [launching, setLaunching] = useState(false);
   const [steering, setSteering] = useState("");
   const [creatingGoal, setCreatingGoal] = useState(false);
 
-  /* ── Toast ── */
   const { toasts, addToast, dismissToast } = useToast();
 
-  /* ── Refs ── */
   const timelineRef = useRef<HTMLDivElement>(null);
   const canvasPanelRef = useRef<HTMLDivElement>(null);
   const [canvasFullscreen, setCanvasFullscreen] = useState(false);
@@ -255,8 +248,6 @@ export default function App() {
       addToast({ variant: "warning", title: "Fullscreen unavailable", description: "Your browser blocked or does not support fullscreen for this panel." });
     }
   }, [addToast]);
-
-  /* ──────────── Effects ──────────── */
 
   useEffect(() => {
     const sync = () => {
@@ -363,8 +354,6 @@ export default function App() {
       return activeRun.latest_event_id ?? activeRun.events[activeRun.events.length - 1].event_id;
     });
   }, [activeRun]);
-
-  /* ──────────── Actions ──────────── */
 
   async function refreshBootstrap() {
     try {
@@ -547,8 +536,6 @@ export default function App() {
     void handleSteer("override_execution_parameters", { parameters: parsed.data });
   }
 
-  /* ──────────── Derived ──────────── */
-
   const flowCanvas = useMemo(
     () => buildRunGraph(activeRun?.events ?? [], selectedEventId),
     [activeRun?.events, selectedEventId],
@@ -712,8 +699,6 @@ export default function App() {
     }
   }, [activeRun, canvasAvailability, canvasMode]);
 
-  /* ──────────── Render ──────────── */
-
   if (booting) {
     return (
       <div className="boot-screen">
@@ -727,7 +712,6 @@ export default function App() {
     <div className="app-shell">
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
-      {/* ─── Top Bar ─── */}
       <header className="topbar">
         <div className="topbar-brand">
           <div className="brand-icon"><Zap size={16} /></div>
@@ -774,7 +758,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* ─── Workspace ─── */}
       <main className={`workspace ${leftRailOpen ? "" : "workspace-left-collapsed"} ${rightRailOpen ? "" : "workspace-right-collapsed"}`}>
         {!leftRailOpen && (
           <button className="drawer-peek left" type="button" onClick={() => setLeftRailOpen(true)}>
@@ -782,7 +765,6 @@ export default function App() {
           </button>
         )}
 
-        {/* ── Left Rail ── */}
         {leftRailOpen && (
         <aside className="left-rail panel">
           <div className="rail-heading">
@@ -1037,7 +1019,6 @@ export default function App() {
         </aside>
         )}
 
-        {/* ── Center Stage ── */}
         <section className="center-stage auto-canvas-stage">
           <div className="panel center-header canvas-command-bar">
             <div className="center-header-main">
@@ -1186,7 +1167,6 @@ export default function App() {
           </div>
         </section>
 
-        {/* ── Right Rail ── */}
         {!rightRailOpen && (
           <button className="drawer-peek right" type="button" onClick={() => setRightRailOpen(true)}>
             Controls
@@ -1276,8 +1256,6 @@ export default function App() {
     </div>
   );
 }
-
-/* ──────────── Inline components ──────────── */
 
 function RunEventNode({ data, selected }: NodeProps<RunGraphNode>) {
   const tone = typeof data.accent === "string" ? data.accent : toneForStage(String(data.stage));

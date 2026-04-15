@@ -51,10 +51,10 @@ This is the preferred local whole-system validation path. It is documented in de
 It starts:
 
 - `k3s`, a local Kubernetes API inside the compose graph.
+- `postgres`, a local Postgres database for production-style persistence testing.
 - `mesh-kube-bootstrap`, a one-shot job that rewrites kubeconfig for the compose network and seeds the baseline `semantic-search` Deployment.
 - `mesh`, which bundles Promptfoo and Goose in the application image, enables live Kubernetes execution against the shared kubeconfig, and defaults `MESH_AGENT_FABRIC_MODE=native` in this topology for deterministic smoke runs.
 - `hermes`, a dedicated sidecar container built from `Dockerfile.stack.hermes`.
-- `gitnexus`, a local GitNexus HTTP sidecar built from `Dockerfile.stack.gitnexus`.
 - `mesh-smoke`, a one-shot validation container that checks readiness, seeds a failure, and launches a live Mesh run.
 
 Optional GPU worker lane:
@@ -78,11 +78,11 @@ Compose provider selection uses namespaced host overrides (`MESH_COMPOSE_GOOSE_P
 Stack-only integration variables:
 
 - `MESH_STACK_HERMES_COMMAND` overrides the Mesh-to-Hermes sidecar command. The default uses `docker exec` against `mesh-intelligence-hermes-stack`.
-- `MESH_STACK_GITNEXUS_URL` overrides the Mesh-to-GitNexus sidecar URL. The default is `http://gitnexus:4747`.
+- `MESH_STACK_GITNEXUS_URL` points Mesh at an external GitNexus sidecar. The stack does not start GitNexus by default.
 - `MESH_DOCKER_SOCKET_HOST_PATH` controls the host Docker socket mounted into the Mesh container for sidecar command execution.
 - `MESH_STACK_AGENT_FABRIC_MODE` selects `native` or `deepagents` for proposal lanes in the full stack.
 - `MESH_STACK_ENABLE_LATENTMAS` controls whether Mesh expects the optional LatentMAS profile to be ready.
-- `HERMES_AGENT_REF`, `UV_VERSION`, `GOOSE_VERSION`, and `GITNEXUS_VERSION` are pinned by default and should be changed only as an explicit dependency upgrade.
+- `HERMES_AGENT_REF`, `UV_VERSION`, and `GOOSE_VERSION` are pinned by default and should be changed only as an explicit dependency upgrade.
 
 ## Readiness behavior
 
@@ -95,7 +95,7 @@ Stack-only integration variables:
   - unavailable when the vendored `deepagents` package cannot be imported
   - ready when Deep Agents is enabled and importable, with `detail` showing the configured model and workspace root
   - provider-key warnings in `deepagents.warnings` when the selected model family is missing credentials
-Goose no longer probes installed Ollama models during integration resolution. If `OPENAI_BASE_URL` or `OPENAI_HOST` is configured and no explicit Goose provider is set, the resolver infers the OpenAI-compatible route and defaults the model to `MiniMax-M2.5`. Ollama is used only when `GOOSE_PROVIDER=ollama` or an equivalent explicit provider setting is present.
+Goose no longer probes installed Ollama models during integration resolution. If `OPENAI_BASE_URL` is configured and no explicit Goose provider is set, the resolver infers the OpenAI-compatible route and defaults the model to `MiniMax-M2.5`. Ollama is used only when `GOOSE_PROVIDER=ollama` or an equivalent explicit provider setting is present.
 
 ## Evo proposal lane
 

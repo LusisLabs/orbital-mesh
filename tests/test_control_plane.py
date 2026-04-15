@@ -459,7 +459,7 @@ class ControlPlaneApiTests(unittest.TestCase):
                     "steering_mode": "approval_gate",
                 },
             )
-            paused = self._poll_run(
+            self._poll_run(
                 run["run_id"],
                 lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
             )

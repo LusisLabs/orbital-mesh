@@ -13,8 +13,7 @@ import tempfile
 import unittest
 
 from services.decision.service import DecisionService
-from services.ingest.service import IngestService
-from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
+from shared.mesh_runtime import Trigger
 from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.learning import LearningStore
 
@@ -29,7 +28,6 @@ class LearningLoopIntegrationTest(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_feedback_enriches_subsequent_decisions(self):
-        # --- Step 1: Simulate a past run outcome ---
         self.learning_store.record_outcome(
             decision_type="restart_deployment",
             service="search",
@@ -52,7 +50,6 @@ class LearningLoopIntegrationTest(unittest.TestCase):
             world_model_updates={},
         )
 
-        # --- Step 2: Verify learning store has data ---
         rate = self.learning_store.get_historical_success_rate("restart_deployment", "search")
         self.assertIsNotNone(rate)
         self.assertAlmostEqual(rate, 2 / 3, places=2)
@@ -60,14 +57,10 @@ class LearningLoopIntegrationTest(unittest.TestCase):
         patterns = self.learning_store.get_recovery_patterns("search")
         self.assertIn("restart_clears_crash", patterns)
 
-        # --- Step 3: Verify ingest enrichment picks up learning data ---
-        ingest = IngestService(learning_store=self.learning_store)
         enrichment = self.learning_store.enrich_context("search")
         self.assertGreater(enrichment["similar_prior_cases"], 0)
 
-        # --- Step 4: Verify decision confidence is adjusted ---
         decision_svc = DecisionService(learning_store=self.learning_store)
-        from shared.mesh_runtime import Trigger
         trigger = Trigger(
             trigger_id="trig_integ",
             trigger_type="kubernetes_deployment_unhealthy",
@@ -98,11 +91,8 @@ class LearningLoopIntegrationTest(unittest.TestCase):
         )
         decision = decision_svc._decide_kubernetes(trigger)
         self.assertEqual(decision.decision_type, "restart_deployment")
-        # Historical rate ~0.667 is >= 0.4 but < 0.8, so no adjustment
-        # But this confirms the pipeline reads from the store without error.
 
     def test_context_store_tracks_service_across_runs(self):
-        # --- Step 1: Simulate two completed runs ---
         self.context_store.update_from_run({
             "run_id": "run_001",
             "artifacts": {
@@ -134,7 +124,6 @@ class LearningLoopIntegrationTest(unittest.TestCase):
             },
         })
 
-        # --- Step 2: Verify aggregated context ---
         ctx = self.context_store.get_service_context("auth")
         self.assertEqual(ctx["total_runs"], 2)
         self.assertEqual(ctx["successful_runs"], 1)

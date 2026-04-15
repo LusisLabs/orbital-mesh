@@ -77,7 +77,7 @@ export function Inspector(props: InspectorProps) {
 }
 
 function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
-  const m = detail.manifest && typeof detail.manifest === "object" ? detail.manifest : detail;
+  const m = detail.manifest;
   const q = typeof m.question === "string" ? m.question : "";
   const status = typeof m.status === "string" ? m.status : "";
   const route = typeof m.minimax_route === "string" ? m.minimax_route : "";
@@ -168,8 +168,6 @@ function researchClassificationColor(classification: ResearchIntelligence["class
   }
 }
 
-/* ─── Shared helpers ─── */
-
 function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="inspector-field">
@@ -255,8 +253,6 @@ function PassFail({ passed }: { passed: boolean }) {
   );
 }
 
-/* ─── Overview ─── */
-
 function OverviewTab({ run }: { run: RunDetail }) {
   return (
     <div className="inspector-scroll">
@@ -327,8 +323,6 @@ function OverviewTab({ run }: { run: RunDetail }) {
     </div>
   );
 }
-
-/* ─── Evidence ─── */
 
 function EvidenceTab({ run }: { run: RunDetail }) {
   const trigger = run.artifacts.trigger;
@@ -403,8 +397,6 @@ function EvidenceTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Policy ─── */
-
 function PolicyTab({ run }: { run: RunDetail }) {
   const evaluation = run.artifacts.evaluation;
   if (!evaluation) {
@@ -474,8 +466,6 @@ function PolicyTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Execution ─── */
-
 function ExecutionTab({ run }: { run: RunDetail }) {
   const exec = run.artifacts.execution;
   if (!exec) {
@@ -536,8 +526,6 @@ function ExecutionTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Feedback ─── */
-
 function FeedbackTab({ run }: { run: RunDetail }) {
   const feedback = run.artifacts.feedback;
   if (!feedback) {
@@ -585,8 +573,6 @@ function FeedbackTab({ run }: { run: RunDetail }) {
     </div>
   );
 }
-
-/* ─── Vault ─── */
 
 function VaultTab(props: InspectorProps) {
   const { vaultDocument, vaultTree, onVaultSelect } = props;
@@ -637,8 +623,6 @@ function VaultTab(props: InspectorProps) {
     </div>
   );
 }
-
-/* ─── Merkle ─── */
 
 function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerkleProof | null }) {
   const proofNodes = merkleProof ? buildProofNodes(merkleProof) : [];
@@ -714,8 +698,6 @@ function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerklePr
   );
 }
 
-/* ─── Code ─── */
-
 function CodeTab() {
   return (
     <div className="inspector-scroll">
@@ -726,8 +708,6 @@ function CodeTab() {
     </div>
   );
 }
-
-/* ─── Utils ─── */
 
 function stageColor(stage: string): string {
   if (stage === "completed") return "var(--accent-good)";
