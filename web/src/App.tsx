@@ -48,6 +48,8 @@ import type {
   RunDetail,
   RunEventRecord,
   RunSessionRecord,
+  AgentTask,
+  EvoLaunchRecord,
   ScenarioRecord,
   VaultTreeEntry,
 } from "./types";
@@ -104,6 +106,8 @@ function rightRailTabIcon(tab: RightRailTab): React.ReactNode {
       return <Play size={15} />;
     case "feedback":
       return <Waves size={15} />;
+    case "agents":
+      return <Bot size={15} />;
     case "vault":
       return <BookOpen size={15} />;
     case "merkle":
@@ -166,6 +170,9 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
     case "goose_review":
     case "hermes_review":
       return "execution";
+    case "agent_tasks":
+    case "agents":
+      return "agents";
     case "feedback":
       return "feedback";
     default:
@@ -176,7 +183,6 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
 export default function App() {
   const [baseUrl] = useState(resolveBaseUrl);
 
-  /* ── Core data ── */
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
@@ -190,7 +196,6 @@ export default function App() {
   );
   const [selectedGoalId, setSelectedGoalId] = useState("");
 
-  /* ── Forms ── */
   const [goalDraft, setGoalDraft] = useState(DEFAULT_GOAL_DRAFT);
   const [launchDraft, setLaunchDraft] = useState(DEFAULT_LAUNCH_DRAFT);
   const [noteDraft, setNoteDraft] = useState("");
@@ -202,31 +207,22 @@ export default function App() {
   const [rightRailOpen, setRightRailOpen] = useState(true);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("unified");
 
-  /* ── Inspector ── */
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
-  const [gitnexusInfo, setGitnexusInfo] = useState<Record<string, unknown> | null>(null);
-  const [gitnexusProcesses, setGitnexusProcesses] = useState<Record<string, unknown> | null>(null);
-  const [gitnexusSearch, setGitnexusSearch] = useState("feature flag remediation");
-  const [gitnexusSearchResult, setGitnexusSearchResult] = useState<Record<string, unknown> | null>(null);
 
-  /* ── Connection ── */
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
 
-  /* ── Loading ── */
   const [booting, setBooting] = useState(true);
   const [launching, setLaunching] = useState(false);
   const [steering, setSteering] = useState("");
   const [creatingGoal, setCreatingGoal] = useState(false);
 
-  /* ── Toast ── */
   const { toasts, addToast, dismissToast } = useToast();
 
-  /* ── Refs ── */
   const timelineRef = useRef<HTMLDivElement>(null);
   const canvasPanelRef = useRef<HTMLDivElement>(null);
   const [canvasFullscreen, setCanvasFullscreen] = useState(false);
@@ -252,8 +248,6 @@ export default function App() {
       addToast({ variant: "warning", title: "Fullscreen unavailable", description: "Your browser blocked or does not support fullscreen for this panel." });
     }
   }, [addToast]);
-
-  /* ──────────── Effects ──────────── */
 
   useEffect(() => {
     const sync = () => {
@@ -339,12 +333,6 @@ export default function App() {
   }, [activeRun, baseUrl, selectedEventId]);
 
   useEffect(() => {
-    if (!readiness?.gitnexus.ready || !readiness.gitnexus.url) return;
-    void api.getGitNexusInfo(readiness.gitnexus.url).then(setGitnexusInfo).catch(() => setGitnexusInfo(null));
-    void api.getGitNexusProcesses(readiness.gitnexus.url).then(setGitnexusProcesses).catch(() => setGitnexusProcesses(null));
-  }, [readiness?.gitnexus.ready, readiness?.gitnexus.url]);
-
-  useEffect(() => {
     void api.getVaultTree(baseUrl).then((r) => setVaultTree(r.tree)).catch(() => setVaultTree(null));
   }, [baseUrl]);
 
@@ -366,8 +354,6 @@ export default function App() {
       return activeRun.latest_event_id ?? activeRun.events[activeRun.events.length - 1].event_id;
     });
   }, [activeRun]);
-
-  /* ──────────── Actions ──────────── */
 
   async function refreshBootstrap() {
     try {
@@ -512,7 +498,10 @@ export default function App() {
       try {
         await api.steerRun(baseUrl, activeRunId, { command, ...payload });
         await loadRun(activeRunId);
-        addToast({ variant: "success", title: `Run ${humanize(command).toLowerCase()}d` });
+        addToast({
+          variant: "success",
+          title: command === "launch_evo" ? "Evo launch requested" : `Run ${humanize(command).toLowerCase()}d`,
+        });
       } catch (error) {
         addToast({ variant: "error", title: `Steer failed`, description: error instanceof Error ? error.message : "Unknown error" });
       } finally {
@@ -521,16 +510,6 @@ export default function App() {
     },
     [activeRunId, baseUrl, addToast], // eslint-disable-line react-hooks/exhaustive-deps
   );
-
-  async function handleGitNexusSearch() {
-    if (!readiness?.gitnexus.url) return;
-    try {
-      const result = await api.searchGitNexus(readiness.gitnexus.url, gitnexusSearch);
-      setGitnexusSearchResult(result);
-    } catch (error) {
-      setGitnexusSearchResult({ error: error instanceof Error ? error.message : "Search failed" });
-    }
-  }
 
   function handleVaultSelect(path: string) {
     void api
@@ -556,8 +535,6 @@ export default function App() {
     }
     void handleSteer("override_execution_parameters", { parameters: parsed.data });
   }
-
-  /* ──────────── Derived ──────────── */
 
   const flowCanvas = useMemo(
     () => buildRunGraph(activeRun?.events ?? [], selectedEventId),
@@ -682,9 +659,18 @@ export default function App() {
     approvalRecommendation !== "" &&
     approvalRecommendation !== "execute";
 
-  const integrationsReady = readiness
-    ? [readiness.promptfoo, readiness.hermes, readiness.goose, readiness.gitnexus].filter((i) => i.ready).length
-    : 0;
+  const readinessItems = readiness
+    ? [
+        readiness.promptfoo,
+        readiness.hermes,
+        readiness.goose,
+        readiness.evo,
+        readiness.latentmas,
+        readiness.deepagents,
+      ]
+    : [];
+  const integrationsReady = readinessItems.filter((i) => i?.ready).length;
+  const integrationsTotal = readinessItems.length || 6;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -713,8 +699,6 @@ export default function App() {
     }
   }, [activeRun, canvasAvailability, canvasMode]);
 
-  /* ──────────── Render ──────────── */
-
   if (booting) {
     return (
       <div className="boot-screen">
@@ -728,7 +712,6 @@ export default function App() {
     <div className="app-shell">
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
-      {/* ─── Top Bar ─── */}
       <header className="topbar">
         <div className="topbar-brand">
           <div className="brand-icon"><Zap size={16} /></div>
@@ -742,8 +725,8 @@ export default function App() {
           <HeaderMetric
             icon={<ShieldCheck size={16} />}
             label="Integrations"
-            value={`${integrationsReady}/4 ready`}
-            tone={integrationsReady === 4 ? "good" : integrationsReady > 0 ? "warn" : "danger"}
+            value={`${integrationsReady}/${integrationsTotal} ready`}
+            tone={integrationsReady === integrationsTotal ? "good" : integrationsReady > 0 ? "warn" : "danger"}
           />
           <HeaderMetric
             icon={<CircleDot size={16} />}
@@ -775,7 +758,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* ─── Workspace ─── */}
       <main className={`workspace ${leftRailOpen ? "" : "workspace-left-collapsed"} ${rightRailOpen ? "" : "workspace-right-collapsed"}`}>
         {!leftRailOpen && (
           <button className="drawer-peek left" type="button" onClick={() => setLeftRailOpen(true)}>
@@ -783,7 +765,6 @@ export default function App() {
           </button>
         )}
 
-        {/* ── Left Rail ── */}
         {leftRailOpen && (
         <aside className="left-rail panel">
           <div className="rail-heading">
@@ -802,7 +783,7 @@ export default function App() {
               <span>Research</span>
             </div>
             <div>
-              <strong>{integrationsReady}/4</strong>
+              <strong>{integrationsReady}/{integrationsTotal}</strong>
               <span>Ready</span>
             </div>
           </div>
@@ -810,13 +791,14 @@ export default function App() {
           <details className="rail-disclosure">
             <summary>
               <span>Integrations</span>
-              <span>{integrationsReady}/4 ready</span>
+              <span>{integrationsReady}/{integrationsTotal} ready</span>
             </summary>
           <div className="readiness-grid">
             <ReadinessCard label="Promptfoo" status={readiness?.promptfoo} />
             <ReadinessCard label="Hermes" status={readiness?.hermes} />
             <ReadinessCard label="Goose" status={readiness?.goose} />
-            <ReadinessCard label="GitNexus" status={readiness?.gitnexus} />
+            <ReadinessCard label="Evo" status={readiness?.evo} />
+            <ReadinessCard label="LatentMAS" status={readiness?.latentmas} />
           </div>
           </details>
 
@@ -1037,7 +1019,6 @@ export default function App() {
         </aside>
         )}
 
-        {/* ── Center Stage ── */}
         <section className="center-stage auto-canvas-stage">
           <div className="panel center-header canvas-command-bar">
             <div className="center-header-main">
@@ -1186,7 +1167,6 @@ export default function App() {
           </div>
         </section>
 
-        {/* ── Right Rail ── */}
         {!rightRailOpen && (
           <button className="drawer-peek right" type="button" onClick={() => setRightRailOpen(true)}>
             Controls
@@ -1211,6 +1191,7 @@ export default function App() {
                 "evidence",
                 "policy",
                 "execution",
+                "agents",
                 "feedback",
                 "vault",
                 "merkle",
@@ -1256,6 +1237,8 @@ export default function App() {
               onOverrideParamsDraftChange={setOverrideParamsDraft}
               onOverrideParams={handleOverrideParams}
             />
+          ) : rightRailTab === "agents" ? (
+            <AgentMeshPanel run={activeRun} active={steering} onSteer={handleSteer} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -1264,12 +1247,6 @@ export default function App() {
               vaultDocument={vaultDocument}
               vaultTree={vaultTree}
               merkleProof={merkleProof}
-              gitnexusInfo={gitnexusInfo}
-              gitnexusProcesses={gitnexusProcesses}
-              gitnexusSearch={gitnexusSearch}
-              gitnexusSearchResult={gitnexusSearchResult}
-              onGitnexusSearchChange={setGitnexusSearch}
-              onGitnexusSearch={handleGitNexusSearch}
               onVaultSelect={handleVaultSelect}
             />
           )}
@@ -1279,8 +1256,6 @@ export default function App() {
     </div>
   );
 }
-
-/* ──────────── Inline components ──────────── */
 
 function RunEventNode({ data, selected }: NodeProps<RunGraphNode>) {
   const tone = typeof data.accent === "string" ? data.accent : toneForStage(String(data.stage));
@@ -1542,6 +1517,225 @@ function SteeringConsolePanel({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function AgentMeshPanel({
+  run,
+  active,
+  onSteer,
+}: {
+  run: RunDetail | null;
+  active: string;
+  onSteer: (command: string, payload?: Record<string, unknown>) => void;
+}) {
+  const tasks = Array.isArray(run?.artifacts?.agent_tasks)
+    ? (run?.artifacts?.agent_tasks as AgentTask[])
+    : [];
+  const evoLaunches = Array.isArray((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] } | undefined)?.launches)
+    ? (((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] }).launches ?? []) as EvoLaunchRecord[])
+    : [];
+  const defaultTargetPath = tasks.flatMap((task) => task.allowed_paths)[0] ?? "";
+  const defaultGateCommand = tasks.flatMap((task) => task.test_commands)[0] ?? "";
+  const [targetPath, setTargetPath] = useState(defaultTargetPath);
+  const [benchmarkCommand, setBenchmarkCommand] = useState("");
+  const [metric, setMetric] = useState("max");
+  const [instrumentationMode, setInstrumentationMode] = useState("inline");
+  const [gateCommand, setGateCommand] = useState(defaultGateCommand);
+
+  useEffect(() => {
+    setTargetPath(defaultTargetPath);
+    setGateCommand(defaultGateCommand);
+    setBenchmarkCommand("");
+    setMetric("max");
+    setInstrumentationMode("inline");
+  }, [run?.run_id, defaultTargetPath, defaultGateCommand]);
+
+  if (!run) {
+    return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
+  }
+  if (tasks.length === 0) {
+    return (
+      <div className="inspector-scroll">
+        <section className="context-panel">
+          <SectionTitle icon={<Bot size={14} />} title="Agent Mesh" />
+          <p className="inspector-muted">
+            No agent tasks recorded yet. Launch a run that reaches decision and evaluation.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="inspector-scroll">
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Agent Mesh</p>
+            <h4>{tasks.length} task{tasks.length === 1 ? "" : "s"} recorded</h4>
+          </div>
+          <StatusChip label="Read Only" tone="#41d6b1" />
+        </div>
+        <p className="inspector-muted">
+          Workers produce proposals and risk signals. Mesh keeps policy, tests, audit, Kubernetes actuation, and production promotion gates.
+        </p>
+      </section>
+
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Evo Launch</p>
+            <h4>Operator-triggered discovery bootstrap</h4>
+          </div>
+          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#f2b84b" : "#41d6b1"} />
+        </div>
+        <div className="stack">
+          <input
+            value={targetPath}
+            onChange={(e) => setTargetPath(e.target.value)}
+            placeholder="Target path"
+            disabled={!defaultTargetPath || active === "launch_evo"}
+          />
+          <textarea
+            value={benchmarkCommand}
+            onChange={(e) => setBenchmarkCommand(e.target.value)}
+            placeholder="Benchmark command (required unless the repo already contains .evo/meta.json)"
+            className="small-textarea mono-textarea"
+            disabled={active === "launch_evo"}
+          />
+          <div className="steering-grid">
+            <select value={metric} onChange={(e) => setMetric(e.target.value)} disabled={active === "launch_evo"}>
+              <option value="max">Metric: max</option>
+              <option value="min">Metric: min</option>
+            </select>
+            <select
+              value={instrumentationMode}
+              onChange={(e) => setInstrumentationMode(e.target.value)}
+              disabled={active === "launch_evo"}
+            >
+              <option value="inline">Instrumentation: inline</option>
+              <option value="sdk">Instrumentation: sdk</option>
+            </select>
+          </div>
+          <input
+            value={gateCommand}
+            onChange={(e) => setGateCommand(e.target.value)}
+            placeholder="Gate command"
+            disabled={active === "launch_evo"}
+          />
+          <button
+            className="action-button compact"
+            disabled={!targetPath.trim() || !gateCommand.trim() || active === "launch_evo"}
+            onClick={() =>
+              onSteer("launch_evo", {
+                target_path: targetPath.trim(),
+                benchmark_command: benchmarkCommand.trim() || undefined,
+                metric,
+                instrumentation_mode: instrumentationMode,
+                gate_command: gateCommand.trim(),
+              })
+            }
+          >
+            Launch Evo
+          </button>
+          {evoLaunches.length > 0 && (
+            <div className="stack">
+              {evoLaunches.map((launch) => (
+                <article key={launch.launch_id} className="agent-attempt-card">
+                  <div className="agent-attempt-header">
+                    <strong>{humanize(launch.action)}</strong>
+                    <span className={launch.status === "completed" ? "agent-risk-badge good" : launch.status === "failed" ? "agent-risk-badge warn" : "agent-risk-badge"}>
+                      {humanize(launch.status)}
+                    </span>
+                  </div>
+                  <div className="context-link-list compact">
+                    <ContextLink label="Target" value={launch.target_path} mono />
+                    {launch.experiment_id ? <ContextLink label="Experiment" value={launch.experiment_id} mono /> : null}
+                    {launch.dashboard_url ? <ContextLink label="Dashboard" value={launch.dashboard_url} mono /> : null}
+                  </div>
+                  {launch.error ? <div className="readiness-warning">{launch.error}</div> : null}
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {tasks.map((task) => (
+        <section key={task.task_id} className="context-panel">
+          <div className="context-panel-header">
+            <div>
+              <p className="eyebrow">{humanize(task.kind)}</p>
+              <h4>{task.task_id}</h4>
+            </div>
+            <StatusChip label={humanize(task.status)} tone={task.status === "completed" ? "#41d6b1" : "#f2b84b"} />
+          </div>
+          <div className="context-stat-grid">
+            <ContextStat label="Workers" value={String(task.attempts.length)} />
+            <ContextStat label="Selected" value={task.selected_attempt_id ? task.selected_attempt_id.split("_").slice(-2, -1)[0] ?? "set" : "none"} />
+            <ContextStat label="Paths" value={String(task.allowed_paths.length)} />
+            <ContextStat label="Tests" value={String(task.test_commands.length)} />
+          </div>
+          {Object.keys(task.kubernetes_scope ?? {}).length > 0 && (
+            <div className="context-link-list">
+              {Object.entries(task.kubernetes_scope).map(([key, value]) => (
+                value ? <ContextLink key={key} label={humanize(key)} value={String(value)} /> : null
+              ))}
+            </div>
+          )}
+          <div className="agent-attempt-grid">
+            {task.attempts.map((attempt) => {
+              const selected = attempt.attempt_id === task.selected_attempt_id;
+              const blocked = attempt.risk_flags.length > 0;
+              const metrics =
+                attempt.output && typeof attempt.output.metrics === "object" && attempt.output.metrics !== null
+                  ? (attempt.output.metrics as Record<string, unknown>)
+                  : null;
+              return (
+                <article key={attempt.attempt_id} className={`agent-attempt-card ${selected ? "selected" : ""}`}>
+                  <div className="agent-attempt-header">
+                    <strong>{humanize(attempt.agent)}</strong>
+                    <span className={blocked ? "agent-risk-badge warn" : "agent-risk-badge good"}>
+                      {blocked ? "gated" : humanize(attempt.status)}
+                    </span>
+                  </div>
+                  <p>{attempt.summary}</p>
+                  <div className="context-link-list compact">
+                    <ContextLink label="Action" value={humanize(attempt.recommended_action)} />
+                    <ContextLink label="Adapter" value={attempt.adapter} />
+                    {typeof attempt.output?.confidence === "number" && (
+                      <ContextLink label="Confidence" value={`${Math.round(attempt.output.confidence * 100)}%`} />
+                    )}
+                    {metrics?.model_name != null && <ContextLink label="Model" value={String(metrics.model_name)} />}
+                    {typeof metrics?.elapsed_time_sec === "number" && (
+                      <ContextLink label="Latency" value={`${metrics.elapsed_time_sec}s`} />
+                    )}
+                  </div>
+                  {attempt.risk_flags.length > 0 && (
+                    <div className="readiness-warning">
+                      {attempt.risk_flags.map((flag) => humanize(flag)).join(", ")}
+                    </div>
+                  )}
+                  {attempt.changed_files.length > 0 && (
+                    <pre className="timeline-summary">{attempt.changed_files.join("\n")}</pre>
+                  )}
+                  {attempt.test_results.length > 0 && (
+                    <pre className="timeline-summary">{JSON.stringify(attempt.test_results, null, 2)}</pre>
+                  )}
+                  {typeof attempt.output?.workspace_path === "string" && attempt.output.workspace_path ? (
+                    <ContextLink label="Workspace" value={String(attempt.output.workspace_path)} />
+                  ) : null}
+                  {typeof attempt.output?.diff === "string" && attempt.output.diff.trim() !== "" ? (
+                    <pre className="timeline-summary">{String(attempt.output.diff)}</pre>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   );
 }

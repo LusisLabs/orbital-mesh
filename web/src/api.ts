@@ -112,6 +112,10 @@ export const api = {
     return request<MerkleSnapshot>(baseUrl, `/api/runs/${runId}/merkle`);
   },
 
+  getAgentTasks(baseUrl: string, runId: string) {
+    return request<{ tasks: import("./types").AgentTask[] }>(baseUrl, `/api/runs/${runId}/agent-tasks`);
+  },
+
   getMerkleProof(baseUrl: string, runId: string, eventId: string) {
     return request<MerkleProof>(baseUrl, `/api/runs/${runId}/merkle/proof/${eventId}`);
   },
@@ -123,21 +127,6 @@ export const api = {
   getVaultDocument(baseUrl: string, path: string) {
     const query = new URLSearchParams({ path });
     return request<{ path: string; content: string }>(baseUrl, `/api/vault/document?${query.toString()}`);
-  },
-
-  getGitNexusInfo(url: string) {
-    return request<Record<string, unknown>>(url, "/api/info");
-  },
-
-  getGitNexusProcesses(url: string) {
-    return request<Record<string, unknown>>(url, "/api/processes");
-  },
-
-  searchGitNexus(url: string, query: string) {
-    return request<Record<string, unknown>>(url, "/api/search", {
-      method: "POST",
-      body: JSON.stringify({ query, mode: "bm25", limit: 8 }),
-    });
   },
 };
 

@@ -1,0 +1,20 @@
+{
+  "name": "mesh-intelligence-local",
+  "interface": {
+    "displayName": "Mesh Intelligence Local"
+  },
+  "plugins": [
+    {
+      "name": "mesh-intelligence",
+      "source": {
+        "source": "local",
+        "path": "./plugins/mesh-intelligence"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+services:
+  latentmas:
+    profiles: ["latentmas"]
+    build:
+      context: .
+      dockerfile: Dockerfile.latentmas
+    image: "${MESH_LATENTMAS_IMAGE:-mesh-intelligence-latentmas:local}"
+    environment:
+      MESH_LATENTMAS_URL: "http://0.0.0.0:8791"
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
+      MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
+      MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"
+      MESH_LATENTMAS_USE_VLLM: "${MESH_LATENTMAS_USE_VLLM:-0}"
+      HF_HOME: /cache/huggingface
+      TRANSFORMERS_CACHE: /cache/huggingface
+      HF_DATASETS_CACHE: /cache/huggingface
+    volumes:
+      - ./:/workspace/mesh-intelligence
+      - latentmas_hf_cache:/cache/huggingface
+    ports:
+      - "${MESH_LATENTMAS_PUBLISH_PORT:-8791}:8791"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+
+  mesh:
+    profiles: ["latentmas"]
+    depends_on:
+      latentmas:
+        condition: service_started
+    environment:
+      MESH_LATENTMAS_ENABLED: "1"
+      MESH_LATENTMAS_URL: "http://latentmas:8791"
+      MESH_LATENTMAS_TIMEOUT_SECONDS: "${MESH_LATENTMAS_TIMEOUT_SECONDS:-600}"
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
+      MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
+      MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"
+      MESH_LATENTMAS_USE_VLLM: "${MESH_LATENTMAS_USE_VLLM:-0}"
+      MESH_LATENTMAS_MAX_ARTIFACT_CHARS: "${MESH_LATENTMAS_MAX_ARTIFACT_CHARS:-20000}"
+
+volumes:
+  latentmas_hf_cache:

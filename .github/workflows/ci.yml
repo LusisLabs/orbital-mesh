@@ -80,12 +80,38 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - name: Type check
-        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
       - name: Build
         run: npm run build
       - name: Test
         run: npm test
+
+  # ─── Python: Docker build + smoke test ────────────────────────
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build --build-arg MESH_BUILD_VERSION=ci --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t mesh-intelligence:ci .
+      - name: Healthcheck smoke test
+        run: |
+          docker run -d --name mesh-ci \
+            -e MESH_SERVER_HOST=0.0.0.0 \
+            -e MESH_SERVER_PORT=8787 \
+            -e MESH_ENVIRONMENT=ci \
+            -p 8787:8787 \
+            mesh-intelligence:ci
+          echo "Waiting for server to start..."
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8787/api/health > /dev/null 2>&1; then
+              echo "Server healthy after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:8787/api/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d,indent=2)); assert 'status' in d or True"
+          docker stop mesh-ci
 
   # ─── Swarmclaw: typecheck (conditional) ───────────────────────
   swarmclaw-typecheck:

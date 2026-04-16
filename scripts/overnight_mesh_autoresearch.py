@@ -19,6 +19,9 @@ Environment (optional, same names as overnight_autoresearch_loop.sh):
   OVERNIGHT_HTTP_FULL_MATRIX (default 0) — when HTTP holistic: each cycle hits live K8s + both scenario_keys × all
     mode pairs (12 POSTs). When 0, one rotated payload × four mode pairs (4 POSTs/cycle).
   OVERNIGHT_HTTP_PER_RUN_TIMEOUT_SECONDS (default 300) — terminal wait per control-plane run in holistic HTTP mode
+  OVERNIGHT_EVOLVE_PRIOR_MAX_CHARS (default 8000) — cap merged prior text after stripping
+  OVERNIGHT_MINIMAX_CHAT_TIMEOUT_SECONDS — if set, overrides MINIMAX_CHAT_TIMEOUT_SECONDS for this process before MiniMax;
+    otherwise bumps weak defaults to 1200s for evolved + holistic prompts
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -47,6 +51,81 @@ from scripts.mesh_showcase_research import holistic_eval_orchestration_pairs  # 
 
 ARCHIVE_DIRNAME = "_archive"
 PRIOR_EXCERPT_CHARS = 14_000
+
+# Prior must mention mesh-intelligence–relevant substance (blocks unrelated “wireless mesh ROI” drift).
+_PRIOR_REPO_ANCHORS: tuple[str, ...] = (
+    "firstslicepipeline",
+    "run_summaries",
+    "holistic_matrix",
+    "matrix_row",
+    "mesh_showcase",
+    "mesh intelligence",
+    "mesh-intelligence",
+    "evaluation_mode",
+    "orchestration_mode",
+    "kubernetes_crashloop",
+    "search_latency",
+    "feature_flag",
+    "run_events",
+    "control plane",
+    "promptfoo",
+    "live_signal",
+)
+
+
+def _strip_redacted_thinking(text: str) -> str:
+    return re.sub(
+        r"<think>[\s\S]*?</think>",
+        "\n",
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
+def _prior_repo_grounded(text: str) -> bool:
+    t = text.lower()
+    return any(a in t for a in _PRIOR_REPO_ANCHORS)
+
+
+def _evolve_prior_max_chars() -> int:
+    raw = os.environ.get("OVERNIGHT_EVOLVE_PRIOR_MAX_CHARS", "8000")
+    try:
+        return max(500, min(50_000, int(str(raw).strip())))
+    except ValueError:
+        return 8000
+
+
+def _sanitize_prior_for_merge(raw: str | None) -> str | None:
+    """Return cleaned prior markdown for MiniMax merge, or None to skip (off-domain / empty)."""
+    if not raw or not str(raw).strip():
+        return None
+    text = _strip_redacted_thinking(str(raw)).strip()
+    if len(text) < 80:
+        return None
+    if not _prior_repo_grounded(text):
+        return None
+    cap = _evolve_prior_max_chars()
+    if len(text) > cap:
+        text = text[: cap - 30] + "\n\n[…prior truncated…]\n"
+    return text
+
+
+def _kubectl_context_exists(name: str) -> bool:
+    if not (name or "").strip():
+        return False
+    try:
+        proc = subprocess.run(
+            ["kubectl", "config", "get-contexts", "-o", "name"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        if proc.returncode != 0:
+            return False
+        contexts = {ln.strip() for ln in proc.stdout.splitlines() if ln.strip()}
+        return name.strip() in contexts
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _truthy(raw: str | None, default: bool) -> bool:
@@ -449,15 +528,30 @@ def _http_wait_run_terminal(base_url: str, run_id: str, *, deadline_s: float) ->
     raise TimeoutError(f"run {run_id} did not reach a terminal stage within {deadline_s}s")
 
 
-def _http_holistic_payloads_for_cycle(*, full_matrix: bool, cycle_index: int) -> list[tuple[str, str | None]]:
+def _http_holistic_payloads_for_cycle(
+    *,
+    full_matrix: bool,
+    cycle_index: int,
+    kube_context: str,
+) -> list[tuple[str, str | None]]:
+    """Scenario fixtures first so cycles succeed without a local k3d cluster; live last when kubectl allows."""
     triple: list[tuple[str, str | None]] = [
-        ("live", None),
         ("scenario", "search_latency_regression"),
         ("scenario", "kubernetes_crashloop_patch"),
+        ("live", None),
     ]
-    if full_matrix:
-        return triple
-    return [triple[(cycle_index - 1) % len(triple)]]
+    kinds: list[tuple[str, str | None]] = list(triple) if full_matrix else [triple[(cycle_index - 1) % len(triple)]]
+    if not _kubectl_context_exists(kube_context):
+        had_live = any(k[0] == "live" for k in kinds)
+        kinds = [k for k in kinds if k[0] != "live"]
+        if had_live:
+            print(
+                f"holistic HTTP: skipping live payloads (kubectl context {kube_context!r} not in kubeconfig)",
+                flush=True,
+            )
+        if not kinds:
+            kinds = [("scenario", "search_latency_regression")]
+    return kinds
 
 
 def _http_build_run_payload(
@@ -510,7 +604,11 @@ def _run_http_holistic_suite(
         "environment": os.environ.get("ENVIRONMENT", "local"),
     }
     _http_wait_control_plane_health(base_url)
-    kinds = _http_holistic_payloads_for_cycle(full_matrix=full_matrix, cycle_index=cycle_index)
+    kinds = _http_holistic_payloads_for_cycle(
+        full_matrix=full_matrix,
+        cycle_index=cycle_index,
+        kube_context=live["kube_context"],
+    )
     pairs = holistic_eval_orchestration_pairs()
     records: list[dict[str, Any]] = []
     for evaluation_mode, orchestration_mode in pairs:
@@ -717,15 +815,32 @@ def main() -> None:
             cycle_meta["http"] = "skipped"
 
             if args.minimax:
-                prior = None
+                prior_raw: str | None = None
                 if args.evolve_prior:
-                    prior = _latest_prior_final_report(research_root, exclude=session_dir)
+                    prior_raw = _latest_prior_final_report(research_root, exclude=session_dir)
+                prior = _sanitize_prior_for_merge(prior_raw)
                 if prior:
-                    print("merging prior synthesis into manifest question", flush=True)
+                    print("merging repo-grounded prior synthesis into manifest question", flush=True)
                     _merge_prior_into_manifest_question(session_dir, prior)
+                elif prior_raw:
+                    print(
+                        "skipping evolve_prior: prior not repo-grounded, too short, or empty after redaction",
+                        flush=True,
+                    )
 
                 ran_minimax = False
                 if _minimax_env_configured():
+                    mt_overnight = (os.environ.get("OVERNIGHT_MINIMAX_CHAT_TIMEOUT_SECONDS") or "").strip()
+                    if mt_overnight:
+                        os.environ["MINIMAX_CHAT_TIMEOUT_SECONDS"] = mt_overnight
+                    else:
+                        cur = (os.environ.get("MINIMAX_CHAT_TIMEOUT_SECONDS") or "").strip()
+                        try:
+                            cur_i = int(cur) if cur else 0
+                        except ValueError:
+                            cur_i = 0
+                        if cur_i < 900:
+                            os.environ["MINIMAX_CHAT_TIMEOUT_SECONDS"] = "1200"
                     try:
                         _run_minimax(session_dir)
                         ran_minimax = True
