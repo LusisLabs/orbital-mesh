@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-# Repo root: .cursor/skills/goose-autoresearch/scripts/ -> parents[4]
+# Repo root: services/skills/goose-autoresearch/scripts/ -> parents[4]
 REPO_ROOT = Path(__file__).resolve().parents[4]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -305,7 +305,7 @@ def run_wave3_synthesis(session_dir: Path, question: str) -> None:
 
 
 def _bootstrap_session(slug: str, question: str) -> Path:
-    init = REPO_ROOT / ".cursor/skills/goose-autoresearch/scripts/init_session.py"
+    init = REPO_ROOT / "services/skills/goose-autoresearch/scripts/init_session.py"
     proc = subprocess.run(
         [sys.executable, str(init), "--slug", slug, "--question", question],
         cwd=REPO_ROOT,

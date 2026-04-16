@@ -23,7 +23,7 @@ Use that output as the factual base for research narratives or paste summaries i
 1. Bootstrap a session workspace:
 
 ```bash
-python3 .cursor/skills/goose-autoresearch/scripts/init_session.py --slug "<short-session-name>" --question "<research question>"
+python3 services/skills/goose-autoresearch/scripts/init_session.py --slug "<short-session-name>" --question "<research question>"
 ```
 
 2. Read the generated `manifest.json` and prompt files in the created session directory.
@@ -67,7 +67,7 @@ The runner also loads the repo **`.env`** automatically (without overriding vari
 **New session + full run** (six model calls: 4 + 1 + 1):
 
 ```bash
-python3 .cursor/skills/goose-autoresearch/scripts/run_minimax_research.py \
+python3 services/skills/goose-autoresearch/scripts/run_minimax_research.py \
   --slug "my-research" \
   --question "Your research question here?"
 ```
@@ -75,13 +75,13 @@ python3 .cursor/skills/goose-autoresearch/scripts/run_minimax_research.py \
 **Existing session directory**:
 
 ```bash
-python3 .cursor/skills/goose-autoresearch/scripts/run_minimax_research.py \
+python3 services/skills/goose-autoresearch/scripts/run_minimax_research.py \
   --session-dir ".mesh-runtime-state/research/<timestamp>-<slug>"
 ```
 
 **Outputs**: `results/wave1-worker-*-minimax.md`, `results/wave2-lead-scorecard-minimax.md`, `synthesis/final-report.md`, and `manifest.json` status `minimax_multiwave_complete`.
 
-Implementation: `.cursor/skills/goose-autoresearch/scripts/minimax_client.py` (stdlib only) + `run_minimax_research.py`.
+Implementation: `services/skills/goose-autoresearch/scripts/minimax_client.py` (stdlib only) + `run_minimax_research.py`.
 
 ## Default Topology
 
