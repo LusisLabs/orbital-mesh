@@ -44,7 +44,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     server: MeshControlPlaneServer
     protocol_version = "HTTP/1.1"
 
-    # ------------------------------------------------------------------ HEAD
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -55,7 +54,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._serve_static(path, head_only=True)
 
-    # ---------------------------------------------------------- OPTIONS (CORS)
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(HTTPStatus.NO_CONTENT)
         self._add_security_headers()
@@ -63,7 +61,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    # ------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -216,7 +213,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._serve_static(path)
 
-    # ------------------------------------------------------------------ POST
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if not self._request_body_within_limit():
@@ -272,7 +268,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
-    # ---------------------------------------------------------------- logging
     def log_message(self, format: str, *args: Any) -> None:
         if not self.server.config.access_log_enabled:
             return
@@ -282,7 +277,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             client_host = "-"
         _LOG.info("%s - %s", client_host, format % args)
 
-    # ----------------------------------------------------------- static files
     def _serve_static(self, path: str, head_only: bool = False) -> None:
         assets_root = Path(self.server.config.web_asset_path)
         if not assets_root.exists():
@@ -308,7 +302,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if not head_only:
             self.wfile.write(raw)
 
-    # ----------------------------------------------------------- SSE streams
     def _stream_run(self, run_id: str) -> None:
         self.send_response(HTTPStatus.OK)
         self._add_security_headers()
@@ -381,7 +374,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
         self.wfile.flush()
 
-    # ----------------------------------------------------------- JSON response
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         raw = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
         self.send_response(status)
@@ -393,7 +385,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    # ----------------------------------------------------------- body parsing
     def _request_body_within_limit(self) -> bool:
         limit = self.server.config.max_json_body_bytes
         if limit <= 0:
@@ -418,7 +409,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
-    # --------------------------------------------------------- security headers
     def _add_security_headers(self) -> None:
         if not self.server.config.security_headers_enabled:
             return
@@ -434,8 +424,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
             self.send_header("Access-Control-Max-Age", "86400")
 
-
-# ----------------------------------------------------------------- lifecycle
 
 def build_server(config: RuntimeConfig | None = None) -> MeshControlPlaneServer:
     resolved = config or RuntimeConfig.from_env()

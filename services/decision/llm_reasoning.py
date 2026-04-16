@@ -94,14 +94,9 @@ class EscalationReasoner:
             return _default_escalate()
         return self._parse_response(raw)
 
-    # ------------------------------------------------------------------
-    # Prompt construction
-    # ------------------------------------------------------------------
-
     def _build_prompt(self, trigger: Trigger) -> str:
         sections: list[str] = []
 
-        # 1. Current signal
         sections.append("## Current Signal")
         sections.append(f"Service: {trigger.service}")
         sections.append(f"Trigger type: {trigger.trigger_type}")
@@ -115,7 +110,6 @@ class EscalationReasoner:
         if rc.get("rollout_status"):
             sections.append(f"Rollout status: {rc['rollout_status']}")
 
-        # 2. Service context from context store
         if self.context_store:
             svc_ctx = self.context_store.get_service_context(trigger.service)
             if svc_ctx:
@@ -127,7 +121,6 @@ class EscalationReasoner:
                 if svc_ctx.get("common_error_patterns"):
                     sections.append(f"Common errors: {', '.join(svc_ctx['common_error_patterns'])}")
 
-        # 3. Similar past incidents
         if self.context_store:
             error_sig = "|".join(rc.get("error_signatures", [])) or trigger.trigger_type
             similar = self.context_store.get_similar_incidents(error_sig, limit=5)
@@ -139,7 +132,6 @@ class EscalationReasoner:
                         f"(error: {inc.get('error_signature', '?')})"
                     )
 
-        # 4. Success rates from learning store
         if self.learning_store:
             sections.append("\n## Historical Success Rates")
             for action in sorted(ALLOWED_ACTIONS - {"escalate", "no_action"}):
@@ -147,7 +139,6 @@ class EscalationReasoner:
                 if rate is not None:
                     sections.append(f"- {action}: {rate:.0%}")
 
-            # Recovery patterns
             patterns = self.learning_store.get_recovery_patterns(trigger.service)
             if patterns:
                 sections.append("\n## Known Recovery Patterns")
@@ -159,10 +150,6 @@ class EscalationReasoner:
             "remediation action from the allowed set."
         )
         return "\n".join(sections)
-
-    # ------------------------------------------------------------------
-    # LLM invocation
-    # ------------------------------------------------------------------
 
     def _call_llm(self, prompt: str) -> str | None:
         provider = self.config.llm_escalation_provider
@@ -204,10 +191,6 @@ class EscalationReasoner:
             return None
         return _extract_assistant_text(payload)
 
-    # ------------------------------------------------------------------
-    # Response parsing with guardrails
-    # ------------------------------------------------------------------
-
     def _parse_response(self, raw: str) -> ReasoningResult:
         parsed = _parse_json_from_text(raw)
         if parsed is None:
@@ -242,10 +225,6 @@ class EscalationReasoner:
             raw_response=raw,
         )
 
-
-# ------------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------------
 
 def _extract_assistant_text(payload: dict) -> str | None:
     messages = payload.get("messages", [])
