@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -68,10 +67,6 @@ def build_agent_attempt(
         recommended_action=recommended_action,
         output=dict(output or {}),
     )
-
-
-def task_to_dict(task: AgentTask) -> dict[str, Any]:
-    return asdict(task)
 
 
 def _timestamp() -> str:

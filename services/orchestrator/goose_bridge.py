@@ -27,10 +27,6 @@ GOOSE_CODE_PATCH_SYSTEM_PROMPT = (
 )
 
 
-def _goose_run_timeout_seconds() -> float:
-    return float(os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS", "60"))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mesh Intelligence Goose bridge")
     parser.add_argument("--goose-bin", required=True, help="Path to the goose binary")

@@ -48,7 +48,6 @@ class OrchestratorService:
         if self.config.orchestration_mode == "native":
             return NativeGooseAdapter(config=self.config)
         return NativeHermesAdapter(config=self.config)
-        return NativeGooseAdapter(config=self.config)
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
         started_at = datetime.now(timezone.utc).isoformat()

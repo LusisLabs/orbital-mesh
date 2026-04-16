@@ -161,8 +161,6 @@ export interface HealthSnapshot {
   commit: string;
 }
 
-export type SteeringMode = "approval_gate" | "interruptible_auto";
-export type RuntimeMode = "native" | "promptfoo" | "goose" | "hermes";
 export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
 export type InspectorTab =
   | "overview"

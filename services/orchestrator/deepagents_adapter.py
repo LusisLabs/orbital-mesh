@@ -153,15 +153,6 @@ def _copy_allowed_workspace(
     return snapshot
 
 
-def _workspace_file_paths(workspace: Path) -> list[str]:
-    paths: list[str] = []
-    root = workspace.resolve()
-    for path in root.rglob("*"):
-        if path.is_file():
-            paths.append(str(path.relative_to(root).as_posix()))
-    return sorted(paths)
-
-
 def _diff_against_snapshot(snapshot: dict[str, str], workspace: Path) -> tuple[str, list[str]]:
     changed: list[str] = []
     chunks: list[str] = []
