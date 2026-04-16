@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import queue
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, build_evo_status
 from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
-from shared.mesh_runtime.control_plane_models import AgentTask
+from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
 from .deepagents_adapter import DeepAgentsAdapter
 from .latentmas_adapter import LatentMasAdapter
 
@@ -45,72 +48,7 @@ class AgentMeshService:
             kubernetes_scope=self._kubernetes_scope(trigger, decision),
             agents=self._agents(),
         )
-        attempts = []
-        if self.config.latentmas_enabled:
-            attempts.append(
-                self.latentmas_adapter.build_attempt(
-                    task=task,
-                    trigger=trigger,
-                    decision=decision,
-                    evaluation=evaluation,
-                )
-            )
-        if self.config.agent_fabric_mode == "deepagents":
-            attempts.extend(
-                [
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="goose",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="hermes",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="codex",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="claudecode",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="openclaw",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                    self.deepagents_adapter.build_lane_attempt(
-                        agent="evo",
-                        task=task,
-                        trigger=trigger,
-                        decision=decision,
-                        evaluation=evaluation,
-                    ),
-                ]
-            )
-        else:
-            attempts.extend([
-                self._goose_attempt(task, trigger, decision, evaluation),
-                self._hermes_attempt(task, trigger, decision, evaluation),
-                self._codex_attempt(task, trigger, decision, evaluation),
-                self._claude_code_attempt(task, trigger, decision, evaluation),
-                self._openclaw_attempt(task, trigger, decision, evaluation),
-                self._evo_attempt(task, trigger, decision, evaluation),
-            ])
+        attempts = self._collect_attempts(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
         successful = [attempt for attempt in attempts if attempt.status == "completed" and not attempt.risk_flags]
         selected_attempt_id = successful[0].attempt_id if successful else attempts[0].attempt_id
         return [
@@ -122,6 +60,131 @@ class AgentMeshService:
                 selected_attempt_id=selected_attempt_id,
             )
         ]
+
+    def _collect_attempts(
+        self,
+        *,
+        task: AgentTask,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> list[AgentAttempt]:
+        attempt_specs = self._attempt_specs(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
+        results: dict[str, AgentAttempt] = {}
+        completed_agents: set[str] = set()
+        completed_queue: queue.Queue[tuple[str, AgentAttempt]] = queue.Queue()
+
+        def run_attempt(
+            agent: str,
+            adapter: str,
+            builder: Callable[[], AgentAttempt],
+        ) -> None:
+            try:
+                attempt = builder()
+            except Exception as exc:  # pragma: no cover - defensive guard for proposal lanes
+                attempt = build_agent_attempt(
+                    task_id=task.task_id,
+                    run_id=task.run_id,
+                    agent=agent,
+                    adapter=adapter,
+                    status="failed",
+                    summary=f"{agent} proposal lane failed during agent-task collection: {exc}",
+                    risk_flags=["agent_mesh_attempt_failed"],
+                    recommended_action="human_review",
+                    output={"error": str(exc)},
+                )
+            completed_queue.put((agent, attempt))
+
+        for spec in attempt_specs:
+            worker = threading.Thread(
+                target=run_attempt,
+                args=(spec["agent"], spec["adapter"], spec["builder"]),
+                daemon=True,
+            )
+            worker.start()
+
+        deadline = time.monotonic() + float(self.config.agent_mesh_task_timeout_seconds)
+        while len(completed_agents) < len(attempt_specs):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                agent, attempt = completed_queue.get(timeout=remaining)
+            except queue.Empty:
+                break
+            results[agent] = attempt
+            completed_agents.add(agent)
+
+        attempts: list[AgentAttempt] = []
+        for spec in attempt_specs:
+            attempt = results.get(spec["agent"])
+            if attempt is None:
+                attempt = build_agent_attempt(
+                    task_id=task.task_id,
+                    run_id=task.run_id,
+                    agent=spec["agent"],
+                    adapter=spec["adapter"],
+                    status="failed",
+                    summary=(
+                        f"{spec['agent']} proposal lane timed out after "
+                        f"{self.config.agent_mesh_task_timeout_seconds}s during agent-task collection."
+                    ),
+                    risk_flags=["agent_mesh_timeout"],
+                    recommended_action="human_review",
+                    output={"timeout_seconds": self.config.agent_mesh_task_timeout_seconds},
+                )
+            attempts.append(attempt)
+        return attempts
+
+    def _attempt_specs(
+        self,
+        *,
+        task: AgentTask,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        if self.config.latentmas_enabled:
+            specs.append(
+                {
+                    "agent": "latentmas",
+                    "adapter": "latentmas_http",
+                    "builder": lambda: self.latentmas_adapter.build_attempt(
+                        task=task,
+                        trigger=trigger,
+                        decision=decision,
+                        evaluation=evaluation,
+                    ),
+                }
+            )
+        if self.config.agent_fabric_mode == "deepagents":
+            for agent in ("goose", "hermes", "codex", "claudecode", "openclaw", "evo"):
+                specs.append(
+                    {
+                        "agent": agent,
+                        "adapter": "deepagents",
+                        "builder": lambda agent=agent: self.deepagents_adapter.build_lane_attempt(
+                            agent=agent,
+                            task=task,
+                            trigger=trigger,
+                            decision=decision,
+                            evaluation=evaluation,
+                        ),
+                    }
+                )
+            return specs
+        native_specs = (
+            ("goose", "native_contract", lambda: self._goose_attempt(task, trigger, decision, evaluation)),
+            ("hermes", "native_contract", lambda: self._hermes_attempt(task, trigger, decision, evaluation)),
+            ("codex", "native_contract", lambda: self._codex_attempt(task, trigger, decision, evaluation)),
+            ("claudecode", "native_contract", lambda: self._claude_code_attempt(task, trigger, decision, evaluation)),
+            ("openclaw", "native_contract", lambda: self._openclaw_attempt(task, trigger, decision, evaluation)),
+            ("evo", "native_contract", lambda: self._evo_attempt(task, trigger, decision, evaluation)),
+        )
+        for agent, adapter, builder in native_specs:
+            specs.append({"agent": agent, "adapter": adapter, "builder": builder})
+        return specs
 
     def _goose_attempt(
         self,
@@ -241,7 +304,7 @@ class AgentMeshService:
         evaluation: EvaluationResult,
     ):
         namespace = task.kubernetes_scope.get("namespace")
-        context = task.kubernetes_scope.get("context")
+        context = task.kubernetes_scope.get("context") or task.kubernetes_scope.get("cluster")
         risk_flags = [] if namespace and context else ["kubernetes_scope_missing"]
         return build_agent_attempt(
             task_id=task.task_id,
@@ -344,7 +407,12 @@ class AgentMeshService:
         related = trigger.related_context if isinstance(trigger.related_context, dict) else {}
         parameters = decision.execution_plan.get("parameters", {})
         return {
-            "context": parameters.get("kube_context") or related.get("kube_context"),
+            "context": (
+                parameters.get("kube_context")
+                or related.get("kube_context")
+                or parameters.get("cluster")
+                or related.get("cluster")
+            ),
             "namespace": parameters.get("namespace") or related.get("namespace"),
             "deployment_name": parameters.get("deployment_name") or related.get("deployment_name"),
             "cluster": parameters.get("cluster") or related.get("cluster"),

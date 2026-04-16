@@ -24,6 +24,9 @@ class LatentMasAdapter:
     ) -> AgentAttempt:
         if not self.config.latentmas_url:
             return self._failed_attempt(task, "enabled but MESH_LATENTMAS_URL is not configured")
+        health_error = self._health_error()
+        if health_error is not None:
+            return self._failed_attempt(task, health_error)
 
         payload = {
             "run_id": task.run_id,
@@ -56,7 +59,10 @@ class LatentMasAdapter:
         try:
             with urlopen(request, timeout=self.config.latentmas_timeout_seconds) as response:
                 raw = response.read().decode("utf-8", errors="replace")
-        except (HTTPError, URLError, TimeoutError, OSError) as exc:
+        except HTTPError as exc:
+            detail = self._http_error_detail(exc)
+            return self._failed_attempt(task, f"LatentMAS sidecar error: {detail}")
+        except (URLError, TimeoutError, OSError) as exc:
             return self._failed_attempt(task, f"LatentMAS sidecar unavailable: {exc}")
 
         try:
@@ -124,6 +130,47 @@ class LatentMasAdapter:
             recommended_action="human_review",
             output={"error": self._cap_text(detail)},
         )
+
+    def _health_error(self) -> str | None:
+        request = Request(
+            f"{self.config.latentmas_url.rstrip('/')}/health",
+            headers={"Accept": "application/json"},
+            method="GET",
+        )
+        try:
+            with urlopen(request, timeout=min(self.config.latentmas_timeout_seconds, 5.0)) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except HTTPError as exc:
+            return f"LatentMAS sidecar healthcheck failed: {self._http_error_detail(exc)}"
+        except (URLError, TimeoutError, OSError) as exc:
+            return f"LatentMAS sidecar unavailable: {exc}"
+
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("ready", True):
+            return None
+        detail = str(payload.get("detail") or "sidecar reported not ready")
+        return f"LatentMAS sidecar not ready: {detail}"
+
+    def _http_error_detail(self, exc: HTTPError) -> str:
+        body = ""
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except OSError:
+            body = ""
+        if body:
+            try:
+                payload = json.loads(body)
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and payload.get("error"):
+                return f"HTTP {exc.code}: {payload['error']}"
+            return f"HTTP {exc.code}: {self._cap_text(body)}"
+        return str(exc)
 
     def _cap_text(self, value: str) -> str:
         cap = max(0, int(self.config.latentmas_max_artifact_chars))

@@ -134,14 +134,15 @@ class MeshRuntimeEngine:
             integration_name=self.config.orchestration_mode if self.config.orchestration_mode != "native" else None,
             status=execution.status,
         )
-        goose_review = execution.external_refs.get("goose_review") if isinstance(execution.external_refs, dict) else None
-        if goose_review:
+        review_artifact = _execution_review_artifact(execution)
+        if review_artifact:
+            artifact_key, integration_name, payload = review_artifact
             record_event(
                 "executing",
                 "integration_artifact_recorded",
-                goose_review,
-                artifact_key="goose_review",
-                integration_name="goose",
+                payload,
+                artifact_key=artifact_key,
+                integration_name=integration_name,
                 status="recorded",
             )
         feedback = self.feedback.record(trigger, decision, execution, normalized_event)
@@ -170,3 +171,12 @@ class MeshRuntimeEngine:
         result["run_metadata"] = run_record.__dict__
         return result
 
+
+def _execution_review_artifact(execution) -> tuple[str, str, dict] | None:
+    if not isinstance(execution.external_refs, dict):
+        return None
+    for artifact_key, integration_name in (("hermes_review", "hermes"), ("goose_review", "goose")):
+        payload = execution.external_refs.get(artifact_key)
+        if isinstance(payload, dict):
+            return artifact_key, integration_name, payload
+    return None

@@ -82,6 +82,7 @@ Stack-only integration variables:
 - `MESH_DOCKER_SOCKET_HOST_PATH` controls the host Docker socket mounted into the Mesh container for sidecar command execution.
 - `MESH_STACK_AGENT_FABRIC_MODE` selects `native` or `deepagents` for proposal lanes in the full stack.
 - `MESH_STACK_ENABLE_LATENTMAS` controls whether Mesh expects the optional LatentMAS profile to be ready.
+- `MESH_AGENT_TASK_TIMEOUT_SECONDS` bounds proposal-lane collection during run execution. Slow agent-task lanes degrade into recorded failed attempts instead of blocking execution.
 - `HERMES_AGENT_REF`, `UV_VERSION`, and `GOOSE_VERSION` are pinned by default and should be changed only as an explicit dependency upgrade.
 
 ## Readiness behavior
@@ -95,6 +96,8 @@ Stack-only integration variables:
   - unavailable when the vendored `deepagents` package cannot be imported
   - ready when Deep Agents is enabled and importable, with `detail` showing the configured model and workspace root
   - provider-key warnings in `deepagents.warnings` when the selected model family is missing credentials
+- For `MESH_DEEPAGENTS_MODEL=openai:MiniMax-*`, Mesh now resolves the OpenAI-compatible key from `OPENAI_API_KEY` first and falls back to `MINIMAX_API_KEY` when present.
+- LatentMAS readiness now reads the sidecar `/health` payload instead of treating any HTTP 200 as ready. If the configured device is unavailable, readiness surfaces the sidecar detail string rather than reporting a false green state.
 Goose no longer probes installed Ollama models during integration resolution. If `OPENAI_BASE_URL` is configured and no explicit Goose provider is set, the resolver infers the OpenAI-compatible route and defaults the model to `MiniMax-M2.5`. Ollama is used only when `GOOSE_PROVIDER=ollama` or an equivalent explicit provider setting is present.
 
 ## Evo proposal lane
@@ -110,6 +113,8 @@ Or point Mesh at the vendored source checkout when `uv` is available in the runt
 ```bash
 MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"
 ```
+
+The stack image now installs `uv` into `/usr/local/bin`, so this command remains valid after the container drops from `root` to the non-root `mesh` user.
 
 Mesh stores Evo readiness and agent-task recommendations by default. Evo execution is not part of normal run progression; it requires an explicit `launch_evo` steering command on an eligible run.
 
@@ -147,6 +152,7 @@ Behavior:
 - For patch-shaped tasks, Mesh copies only `allowed_paths` files into that workspace before invoking Deep Agents.
 - The adapter records `adapter="deepagents"` plus `workspace_path`, `diff`, `deepagents_final_message`, `changed_files`, and `test_results` in the attempt output when available.
 - Missing provider keys should not crash the control plane. The attempt carries non-blocking risk flags and readiness warnings instead.
+- Deep Agents uses the OpenAI-compatible MiniMax route with explicit `base_url` and API key wiring when the configured model is `openai:MiniMax-*`. This avoids proposal-lane 401s caused by relying on implicit env discovery.
 
 Operational restriction:
 

@@ -113,6 +113,51 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_latentmas_health_not_ready_skips_infer(self) -> None:
+        server, thread = _start_fake_latentmas(
+            {"summary": "should not run"},
+            health_payload={"ready": False, "detail": "requested device `cuda` unavailable; falling back to cpu"},
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            task = AgentMeshService(config=self.config).build_tasks(
+                run_id="run_not_ready",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0]
+            self.assertEqual(task.attempts[0].status, "failed")
+            self.assertIn("LatentMAS sidecar not ready", task.attempts[0].summary)
+            self.assertEqual(_FakeLatentMasHandler.last_payload, {})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_latentmas_http_error_surfaces_server_reason(self) -> None:
+        server, thread = _start_fake_latentmas(
+            {"error": "model load failed: CUDA driver not available"},
+            response_status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            task = AgentMeshService(config=self.config).build_tasks(
+                run_id="run_http_error",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0]
+            self.assertEqual(task.attempts[0].status, "failed")
+            self.assertIn("CUDA driver not available", task.attempts[0].summary)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_latentmas_output_is_capped(self) -> None:
         server, thread = _start_fake_latentmas(
             {
@@ -174,6 +219,8 @@ class LatentMasAgentMeshTests(unittest.TestCase):
 
 class _FakeLatentMasHandler(BaseHTTPRequestHandler):
     response_payload: Any = {}
+    health_payload: dict[str, Any] = {"ready": True}
+    response_status = HTTPStatus.OK
     raw_response = False
     last_payload: dict[str, Any] = {}
 
@@ -182,7 +229,7 @@ class _FakeLatentMasHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._send_json({"ready": True})
+            self._send_json(self.health_payload)
             return
         self.send_response(HTTPStatus.NOT_FOUND)
         self.end_headers()
@@ -197,25 +244,33 @@ class _FakeLatentMasHandler(BaseHTTPRequestHandler):
         _FakeLatentMasHandler.last_payload = json.loads(body.decode("utf-8"))
         if self.raw_response:
             data = str(self.response_payload).encode("utf-8")
-            self.send_response(HTTPStatus.OK)
+            self.send_response(self.response_status)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
             return
-        self._send_json(self.response_payload)
+        self._send_json(self.response_payload, status=self.response_status)
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         data = json.dumps(payload).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
 
-def _start_fake_latentmas(payload: Any, raw: bool = False) -> tuple[ThreadingHTTPServer, threading.Thread]:
+def _start_fake_latentmas(
+    payload: Any,
+    raw: bool = False,
+    *,
+    health_payload: dict[str, Any] | None = None,
+    response_status: HTTPStatus = HTTPStatus.OK,
+) -> tuple[ThreadingHTTPServer, threading.Thread]:
     _FakeLatentMasHandler.response_payload = payload
+    _FakeLatentMasHandler.health_payload = health_payload or {"ready": True}
+    _FakeLatentMasHandler.response_status = response_status
     _FakeLatentMasHandler.raw_response = raw
     _FakeLatentMasHandler.last_payload = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeLatentMasHandler)

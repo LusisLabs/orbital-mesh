@@ -16,12 +16,13 @@ from shared.mesh_runtime import (
 )
 
 from .goose_adapter import GooseAdapter, GooseCliAdapter, NativeGooseAdapter
+from .hermes_adapter import HermesAdapter, HermesCliAdapter, NativeHermesAdapter
 
 
 class OrchestratorService:
     def __init__(
         self,
-        adapter: GooseAdapter | None = None,
+        adapter: GooseAdapter | HermesAdapter | None = None,
         config: RuntimeConfig | None = None,
         clock: Callable[[], float] | None = None,
         sleeper: Callable[[float], None] | None = None,
@@ -31,13 +32,22 @@ class OrchestratorService:
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
 
-    def _build_adapter(self) -> GooseAdapter:
+    def _build_adapter(self) -> GooseAdapter | HermesAdapter:
         if self.config.orchestration_mode == "goose":
             resolved = resolve_integrations_config(self.config)
             return GooseCliAdapter(
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
+        if self.config.orchestration_mode == "hermes":
+            resolved = resolve_integrations_config(self.config)
+            return HermesCliAdapter(
+                command=resolved.hermes_command,
+                timeout_seconds=self.config.hermes_command_timeout_seconds,
+            )
+        if self.config.orchestration_mode == "native":
+            return NativeGooseAdapter(config=self.config)
+        return NativeHermesAdapter(config=self.config)
         return NativeGooseAdapter(config=self.config)
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:

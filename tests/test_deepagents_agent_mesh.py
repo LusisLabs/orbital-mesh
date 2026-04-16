@@ -148,6 +148,41 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         for attempt in tasks[0].attempts:
             self.assertEqual(attempt.adapter, "deepagents")
 
+    def test_deepagents_collection_timeout_degrades_lane_without_blocking(self) -> None:
+        self.config.agent_fabric_mode = "deepagents"
+        self.config.agent_mesh_task_timeout_seconds = 0.05
+        task, trigger, decision, evaluation = self._minimal_task_bundle()
+
+        def slow_lane(_self, *, agent, task, trigger, decision, evaluation):
+            time.sleep(0.2)
+            return build_agent_attempt(
+                task_id=task.task_id,
+                run_id=task.run_id,
+                agent=agent,
+                adapter="deepagents",
+                status="completed",
+                summary=f"slow-{agent}",
+                risk_flags=[],
+                recommended_action="human_review",
+                output={},
+            )
+
+        started = time.monotonic()
+        with patch.object(DeepAgentsAdapter, "build_lane_attempt", slow_lane):
+            tasks = AgentMeshService(config=self.config).build_tasks(
+                run_id=task.run_id,
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 0.2)
+        attempts = tasks[0].attempts
+        self.assertEqual([attempt.agent for attempt in attempts], ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"])
+        for attempt in attempts:
+            self.assertEqual(attempt.status, "failed")
+            self.assertEqual(attempt.risk_flags, ["agent_mesh_timeout"])
+
     def test_deepagents_latentmas_still_prepended(self) -> None:
         self.config.agent_fabric_mode = "deepagents"
         self.config.latentmas_enabled = True
@@ -261,14 +296,50 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         with (
             patch.dict(
                 "os.environ",
-                {"OPENAI_BASE_URL": "https://api.minimax.io/v1"},
+                {"OPENAI_BASE_URL": "https://api.minimax.io/v1", "OPENAI_API_KEY": "sk-test"},
                 clear=False,
             ),
             patch.object(deepagents_adapter_module, "init_chat_model", return_value=sentinel.model) as mock_init,
         ):
             model = deepagents_adapter_module._resolve_deepagents_model("openai:MiniMax-M2.7")
         self.assertIs(model, sentinel.model)
-        mock_init.assert_called_once_with("openai:MiniMax-M2.7", use_responses_api=False)
+        mock_init.assert_called_once_with(
+            "openai:MiniMax-M2.7",
+            use_responses_api=False,
+            base_url="https://api.minimax.io/v1",
+            api_key="sk-test",
+        )
+
+    def test_resolve_deepagents_model_uses_minimax_api_key_fallback(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "OPENAI_BASE_URL": "https://api.minimax.io/v1",
+                    "OPENAI_API_KEY": "",
+                    "MINIMAX_API_KEY": "minimax-test",
+                },
+                clear=False,
+            ),
+            patch.object(deepagents_adapter_module, "init_chat_model", return_value=sentinel.model) as mock_init,
+        ):
+            model = deepagents_adapter_module._resolve_deepagents_model("openai:MiniMax-M2.7")
+        self.assertIs(model, sentinel.model)
+        mock_init.assert_called_once_with(
+            "openai:MiniMax-M2.7",
+            use_responses_api=False,
+            base_url="https://api.minimax.io/v1",
+            api_key="minimax-test",
+        )
+
+    def test_model_env_warnings_accept_minimax_api_key_fallback(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "", "MINIMAX_API_KEY": "minimax-test"},
+            clear=False,
+        ):
+            warnings = deepagents_adapter_module._model_env_warnings("openai:MiniMax-M2.7")
+        self.assertEqual(warnings, [])
 
     def test_resolve_deepagents_model_preserves_plain_openai_string_off_minimax_route(self) -> None:
         with (

@@ -36,6 +36,7 @@ from shared.mesh_runtime import (
     STEERING_REJECTED,
     TRIGGER_READY,
     Decision,
+    ExecutionRecord,
     EvaluationResult,
     Trigger,
     load_fixture,
@@ -562,16 +563,18 @@ class RunCoordinator:
                 integration_name=run_config.orchestration_mode if run_config.orchestration_mode != "native" else None,
                 status=execution.status,
             )
-            if execution.external_refs.get("goose_review"):
-                self._set_artifact(run_id, "goose_review", execution.external_refs["goose_review"])
+            review_artifact = self._execution_review_artifact(execution)
+            if review_artifact:
+                artifact_key, integration_name, payload = review_artifact
+                self._set_artifact(run_id, artifact_key, payload)
                 self.state_store.append_run_event(
                     run_id,
                     stage="executing",
                     event_type=INTEGRATION_ARTIFACT_RECORDED,
-                    payload=execution.external_refs["goose_review"],
-                    summary={"approved": execution.external_refs["goose_review"].get("approved")},
-                    artifact_key="goose_review",
-                    integration_name="goose",
+                    payload=payload,
+                    summary={"approved": payload.get("approved")},
+                    artifact_key=artifact_key,
+                    integration_name=integration_name,
                     status="recorded",
                 )
 
@@ -646,6 +649,15 @@ class RunCoordinator:
         finally:
             with self._lock:
                 self._threads.pop(run_id, None)
+
+    def _execution_review_artifact(self, execution: ExecutionRecord) -> tuple[str, str, dict[str, Any]] | None:
+        if not isinstance(execution.external_refs, dict):
+            return None
+        for artifact_key, integration_name in (("hermes_review", "hermes"), ("goose_review", "goose")):
+            payload = execution.external_refs.get(artifact_key)
+            if isinstance(payload, dict):
+                return artifact_key, integration_name, payload
+        return None
 
     def _record_learning(
         self,

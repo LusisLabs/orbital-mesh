@@ -279,11 +279,20 @@ def _final_ai_text(messages: list[Any]) -> str:
 def _model_env_warnings(model: str) -> list[str]:
     warnings: list[str] = []
     lower = model.lower()
-    if lower.startswith("openai:") and not (os.getenv("OPENAI_API_KEY") or "").strip():
+    if lower.startswith("openai:") and not _openai_api_key_for_model(model):
         warnings.append("OPENAI_API_KEY is not set")
     if lower.startswith("anthropic:") and not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
         warnings.append("ANTHROPIC_API_KEY is not set")
     return warnings
+
+
+def _openai_api_key_for_model(model: str) -> str:
+    openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if openai_api_key:
+        return openai_api_key
+    if "minimax" in model.lower():
+        return (os.getenv("MINIMAX_API_KEY") or "").strip()
+    return ""
 
 
 def _import_deepagents() -> tuple[Any, Any]:
@@ -306,7 +315,14 @@ def _uses_minimax_openai_compatible_route(model: str) -> bool:
 
 def _resolve_deepagents_model(model: str) -> Any:
     if model.lower().startswith("openai:") and _uses_minimax_openai_compatible_route(model):
-        return init_chat_model(model, use_responses_api=False)
+        kwargs: dict[str, Any] = {"use_responses_api": False}
+        openai_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()
+        if openai_base_url:
+            kwargs["base_url"] = openai_base_url
+        openai_api_key = _openai_api_key_for_model(model)
+        if openai_api_key:
+            kwargs["api_key"] = openai_api_key
+        return init_chat_model(model, **kwargs)
     return model
 
 

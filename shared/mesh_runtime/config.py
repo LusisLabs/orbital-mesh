@@ -96,6 +96,7 @@ class RuntimeConfig:
     latentmas_use_vllm: bool = False
     latentmas_max_artifact_chars: int = 20_000
     agent_fabric_mode: str = "native"
+    agent_mesh_task_timeout_seconds: float = 15.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
@@ -120,6 +121,11 @@ class RuntimeConfig:
             raise ValueError(f"max_transient_retries must be >= 0, got {self.max_transient_retries}")
         if self.max_json_body_bytes < 0:
             raise ValueError(f"max_json_body_bytes must be >= 0, got {self.max_json_body_bytes}")
+        if self.agent_mesh_task_timeout_seconds <= 0:
+            raise ValueError(
+                "agent_mesh_task_timeout_seconds must be > 0, "
+                f"got {self.agent_mesh_task_timeout_seconds}"
+            )
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
@@ -199,6 +205,7 @@ class RuntimeConfig:
             latentmas_use_vllm=os.getenv("MESH_LATENTMAS_USE_VLLM", "").lower() in ("1", "true", "yes"),
             latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
             agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
+            agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
             mesh_deepagents_workspace_root=_env_path_anchored_to_repo(

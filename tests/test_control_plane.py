@@ -261,6 +261,44 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(attempts[0]["risk_flags"], ["latentmas_unavailable"])
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
 
+    def test_slow_deepagents_proposal_lanes_do_not_block_run_execution(self) -> None:
+        for cfg in (self.server.config, self.server.coordinator.config):
+            cfg.agent_fabric_mode = "deepagents"
+            cfg.agent_mesh_task_timeout_seconds = 0.05
+
+        def slow_lane(_self, *, agent, task, trigger, decision, evaluation):
+            time.sleep(0.2)
+            return build_agent_attempt(
+                task_id=task.task_id,
+                run_id=task.run_id,
+                agent=agent,
+                adapter="deepagents",
+                status="completed",
+                summary=f"slow-{agent}",
+                risk_flags=[],
+                recommended_action="human_review",
+                output={},
+            )
+
+        with patch("services.orchestrator.deepagents_adapter.DeepAgentsAdapter.build_lane_attempt", slow_lane):
+            run = self._request(
+                "POST",
+                "/api/runs",
+                {
+                    "scenario_key": "search_latency_regression",
+                    "evaluation_mode": "native",
+                    "orchestration_mode": "native",
+                    "steering_mode": "interruptible_auto",
+                },
+            )
+            completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
+        attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+        self.assertEqual([attempt["agent"] for attempt in attempts], ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"])
+        for attempt in attempts:
+            self.assertEqual(attempt["status"], "failed")
+            self.assertEqual(attempt["risk_flags"], ["agent_mesh_timeout"])
+
     def test_kubernetes_fixture_repo_placeholder_resolves_before_evaluation(self) -> None:
         run = self._request(
             "POST",

@@ -71,6 +71,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+  && install -m 755 /root/.local/bin/uv /usr/local/bin/uv \
+  && if [ -f /root/.local/bin/uvx ]; then install -m 755 /root/.local/bin/uvx /usr/local/bin/uvx; fi \
   && git init /opt/hermes-agent \
   && cd /opt/hermes-agent \
   && git remote add origin https://github.com/NousResearch/hermes-agent.git \

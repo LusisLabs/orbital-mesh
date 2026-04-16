@@ -93,6 +93,7 @@ With LatentMAS enabled, the first attempt may look like:
 ```
 
 If the sidecar is unavailable, Mesh records a failed LatentMAS attempt with `latentmas_unavailable` and continues with the remaining worker lanes for the active agent fabric mode.
+LatentMAS health is preflight-aware: the sidecar now reports readiness detail from `/health`, and Mesh skips the inference call when the sidecar reports `ready: false`. This prevents a false-green readiness check followed by an immediate `500` on `/infer`.
 
 With Deep Agents enabled, a lane attempt looks like:
 
@@ -121,6 +122,8 @@ With Deep Agents enabled, a lane attempt looks like:
 ```
 
 If Deep Agents is enabled but the dependency or provider credentials are unavailable, Mesh records a failed or degraded attempt with non-blocking risk flags such as `deepagents_dependency_missing` or `deepagents_model_credentials_missing`.
+Agent-task collection is best-effort and bounded by `MESH_AGENT_TASK_TIMEOUT_SECONDS` so proposal lanes cannot block control-plane execution. Slow lanes degrade into recorded failed attempts with `agent_mesh_timeout`.
+For `openai:MiniMax-*` Deep Agents models, Mesh resolves credentials from `OPENAI_API_KEY` and falls back to `MINIMAX_API_KEY` for the OpenAI-compatible MiniMax route.
 
 ## Evo Proposal Lane
 

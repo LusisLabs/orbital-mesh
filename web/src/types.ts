@@ -153,6 +153,14 @@ export interface SystemSnapshot {
 }
 // </generated-control-plane-contracts>
 
+export interface HealthSnapshot {
+  status: string;
+  timestamp: string;
+  environment: string;
+  version: string;
+  commit: string;
+}
+
 export type SteeringMode = "approval_gate" | "interruptible_auto";
 export type RuntimeMode = "native" | "promptfoo" | "goose" | "hermes";
 export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";

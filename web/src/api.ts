@@ -1,5 +1,6 @@
 import type {
   GoalRecord,
+  HealthSnapshot,
   IntegrationReadiness,
   MerkleProof,
   MerkleSnapshot,
@@ -47,7 +48,7 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
 
 export const api = {
   getHealth(baseUrl: string) {
-    return request<{ status: string }>(baseUrl, "/api/health");
+    return request<HealthSnapshot>(baseUrl, "/api/health");
   },
 
   getReadiness(baseUrl: string) {
