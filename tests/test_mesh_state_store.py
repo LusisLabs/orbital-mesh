@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from shared.mesh_runtime import FileStateStore, RuntimeConfig, build_mesh_state_store
+from shared.mesh_runtime.json_store import LockedJsonFile
 from shared.mesh_runtime.mesh_state_store import RunFilters
 
 
@@ -53,6 +56,31 @@ class MeshStateStoreTests(unittest.TestCase):
             self.assertEqual(store.get_learning_context("search")["similar_prior_cases"], 1)
             self.assertEqual(store.get_historical_success_rate("rollback_deployment", "search"), 1.0)
             self.assertEqual(store.get_recovery_patterns("search")["rollback_restores_search"], 1)
+
+    def test_locked_json_file_read_only_access_does_not_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text('{"runs": [{"run_id": "run_1"}]}\n', encoding="utf-8")
+
+            with patch("shared.mesh_runtime.json_store.os.replace") as replace_mock:
+                with LockedJsonFile(path) as payload:
+                    self.assertEqual(payload["runs"][0]["run_id"], "run_1")
+
+            replace_mock.assert_not_called()
+
+    def test_file_store_lists_empty_runs_when_run_session_file_is_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run_sessions.json"
+            raw = '{"runs": [{"run_id": "x" INVALID}]}'
+            path.write_text(raw, encoding="utf-8")
+
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
+
+            self.assertEqual(store.list_run_sessions(), [])
+            backups = sorted(Path(tmp).glob("run_sessions.json.corrupt.*"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), raw)
+            self.assertEqual(path.read_text(encoding="utf-8"), "{}\n")
 
     def test_postgres_backend_requires_database_url(self) -> None:
         with self.assertRaises(ValueError):

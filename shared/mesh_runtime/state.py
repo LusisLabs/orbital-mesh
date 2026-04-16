@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .json_store import LockedJsonFile
+from .json_store import LockedJsonFile, parse_state_json_file as _parse_state_json_file
 
 
 @dataclass
@@ -37,19 +37,12 @@ class RunRecord:
 
 
 def parse_state_json_file(path: Path, raw: str) -> dict[str, Any]:
-    """Parse JSON from *raw*, returning {} on failure and writing a .corrupt backup."""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        backup = path.with_suffix(
-            f"{path.suffix}.corrupt.{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}"
-        )
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        backup.write_text(raw, encoding="utf-8")
-        return {}
+    return _parse_state_json_file(path, raw)
 
 
 class RuntimeStateStore:
+    _locked_json = LockedJsonFile
+
     def __init__(self, state_directory: str | Path):
         self.state_directory = Path(state_directory)
         self.state_directory.mkdir(parents=True, exist_ok=True)
@@ -152,5 +145,3 @@ class RuntimeStateStore:
         if self._run_snapshots_dir.exists():
             shutil.rmtree(self._run_snapshots_dir)
             self._run_snapshots_dir.mkdir(parents=True, exist_ok=True)
-
-    _locked_json = LockedJsonFile
