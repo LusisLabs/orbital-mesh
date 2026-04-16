@@ -15,7 +15,7 @@ from .mesh_state_store import RunFilters
 from .state import RuntimeStateStore
 from .vault import VaultManager
 
-MIGRATION_PATH = Path(__file__).resolve().parents[2] / "migrations" / "postgres" / "001_live_persistence.sql"
+MIGRATION_DIR = Path(__file__).resolve().parents[2] / "migrations" / "postgres"
 
 
 class PostgresStateStore:
@@ -345,7 +345,8 @@ class PostgresStateStore:
 
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(MIGRATION_PATH.read_text(encoding="utf-8"))
+            for path in sorted(MIGRATION_DIR.glob("*.sql")):
+                conn.execute(path.read_text(encoding="utf-8"))
 
     def _connect(self):
         try:

@@ -1,3 +1,4 @@
+from .active_memory import ActiveMemoryStore
 from .config import RuntimeConfig
 from .context_store import ContextStore
 from .learning import LearningStore
@@ -20,9 +21,13 @@ from .postgres_state import PostgresStateStore
 from .state_store_factory import build_mesh_state_store
 from .contracts import (
     Decision,
+    EvidenceNode,
     EvaluationResult,
     ExecutionRecord,
     FeedbackRecord,
+    MemoryCompactionRecord,
+    ScenarioAnalysis,
+    Subdecision,
     Trigger,
 )
 from .events import EventEnvelope
@@ -44,19 +49,23 @@ from .run_events import (
     AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,
     DECISION_READY,
+    EVIDENCE_NODE_RECORDED,
     EVALUATION_READY,
     EXECUTION_RECORDED,
     FEEDBACK_RECORDED,
     INTEGRATION_ARTIFACT_RECORDED,
     INTEGRATION_READINESS_RECORDED,
+    MEMORY_COMPACTION_RECORDED,
     NO_TRIGGER,
     NORMALIZED_EVENT,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_QUEUED,
+    SCENARIO_ANALYSIS_READY,
     STEERING_COMMAND,
     STEERING_REJECTED,
+    SUBDECISION_RECORDED,
     TRIGGER_READY,
 )
 from .schema_validation import SchemaValidationError, load_schema, validate_payload

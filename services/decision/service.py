@@ -8,6 +8,7 @@ from shared.mesh_runtime import Decision, Trigger, load_policy
 
 if TYPE_CHECKING:
     from services.decision.llm_reasoning import EscalationReasoner
+    from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
 
 
@@ -29,9 +30,9 @@ class DecisionService:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
 
-    def decide(self, trigger: Trigger) -> Decision:
+    def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._decide_kubernetes(trigger)
+            return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -165,10 +166,11 @@ class DecisionService:
             confidence=confidence,
             execution_plan=execution_plan,
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
         decision.validate()
         return decision
 
-    def _decide_kubernetes(self, trigger: Trigger) -> Decision:
+    def _decide_kubernetes(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         event_reasons = list(trigger.related_context.get("event_reasons", []))
         rollout_status = str(trigger.related_context.get("rollout_status", "degraded"))
@@ -275,8 +277,61 @@ class DecisionService:
             confidence=confidence,
             execution_plan=_execution_plan(trigger, decision_type, 0),
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, 0)
         decision.validate()
         return decision
+
+
+def _apply_scenario_analysis(
+    decision: Decision,
+    trigger: Trigger,
+    scenario_analysis: "ScenarioAnalysis | dict | None",
+    target_rollout: int,
+) -> Decision:
+    if scenario_analysis is None:
+        return decision
+    analysis = scenario_analysis.to_dict() if hasattr(scenario_analysis, "to_dict") else dict(scenario_analysis)
+    review_reasons = list(analysis.get("required_review_reasons") or [])
+    suggested = analysis.get("suggested_decision_type")
+    autonomy_hint = analysis.get("autonomy_tier_hint")
+    confidence = float(analysis.get("confidence", decision.confidence) or decision.confidence)
+    risk_level = analysis.get("risk_level")
+
+    if review_reasons and suggested == "escalate":
+        decision.decision_type = "escalate"
+        decision.summary = _summary(trigger, "escalate", target_rollout)
+        decision.execution_plan = _execution_plan(trigger, "escalate", target_rollout)
+        decision.risk["customer_impact_if_wrong"] = _customer_impact_if_wrong("escalate")
+
+    if autonomy_hint in {"approval_required", "escalated"}:
+        decision.autonomy_tier = str(autonomy_hint)
+    elif review_reasons and decision.autonomy_tier == "autonomous":
+        decision.autonomy_tier = "approval_required"
+
+    if risk_level in {"medium", "high"}:
+        current = str(decision.risk.get("level", "medium"))
+        if current == "low" or risk_level == "high":
+            decision.risk["level"] = risk_level
+
+    if review_reasons:
+        decision.confidence = min(decision.confidence, confidence, 0.74)
+    else:
+        decision.confidence = min(max(decision.confidence, confidence), 0.95)
+
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["scenario_analysis"] = {
+        "analysis_id": analysis.get("analysis_id"),
+        "suggested_decision_type": suggested,
+        "autonomy_tier_hint": autonomy_hint,
+        "required_review_reasons": review_reasons,
+        "evidence_refs": list(analysis.get("evidence_refs") or []),
+        "merkle_root": analysis.get("merkle_root"),
+    }
+    if review_reasons:
+        decision.reasoning.setdefault("evidence", []).append(
+            "scenario analysis requires review: " + "; ".join(review_reasons)
+        )
+    return decision
 
 
 def _delta_pct(baseline: float, observed: float) -> float:

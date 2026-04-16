@@ -126,6 +126,13 @@ class ControlPlaneApiTests(unittest.TestCase):
             lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
         )
         self.assertNotIn("execution", paused["artifacts"])
+        analysis = self._request("GET", f"/api/runs/{run['run_id']}/scenario-analysis")
+        self.assertEqual(analysis["suggested_decision_type"], "disable_flag")
+        self.assertIn("merkle_root", analysis)
+        graph = self._request("GET", f"/api/runs/{run['run_id']}/evidence-graph")
+        self.assertGreater(len(graph["nodes"]), 0)
+        active_memory = self._request("GET", "/api/memory/active?service=api-gateway")
+        self.assertIn("api-gateway", active_memory["services"])
 
         override = self._request(
             "POST",
@@ -417,6 +424,51 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(paused["artifacts"]["input_signal"]["signal_type"], "kubernetes_deployment_issue")
         self.assertEqual(paused["artifacts"]["input_signal"]["related_context"]["kube_context"], "k3d-mesh-e2e")
         self.assertIn(paused["artifacts"]["decision"]["decision_type"], ("rollback_deployment", "restart_deployment"))
+
+    def test_live_kubernetes_scenario_key_shorthand_requires_kube_context(self) -> None:
+        request = Request(
+            f"{self.base_url}/api/runs",
+            data=json.dumps(
+                {
+                    "scenario_key": "live_kubernetes:search/semantic-search",
+                    "evaluation_mode": "native",
+                    "orchestration_mode": "native",
+                    "steering_mode": "approval_gate",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(request, timeout=10)
+        self.assertEqual(ctx.exception.code, 400)
+        body = ctx.exception.read().decode("utf-8")
+        self.assertIn("kube_context", body)
+
+    def test_live_kubernetes_scenario_key_shorthand_collects_signal(self) -> None:
+        fake_state_dir = Path(self.temp_dir.name) / "fake-kubectl-shorthand"
+        fake_state_dir.mkdir(parents=True, exist_ok=True)
+        _, fake_command = _write_fake_kubectl(fake_state_dir)
+        self.server.config.kubectl_command = fake_command
+        self.server.coordinator.config.kubectl_command = fake_command
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "live_kubernetes:search/semantic-search",
+                "kube_context": "k3d-mesh-e2e",
+                "environment": "staging",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        paused = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        self.assertEqual(paused["scenario_key"], "live_kubernetes:search/semantic-search")
+        self.assertEqual(paused["artifacts"]["input_signal"]["signal_type"], "kubernetes_deployment_issue")
 
     def test_readiness_reports_missing_cli_integrations(self) -> None:
         readiness = self._request("GET", "/api/readiness")

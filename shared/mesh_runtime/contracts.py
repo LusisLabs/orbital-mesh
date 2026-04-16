@@ -57,6 +57,64 @@ class Decision(ContractModel):
 
 
 @dataclass
+class EvidenceNode(ContractModel):
+    schema_name: ClassVar[str] = "evidence-node.schema.json"
+    evidence_id: str
+    run_id: str | None
+    analyzer: str
+    kind: str
+    summary: str
+    payload: dict[str, Any]
+    source_event_ids: list[str]
+    confidence: float
+    trusted: bool
+
+
+@dataclass
+class Subdecision(ContractModel):
+    schema_name: ClassVar[str] = "subdecision.schema.json"
+    subdecision_id: str
+    analyzer: str
+    recommendation: str
+    confidence: float
+    risk_level: str
+    reasons: list[str]
+    evidence_refs: list[str]
+    requires_review: bool
+
+
+@dataclass
+class ScenarioAnalysis(ContractModel):
+    schema_name: ClassVar[str] = "scenario-analysis.schema.json"
+    analysis_id: str
+    trigger_id: str
+    created_at: str
+    suggested_decision_type: str
+    confidence: float
+    risk_level: str
+    autonomy_tier_hint: str
+    required_review_reasons: list[str]
+    evidence_refs: list[str]
+    subdecisions: list[dict[str, Any]]
+    evidence_nodes: list[dict[str, Any]]
+    merkle_root: str | None = None
+    merkle_event_ids: list[str] | None = None
+
+
+@dataclass
+class MemoryCompactionRecord(ContractModel):
+    schema_name: ClassVar[str] = "memory-compaction.schema.json"
+    compaction_id: str
+    run_id: str | None
+    service: str
+    created_at: str
+    active_facts: list[dict[str, Any]]
+    suppressed_facts: list[dict[str, Any]]
+    source_event_ids: list[str]
+    merkle_root: str | None = None
+
+
+@dataclass
 class EvaluationResult(ContractModel):
     schema_name: ClassVar[str] = "evaluation-result.schema.json"
     evaluation_id: str

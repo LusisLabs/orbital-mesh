@@ -90,6 +90,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             self._send_json({"runs": self.server.coordinator.list_runs()})
             return
+        if path == "/api/memory/active":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_active_memory(service))
+            return
         if path == "/api/research-sessions":
             self._send_json({"sessions": self.server.coordinator.list_research_sessions()})
             return
@@ -113,6 +117,28 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             after = _safe_int(parse_qs(parsed.query).get("after", ["0"])[0])
             events = self.server.coordinator.state_store.list_run_events(run_id, after_sequence=after)
             self._send_json({"events": [event.to_dict() for event in events]})
+            return
+        if path.startswith("/api/runs/") and path.endswith("/scenario-analysis"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_scenario_analysis(run_id)
+            if payload is None:
+                self._send_json({"error": "scenario analysis not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/evidence-graph"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_evidence_graph(run_id)
+            if payload is None:
+                self._send_json({"error": "evidence graph not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
             return
         if path.startswith("/api/runs/") and path.endswith("/merkle"):
             run_id = _safe_segment(path, 2)

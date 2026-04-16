@@ -63,6 +63,8 @@ This topology is not the production template. It intentionally uses a privileged
   post-action observations into one event envelope.
 - `TriggerService` emits a trigger only when evidence is recent, persistent, above thresholds, and
   not suppressed.
+- `ScenarioAnalysisService` records cross-run evidence, modular subdecisions, active-memory
+  compaction, and a Merkle-bound advisory synthesis before final decision creation.
 - `DecisionService` produces exactly one bounded decision from the allowed set:
   `no_action`, `reduce_rollout`, `disable_flag`, `escalate`.
 - `EvaluationService` merges policy and business gates with Promptfoo-backed quality artifacts.
@@ -125,12 +127,13 @@ Telemetry is **not** pushed service-by-service over HTTP. One **`POST /api/runs`
 | --- | --- | --- | --- |
 | 1 | `IngestService.normalize_signal` | Raw signal dict → `EventEnvelope` | `ingesting` |
 | 2 | `TriggerService.detect` | Envelope → `Trigger` or `None` | `trigger_ready` or `no_trigger` (then terminal if no trigger) |
-| 3 | `DecisionService.decide` | `Trigger` → `Decision` | `decision_ready` |
-| 4 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
+| 3 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
+| 4 | `DecisionService.decide` | `Trigger` + advisory analysis → `Decision` | `decision_ready` |
+| 5 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
 | — | *Operator gate* | If approval mode or failed auto conditions: **`awaiting_operator`** until `POST .../steer` | `awaiting_operator` |
-| 5 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
-| 6 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 4) |
-| 7 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
+| 6 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
+| 7 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 5) |
+| 8 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
 
 Overrides (`override_decision`, `override_execution_parameters`) cause **re-evaluation**: `decide` is not re-run from scratch in all cases, but evaluation is run again with the updated decision path before execution resumes.
 

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/scenario-analysis.schema.json",
+  "title": "ScenarioAnalysis",
+  "type": "object",
+  "required": [
+    "analysis_id",
+    "trigger_id",
+    "created_at",
+    "suggested_decision_type",
+    "confidence",
+    "risk_level",
+    "autonomy_tier_hint",
+    "required_review_reasons",
+    "evidence_refs",
+    "subdecisions",
+    "evidence_nodes"
+  ],
+  "properties": {
+    "analysis_id": { "type": "string" },
+    "trigger_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "suggested_decision_type": {
+      "type": "string",
+      "enum": [
+        "no_action",
+        "reduce_rollout",
+        "disable_flag",
+        "escalate",
+        "investigate_and_patch",
+        "rollback_deployment",
+        "restart_deployment"
+      ]
+    },
+    "confidence": { "type": "number" },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "autonomy_tier_hint": {
+      "type": "string",
+      "enum": ["autonomous", "approval_required", "escalated"]
+    },
+    "required_review_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "subdecisions": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "evidence_nodes": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "merkle_root": { "type": ["string", "null"] },
+    "merkle_event_ids": {
+      "type": ["array", "null"],
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

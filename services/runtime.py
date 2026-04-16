@@ -8,8 +8,10 @@ from services.evaluation.service import EvaluationService
 from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
 from services.orchestrator.service import OrchestratorService
+from services.scenario_analysis.service import ScenarioAnalysisService
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
+from shared.mesh_runtime.active_memory import ActiveMemoryStore
 
 if TYPE_CHECKING:
     from shared.mesh_runtime.context_store import ContextStore
@@ -51,6 +53,12 @@ class MeshRuntimeEngine:
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
         self.feedback = feedback or FeedbackService()
+        self.scenario_analysis = ScenarioAnalysisService(
+            state_store=None,
+            learning_store=learning_store,
+            context_store=context_store,
+            active_memory=ActiveMemoryStore(self.config.state_directory),
+        )
 
     def run_sync(self, raw_signal: dict, scenario_name: str = "manual") -> dict:
         run_events: list[dict] = []
@@ -91,7 +99,6 @@ class MeshRuntimeEngine:
             result["run_metadata"] = run_record.__dict__
             return result
 
-        decision = self.decision.decide(trigger)
         record_event(
             "trigger_ready",
             "trigger_ready",
@@ -99,6 +106,23 @@ class MeshRuntimeEngine:
             artifact_key="trigger",
             status="recorded",
         )
+        scenario_analysis, memory_compaction = self.scenario_analysis.analyze(trigger)
+        record_event(
+            "scenario_analysis_ready",
+            "scenario_analysis_ready",
+            scenario_analysis.to_dict(),
+            artifact_key="scenario_analysis",
+            status="recorded",
+        )
+        if memory_compaction is not None:
+            record_event(
+                "scenario_analysis_ready",
+                "memory_compaction_recorded",
+                memory_compaction.to_dict(),
+                artifact_key="memory_compaction",
+                status="recorded",
+            )
+        decision = self.decision.decide(trigger, scenario_analysis=scenario_analysis)
         record_event(
             "decision_ready",
             "decision_ready",
@@ -156,6 +180,7 @@ class MeshRuntimeEngine:
         result = {
             "normalized_event": normalized_event.to_dict(),
             "trigger": trigger.to_dict(),
+            "scenario_analysis": scenario_analysis.to_dict(),
             "decision": decision.to_dict(),
             "evaluation": evaluation.to_dict(),
             "execution": execution.to_dict(),

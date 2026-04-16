@@ -16,24 +16,29 @@ from uuid import uuid4
 from services.runtime import MeshRuntimeEngine
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.evo_launcher import EvoLaunchService
+from services.scenario_analysis import ScenarioAnalysisService
 from shared.mesh_runtime import (
     AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,
     DECISION_READY,
+    EVIDENCE_NODE_RECORDED,
     EVALUATION_READY,
     EXECUTION_RECORDED,
     FEEDBACK_RECORDED,
     INTEGRATION_ARTIFACT_RECORDED,
     INTEGRATION_READINESS_RECORDED,
+    MEMORY_COMPACTION_RECORDED,
     NORMALIZED_EVENT,
     NO_TRIGGER,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
     RUN_QUEUED,
+    SCENARIO_ANALYSIS_READY,
     RuntimeConfig,
     STEERING_COMMAND,
     STEERING_REJECTED,
+    SUBDECISION_RECORDED,
     TRIGGER_READY,
     Decision,
     ExecutionRecord,
@@ -49,6 +54,7 @@ from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
 from shared.mesh_runtime.learning import LearningStore
+from shared.mesh_runtime.active_memory import ActiveMemoryStore
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -122,6 +128,49 @@ def _validate_steering_command(session: RunSession, command_type: str, command_p
         )
 
 
+def _evidence_graph(analysis: dict[str, Any]) -> dict[str, Any]:
+    nodes: list[dict[str, Any]] = []
+    edges: list[dict[str, Any]] = []
+    for evidence in analysis.get("evidence_nodes", []):
+        evidence_id = evidence.get("evidence_id")
+        if not evidence_id:
+            continue
+        nodes.append(
+            {
+                "id": evidence_id,
+                "type": "evidence",
+                "label": evidence.get("summary", evidence.get("kind", "evidence")),
+                "analyzer": evidence.get("analyzer"),
+                "confidence": evidence.get("confidence"),
+            }
+        )
+    for subdecision in analysis.get("subdecisions", []):
+        subdecision_id = subdecision.get("subdecision_id")
+        if not subdecision_id:
+            continue
+        nodes.append(
+            {
+                "id": subdecision_id,
+                "type": "subdecision",
+                "label": subdecision.get("recommendation"),
+                "analyzer": subdecision.get("analyzer"),
+                "requires_review": subdecision.get("requires_review"),
+            }
+        )
+        for evidence_ref in subdecision.get("evidence_refs", []):
+            edges.append({"source": evidence_ref, "target": subdecision_id, "kind": "supports"})
+        edges.append({"source": subdecision_id, "target": analysis.get("analysis_id"), "kind": "feeds"})
+    nodes.append(
+        {
+            "id": analysis.get("analysis_id"),
+            "type": "scenario_analysis",
+            "label": analysis.get("suggested_decision_type"),
+            "merkle_root": analysis.get("merkle_root"),
+        }
+    )
+    return {"nodes": nodes, "edges": edges, "merkle_root": analysis.get("merkle_root")}
+
+
 class RunControl:
     def __init__(self, auto_mode: bool, pause_points: list[str]):
         self.condition = threading.Condition()
@@ -141,6 +190,13 @@ class RunCoordinator:
         self.sidecar = GitNexusSidecarManager(self.config)
         self.learning_store = LearningStore(self.config.state_directory, state_store=self.state_store)
         self.context_store = ContextStore(self.config.state_directory)
+        self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        self.scenario_analysis = ScenarioAnalysisService(
+            state_store=self.state_store,
+            learning_store=self.learning_store,
+            context_store=self.context_store,
+            active_memory=self.active_memory,
+        )
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config)
         self.evo_launcher = EvoLaunchService(self.config)
@@ -311,6 +367,23 @@ class RunCoordinator:
             "events": [event.to_dict() for event in self.state_store.list_run_events(run_id)],
             "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
         }
+
+    def get_scenario_analysis(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        artifact = session.artifacts.get("scenario_analysis")
+        return artifact if isinstance(artifact, dict) else None
+
+    def get_evidence_graph(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        artifact = session.artifacts.get("evidence_graph")
+        return artifact if isinstance(artifact, dict) else None
+
+    def get_active_memory(self, service: str | None = None) -> dict[str, Any]:
+        return self.active_memory.active_facts(service)
 
     def list_agent_tasks(self, run_id: str) -> list[dict[str, Any]]:
         session = self.state_store.get_run_session(run_id)
@@ -521,7 +594,22 @@ class RunCoordinator:
                     continue
                 break
 
-            decision = engine.decision.decide(trigger)
+            scenario_analysis = None
+            try:
+                scenario_analysis = self._record_scenario_analysis(run_id, trigger)
+            except Exception as exc:
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="scenario_analysis_ready",
+                    event_type=SCENARIO_ANALYSIS_READY,
+                    payload={"error": str(exc), "fallback": "existing_decision_service"},
+                    summary={"status": "failed"},
+                    artifact_key="scenario_analysis",
+                    status="failed",
+                )
+                _LOG.exception("Scenario analysis failed for run %s", run_id)
+
+            decision = engine.decision.decide(trigger, scenario_analysis=scenario_analysis)
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
 
             while True:
@@ -679,6 +767,75 @@ class RunCoordinator:
                 self.context_store.update_from_run(completed_session.to_dict())
         except Exception:
             _LOG.exception("Learning persistence failed for run %s", run_id)
+
+    def _record_scenario_analysis(self, run_id: str, trigger: Trigger):
+        self._update_session(run_id, stage="scenario_analysis_ready", status="running")
+        analysis, memory_compaction = self.scenario_analysis.analyze(trigger, run_id=run_id)
+        merkle_event_ids: list[str] = []
+        for evidence in analysis.evidence_nodes:
+            event = self.state_store.append_run_event(
+                run_id,
+                stage="scenario_analysis_ready",
+                event_type=EVIDENCE_NODE_RECORDED,
+                payload=evidence,
+                summary={"analyzer": evidence.get("analyzer"), "kind": evidence.get("kind")},
+                artifact_key="scenario_analysis",
+                status="recorded",
+            )
+            merkle_event_ids.append(event.event_id)
+        for subdecision in analysis.subdecisions:
+            event = self.state_store.append_run_event(
+                run_id,
+                stage="scenario_analysis_ready",
+                event_type=SUBDECISION_RECORDED,
+                payload=subdecision,
+                summary={
+                    "analyzer": subdecision.get("analyzer"),
+                    "recommendation": subdecision.get("recommendation"),
+                    "requires_review": subdecision.get("requires_review"),
+                },
+                artifact_key="scenario_analysis",
+                status="recorded",
+            )
+            merkle_event_ids.append(event.event_id)
+
+        merkle = self.state_store.get_merkle_snapshot(run_id)
+        analysis.merkle_root = merkle.root_hash
+        analysis.merkle_event_ids = merkle_event_ids
+        analysis.validate()
+        analysis_payload = analysis.to_dict()
+        self._set_artifact(run_id, "scenario_analysis", analysis_payload)
+        self._set_artifact(run_id, "evidence_graph", _evidence_graph(analysis_payload))
+        self.state_store.append_run_event(
+            run_id,
+            stage="scenario_analysis_ready",
+            event_type=SCENARIO_ANALYSIS_READY,
+            payload=analysis_payload,
+            summary={
+                "suggested_decision_type": analysis.suggested_decision_type,
+                "required_review_count": len(analysis.required_review_reasons),
+            },
+            artifact_key="scenario_analysis",
+            status="recorded",
+        )
+
+        if memory_compaction is not None:
+            memory_compaction.merkle_root = merkle.root_hash
+            memory_payload = memory_compaction.to_dict()
+            self._set_artifact(run_id, "memory_compaction", memory_payload)
+            self.state_store.append_run_event(
+                run_id,
+                stage="scenario_analysis_ready",
+                event_type=MEMORY_COMPACTION_RECORDED,
+                payload=memory_payload,
+                summary={
+                    "active_facts": len(memory_compaction.active_facts),
+                    "suppressed_facts": len(memory_compaction.suppressed_facts),
+                },
+                artifact_key="memory_compaction",
+                status="recorded",
+            )
+        return analysis
 
     def _record_decision_and_evaluation(
         self,
@@ -1046,6 +1203,45 @@ class RunCoordinator:
         if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
             return self._collect_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
+        if isinstance(scenario_key, str) and scenario_key.startswith("live_kubernetes:"):
+            remainder = scenario_key[len("live_kubernetes:") :].strip()
+            if "/" not in remainder:
+                raise ValueError(
+                    f"invalid live_kubernetes scenario_key {scenario_key!r}: "
+                    "expected live_kubernetes:<namespace>/<deployment_name>"
+                )
+            namespace, deployment_name = remainder.split("/", 1)
+            namespace = namespace.strip()
+            deployment_name = deployment_name.strip()
+            if not namespace or not deployment_name:
+                raise ValueError(
+                    f"invalid live_kubernetes scenario_key {scenario_key!r}: "
+                    "namespace and deployment_name must be non-empty"
+                )
+            extras = payload.get("live_kubernetes")
+            kube_context = None
+            environment = "staging"
+            if isinstance(extras, dict):
+                kube_context = extras.get("kube_context")
+                environment = str(extras.get("environment") or environment)
+            kube_context = kube_context or payload.get("kube_context")
+            environment = str(payload.get("environment") or environment)
+            if not kube_context:
+                raise ValueError(
+                    "live_kubernetes scenario_key requires kube_context "
+                    '(e.g. \"kube_context\": \"k3d-mesh-e2e\" or '
+                    '\"live_kubernetes\": {\"kube_context\": \"...\"})'
+                )
+            return self._collect_live_kubernetes_signal(
+                {
+                    "source": "kubernetes",
+                    "deployment_name": deployment_name,
+                    "namespace": namespace,
+                    "kube_context": kube_context,
+                    "environment": environment,
+                },
+                payload,
+            )
         if scenario_key:
             fixture_name = f"{scenario_key}.json"
             try:
