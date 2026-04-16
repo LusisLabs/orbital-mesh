@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass
@@ -75,6 +78,48 @@ class RunSession(JsonModel):
     operator_notes: list[str] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+
+    @classmethod
+    def new(
+        cls,
+        *,
+        goal_id: str | None,
+        scenario_key: str | None,
+        steering_mode: str,
+        auto_mode: bool,
+        pause_points: list[str],
+        evaluation_mode: str,
+        orchestration_mode: str,
+        artifacts: dict[str, Any],
+    ) -> RunSession:
+        """Build a brand-new queued RunSession with a generated run_id.
+
+        Shared factory used by every state backend so the construction
+        logic lives in one place and backends cannot drift.
+        """
+
+        now = datetime.now(timezone.utc).isoformat()
+        return cls(
+            run_id=f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}",
+            created_at=now,
+            updated_at=now,
+            goal_id=goal_id,
+            scenario_key=scenario_key,
+            stage="queued",
+            status="queued",
+            steering_mode=steering_mode,
+            auto_mode=auto_mode,
+            pause_points=list(pause_points),
+            pending_pause_stage=None,
+            evaluation_mode=evaluation_mode,
+            orchestration_mode=orchestration_mode,
+            latest_event_id=None,
+            latest_event_sequence=0,
+            latest_merkle_root=None,
+            operator_notes=[],
+            artifacts=deepcopy(artifacts),
+            error=None,
+        )
 
 
 @dataclass

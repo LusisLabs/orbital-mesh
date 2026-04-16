@@ -82,27 +82,15 @@ class PostgresStateStore:
         orchestration_mode: str,
         artifacts: dict[str, Any],
     ) -> RunSession:
-        now = _timestamp()
-        session = RunSession(
-            run_id=f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}",
-            created_at=now,
-            updated_at=now,
+        session = RunSession.new(
             goal_id=goal_id,
             scenario_key=scenario_key,
-            stage="queued",
-            status="queued",
             steering_mode=steering_mode,
             auto_mode=auto_mode,
-            pause_points=list(pause_points),
-            pending_pause_stage=None,
+            pause_points=pause_points,
             evaluation_mode=evaluation_mode,
             orchestration_mode=orchestration_mode,
-            latest_event_id=None,
-            latest_event_sequence=0,
-            latest_merkle_root=None,
-            operator_notes=[],
-            artifacts=deepcopy(artifacts),
-            error=None,
+            artifacts=artifacts,
         )
         self.save_run_session(session)
         return session
