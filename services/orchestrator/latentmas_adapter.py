@@ -148,10 +148,10 @@ class LatentMasAdapter:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            return None
+            return f"LatentMAS sidecar returned non-JSON health payload: {raw[:200]!r}"
         if not isinstance(payload, dict):
-            return None
-        if payload.get("ready", True):
+            return f"LatentMAS sidecar health payload is not an object: {type(payload).__name__}"
+        if payload.get("ready", False):
             return None
         detail = str(payload.get("detail") or "sidecar reported not ready")
         return f"LatentMAS sidecar not ready: {detail}"

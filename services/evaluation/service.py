@@ -9,6 +9,7 @@ from shared.mesh_runtime import (
     EvaluationResult,
     RuntimeConfig,
     RuntimeStateStore,
+    SchemaValidationError,
     Trigger,
     log_runtime_event,
     load_policy,
@@ -51,7 +52,7 @@ class EvaluationService:
             trigger.validate()
             decision.validate()
             schema_validation = {"passed": True}
-        except Exception as exc:
+        except SchemaValidationError as exc:
             schema_validation = {"passed": False, "notes": [str(exc)]}
             blocking_reasons.append(str(exc))
 

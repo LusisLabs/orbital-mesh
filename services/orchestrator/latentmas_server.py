@@ -167,6 +167,11 @@ class LatentMasRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = self._read_json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            _LOG.info("LatentMAS inference rejected bad request: %s", exc)
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        try:
             result = self.server.runtime.infer(payload)
         except Exception as exc:
             _LOG.exception("LatentMAS inference failed")

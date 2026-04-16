@@ -223,7 +223,12 @@ class EscalationReasoner:
                 raw_response=raw,
             )
 
-        confidence = _clamp(float(parsed.get("confidence", 0.0)), 0.0, 1.0)
+        raw_confidence = parsed.get("confidence", 0.0)
+        try:
+            confidence_value = float(raw_confidence)
+        except (TypeError, ValueError):
+            confidence_value = 0.0
+        confidence = _clamp(confidence_value, 0.0, 1.0)
         reasoning_chain = parsed.get("reasoning_chain", [])
         if not isinstance(reasoning_chain, list):
             reasoning_chain = [str(reasoning_chain)]

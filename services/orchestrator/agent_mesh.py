@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
+
+_LOG = logging.getLogger("mesh.orchestrator.agent_mesh")
 
 from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, build_evo_status
 from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
@@ -82,6 +85,13 @@ class AgentMeshService:
             try:
                 attempt = builder()
             except Exception as exc:  # pragma: no cover - defensive guard for proposal lanes
+                _LOG.exception(
+                    "agent_mesh proposal lane %s (%s) raised; task_id=%s run_id=%s",
+                    agent,
+                    adapter,
+                    task.task_id,
+                    task.run_id,
+                )
                 attempt = build_agent_attempt(
                     task_id=task.task_id,
                     run_id=task.run_id,
