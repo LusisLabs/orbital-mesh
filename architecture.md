@@ -244,11 +244,11 @@ Disallowed side effects:
 
 Active shared contracts live in:
 
-- `scaffold/contracts/schemas/trigger.schema.json`
-- `scaffold/contracts/schemas/decision.schema.json`
-- `scaffold/contracts/schemas/evaluation-result.schema.json`
-- `scaffold/contracts/schemas/execution-record.schema.json`
-- `scaffold/contracts/schemas/feedback-record.schema.json`
+- `shared/mesh_runtime/schemas/trigger.schema.json`
+- `shared/mesh_runtime/schemas/decision.schema.json`
+- `shared/mesh_runtime/schemas/evaluation-result.schema.json`
+- `shared/mesh_runtime/schemas/execution-record.schema.json`
+- `shared/mesh_runtime/schemas/feedback-record.schema.json`
 
 These schemas back the Python contract models in `shared/mesh_runtime/contracts.py`.
 
