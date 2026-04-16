@@ -84,6 +84,9 @@ class AgentMeshService:
         ) -> None:
             try:
                 attempt = builder()
+            # Broad catch is intentional: proposal lanes run independently and a crash in
+            # one adapter must not sink the whole mesh run — we log the stack and record
+            # a failed attempt so the run continues with the other lanes' proposals.
             except Exception as exc:  # pragma: no cover - defensive guard for proposal lanes
                 _LOG.exception(
                     "agent_mesh proposal lane %s (%s) raised; task_id=%s run_id=%s",
