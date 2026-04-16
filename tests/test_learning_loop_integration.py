@@ -14,7 +14,6 @@ import unittest
 
 from services.decision.service import DecisionService
 from services.ingest.service import IngestService
-from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.learning import LearningStore
 
@@ -61,7 +60,7 @@ class LearningLoopIntegrationTest(unittest.TestCase):
         self.assertIn("restart_clears_crash", patterns)
 
         # --- Step 3: Verify ingest enrichment picks up learning data ---
-        ingest = IngestService(learning_store=self.learning_store)
+        _ingest = IngestService(learning_store=self.learning_store)  # noqa: F841
         enrichment = self.learning_store.enrich_context("search")
         self.assertGreater(enrichment["similar_prior_cases"], 0)
 
