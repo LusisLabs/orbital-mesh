@@ -33,9 +33,9 @@ class Trigger(ContractModel):
     environment: str
     service: str
     endpoint: str
-    flag_key: str
-    current_rollout_pct: int
-    comparison_window: dict[str, str]
+    flag_key: str | None
+    current_rollout_pct: int | None
+    comparison_window: dict[str, str] | None
     segment: dict[str, Any]
     metrics: dict[str, Any]
     related_context: dict[str, Any]

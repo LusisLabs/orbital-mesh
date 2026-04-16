@@ -130,7 +130,7 @@ class DecisionService:
         elif multi_service_impact or protected_tier or repeated_rollback:
             autonomy_tier = "approval_required"
 
-        target_rollout = 10 if trigger.current_rollout_pct >= 10 else 0
+        target_rollout = 10 if (trigger.current_rollout_pct or 0) >= 10 else 0
         execution_plan = _execution_plan(trigger, decision_type, target_rollout)
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
