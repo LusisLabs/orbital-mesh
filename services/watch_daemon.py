@@ -6,11 +6,9 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
-if TYPE_CHECKING:
-    from services.control_plane import RunCoordinator
-    from services.signal_correlator import SignalCorrelator
+from shared.mesh_runtime.watch_protocol import RunCoordinatorLike, SignalCorrelatorLike
 
 _LOG = logging.getLogger("mesh.watch_daemon")
 
@@ -34,11 +32,11 @@ class _DeduplicationEntry:
 class WatchDaemon:
     def __init__(
         self,
-        coordinator: RunCoordinator,
+        coordinator: RunCoordinatorLike,
         targets: list[WatchTarget],
         interval_seconds: int = 60,
         default_cooldown_seconds: int = 300,
-        correlator: SignalCorrelator | None = None,
+        correlator: SignalCorrelatorLike | None = None,
     ) -> None:
         self.coordinator = coordinator
         self.targets = list(targets)
