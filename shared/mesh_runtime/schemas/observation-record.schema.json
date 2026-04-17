@@ -1,0 +1,33 @@
+{
+  "$id": "https://mesh.local/contracts/observation-record.schema.json",
+  "type": "object",
+  "required": [
+    "observation_id",
+    "scope",
+    "kind",
+    "content",
+    "service",
+    "run_id",
+    "source_type",
+    "source_refs",
+    "created_at",
+    "author",
+    "tags",
+    "metadata"
+  ],
+  "properties": {
+    "observation_id": { "type": "string" },
+    "scope": { "type": "object" },
+    "kind": { "type": "string" },
+    "content": { "type": "string" },
+    "service": { "type": ["string", "null"] },
+    "run_id": { "type": ["string", "null"] },
+    "source_type": { "type": "string" },
+    "source_refs": { "type": "array", "items": { "type": "object" } },
+    "created_at": { "type": "string" },
+    "author": { "type": "string" },
+    "tags": { "type": "array", "items": { "type": "string" } },
+    "metadata": { "type": "object" }
+  },
+  "additionalProperties": false
+}

@@ -86,6 +86,76 @@ class MeshStateStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_mesh_state_store(RuntimeConfig(state_backend="postgres", database_url=None))
 
+    def test_file_store_persists_verified_memory_records_and_packets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
+            observation = store.append_observation({
+                "observation_id": "obs_1",
+                "scope": {"shared": True, "service": "search"},
+                "kind": "incident_summary",
+                "content": "Search latency spiked after rollout.",
+                "service": "search",
+                "run_id": "run_1",
+                "source_type": "run_event",
+                "source_refs": [{"run_id": "run_1", "event_id": "evt_1"}],
+                "created_at": "2026-04-16T00:00:00+00:00",
+                "author": "mesh",
+                "tags": ["search"],
+                "metadata": {},
+            })
+            self.assertEqual(observation["observation_id"], "obs_1")
+
+            claim = store.save_claim({
+                "claim_id": "claim_1",
+                "statement": "Search rollout regression requires investigation.",
+                "entity_refs": ["search", "disable_flag"],
+                "supporting_observation_ids": ["obs_1"],
+                "contradicting_claim_ids": [],
+                "superseded_by": None,
+                "confidence": 0.81,
+                "confidence_factors": {
+                    "support_score": 0.7,
+                    "recency_score": 0.8,
+                    "authority_score": 0.9,
+                    "consistency_score": 0.8,
+                    "verification_score": 0.85,
+                },
+                "freshness": 0.8,
+                "tier": "semantic",
+                "state": "active",
+                "created_at": "2026-04-16T00:00:00+00:00",
+                "updated_at": "2026-04-16T00:00:00+00:00",
+            })
+            self.assertEqual(claim["claim_id"], "claim_1")
+
+            response = store.retrieve_memory({"query": "search rollout regression", "scope": {"service": "search"}, "limit": 5})
+            self.assertEqual(response["packet"]["claims"][0]["claim_id"], "claim_1")
+            self.assertEqual(response["results"][0]["state"], "active")
+
+            packet_id = response["packet"]["packet_id"]
+            self.assertEqual(store.get_memory_packet(packet_id)["packet_id"], packet_id)
+
+            maintenance = store.run_memory_maintenance(now="2026-09-16T00:00:00+00:00")
+            self.assertGreaterEqual(maintenance["claims_scanned"], 1)
+
+            tree = store.tree()
+            flat_paths = _flatten_tree(tree)
+            self.assertIn("MemoryObservations/obs_1.md", flat_paths)
+            self.assertIn("MemoryClaims/claim_1.md", flat_paths)
+            self.assertTrue(any(path.startswith("MemoryRetrievals/ret_") for path in flat_paths))
+
+
+def _flatten_tree(nodes: list[dict[str, object]]) -> list[str]:
+    paths: list[str] = []
+    for node in nodes:
+        path = node["path"]
+        if isinstance(path, str):
+            paths.append(path)
+        children = node.get("children")
+        if isinstance(children, list):
+            paths.extend(_flatten_tree(children))
+    return paths
+
 
 if __name__ == "__main__":
     unittest.main()

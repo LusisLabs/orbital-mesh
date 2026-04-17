@@ -38,8 +38,11 @@ The v1 analyzer set is:
 - `MemoryRelevanceAnalyzer`: active compressed facts and recent related runs.
 - `EdgeCaseAnalyzer`: unknown, conflicting, stale, or unclassified evidence.
 
-Analyzer disagreement or fail-closed findings do not bypass policy. They add
-review reasons, reduce confidence, and can force approval or escalation.
+Analyzer disagreement or fail-closed findings do not bypass policy. Review
+reasons are now classified as either terminal human-review blockers or
+recoverable evidence blockers. Terminal reasons still reduce confidence and can
+force escalation. Recoverable reasons keep the action bounded but allow the
+control plane to retry with enriched context in `interruptible_auto`.
 
 ## Active Memory
 
@@ -56,6 +59,13 @@ The file backend stores compressed active memory at:
 Facts are promoted only when they are relevant, non-empty, and confidence meets
 the active-memory threshold. Suppressed facts are recorded in the compaction
 artifact with a reason.
+
+Scenario analysis no longer consumes ambiguous raw search output directly.
+Instead it requests a verified `MemoryPacket` from the canonical memory
+substrate. The packet contains exact-source-backed observations, claims,
+procedures, contradiction flags, and citations. `memory_compaction_recorded`
+now reflects a prompt-cache projection from verified canonical memory rather
+than ad hoc analyzer facts.
 
 ## Public API
 
@@ -75,8 +85,8 @@ artifact with a reason.
 
 - Existing `DecisionService` remains authoritative for the final `Decision`.
 - Existing decision types remain the only allowed decision types.
-- Scenario analysis can require approval, reduce confidence, or route to
-  escalation.
+- Scenario analysis can require approval, reduce confidence, route to
+  escalation, or mark a run as recoverable with additional evidence.
 - Scenario analysis cannot invent actions, skip evaluation, bypass approval, or
   execute directly.
 - If analysis fails, the run records the failure and falls back to the existing

@@ -14,7 +14,7 @@ from services.evaluation.service import EvaluationService
 from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.trigger.service import TriggerService
-from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
+from shared.mesh_runtime import FileStateStore, RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
 
 
 class LatentMasAgentMeshTests(unittest.TestCase):
@@ -73,6 +73,72 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             self.assertEqual(task.attempts[0].output["metrics"]["model_name"], "fake-qwen")
             self.assertEqual(task.selected_attempt_id, task.attempts[0].attempt_id)
             self.assertEqual(_FakeLatentMasHandler.last_payload["task"]["task_id"], task.task_id)
+            self.assertIn("memory_packet", _FakeLatentMasHandler.last_payload["task"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_latentmas_attempt_carries_memory_citations(self) -> None:
+        state_store = FileStateStore(self.config)
+        state_store.append_observation({
+            "observation_id": "obs_memory",
+            "scope": {"shared": True, "service": "api-gateway"},
+            "kind": "note",
+            "content": "API gateway regressions should be escalated with citations.",
+            "service": "api-gateway",
+            "run_id": "run_seed",
+            "source_type": "run_event",
+            "source_refs": [{"run_id": "run_seed", "event_id": "evt_1"}],
+            "created_at": "2026-04-16T00:00:00+00:00",
+            "author": "mesh",
+            "tags": [],
+            "metadata": {},
+        })
+        state_store.save_claim({
+            "claim_id": "claim_memory",
+            "statement": "API gateway regressions benefit from cited memory packets.",
+            "entity_refs": ["api-gateway"],
+            "supporting_observation_ids": ["obs_memory"],
+            "contradicting_claim_ids": [],
+            "superseded_by": None,
+            "confidence": 0.83,
+            "confidence_factors": {
+                "support_score": 0.8,
+                "recency_score": 0.8,
+                "authority_score": 0.8,
+                "consistency_score": 0.8,
+                "verification_score": 0.9,
+            },
+            "freshness": 0.8,
+            "tier": "semantic",
+            "state": "active",
+            "created_at": "2026-04-16T00:00:00+00:00",
+            "updated_at": "2026-04-16T00:00:00+00:00",
+        })
+        server, thread = _start_fake_latentmas(
+            {
+                "summary": "LatentMAS recommends the gated execution path.",
+                "recommended_action": "execute",
+                "risk_flags": [],
+                "confidence": 0.91,
+                "raw_prediction": "{\"summary\":\"ok\"}",
+                "agent_traces": [],
+                "metrics": {"model_name": "fake-qwen", "elapsed_time_sec": 0.01},
+            }
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            attempt = AgentMeshService(config=self.config, state_store=state_store).build_tasks(
+                run_id="run_enabled",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0].attempts[0]
+            self.assertTrue(attempt.citations)
+            self.assertEqual(attempt.memory_actions_requested, ["review"])
         finally:
             server.shutdown()
             server.server_close()

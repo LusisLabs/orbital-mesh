@@ -12,6 +12,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from control_plane_server import start_server_in_thread
+from shared.mesh_runtime.agent_workers import build_agent_attempt
 from shared.mesh_runtime import RuntimeConfig, load_fixture
 from tests.test_kubernetes_live_execution import _write_fake_kubectl
 
@@ -154,6 +155,14 @@ class ControlPlaneApiTests(unittest.TestCase):
         self._request("POST", f"/api/runs/{run['run_id']}/steer", {"command": "approve"})
         completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
+        crystallization = self._request("GET", f"/api/runs/{run['run_id']}/memory-crystallization")
+        self.assertGreaterEqual(crystallization["observations_recorded"], 1)
+        query = self._request("GET", "/api/memory/query?q=disable%20flag&service=api-gateway")
+        self.assertIn("packet", query)
+        graph_payload = self._request("GET", "/api/memory/graph?service=api-gateway")
+        self.assertIn("nodes", graph_payload)
+        maintenance = self._request("POST", "/api/memory/maintenance/run", {})
+        self.assertIn("claims_scanned", maintenance)
 
         events = self._request("GET", f"/api/runs/{run['run_id']}/events")["events"]
         decision_event = next(event for event in events if event["event_type"] == "decision_ready")
@@ -393,6 +402,108 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(blocked_events[-1]["payload"]["reason"], "evaluation did not pass")
         self.assertEqual(blocked_events[-1]["payload"]["final_recommendation"], "human_review")
         self.assertTrue(blocked_events[-1]["payload"]["blocking_reasons"])
+
+    def test_interruptible_auto_launches_recovery_child_for_recoverable_blockers(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["conflicting_signals"] = True
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "signal_payload": signal,
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        parent = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "recovery_spawned")
+        recovery = parent["artifacts"]["recovery"]
+        self.assertEqual(recovery["status"], "launched")
+        self.assertEqual(recovery["retry_index"], 1)
+        self.assertTrue(parent["artifacts"]["evaluation"]["stage_results"]["blocker_analysis"]["can_auto_remediate"])
+
+        child = self._poll_run(recovery["child_run_id"], lambda payload: payload["stage"] == "completed")
+        self.assertEqual(child["artifacts"]["execution"]["status"], "succeeded")
+        self.assertEqual(child["artifacts"]["input_signal"]["related_context"]["recovery_context"]["retry_index"], 1)
+
+    def test_interruptible_auto_does_not_spawn_recovery_child_for_terminal_blockers(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["high_business_impact"] = True
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "signal_payload": signal,
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        paused = self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        blocker_analysis = paused["artifacts"]["evaluation"]["stage_results"]["blocker_analysis"]
+        self.assertFalse(blocker_analysis["can_auto_remediate"])
+        self.assertNotIn("recovery", paused["artifacts"])
+
+    def test_explain_blockers_records_hermes_explanation_artifact(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["high_business_impact"] = True
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "signal_payload": signal,
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        explained = self._request("POST", f"/api/runs/{run['run_id']}/steer", {"command": "explain_blockers"})
+
+        self.assertIn("hermes_explanation", explained["artifacts"])
+        self.assertIn("summary", explained["artifacts"]["hermes_explanation"])
+        explanation_events = [
+            event
+            for event in explained["events"]
+            if event.get("artifact_key") == "hermes_explanation" and event.get("integration_name") == "hermes"
+        ]
+        self.assertTrue(explanation_events)
+
+    def test_chat_with_hermes_appends_conversation_history(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["high_business_impact"] = True
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "signal_payload": signal,
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        self._request("POST", f"/api/runs/{run['run_id']}/steer", {"command": "explain_blockers"})
+        chatted = self._request(
+            "POST",
+            f"/api/runs/{run['run_id']}/steer",
+            {"command": "chat_with_hermes", "message": "What should I change first?"},
+        )
+
+        explanation = chatted["artifacts"]["hermes_explanation"]
+        self.assertGreaterEqual(len(explanation["messages"]), 3)
+        self.assertEqual(explanation["messages"][-2]["role"], "user")
+        self.assertIn("What should I change first?", explanation["messages"][-2]["content"])
+        self.assertEqual(explanation["messages"][-1]["role"], "assistant")
 
     def test_live_kubernetes_signal_can_be_launched_via_api(self) -> None:
         fake_state_dir = Path(self.temp_dir.name) / "fake-kubectl"

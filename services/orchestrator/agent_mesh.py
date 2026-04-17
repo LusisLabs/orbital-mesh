@@ -13,6 +13,7 @@ _LOG = logging.getLogger("mesh.orchestrator.agent_mesh")
 from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, build_evo_status
 from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
 from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
+from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from .deepagents_adapter import DeepAgentsAdapter
 from .latentmas_adapter import LatentMasAdapter
 
@@ -28,10 +29,12 @@ class AgentMeshService:
     def __init__(
         self,
         config: RuntimeConfig | None = None,
+        state_store: MeshStateStore | None = None,
         latentmas_adapter: LatentMasAdapter | None = None,
         deepagents_adapter: DeepAgentsAdapter | None = None,
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
+        self.state_store = state_store
         self.latentmas_adapter = latentmas_adapter or LatentMasAdapter(self.config)
         self.deepagents_adapter = deepagents_adapter or DeepAgentsAdapter(self.config)
 
@@ -43,12 +46,18 @@ class AgentMeshService:
         decision: Decision,
         evaluation: EvaluationResult,
     ) -> list[AgentTask]:
+        memory_scope = self._memory_scope(run_id, trigger)
+        memory_packet = self._memory_packet(memory_scope, trigger)
         task = build_agent_task(
             run_id=run_id,
             kind=self._task_kind(decision),
             allowed_paths=self._allowed_paths(trigger),
             test_commands=self._test_commands(trigger),
             kubernetes_scope=self._kubernetes_scope(trigger, decision),
+            memory_scope=memory_scope,
+            memory_packet=memory_packet,
+            memory_write_policy=self._memory_write_policy(),
+            open_questions=self._open_questions(memory_packet),
             agents=self._agents(),
         )
         attempts = self._collect_attempts(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
@@ -223,6 +232,9 @@ class AgentMeshService:
                 "execution_plan": decision.execution_plan,
                 "trigger_type": trigger.trigger_type,
             },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[_proposal_observation("goose", trigger.service, f"Operational plan proposed for {decision.decision_type}.")],
+            memory_actions_requested=["defer"],
         )
 
     def _hermes_attempt(
@@ -252,6 +264,10 @@ class AgentMeshService:
                 "reasoning": decision.reasoning,
                 "related_context": trigger.related_context,
             },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[_proposal_observation("hermes", trigger.service, summary)],
+            contradictions_detected=list(task.memory_packet.get("contradictions", [])),
+            memory_actions_requested=["review"],
         )
 
     def _codex_attempt(
@@ -282,6 +298,21 @@ class AgentMeshService:
                 "test_commands": task.test_commands,
                 "evaluation_blocking_reasons": evaluation.blocking_reasons,
             },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[
+                _proposal_observation(
+                    "codex",
+                    trigger.service,
+                    "Code remediation proposal is bounded by allowed paths and tests.",
+                )
+            ],
+            claims_proposed=[
+                {
+                    "statement": "Code remediation should remain gated behind verified repository context and tests.",
+                    "confidence": 0.62,
+                }
+            ],
+            memory_actions_requested=["review"],
         )
 
     def _claude_code_attempt(
@@ -307,6 +338,16 @@ class AgentMeshService:
                 "risk": decision.risk,
                 "blocking_reasons": evaluation.blocking_reasons,
             },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[
+                _proposal_observation(
+                    "claudecode",
+                    trigger.service,
+                    "Review lane validated blast radius, rollback semantics, and test coverage posture.",
+                )
+            ],
+            contradictions_detected=list(task.memory_packet.get("contradictions", [])),
+            memory_actions_requested=["review"],
         )
 
     def _openclaw_attempt(
@@ -333,6 +374,11 @@ class AgentMeshService:
             risk_flags=risk_flags,
             recommended_action="stage_validation" if not risk_flags else "human_review",
             output={"kubernetes_scope": task.kubernetes_scope},
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[
+                _proposal_observation("openclaw", trigger.service, f"Staging scope reviewed for {namespace or 'unknown namespace'}.")
+            ],
+            memory_actions_requested=["defer"],
         )
 
     def _evo_attempt(
@@ -397,6 +443,15 @@ class AgentMeshService:
                 "evo_detail": evo_status.detail,
                 "evaluation_blocking_reasons": evaluation.blocking_reasons,
             },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[
+                _proposal_observation("evo", trigger.service, self._evo_summary(
+                    ready=evo_status.ready,
+                    workspace_detected=workspace_detected,
+                    recommended_action=recommended_action,
+                ))
+            ],
+            memory_actions_requested=["defer"],
         )
 
     def _task_kind(self, decision: Decision) -> str:
@@ -437,6 +492,40 @@ class AgentMeshService:
             return ["latentmas", *agents]
         return agents
 
+    def _memory_scope(self, run_id: str, trigger: Trigger) -> dict[str, Any]:
+        return {
+            "shared": True,
+            "service": trigger.service,
+            "run_id": run_id,
+            "endpoint": trigger.endpoint,
+        }
+
+    def _memory_packet(self, memory_scope: dict[str, Any], trigger: Trigger) -> dict[str, Any]:
+        if self.state_store is None:
+            return {}
+        response = self.state_store.retrieve_memory(
+            {
+                "query": " ".join(filter(None, [trigger.service, trigger.endpoint, trigger.trigger_type])),
+                "scope": memory_scope,
+                "limit": 8,
+            }
+        )
+        return dict(response.get("packet", {}))
+
+    def _memory_write_policy(self) -> dict[str, Any]:
+        return {
+            "shared_memory_mode": "read_mostly",
+            "shared_memory_mutation": "proposals_only",
+            "procedural_memory_mutation": "forbidden_without_review",
+        }
+
+    def _open_questions(self, packet: dict[str, Any]) -> list[str]:
+        return [
+            f"Resolve contradiction for {item.get('claim_id')}"
+            for item in packet.get("contradictions", [])[:3]
+            if item.get("claim_id")
+        ]
+
     def _evo_workspace_detected(self, repo_path: str) -> bool:
         if not repo_path:
             return False
@@ -461,3 +550,12 @@ class AgentMeshService:
         if recommended_action == "prepare_benchmark":
             return "Evo needs benchmark gates before this task can enter experiment-driven optimization."
         return "Evo is limited to bounded code-remediation tasks with explicit repo, path, and test gates."
+
+
+def _proposal_observation(agent: str, service: str, content: str) -> dict[str, Any]:
+    return {
+        "kind": "agent_observation",
+        "service": service,
+        "author": agent,
+        "content": content,
+    }

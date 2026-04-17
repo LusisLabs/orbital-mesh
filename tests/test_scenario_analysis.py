@@ -42,9 +42,9 @@ class ScenarioAnalysisTests(unittest.TestCase):
         decision = DecisionService().decide(trigger, scenario_analysis=analysis)
 
         self.assertIn("conflicting signals are present", analysis.required_review_reasons)
-        self.assertEqual(decision.autonomy_tier, "escalated")
-        self.assertEqual(decision.decision_type, "escalate")
-        self.assertLessEqual(decision.confidence, 0.74)
+        self.assertEqual(decision.autonomy_tier, "approval_required")
+        self.assertEqual(decision.decision_type, "disable_flag")
+        self.assertGreater(decision.confidence, 0.74)
 
     def test_memory_compaction_keeps_active_context_separate_from_run_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -80,6 +80,8 @@ class ScenarioAnalysisTests(unittest.TestCase):
             snapshot = active_memory.active_facts(trigger.service)
             self.assertIn(trigger.service, snapshot["services"])
             self.assertGreater(len(snapshot["services"][trigger.service]), 0)
+            self.assertGreater(len(store.list_observations({"service": trigger.service})), 0)
+            self.assertGreater(len(store.list_claims({"service": trigger.service})), 0)
             self.assertGreaterEqual(len(store.list_run_events(session.run_id)), 1)
             self.assertIsNotNone(compaction)
             self.assertGreaterEqual(len(analysis.evidence_refs), 1)

@@ -206,6 +206,10 @@ def _bounded_task_context(
         "allowed_paths": task.allowed_paths,
         "test_commands": task.test_commands,
         "kubernetes_scope": task.kubernetes_scope,
+        "memory_scope": task.memory_scope,
+        "memory_packet": task.memory_packet,
+        "memory_write_policy": task.memory_write_policy,
+        "open_questions": task.open_questions,
         "trigger": {
             "trigger_type": trigger.trigger_type,
             "related_context": trigger.related_context,
@@ -391,9 +395,13 @@ class DeepAgentsAdapter:
             "\n\nYou may delegate via the task tool to these subagents. "
             "Mesh forbids production Kubernetes access, mutating the real git checkout on main, "
             "and any Mesh actuation — proposals only.\n"
+            "Shared memory is read-mostly. You may propose observations, claims, procedures, citations, "
+            "and contradiction flags, but you may not mutate shared semantic or procedural memory directly.\n"
             "After analysis, respond with a single JSON object (no markdown fences) containing:\n"
             '{ "summary": string, "recommended_action": string, "risk_flags": string[], '
-            '"changed_files": string[], "test_results": [ { "name": string, "passed": boolean, "detail": string } ] }\n'
+            '"changed_files": string[], "test_results": [ { "name": string, "passed": boolean, "detail": string } ], '
+            '"observations_proposed": object[], "claims_proposed": object[], "procedures_proposed": object[], '
+            '"citations": object[], "contradictions_detected": object[], "memory_actions_requested": string[] }\n'
             "Use changed_files only for sandbox paths you touched; use test_results only if you have concrete check outcomes."
         )
 
@@ -476,6 +484,12 @@ class DeepAgentsAdapter:
 
         changed_files: list[str] = []
         test_results: list[dict[str, Any]] = []
+        observations_proposed: list[dict[str, Any]] = []
+        claims_proposed: list[dict[str, Any]] = []
+        procedures_proposed: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = list(task.memory_packet.get("citations", []))
+        contradictions_detected: list[dict[str, Any]] = list(task.memory_packet.get("contradictions", []))
+        memory_actions_requested: list[str] = ["review"]
         summary = self._cap_text(final_text or "Deep Agents lane completed without parseable summary.")
         recommended_action = "human_review"
 
@@ -491,6 +505,18 @@ class DeepAgentsAdapter:
             tr = parsed.get("test_results")
             if isinstance(tr, list):
                 test_results = [x for x in tr if isinstance(x, dict)]
+            if isinstance(parsed.get("observations_proposed"), list):
+                observations_proposed = [x for x in parsed["observations_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("claims_proposed"), list):
+                claims_proposed = [x for x in parsed["claims_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("procedures_proposed"), list):
+                procedures_proposed = [x for x in parsed["procedures_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("citations"), list):
+                citations = [x for x in parsed["citations"] if isinstance(x, dict)]
+            if isinstance(parsed.get("contradictions_detected"), list):
+                contradictions_detected = [x for x in parsed["contradictions_detected"] if isinstance(x, dict)]
+            if isinstance(parsed.get("memory_actions_requested"), list):
+                memory_actions_requested = [str(x) for x in parsed["memory_actions_requested"]]
 
         if diff_changed:
             for path in diff_changed:
@@ -525,4 +551,11 @@ class DeepAgentsAdapter:
             risk_flags=sorted(set(risk_flags)),
             recommended_action=recommended_action,
             output=output,
+            observations_proposed=observations_proposed
+            or [{"kind": "agent_observation", "service": trigger.service, "author": agent, "content": summary}],
+            claims_proposed=claims_proposed,
+            procedures_proposed=procedures_proposed,
+            citations=citations,
+            contradictions_detected=contradictions_detected,
+            memory_actions_requested=memory_actions_requested,
         )

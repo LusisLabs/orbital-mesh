@@ -53,6 +53,9 @@
         },
         "execution_readiness": {
           "type": "object"
+        },
+        "blocker_analysis": {
+          "type": "object"
         }
       },
       "additionalProperties": false

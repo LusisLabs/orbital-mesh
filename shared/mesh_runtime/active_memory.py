@@ -59,6 +59,57 @@ class ActiveMemoryStore:
         record.validate()
         return record
 
+    def refresh_from_claims(
+        self,
+        *,
+        run_id: str | None,
+        service: str,
+        claims: list[dict[str, Any]],
+        source_event_ids: list[str],
+        merkle_root: str | None = None,
+    ) -> MemoryCompactionRecord:
+        candidate_facts: list[dict[str, Any]] = []
+        for claim in claims:
+            if str(claim.get("state")) != "active":
+                continue
+            candidate_facts.append(
+                {
+                    "service": service,
+                    "kind": str(claim.get("tier") or "semantic"),
+                    "content": str(claim.get("statement") or ""),
+                    "confidence": float(claim.get("confidence", 0.0) or 0.0),
+                    "source_run_id": run_id,
+                    "source_event_ids": source_event_ids,
+                    "created_at": claim.get("updated_at") or claim.get("created_at"),
+                    "reinforcement_count": max(1, len(claim.get("supporting_observation_ids", []))),
+                }
+            )
+        return self.compact(
+            run_id=run_id,
+            service=service,
+            candidate_facts=candidate_facts,
+            source_event_ids=source_event_ids,
+            merkle_root=merkle_root,
+        )
+
+    def project_packet(
+        self,
+        *,
+        run_id: str | None,
+        service: str,
+        packet: dict[str, Any],
+        source_event_ids: list[str],
+        merkle_root: str | None = None,
+    ) -> MemoryCompactionRecord:
+        claims = list(packet.get("claims", [])) + list(packet.get("procedures", []))
+        return self.refresh_from_claims(
+            run_id=run_id,
+            service=service,
+            claims=claims,
+            source_event_ids=source_event_ids,
+            merkle_root=merkle_root,
+        )
+
     def active_facts(self, service: str | None = None) -> dict[str, Any]:
         if not self._active_path.exists():
             return {"services": {}, "updated_at": None}

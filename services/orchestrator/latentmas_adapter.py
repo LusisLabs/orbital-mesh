@@ -36,6 +36,10 @@ class LatentMasAdapter:
                 "allowed_paths": task.allowed_paths,
                 "test_commands": task.test_commands,
                 "kubernetes_scope": task.kubernetes_scope,
+                "memory_scope": task.memory_scope,
+                "memory_packet": task.memory_packet,
+                "memory_write_policy": task.memory_write_policy,
+                "open_questions": task.open_questions,
             },
             "trigger": trigger.to_dict(),
             "decision": decision.to_dict(),
@@ -116,6 +120,16 @@ class LatentMasAdapter:
             risk_flags=risk_flags,
             recommended_action=str(result.get("recommended_action") or "human_review"),
             output={key: value for key, value in output.items() if value is not None},
+            citations=list(task.memory_packet.get("citations", [])),
+            observations_proposed=[
+                {
+                    "kind": "agent_observation",
+                    "service": trigger.service,
+                    "author": "latentmas",
+                    "content": summary,
+                }
+            ],
+            memory_actions_requested=["review"],
         )
 
     def _failed_attempt(self, task: AgentTask, detail: str) -> AgentAttempt:

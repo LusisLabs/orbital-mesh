@@ -75,6 +75,12 @@ export interface AgentAttempt {
   risk_flags: string[];
   recommended_action: string;
   output: Record<string, any>;
+  observations_proposed: Record<string, any>[];
+  claims_proposed: Record<string, any>[];
+  procedures_proposed: Record<string, any>[];
+  citations: Record<string, any>[];
+  contradictions_detected: Record<string, any>[];
+  memory_actions_requested: string[];
 }
 
 export interface AgentTask {
@@ -87,6 +93,10 @@ export interface AgentTask {
   allowed_paths: string[];
   test_commands: string[];
   kubernetes_scope: Record<string, any>;
+  memory_scope: Record<string, any>;
+  memory_packet: Record<string, any>;
+  memory_write_policy: Record<string, any>;
+  open_questions: string[];
   agents: string[];
   attempts: AgentAttempt[];
   selected_attempt_id?: string | null;

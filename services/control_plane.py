@@ -53,6 +53,7 @@ from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 from shared.mesh_runtime.research import (
@@ -60,10 +61,11 @@ from shared.mesh_runtime.research import (
     build_research_session_intelligence,
     sanitize_research_markdown,
 )
+from services.orchestrator.hermes_adapter import HermesCliAdapter, NativeHermesAdapter
 
 
 PAUSEABLE_STAGES = {"trigger_ready", "decision_ready", "evaluation_ready", "feedback_ready"}
-TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger"}
+TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "recovery_spawned"}
 ALLOWED_STEERING_COMMANDS = {
     "approve",
     "cancel",
@@ -72,6 +74,8 @@ ALLOWED_STEERING_COMMANDS = {
     "set_auto_mode",
     "override_decision",
     "override_execution_parameters",
+    "explain_blockers",
+    "chat_with_hermes",
     "attach_note",
     "launch_evo",
 }
@@ -111,7 +115,28 @@ def _validate_steering_command(session: RunSession, command_type: str, command_p
                 f"steering command {command_type!r} is not allowed at stage {effective!r} "
                 f"(run stage {session.stage!r}). "
                 "Evo launch is accepted only when the run is paused at evaluation_ready or after completion."
+        )
+        return
+    if command_type == "explain_blockers":
+        effective = session.pending_pause_stage or session.stage
+        if effective != "evaluation_ready":
+            raise ValueError(
+                f"steering command {command_type!r} is not allowed at stage {effective!r} "
+                f"(run stage {session.stage!r}). "
+                "Hermes explanation is accepted only when the run is paused at evaluation_ready."
             )
+        return
+    if command_type == "chat_with_hermes":
+        effective = session.pending_pause_stage or session.stage
+        if effective != "evaluation_ready":
+            raise ValueError(
+                f"steering command {command_type!r} is not allowed at stage {effective!r} "
+                f"(run stage {session.stage!r}). "
+                "Hermes blocker chat is accepted only when the run is paused at evaluation_ready."
+            )
+        message = str(command_payload.get("message", "")).strip()
+        if not message:
+            raise ValueError("chat_with_hermes requires a non-empty message")
         return
     effective = session.pending_pause_stage or session.stage
     if command_type not in _STEERING_DECISION_COMMANDS:
@@ -198,7 +223,7 @@ class RunCoordinator:
             active_memory=self.active_memory,
         )
         self._lock = threading.Lock()
-        self.agent_mesh = AgentMeshService(config=self.config)
+        self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.evo_launcher = EvoLaunchService(self.config)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
@@ -385,6 +410,53 @@ class RunCoordinator:
     def get_active_memory(self, service: str | None = None) -> dict[str, Any]:
         return self.active_memory.active_facts(service)
 
+    def query_memory(self, query: str, scope: dict[str, Any] | None = None, limit: int = 10) -> dict[str, Any]:
+        return self.state_store.retrieve_memory({"query": query, "scope": scope or {}, "limit": limit})
+
+    def get_memory_claim(self, claim_id: str) -> dict[str, Any] | None:
+        return self.state_store.get_claim(claim_id)
+
+    def get_memory_graph(self, service: str | None = None) -> dict[str, Any]:
+        scope = {"service": service} if service else {}
+        claims = self.state_store.list_claims(scope, {"limit": 200})
+        relationships = self.state_store.list_relationships(node_ids=[claim.get("claim_id") for claim in claims if claim.get("claim_id")], scope=scope)
+        nodes = [
+            {
+                "id": claim.get("claim_id"),
+                "type": claim.get("tier"),
+                "label": claim.get("statement"),
+                "state": claim.get("state"),
+                "confidence": claim.get("confidence"),
+            }
+            for claim in claims
+        ]
+        edges = [
+            {
+                "id": relationship.get("relationship_id"),
+                "source": relationship.get("from_id"),
+                "target": relationship.get("to_id"),
+                "type": relationship.get("type"),
+                "confidence": relationship.get("confidence"),
+            }
+            for relationship in relationships
+        ]
+        return {"nodes": nodes, "edges": edges}
+
+    def run_memory_maintenance(self) -> dict[str, Any]:
+        return self.state_store.run_memory_maintenance()
+
+    def get_memory_crystallization(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        artifact = session.artifacts.get("memory_crystallization")
+        if artifact is None and session.stage == "completed":
+            self._record_memory_crystallization(run_id)
+            session = self.state_store.get_run_session(run_id)
+            if session is not None:
+                artifact = session.artifacts.get("memory_crystallization")
+        return artifact if isinstance(artifact, dict) else None
+
     def list_agent_tasks(self, run_id: str) -> list[dict[str, Any]]:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -497,6 +569,12 @@ class RunCoordinator:
         )
         if command_type == "launch_evo":
             self._launch_evo(run_id, session, command_payload)
+            return self.get_run(run_id) or session.to_dict()
+        if command_type == "explain_blockers":
+            self._explain_blockers(run_id, session)
+            return self.get_run(run_id) or session.to_dict()
+        if command_type == "chat_with_hermes":
+            self._chat_with_hermes(run_id, session, str(command_payload.get("message", "")).strip())
             return self.get_run(run_id) or session.to_dict()
         if command_type == "attach_note" and command.payload.get("note"):
             session.operator_notes.append(command.payload["note"])
@@ -611,6 +689,15 @@ class RunCoordinator:
 
             decision = engine.decision.decide(trigger, scenario_analysis=scenario_analysis)
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
+            if self._maybe_launch_recovery_run(
+                run_id,
+                scenario_key=scenario_key,
+                signal_payload=signal_payload,
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            ):
+                return
 
             while True:
                 outcome = self._wait_if_needed(run_id, "evaluation_ready", trigger=trigger, decision=decision, evaluation=evaluation)
@@ -724,6 +811,7 @@ class RunCoordinator:
             )
             self._update_session(run_id, stage="completed", status="completed")
             self._record_learning(trigger, decision, feedback, run_id)
+            self._record_memory_crystallization(run_id)
         except Exception as exc:
             self.state_store.append_run_event(
                 run_id,
@@ -747,6 +835,112 @@ class RunCoordinator:
                 return artifact_key, integration_name, payload
         return None
 
+    def _explain_blockers(self, run_id: str, session: RunSession) -> None:
+        decision, decision_payload, evaluation_payload, blocking_reasons, existing = self._hermes_blocker_context(run_id, session)
+        explanation = self._hermes_adapter().explain_blockers(
+            decision,
+            evaluation_payload,
+            blocking_reasons,
+        )
+        self._persist_hermes_explanation(
+            run_id,
+            decision_payload,
+            blocking_reasons,
+            existing,
+            explanation,
+        )
+
+    def _chat_with_hermes(self, run_id: str, session: RunSession, user_message: str) -> None:
+        decision, decision_payload, evaluation_payload, blocking_reasons, existing = self._hermes_blocker_context(run_id, session)
+        history = existing.get("messages", []) if isinstance(existing.get("messages"), list) else []
+        reply = self._hermes_adapter().chat_blockers(
+            decision,
+            evaluation_payload,
+            blocking_reasons,
+            [
+                {"role": str(item.get("role", "")), "content": str(item.get("content", ""))}
+                for item in history
+                if isinstance(item, dict)
+            ],
+            user_message,
+        )
+        self._persist_hermes_explanation(
+            run_id,
+            decision_payload,
+            blocking_reasons,
+            existing,
+            reply,
+            user_message=user_message,
+        )
+
+    def _hermes_adapter(self):
+        resolved = resolve_integrations_config(self.config)
+        if resolved.hermes_command:
+            return HermesCliAdapter(
+                command=resolved.hermes_command,
+                timeout_seconds=self.config.hermes_command_timeout_seconds,
+            )
+        return NativeHermesAdapter(config=self.config)
+
+    def _hermes_blocker_context(
+        self,
+        run_id: str,
+        session: RunSession,
+    ) -> tuple[Decision, dict[str, Any], dict[str, Any], list[str], dict[str, Any]]:
+        effective_stage = session.pending_pause_stage or session.stage
+        if effective_stage != "evaluation_ready":
+            raise ValueError("blocked-evaluation explanation is only available at evaluation_ready")
+        decision_payload = session.artifacts.get("decision")
+        evaluation_payload = session.artifacts.get("evaluation")
+        if not isinstance(decision_payload, dict) or not isinstance(evaluation_payload, dict):
+            raise ValueError("decision and evaluation artifacts are required before Hermes can explain blockers")
+        blocking_reasons_raw = evaluation_payload.get("blocking_reasons")
+        blocking_reasons = [str(reason) for reason in blocking_reasons_raw] if isinstance(blocking_reasons_raw, list) else []
+        existing = session.artifacts.get("hermes_explanation")
+        if not isinstance(existing, dict):
+            existing = {}
+        return Decision.from_dict(decision_payload), decision_payload, evaluation_payload, blocking_reasons, existing
+
+    def _persist_hermes_explanation(
+        self,
+        run_id: str,
+        decision_payload: dict[str, Any],
+        blocking_reasons: list[str],
+        existing: dict[str, Any],
+        latest: dict[str, Any],
+        *,
+        user_message: str | None = None,
+    ) -> None:
+        messages = list(existing.get("messages", [])) if isinstance(existing.get("messages"), list) else []
+        if user_message:
+            messages.append({"role": "user", "content": user_message, "recorded_at": _timestamp()})
+        assistant_reply = str(latest.get("assistant_reply", latest.get("summary", ""))).strip()
+        if assistant_reply:
+            messages.append({"role": "assistant", "content": assistant_reply, "recorded_at": _timestamp()})
+        explanation_payload = {
+            **existing,
+            **latest,
+            "assistant_reply": assistant_reply or latest.get("summary"),
+            "blocking_reasons": blocking_reasons,
+            "decision_type": decision_payload.get("decision_type"),
+            "messages": messages,
+        }
+        self._set_artifact(run_id, "hermes_explanation", explanation_payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="awaiting_operator",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=explanation_payload,
+            summary={
+                "recommendation": explanation_payload.get("recommendation"),
+                "next_action": explanation_payload.get("next_action"),
+                "message_count": len(messages),
+            },
+            artifact_key="hermes_explanation",
+            integration_name="hermes",
+            status="recorded",
+        )
+
     def _record_learning(
         self,
         trigger: Trigger,
@@ -767,6 +961,28 @@ class RunCoordinator:
                 self.context_store.update_from_run(completed_session.to_dict())
         except Exception:
             _LOG.exception("Learning persistence failed for run %s", run_id)
+
+    def _record_memory_crystallization(self, run_id: str) -> None:
+        try:
+            from shared.mesh_runtime.memory_lifecycle import MemoryLifecycleService
+
+            crystallization = MemoryLifecycleService(self.state_store).crystallize_run(run_id)
+            self._set_artifact(run_id, "memory_crystallization", crystallization)
+            self.state_store.append_run_event(
+                run_id,
+                stage="completed",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=crystallization,
+                summary={
+                    "observations_recorded": crystallization.get("observations_recorded"),
+                    "claims_recorded": crystallization.get("claims_recorded"),
+                },
+                artifact_key="memory_crystallization",
+                integration_name="memory",
+                status="recorded",
+            )
+        except Exception:
+            _LOG.exception("Memory crystallization failed for run %s", run_id)
 
     def _record_scenario_analysis(self, run_id: str, trigger: Trigger):
         self._update_session(run_id, stage="scenario_analysis_ready", status="running")
@@ -911,6 +1127,255 @@ class RunCoordinator:
             status="recorded",
         )
         return evaluation
+
+    def _maybe_launch_recovery_run(
+        self,
+        run_id: str,
+        *,
+        scenario_key: str | None,
+        signal_payload: dict[str, Any],
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> bool:
+        with self._lock:
+            control = self.controls.get(run_id)
+        if control is None or not control.auto_mode:
+            return False
+        if evaluation.passed and evaluation.final_recommendation == "execute":
+            return False
+        blocker_analysis = evaluation.stage_results.get("blocker_analysis", {})
+        if not isinstance(blocker_analysis, dict) or not blocker_analysis.get("can_auto_remediate"):
+            return False
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return False
+        existing_recovery = self._existing_recovery_context(session, trigger)
+        retry_index = int(existing_recovery.get("retry_index", 0) or 0)
+        retry_budget = int(existing_recovery.get("retry_budget", self.config.max_transient_retries) or self.config.max_transient_retries)
+        if retry_index >= retry_budget:
+            exhausted = {
+                "status": "budget_exhausted",
+                "parent_run_id": run_id,
+                "root_run_id": existing_recovery.get("root_run_id") or run_id,
+                "retry_index": retry_index,
+                "retry_budget": retry_budget,
+                "blocking_reasons": list(evaluation.blocking_reasons),
+                "recoverable_blockers": list(blocker_analysis.get("recoverable_blockers", [])),
+                "retry_hints": list(blocker_analysis.get("retry_hints", [])),
+                "recorded_at": _timestamp(),
+            }
+            self._set_artifact(run_id, "recovery", exhausted)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=exhausted,
+                summary={"status": "budget_exhausted"},
+                artifact_key="recovery",
+                integration_name="mesh",
+                status="budget_exhausted",
+            )
+            return False
+        child_payload, recovery_artifact = self._build_recovery_child_payload(
+            session=session,
+            scenario_key=scenario_key,
+            signal_payload=signal_payload,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+            blocker_analysis=blocker_analysis,
+            retry_index=retry_index,
+            retry_budget=retry_budget,
+            existing_recovery=existing_recovery,
+        )
+        child_run = self.create_run(child_payload)
+        recovery_artifact["status"] = "launched"
+        recovery_artifact["child_run_id"] = child_run["run_id"]
+        recovery_artifact["launched_at"] = _timestamp()
+        self._set_artifact(run_id, "recovery", recovery_artifact)
+        self.state_store.append_run_event(
+            run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=recovery_artifact,
+            summary={"status": "launched", "child_run_id": child_run["run_id"]},
+            artifact_key="recovery",
+            integration_name="mesh",
+            status="launched",
+        )
+        self._update_session(run_id, stage="recovery_spawned", status="recovery_spawned", pending_pause_stage=None)
+        return True
+
+    def _build_recovery_child_payload(
+        self,
+        *,
+        session: RunSession,
+        scenario_key: str | None,
+        signal_payload: dict[str, Any],
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+        blocker_analysis: dict[str, Any],
+        retry_index: int,
+        retry_budget: int,
+        existing_recovery: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        next_retry_index = retry_index + 1
+        evidence = self._collect_recovery_evidence(session.run_id, trigger, decision, evaluation, session)
+        child_signal = copy.deepcopy(signal_payload)
+        original_signal_id = str(child_signal.get("signal_id") or session.run_id)
+        child_signal["signal_id"] = f"{original_signal_id}-retry-{next_retry_index}"
+        related_context = child_signal.setdefault("related_context", {})
+        prior_attempts = list(existing_recovery.get("previous_attempts", [])) if isinstance(existing_recovery.get("previous_attempts"), list) else []
+        prior_attempts.append(
+            {
+                "run_id": session.run_id,
+                "decision_type": decision.decision_type,
+                "confidence": decision.confidence,
+                "blocking_reasons": list(evaluation.blocking_reasons),
+                "recoverable_blockers": list(blocker_analysis.get("recoverable_blockers", [])),
+            }
+        )
+        recovery_context = {
+            "root_run_id": existing_recovery.get("root_run_id") or session.run_id,
+            "parent_run_id": session.run_id,
+            "retry_index": next_retry_index,
+            "retry_budget": retry_budget,
+            "previous_attempts": prior_attempts[-retry_budget:],
+            "prior_attempt_count": len(prior_attempts),
+            "latest_decision_type": decision.decision_type,
+            "parent_blocking_reasons": list(evaluation.blocking_reasons),
+            "recoverable_blockers": list(blocker_analysis.get("recoverable_blockers", [])),
+            "retry_hints": list(blocker_analysis.get("retry_hints", [])),
+            "original_signal_id": original_signal_id,
+            **evidence,
+        }
+        related_context["recovery_context"] = recovery_context
+        related_context["similar_prior_cases"] = max(
+            int(related_context.get("similar_prior_cases", 0) or 0),
+            int(evidence.get("related_run_count", 0) or 0),
+        )
+        trigger_signals = list(related_context.get("trigger_signals", []))
+        retry_marker = f"recovery_context_retry_{next_retry_index}"
+        if retry_marker not in trigger_signals:
+            trigger_signals.append(retry_marker)
+        related_context["trigger_signals"] = trigger_signals
+        child_payload = {
+            "goal_id": session.goal_id,
+            "scenario_key": scenario_key,
+            "signal_payload": child_signal,
+            "evaluation_mode": session.evaluation_mode,
+            "orchestration_mode": session.orchestration_mode,
+            "steering_mode": session.steering_mode,
+            "pause_points": session.pause_points,
+        }
+        recovery_artifact = {
+            "status": "queued",
+            "root_run_id": recovery_context["root_run_id"],
+            "parent_run_id": session.run_id,
+            "retry_index": next_retry_index,
+            "retry_budget": retry_budget,
+            "decision_type": decision.decision_type,
+            "blocking_reasons": list(evaluation.blocking_reasons),
+            "recoverable_blockers": list(blocker_analysis.get("recoverable_blockers", [])),
+            "retry_hints": list(blocker_analysis.get("retry_hints", [])),
+            "evidence_summary": {
+                key: recovery_context[key]
+                for key in (
+                    "corroborating_evidence_count",
+                    "active_memory_count",
+                    "similar_incident_count",
+                    "related_run_count",
+                    "scenario_evidence_count",
+                    "promptfoo_failure_count",
+                )
+            },
+        }
+        return child_payload, recovery_artifact
+
+    def _collect_recovery_evidence(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+        session: RunSession,
+    ) -> dict[str, Any]:
+        active_facts = self.active_memory.active_facts(trigger.service).get("services", {}).get(trigger.service, [])
+        error_signatures = trigger.related_context.get("error_signatures", [])
+        incident_key = "|".join(error_signatures) if isinstance(error_signatures, list) and error_signatures else decision.decision_type
+        similar_incidents = self.context_store.get_similar_incidents(str(incident_key), limit=5)
+        related_runs: list[dict[str, Any]] = []
+        for related in self.state_store.list_run_sessions(limit=25):
+            if related.run_id == run_id:
+                continue
+            artifacts = related.artifacts if isinstance(related.artifacts, dict) else {}
+            related_trigger = artifacts.get("trigger", {})
+            if related_trigger.get("service") != trigger.service:
+                continue
+            related_runs.append(
+                {
+                    "run_id": related.run_id,
+                    "stage": related.stage,
+                    "status": related.status,
+                    "decision_type": artifacts.get("decision", {}).get("decision_type"),
+                    "feedback_outcome": artifacts.get("feedback", {}).get("outcome"),
+                }
+            )
+            if len(related_runs) >= 5:
+                break
+        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts", {})
+        assertion_results = promptfoo_artifact.get("assertion_results", []) if isinstance(promptfoo_artifact, dict) else []
+        failing_assertions = [
+            {
+                "name": item.get("name"),
+                "reason": item.get("reason"),
+            }
+            for item in assertion_results
+            if isinstance(item, dict) and not item.get("passed", False)
+        ]
+        scenario_analysis = session.artifacts.get("scenario_analysis", {}) if isinstance(session.artifacts, dict) else {}
+        scenario_evidence_refs = scenario_analysis.get("evidence_refs", []) if isinstance(scenario_analysis, dict) else []
+        hermes_explanation = session.artifacts.get("hermes_explanation", {}) if isinstance(session.artifacts, dict) else {}
+        learning_context = self.learning_store.enrich_context(trigger.service, trigger.endpoint, trigger.flag_key)
+        service_context = self.context_store.get_service_context(trigger.service)
+        corroborating_evidence_count = sum(
+            1
+            for count in (
+                len(active_facts),
+                len(similar_incidents),
+                len(related_runs),
+                len(scenario_evidence_refs),
+                len(failing_assertions),
+            )
+            if count > 0
+        )
+        return {
+            "corroborating_evidence_count": corroborating_evidence_count,
+            "active_memory_count": len(active_facts),
+            "similar_incident_count": len(similar_incidents),
+            "related_run_count": len(related_runs),
+            "scenario_evidence_count": len(scenario_evidence_refs),
+            "promptfoo_failure_count": len(failing_assertions),
+            "service_context": service_context,
+            "learning_context": learning_context,
+            "similar_incidents": similar_incidents,
+            "related_runs": related_runs,
+            "failing_promptfoo_assertions": failing_assertions,
+            "hermes_summary": hermes_explanation.get("assistant_reply"),
+        }
+
+    def _existing_recovery_context(self, session: RunSession, trigger: Trigger) -> dict[str, Any]:
+        raw = trigger.related_context.get("recovery_context")
+        if isinstance(raw, dict):
+            return dict(raw)
+        input_signal = session.artifacts.get("input_signal") if isinstance(session.artifacts, dict) else None
+        if isinstance(input_signal, dict):
+            related_context = input_signal.get("related_context")
+            if isinstance(related_context, dict) and isinstance(related_context.get("recovery_context"), dict):
+                return dict(related_context["recovery_context"])
+        return {}
 
     def _wait_if_needed(
         self,

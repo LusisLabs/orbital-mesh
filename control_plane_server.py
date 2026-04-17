@@ -91,6 +91,27 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             service = parse_qs(parsed.query).get("service", [None])[0]
             self._send_json(self.server.coordinator.get_active_memory(service))
             return
+        if path == "/api/memory/query":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            limit = _safe_int(parse_qs(parsed.query).get("limit", ["10"])[0], default=10)
+            self._send_json(self.server.coordinator.query_memory(query, {"service": service} if service else {}, limit=limit))
+            return
+        if path.startswith("/api/memory/claims/"):
+            claim_id = _safe_segment(path, 3)
+            if claim_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            claim = self.server.coordinator.get_memory_claim(claim_id)
+            if claim is None:
+                self._send_json({"error": "claim not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(claim)
+            return
+        if path == "/api/memory/graph":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_memory_graph(service))
+            return
         if path == "/api/research-sessions":
             self._send_json({"sessions": self.server.coordinator.list_research_sessions()})
             return
@@ -151,6 +172,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"tasks": self.server.coordinator.list_agent_tasks(run_id)})
             except KeyError:
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/memory-crystallization"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_memory_crystallization(run_id)
+            if payload is None:
+                self._send_json({"error": "memory crystallization not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
@@ -250,6 +282,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/memory/maintenance/run":
+            self._send_json(self.server.coordinator.run_memory_maintenance(), status=HTTPStatus.CREATED)
             return
         if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/steer"):
             run_id = _safe_segment(parsed.path, 2)

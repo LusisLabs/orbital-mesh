@@ -22,6 +22,9 @@ Agents own:
 - staging validation suggestions
 
 Workers do not write production, mutate the real repo checkout, mutate `main`, or bypass Kubernetes allowlists. Code-writing adapters must stay inside isolated workspaces and return diffs, changed-file lists, summaries, and test results for Mesh evaluation.
+Workers also do not mutate shared semantic or procedural memory directly. They
+receive verified memory packets and may only return proposed observations,
+claims, procedures, citations, and contradiction flags for Mesh review.
 
 ## Worker Contract
 
@@ -53,6 +56,18 @@ Artifact shape:
     "namespace": "search",
     "deployment_name": "semantic-search"
   },
+  "memory_scope": {
+    "shared": true,
+    "service": "search",
+    "run_id": "run_..."
+  },
+  "memory_packet": {
+    "packet_id": "mpkt_...",
+    "claims": [],
+    "procedures": [],
+    "contradictions": [],
+    "citations": []
+  },
   "attempts": [
     {
       "agent": "goose",
@@ -60,7 +75,11 @@ Artifact shape:
       "status": "completed",
       "summary": "Operational plan...",
       "risk_flags": [],
-      "recommended_action": "execute"
+      "recommended_action": "execute",
+      "observations_proposed": [],
+      "claims_proposed": [],
+      "citations": [],
+      "memory_actions_requested": ["defer"]
     }
   ],
   "selected_attempt_id": "attempt_..."

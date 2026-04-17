@@ -15,6 +15,7 @@ from shared.mesh_runtime import (
     load_policy,
     resolve_integrations_config,
 )
+from shared.mesh_runtime.review_blockers import classify_blocking_reasons
 
 from .promptfoo_adapter import NativePromptfooAdapter, PromptfooAdapter, PromptfooCliAdapter
 
@@ -126,6 +127,11 @@ class EvaluationService:
             readiness_notes.extend(repo_patch_notes)
             blocking_reasons.extend(repo_patch_notes)
 
+        scenario_review_reasons = _scenario_review_reasons(decision)
+        blocker_analysis = classify_blocking_reasons(
+            blocking_reasons,
+            scenario_review_reasons=scenario_review_reasons,
+        )
         passed = not blocking_reasons
         log_runtime_event(
             "evaluation_completed",
@@ -134,6 +140,7 @@ class EvaluationService:
             passed=passed,
             recommendation="reject" if reject else ("execute" if passed else "human_review"),
             blocking_reasons=blocking_reasons,
+            auto_recovery=blocker_analysis["can_auto_remediate"],
         )
         evaluation = EvaluationResult(
             evaluation_id=f"eval_{decision.decision_id}",
@@ -183,6 +190,7 @@ class EvaluationService:
                         "rollback value present",
                     ],
                 },
+                "blocker_analysis": blocker_analysis,
             },
             blocking_reasons=blocking_reasons,
             review_route="human_review" if not passed and not reject else None,
@@ -234,3 +242,10 @@ class EvaluationService:
                 if not isinstance(patch_template.get(key), str) or not patch_template.get(key):
                     notes.append(f"patch template field `{key}` is missing")
         return not notes, notes
+
+
+def _scenario_review_reasons(decision: Decision) -> list[str]:
+    evidence_pack = decision.reasoning.get("evidence_pack", {})
+    scenario_analysis = evidence_pack.get("scenario_analysis", {})
+    reasons = scenario_analysis.get("required_review_reasons", [])
+    return [str(reason) for reason in reasons] if isinstance(reasons, list) else []

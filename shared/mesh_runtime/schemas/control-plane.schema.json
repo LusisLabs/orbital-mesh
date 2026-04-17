@@ -18,12 +18,53 @@
           },
           "type": "array"
         },
+        "citations": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "claims_proposed": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
         "completed_at": {
           "type": "string"
+        },
+        "contradictions_detected": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "memory_actions_requested": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "observations_proposed": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
         },
         "output": {
           "additionalProperties": {},
           "type": "object"
+        },
+        "procedures_proposed": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
         },
         "recommended_action": {
           "type": "string"
@@ -71,7 +112,13 @@
         "test_results",
         "risk_flags",
         "recommended_action",
-        "output"
+        "output",
+        "observations_proposed",
+        "claims_proposed",
+        "procedures_proposed",
+        "citations",
+        "contradictions_detected",
+        "memory_actions_requested"
       ],
       "type": "object"
     },
@@ -105,6 +152,24 @@
         "kubernetes_scope": {
           "additionalProperties": {},
           "type": "object"
+        },
+        "memory_packet": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "memory_scope": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "memory_write_policy": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "open_questions": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "run_id": {
           "type": "string"
@@ -145,6 +210,10 @@
         "allowed_paths",
         "test_commands",
         "kubernetes_scope",
+        "memory_scope",
+        "memory_packet",
+        "memory_write_policy",
+        "open_questions",
         "agents",
         "attempts",
         "selected_attempt_id"

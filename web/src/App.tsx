@@ -167,6 +167,7 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
     case "decision":
     case "evaluation":
     case "promptfoo_artifact":
+    case "hermes_explanation":
       return "policy";
     case "execution":
     case "goose_review":
@@ -204,6 +205,7 @@ export default function App() {
   const [goalDraft, setGoalDraft] = useState(DEFAULT_GOAL_DRAFT);
   const [launchDraft, setLaunchDraft] = useState(DEFAULT_LAUNCH_DRAFT);
   const [noteDraft, setNoteDraft] = useState("");
+  const [hermesChatDraft, setHermesChatDraft] = useState("");
   const [overrideDecisionDraft, setOverrideDecisionDraft] = useState('{\n  "decision_type": "reduce_rollout"\n}');
   const [overrideParamsDraft, setOverrideParamsDraft] = useState('{\n  "rollout_pct": 5\n}');
   const [showGoalForm, setShowGoalForm] = useState(false);
@@ -550,6 +552,32 @@ export default function App() {
     void handleSteer("override_execution_parameters", { parameters: parsed.data });
   }
 
+  function handleHermesChat() {
+    const message = hermesChatDraft.trim();
+    if (!message) {
+      addToast({ variant: "warning", title: "Hermes message required" });
+      return;
+    }
+    void handleSteer("chat_with_hermes", { message });
+    setHermesChatDraft("");
+  }
+
+  function handleAcceptHermesAction() {
+    if (!hermesExplanation) {
+      return;
+    }
+    const command = String(hermesExplanation.proposed_command ?? "").trim();
+    const payload =
+      hermesExplanation.proposed_payload && typeof hermesExplanation.proposed_payload === "object"
+        ? (hermesExplanation.proposed_payload as Record<string, unknown>)
+        : {};
+    if (!command) {
+      addToast({ variant: "warning", title: "No Hermes action to accept" });
+      return;
+    }
+    void handleSteer(command, payload);
+  }
+
   const flowCanvas = useMemo(
     () => buildRunGraph(activeRun?.events ?? [], selectedEventId),
     [activeRun?.events, selectedEventId],
@@ -672,6 +700,7 @@ export default function App() {
     activeRun?.pending_pause_stage === "evaluation_ready" &&
     approvalRecommendation !== "" &&
     approvalRecommendation !== "execute";
+  const hermesExplanation = (activeRun?.artifacts?.hermes_explanation ?? null) as Record<string, any> | null;
 
   const readinessItems = readiness
     ? [
@@ -1271,6 +1300,11 @@ export default function App() {
               activeEvent={selectedEvent}
               active={steering}
               approvalCurrentlyBlocked={approvalCurrentlyBlocked}
+              hermesExplanation={hermesExplanation}
+              hermesChatDraft={hermesChatDraft}
+              onHermesChatDraftChange={setHermesChatDraft}
+              onHermesChat={handleHermesChat}
+              onAcceptHermesAction={handleAcceptHermesAction}
               noteDraft={noteDraft}
               onNoteDraftChange={setNoteDraft}
               onSteer={handleSteer}
@@ -1445,6 +1479,11 @@ function SteeringConsolePanel({
   activeEvent,
   active,
   approvalCurrentlyBlocked,
+  hermesExplanation,
+  hermesChatDraft,
+  onHermesChatDraftChange,
+  onHermesChat,
+  onAcceptHermesAction,
   noteDraft,
   onNoteDraftChange,
   onSteer,
@@ -1462,6 +1501,11 @@ function SteeringConsolePanel({
   activeEvent: RunEventRecord | null;
   active: string;
   approvalCurrentlyBlocked: boolean;
+  hermesExplanation: Record<string, any> | null;
+  hermesChatDraft: string;
+  onHermesChatDraftChange: (value: string) => void;
+  onHermesChat: () => void;
+  onAcceptHermesAction: () => void;
   noteDraft: string;
   onNoteDraftChange: (value: string) => void;
   onSteer: (command: string, payload?: Record<string, unknown>) => void;
@@ -1504,6 +1548,13 @@ function SteeringConsolePanel({
           <SteerButton label="Resume" command="resume" active={active} disabled={!activeRunId} onClick={onSteer} />
           <SteerButton label="Cancel" command="cancel" active={active} disabled={!activeRunId} onClick={onSteer} />
           <SteerButton
+            label="Ask Hermes"
+            command="explain_blockers"
+            active={active}
+            disabled={!activeRunId || !approvalCurrentlyBlocked}
+            onClick={onSteer}
+          />
+          <SteerButton
             label={activeRun?.auto_mode ? "Set Gate" : "Set Auto"}
             command="set_auto_mode"
             active={active}
@@ -1512,6 +1563,61 @@ function SteeringConsolePanel({
           />
         </div>
         <div className="stack">
+          {approvalCurrentlyBlocked && hermesExplanation && (
+            <section className="context-panel">
+              <div className="context-panel-header">
+                <div>
+                  <p className="eyebrow">Hermes Explanation</p>
+                  <h4>{humanize(String(hermesExplanation.recommendation ?? "human_review"))}</h4>
+                </div>
+                <StatusChip label="Hermes" tone="#4aa8ff" />
+              </div>
+              <p className="inspector-muted">{String(hermesExplanation.summary ?? "No explanation available.")}</p>
+              {Array.isArray(hermesExplanation.operator_actions) && hermesExplanation.operator_actions.length > 0 && (
+                <div className="context-link-list">
+                  {hermesExplanation.operator_actions.slice(0, 3).map((action) => (
+                    <ContextLink key={String(action)} label="Action" value={String(action)} />
+                  ))}
+                </div>
+              )}
+              {Array.isArray(hermesExplanation.messages) && hermesExplanation.messages.length > 0 && (
+                <div className="stack">
+                  {hermesExplanation.messages.slice(-6).map((message, index) => (
+                    <pre key={`${String(message.role)}-${index}`} className="timeline-summary">
+                      {`${humanize(String(message.role ?? "assistant"))}: ${String(message.content ?? "")}`}
+                    </pre>
+                  ))}
+                </div>
+              )}
+              <div className="note-row">
+                <input
+                  value={hermesChatDraft}
+                  onChange={(e) => onHermesChatDraftChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && hermesChatDraft.trim()) {
+                      onHermesChat();
+                    }
+                  }}
+                  placeholder="Ask Hermes a follow-up…"
+                  disabled={!approvalCurrentlyBlocked}
+                />
+                <button
+                  className="action-button compact"
+                  disabled={!approvalCurrentlyBlocked || !hermesChatDraft.trim()}
+                  onClick={onHermesChat}
+                >
+                  Send
+                </button>
+              </div>
+              <button
+                className="action-button compact"
+                disabled={!hermesExplanation.proposed_command}
+                onClick={onAcceptHermesAction}
+              >
+                Accept Hermes Action
+              </button>
+            </section>
+          )}
           <div className="note-row">
             <input
               value={noteDraft}

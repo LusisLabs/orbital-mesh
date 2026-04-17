@@ -7,7 +7,9 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
-from shared.mesh_runtime import EvidenceNode, ScenarioAnalysis, Subdecision, Trigger
+from shared.mesh_runtime import ClaimRecord, EvidenceNode, ObservationRecord, ScenarioAnalysis, Subdecision, Trigger
+from shared.mesh_runtime.memory_scoring import confidence_from_factors, freshness_score, support_score
+from shared.mesh_runtime.review_blockers import classify_review_reasons
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 
 _ACTIONABLE_RECOMMENDATIONS = {
@@ -29,8 +31,7 @@ class ScenarioAnalysisInput:
     learning_context: dict[str, Any]
     historical_success_rates: dict[str, float | None]
     recovery_patterns: dict[str, int]
-    similar_memory: list[dict[str, Any]]
-    active_memory: list[dict[str, Any]]
+    memory_packet: dict[str, Any]
     recent_runs: list[dict[str, Any]]
 
 
@@ -67,24 +68,22 @@ class ScenarioAnalysisService:
         payload = self._build_input(trigger, run_id)
         evidence_nodes: list[EvidenceNode] = []
         subdecisions: list[Subdecision] = []
-        memory_candidates: list[dict[str, Any]] = []
 
         for analyzer in self.analyzers:
             analyzer_evidence, subdecision = analyzer.analyze(payload)
             evidence_nodes.extend(analyzer_evidence)
             subdecisions.append(subdecision)
-            for evidence in analyzer_evidence:
-                fact = _fact_from_evidence(evidence, trigger.service)
-                if fact:
-                    memory_candidates.append(fact)
+            observation_ids = self._persist_analyzer_observations(trigger.service, analyzer_evidence)
+            self._persist_analyzer_claims(trigger.service, analyzer_evidence, observation_ids)
 
         synthesis = DecisionSynthesisService().synthesize(trigger, subdecisions, evidence_nodes)
         memory_record = None
         if self.active_memory is not None:
-            memory_record = self.active_memory.compact(
+            refreshed_packet = self._retrieve_memory_packet(trigger, run_id) or payload.memory_packet
+            memory_record = self.active_memory.project_packet(
                 run_id=run_id,
                 service=trigger.service,
-                candidate_facts=memory_candidates,
+                packet=refreshed_packet,
                 source_event_ids=payload.source_event_ids,
             )
 
@@ -119,10 +118,7 @@ class ScenarioAnalysisService:
             for action in sorted(_ACTIONABLE_RECOMMENDATIONS - {"escalate"}):
                 success_rates[action] = self.learning_store.get_historical_success_rate(action, trigger.service)
         recovery_patterns = self.learning_store.get_recovery_patterns(trigger.service) if self.learning_store else {}
-        similar_memory = (
-            self.state_store.search_memory(trigger.service, {"service": trigger.service}) if self.state_store else []
-        )
-        active = self.active_memory.active_facts(trigger.service).get("services", {}).get(trigger.service, []) if self.active_memory else []
+        memory_packet = self._retrieve_memory_packet(trigger, run_id)
         return ScenarioAnalysisInput(
             trigger=trigger,
             run_id=run_id,
@@ -131,10 +127,78 @@ class ScenarioAnalysisService:
             learning_context=learning_context,
             historical_success_rates=success_rates,
             recovery_patterns=recovery_patterns,
-            similar_memory=similar_memory,
-            active_memory=list(active),
+            memory_packet=memory_packet,
             recent_runs=_recent_runs(self.state_store, trigger.service, run_id),
         )
+
+    def _retrieve_memory_packet(self, trigger: Trigger, run_id: str | None) -> dict[str, Any]:
+        if self.state_store is None or not hasattr(self.state_store, "retrieve_memory"):
+            return {}
+        response = self.state_store.retrieve_memory(
+            {
+                "query": " ".join(filter(None, [trigger.service, trigger.endpoint, trigger.trigger_type])),
+                "scope": {"service": trigger.service, "run_id": run_id},
+                "limit": 8,
+            }
+        )
+        return dict(response.get("packet", {}))
+
+    def _persist_analyzer_observations(self, service: str, evidence_nodes: list[EvidenceNode]) -> dict[str, str]:
+        observation_ids: dict[str, str] = {}
+        if self.state_store is None or not hasattr(self.state_store, "append_observation"):
+            return observation_ids
+        for evidence in evidence_nodes:
+            if not evidence.trusted:
+                continue
+            observation = ObservationRecord(
+                observation_id=f"obs_{uuid4().hex[:12]}",
+                scope={"shared": True, "service": service, "run_id": evidence.run_id},
+                kind=evidence.kind,
+                content=evidence.summary,
+                service=service,
+                run_id=evidence.run_id,
+                source_type="scenario_analysis",
+                source_refs=[{"run_id": evidence.run_id, "event_id": event_id} for event_id in evidence.source_event_ids],
+                created_at=_timestamp(),
+                author=f"analyzer:{evidence.analyzer}",
+                tags=[evidence.analyzer, evidence.kind],
+                metadata={"confidence": evidence.confidence, "trusted": evidence.trusted, "payload": evidence.payload},
+            )
+            observation.validate()
+            self.state_store.append_observation(observation.to_dict())
+            observation_ids[evidence.evidence_id] = observation.observation_id
+        return observation_ids
+
+    def _persist_analyzer_claims(self, service: str, evidence_nodes: list[EvidenceNode], observation_ids: dict[str, str]) -> None:
+        if self.state_store is None or not hasattr(self.state_store, "save_claim"):
+            return
+        for evidence in evidence_nodes:
+            if not evidence.trusted or evidence.confidence < 0.55:
+                continue
+            factors = {
+                "support_score": support_score(1),
+                "recency_score": freshness_score(_timestamp(), half_life_days=14.0),
+                "authority_score": 0.82,
+                "consistency_score": 0.75,
+                "verification_score": max(0.55, min(float(evidence.confidence), 1.0)),
+            }
+            claim = ClaimRecord(
+                claim_id=f"claim_{uuid4().hex[:12]}",
+                statement=evidence.summary,
+                entity_refs=[service, evidence.analyzer],
+                supporting_observation_ids=[observation_ids[evidence.evidence_id]] if evidence.evidence_id in observation_ids else [],
+                contradicting_claim_ids=[],
+                superseded_by=None,
+                confidence=confidence_from_factors(factors),
+                confidence_factors=factors,
+                freshness=factors["recency_score"],
+                tier="semantic",
+                state="active",
+                created_at=_timestamp(),
+                updated_at=_timestamp(),
+            )
+            claim.validate()
+            self.state_store.save_claim(claim.to_dict())
 
 
 class RegressionAnalyzer:
@@ -253,6 +317,8 @@ class HistoricalOutcomeAnalyzer:
         best_rate = None
         best_action = None
         weak_actions = []
+        recovery_context = _recovery_context(payload)
+        corroborating_evidence = int(recovery_context.get("corroborating_evidence_count", 0) or 0)
         for action, rate in payload.historical_success_rates.items():
             if rate is None:
                 continue
@@ -274,7 +340,7 @@ class HistoricalOutcomeAnalyzer:
             0.75 if best_rate is not None else 0.55,
             True,
         )
-        if weak_actions:
+        if weak_actions and corroborating_evidence < 2:
             return [evidence], _subdecision(
                 self.name,
                 "approval_required",
@@ -283,6 +349,16 @@ class HistoricalOutcomeAnalyzer:
                 [f"historical success rate is weak for: {', '.join(sorted(weak_actions))}"],
                 [evidence.evidence_id],
                 True,
+            )
+        if weak_actions:
+            return [evidence], _subdecision(
+                self.name,
+                best_action or "no_action",
+                max(best_rate or 0.55, 0.76),
+                "low",
+                ["historical weakness is offset by corroborating recovery evidence"],
+                [evidence.evidence_id],
+                False,
             )
         return [evidence], _subdecision(
             self.name,
@@ -328,9 +404,10 @@ class MemoryRelevanceAnalyzer:
     name = "memory_relevance"
 
     def analyze(self, payload: ScenarioAnalysisInput) -> tuple[list[EvidenceNode], Subdecision]:
-        active_count = len(payload.active_memory)
+        packet = payload.memory_packet or {}
+        active_count = len(packet.get("claims", [])) + len(packet.get("procedures", []))
         recent_count = len(payload.recent_runs)
-        memory_count = len(payload.similar_memory)
+        memory_count = len(packet.get("observations", []))
         evidence = _evidence(
             payload,
             self.name,
@@ -340,7 +417,9 @@ class MemoryRelevanceAnalyzer:
                 "active_fact_count": active_count,
                 "recent_run_count": recent_count,
                 "memory_search_hit_count": memory_count,
-                "active_facts": payload.active_memory[:5],
+                "verified_claims": packet.get("claims", [])[:5],
+                "verified_procedures": packet.get("procedures", [])[:3],
+                "contradictions": packet.get("contradictions", [])[:3],
             },
             0.7 if active_count or recent_count or memory_count else 0.55,
             True,
@@ -361,30 +440,45 @@ class EdgeCaseAnalyzer:
 
     def analyze(self, payload: ScenarioAnalysisInput) -> tuple[list[EvidenceNode], Subdecision]:
         trigger = payload.trigger
+        recovery_context = _recovery_context(payload)
+        corroborating_evidence = int(recovery_context.get("corroborating_evidence_count", 0) or 0)
         reasons: list[str] = []
+        resolved: list[str] = []
         if trigger.trigger_type not in {"feature_flag_performance_regression", "kubernetes_deployment_unhealthy"}:
             reasons.append(f"unclassified trigger type {trigger.trigger_type}")
         if trigger.related_context.get("conflicting_signals"):
-            reasons.append("conflicting signals are present")
+            if corroborating_evidence >= 2:
+                resolved.append("conflicting signals were reduced by corroborating recovery evidence")
+            else:
+                reasons.append("conflicting signals are present")
         if payload.run_id is not None and not payload.source_event_ids:
             reasons.append("no source run event ids available for analysis provenance")
         if trigger.trigger_type == "kubernetes_deployment_unhealthy" and not trigger.related_context.get("error_signatures"):
-            reasons.append("Kubernetes trigger lacks error signatures")
+            if corroborating_evidence >= 2:
+                resolved.append("Kubernetes trigger reused corroborating prior rollout evidence")
+            else:
+                reasons.append("Kubernetes trigger lacks error signatures")
         evidence = _evidence(
             payload,
             self.name,
             "edge_case_scan",
-            "; ".join(reasons) or "No fail-closed edge case found.",
-            {"edge_case_reasons": reasons},
-            0.9 if reasons else 0.75,
+            "; ".join(reasons or resolved) or "No fail-closed edge case found.",
+            {"edge_case_reasons": reasons, "resolved_edge_cases": resolved},
+            0.9 if reasons else (0.8 if resolved else 0.75),
             True,
+        )
+        review_analysis = classify_review_reasons(reasons)
+        risk_level = (
+            "high"
+            if review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"]
+            else ("medium" if reasons else "low")
         )
         return [evidence], _subdecision(
             self.name,
             "escalate" if reasons else "no_action",
-            0.9 if reasons else 0.75,
-            "high" if reasons else "low",
-            reasons or ["edge-case scan passed"],
+            0.9 if reasons else (0.8 if resolved else 0.75),
+            risk_level,
+            reasons or resolved or ["edge-case scan passed"],
             [evidence.evidence_id],
             bool(reasons),
         )
@@ -402,9 +496,22 @@ class DecisionSynthesisService:
             if item.requires_review:
                 review_reasons.extend(item.reasons)
         actionable = [item for item in subdecisions if item.recommendation in _ACTIONABLE_RECOMMENDATIONS]
+        review_analysis = classify_review_reasons(review_reasons)
         if review_reasons:
-            suggested = "escalate" if any(item.recommendation == "escalate" for item in actionable) else _base_suggestion(trigger)
-            autonomy = "approval_required"
+            safe_actionable = [item for item in actionable if item.recommendation != "escalate"]
+            conflict_only_review = bool(review_reasons) and all("conflicting signals" in reason for reason in review_reasons)
+            if conflict_only_review and safe_actionable:
+                suggested = max(safe_actionable, key=lambda item: item.confidence).recommendation
+                autonomy = "approval_required"
+            elif review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"]:
+                suggested = "escalate" if any(item.recommendation == "escalate" for item in actionable) else _base_suggestion(trigger)
+                autonomy = "approval_required"
+            elif safe_actionable:
+                suggested = max(safe_actionable, key=lambda item: item.confidence).recommendation
+                autonomy = "approval_required"
+            else:
+                suggested = _base_suggestion(trigger)
+                autonomy = "approval_required"
         elif actionable:
             suggested = max(actionable, key=lambda item: item.confidence).recommendation
             autonomy = "autonomous"
@@ -413,7 +520,7 @@ class DecisionSynthesisService:
             autonomy = "autonomous"
         confidence_values = [item.confidence for item in subdecisions]
         confidence = round(sum(confidence_values) / len(confidence_values), 2) if confidence_values else 0.5
-        if review_reasons:
+        if review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"]:
             confidence = min(confidence, 0.74)
         risk_level = "high" if any(item.risk_level == "high" for item in subdecisions) else "medium" if any(item.risk_level == "medium" for item in subdecisions) else "low"
         if suggested == "escalate":
@@ -473,6 +580,11 @@ def _single_evidence_subdecision(
     return [evidence], _subdecision(analyzer, recommendation, confidence, risk_level, reasons, [evidence.evidence_id], requires_review)
 
 
+def _recovery_context(payload: ScenarioAnalysisInput) -> dict[str, Any]:
+    raw = payload.trigger.related_context.get("recovery_context")
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def _evidence(
     payload: ScenarioAnalysisInput,
     analyzer: str,
@@ -520,19 +632,6 @@ def _subdecision(
     return item
 
 
-def _fact_from_evidence(evidence: EvidenceNode, service: str) -> dict[str, Any] | None:
-    if not evidence.trusted or evidence.confidence < 0.55:
-        return None
-    return {
-        "service": service,
-        "kind": evidence.kind,
-        "content": evidence.summary,
-        "confidence": evidence.confidence,
-        "source_run_id": evidence.run_id,
-        "source_event_ids": evidence.source_event_ids,
-    }
-
-
 def _base_suggestion(trigger: Trigger) -> str:
     if trigger.trigger_type == "kubernetes_deployment_unhealthy":
         signatures = set(trigger.related_context.get("error_signatures", []))
@@ -557,6 +656,10 @@ def _ratio(baseline: float, observed: float) -> float:
     if baseline == 0:
         return 0.0 if observed == 0 else float("inf")
     return round(observed / baseline, 2)
+
+
+def _timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _timestamp() -> str:

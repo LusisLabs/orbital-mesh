@@ -115,6 +115,90 @@ class MemoryCompactionRecord(ContractModel):
 
 
 @dataclass
+class ObservationRecord(ContractModel):
+    schema_name: ClassVar[str] = "observation-record.schema.json"
+    observation_id: str
+    scope: dict[str, Any]
+    kind: str
+    content: str
+    service: str | None
+    run_id: str | None
+    source_type: str
+    source_refs: list[dict[str, Any]]
+    created_at: str
+    author: str
+    tags: list[str]
+    metadata: dict[str, Any]
+
+
+@dataclass
+class ClaimRecord(ContractModel):
+    schema_name: ClassVar[str] = "claim-record.schema.json"
+    claim_id: str
+    statement: str
+    entity_refs: list[str]
+    supporting_observation_ids: list[str]
+    contradicting_claim_ids: list[str]
+    superseded_by: str | None
+    confidence: float
+    confidence_factors: dict[str, float]
+    freshness: float
+    tier: str
+    state: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class RelationshipRecord(ContractModel):
+    schema_name: ClassVar[str] = "relationship-record.schema.json"
+    relationship_id: str
+    from_id: str
+    to_id: str
+    type: str
+    confidence: float
+    supporting_observation_ids: list[str]
+    state: str
+
+
+@dataclass
+class SupersessionRecord(ContractModel):
+    schema_name: ClassVar[str] = "supersession-record.schema.json"
+    supersession_id: str
+    old_claim_id: str
+    new_claim_id: str
+    reason: str
+    created_at: str
+    created_by: str
+
+
+@dataclass
+class RetrievalRecord(ContractModel):
+    schema_name: ClassVar[str] = "retrieval-record.schema.json"
+    retrieval_id: str
+    query: str
+    scope: dict[str, Any]
+    channels: list[str]
+    candidate_ids: list[str]
+    verified_ids: list[str]
+    discarded_ids: list[str]
+    created_at: str
+
+
+@dataclass
+class MemoryPacket(ContractModel):
+    schema_name: ClassVar[str] = "memory-packet.schema.json"
+    packet_id: str
+    scope: dict[str, Any]
+    observations: list[dict[str, Any]]
+    claims: list[dict[str, Any]]
+    procedures: list[dict[str, Any]]
+    contradictions: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    generated_at: str
+
+
+@dataclass
 class EvaluationResult(ContractModel):
     schema_name: ClassVar[str] = "evaluation-result.schema.json"
     evaluation_id: str
