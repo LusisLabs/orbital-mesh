@@ -13,6 +13,11 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
+from services.ingest.webhook_service import (
+    SignatureMismatchError,
+    UnknownWebhookSourceError,
+    WebhookIngestError,
+)
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
@@ -89,6 +94,23 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload)
             return
+        if path == "/api/webhook-sources":
+            self._send_json({"sources": self.server.coordinator.list_webhook_sources()})
+            return
+        if path.startswith("/api/webhook-sources/"):
+            source_id = path.split("/")[-1]
+            try:
+                self._send_json(self.server.coordinator.get_webhook_source(source_id))
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if path == "/api/alerts":
+            query = parse_qs(parsed.query)
+            source_id = query.get("source_id", [None])[0]
+            limit = _parse_int(query.get("limit", ["100"])[0], default=100)
+            alerts = self.server.coordinator.list_alert_events(source_id, limit=limit)
+            self._send_json({"alerts": alerts})
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -120,11 +142,16 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             )
             return
+        raw_body = self._read_request_body()
         try:
-            payload = self._read_json_body()
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         except json.JSONDecodeError:
             self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
             return
+        if not isinstance(payload, dict):
+            # Webhook vendors occasionally ship JSON arrays at the root;
+            # wrap them so path expressions like "$.alerts[0]" still work.
+            payload = {"root": payload}
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
@@ -144,6 +171,50 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(run)
+            return
+        if parsed.path == "/api/webhook-sources":
+            try:
+                record = self.server.coordinator.register_webhook_source(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(record, status=HTTPStatus.CREATED)
+            return
+        if parsed.path.startswith("/api/webhooks/"):
+            source_id = parsed.path.split("/", 3)[-1]
+            signature = self.headers.get("X-Mesh-Signature") or self.headers.get(
+                "X-Hub-Signature-256"
+            )
+            try:
+                outcome = self.server.coordinator.ingest_webhook(
+                    source_id,
+                    payload,
+                    raw_body=raw_body,
+                    signature=signature,
+                )
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except SignatureMismatchError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            except WebhookIngestError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(outcome, status=HTTPStatus.ACCEPTED)
+            return
+        self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/webhook-sources/"):
+            source_id = parsed.path.split("/")[-1]
+            try:
+                self.server.coordinator.delete_webhook_source(source_id)
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"deleted": source_id})
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
@@ -279,6 +350,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
+    def _read_request_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length == 0:
+            return b""
+        return self.rfile.read(length)
+
 
 def build_server(config: RuntimeConfig | None = None) -> MeshControlPlaneServer:
     resolved = config or RuntimeConfig.from_env()
@@ -311,3 +388,11 @@ def start_server_in_thread(
 
 def _timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _parse_int(value: str, default: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return default
+    return parsed if parsed > 0 else default

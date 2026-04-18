@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import threading
+import time
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -12,6 +13,10 @@ from typing import Any
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
+from services.ingest.webhook_service import (
+    WebhookIngestService,
+    build_signal_from_alert,
+)
 from shared.mesh_runtime import (
     APPROVAL_BLOCKED,
     DECISION_READY,
@@ -34,9 +39,11 @@ from shared.mesh_runtime import (
     Trigger,
     load_fixture,
 )
+from shared.mesh_runtime.alert_store import AlertStore
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
 from shared.mesh_runtime.control_plane_state import ControlPlaneStateStore
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.webhook_templates import AlertEvent
 
 
 ALLOWED_STAGES = {
@@ -88,12 +95,75 @@ class RunCoordinator:
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
         self.state_store.ensure_default_goal()
+        self.alert_store = AlertStore(self.config.state_directory)
+        self.webhook_service = WebhookIngestService(
+            alert_store=self.alert_store,
+            run_factory=self._spawn_run_from_alert,
+        )
+        # Readiness probes shell out to Promptfoo / Goose / GitNexus, which is
+        # slow enough that the UI polling path would dominate our CPU on a busy
+        # system. Cache the snapshot with a short TTL — the observable staleness
+        # is bounded but calls drop from ~100ms to ~1us for the hot loop.
+        self._readiness_cache: tuple[float, dict[str, Any]] | None = None
+        self._readiness_ttl_seconds = 10.0
+        self._readiness_lock = threading.Lock()
 
     def ensure_sidecar(self) -> bool:
         return self.sidecar.ensure_running()
 
-    def build_readiness(self) -> dict[str, Any]:
-        return build_readiness(self.config).to_dict()
+    def build_readiness(self, force: bool = False) -> dict[str, Any]:
+        now = time.monotonic()
+        with self._readiness_lock:
+            cached = self._readiness_cache
+            if not force and cached and now - cached[0] < self._readiness_ttl_seconds:
+                return cached[1]
+        snapshot = build_readiness(self.config).to_dict()
+        with self._readiness_lock:
+            self._readiness_cache = (now, snapshot)
+        return snapshot
+
+    def invalidate_readiness(self) -> None:
+        with self._readiness_lock:
+            self._readiness_cache = None
+
+    # ---- webhook surface --------------------------------------------------
+
+    def register_webhook_source(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self.webhook_service.register_source(payload)
+
+    def list_webhook_sources(self) -> list[dict[str, Any]]:
+        return self.webhook_service.list_sources()
+
+    def get_webhook_source(self, source_id: str) -> dict[str, Any]:
+        return self.webhook_service.get_source(source_id)
+
+    def delete_webhook_source(self, source_id: str) -> None:
+        self.webhook_service.delete_source(source_id)
+
+    def ingest_webhook(
+        self,
+        source_id: str,
+        payload: dict[str, Any],
+        raw_body: bytes | None = None,
+        signature: str | None = None,
+    ) -> dict[str, Any]:
+        return self.webhook_service.ingest(source_id, payload, raw_body=raw_body, signature=signature)
+
+    def list_alert_events(self, source_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+        return self.webhook_service.list_events(source_id, limit=limit)
+
+    def _spawn_run_from_alert(self, event: AlertEvent, record: dict[str, Any]) -> dict[str, Any]:
+        signal_payload = build_signal_from_alert(event)
+        goal_id = record.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        return self.create_run(
+            {
+                "goal_id": goal_id,
+                "signal_payload": signal_payload,
+                "steering_mode": record.get("steering_mode") or self.config.default_steering_mode,
+                "evaluation_mode": self.config.evaluation_mode,
+                "orchestration_mode": self.config.orchestration_mode,
+            }
+        )
 
     def list_scenarios(self) -> list[dict[str, Any]]:
         fixtures_root = Path(__file__).resolve().parents[1] / "fixtures" / "signals"

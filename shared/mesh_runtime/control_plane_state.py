@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import fcntl
 import json
+import threading
+from collections import deque
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Deque, Iterator
 from uuid import uuid4
 
 from .config import RuntimeConfig
@@ -14,6 +16,9 @@ from .control_plane_models import GoalRecord, RunEvent, RunSession
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .state import RuntimeStateStore
 from .vault import VaultManager
+
+
+_EVENT_CACHE_SIZE = 512
 
 
 class ControlPlaneStateStore:
@@ -27,6 +32,12 @@ class ControlPlaneStateStore:
         self._run_sessions_path = self.state_directory / "run_sessions.json"
         self._run_events_dir = self.state_directory / "run_events"
         self._run_events_dir.mkdir(parents=True, exist_ok=True)
+        # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
+        # JSON from disk + redeserializing is 10-50x more expensive than a
+        # deque slice. The tail is bounded per run_id and invalidated on write.
+        self._event_tail_cache: dict[str, Deque[RunEvent]] = {}
+        self._event_cache_lock = threading.Lock()
+        self._session_cache: dict[str, RunSession] = {}
 
     def ensure_default_goal(self) -> GoalRecord:
         goals = self.list_goals()
@@ -167,6 +178,12 @@ class ControlPlaneStateStore:
             existing_events.append(event)
             event_payload["events"] = [record.to_dict() for record in existing_events]
 
+        with self._event_cache_lock:
+            tail = self._event_tail_cache.setdefault(
+                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
+            )
+            tail.append(event)
+
         snapshot = self.get_merkle_snapshot(run_id)
         session = self.get_run_session(run_id)
         if session is not None:
@@ -178,12 +195,21 @@ class ControlPlaneStateStore:
         return event
 
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:
+        with self._event_cache_lock:
+            cached = self._event_tail_cache.get(run_id)
+            if cached is not None:
+                return [event for event in cached if event.sequence > after_sequence]
         event_path = self._run_events_dir / f"{run_id}.json"
         if not event_path.exists():
             return []
         with _locked_json(event_path) as payload:
             records = payload.get("events", [])
             events = [RunEvent(**record) for record in records if isinstance(record, dict)]
+        with self._event_cache_lock:
+            # Warm the cache with whatever we just loaded; subsequent polls hit
+            # the hot path.
+            tail = deque(events[-_EVENT_CACHE_SIZE:], maxlen=_EVENT_CACHE_SIZE)
+            self._event_tail_cache[run_id] = tail
         return [event for event in events if event.sequence > after_sequence]
 
     def get_merkle_snapshot(self, run_id: str):
