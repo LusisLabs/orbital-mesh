@@ -11,6 +11,7 @@ from shared.mesh_runtime import (
     EvaluationResult,
     ExecutionRecord,
     RuntimeConfig,
+    build_readiness,
     log_runtime_event,
     resolve_integrations_config,
 )
@@ -32,12 +33,30 @@ class OrchestratorService:
         self.sleeper = sleeper or time.sleep
 
     def _build_adapter(self) -> GooseAdapter:
-        if self.config.orchestration_mode == "goose":
+        mode = (self.config.orchestration_mode or "auto").lower()
+        if mode == "native":
+            return NativeGooseAdapter()
+        if mode == "goose":
             resolved = resolve_integrations_config(self.config)
             return GooseCliAdapter(
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
+        # auto: use Goose when the bridge is ready, otherwise stay native.
+        readiness = build_readiness(self.config)
+        if readiness.goose.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("orchestration_adapter_selected", adapter="goose", reason="auto_ready")
+            return GooseCliAdapter(
+                command=resolved.goose_command,
+                timeout_seconds=self.config.goose_command_timeout_seconds,
+            )
+        log_runtime_event(
+            "orchestration_adapter_selected",
+            adapter="native",
+            reason="auto_fallback",
+            detail=readiness.goose.detail,
+        )
         return NativeGooseAdapter()
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:

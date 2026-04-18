@@ -10,6 +10,7 @@ from shared.mesh_runtime import (
     RuntimeConfig,
     RuntimeStateStore,
     Trigger,
+    build_readiness,
     log_runtime_event,
     load_policy,
     resolve_integrations_config,
@@ -30,9 +31,25 @@ class EvaluationService:
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
 
     def _build_adapter(self) -> PromptfooAdapter:
-        if self.config.evaluation_mode == "promptfoo":
+        mode = (self.config.evaluation_mode or "auto").lower()
+        if mode == "native":
+            return NativePromptfooAdapter()
+        if mode == "promptfoo":
             resolved = resolve_integrations_config(self.config)
             return PromptfooCliAdapter(command=resolved.promptfoo_command)
+        # auto: prefer Promptfoo when it can actually run, otherwise fall back
+        # to the in-process heuristic so offline/dev setups still work.
+        readiness = build_readiness(self.config)
+        if readiness.promptfoo.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("evaluation_adapter_selected", adapter="promptfoo", reason="auto_ready")
+            return PromptfooCliAdapter(command=resolved.promptfoo_command)
+        log_runtime_event(
+            "evaluation_adapter_selected",
+            adapter="native",
+            reason="auto_fallback",
+            detail=readiness.promptfoo.detail,
+        )
         return NativePromptfooAdapter()
 
     def evaluate(

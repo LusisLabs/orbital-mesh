@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,9 @@ from .control_plane_models import IntegrationReadiness, IntegrationStatus
 
 
 DEFAULT_GITNEXUS_PORT = 4747
+_READINESS_TTL_SECONDS = 10.0
+_readiness_lock = threading.Lock()
+_readiness_cache: dict[tuple, tuple[float, IntegrationReadiness]] = {}
 # GitNexus exposes `/api/heartbeat` as SSE (long-lived); use `/api/info` for probes and readiness.
 GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
@@ -86,7 +90,25 @@ def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsCo
     )
 
 
-def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
+def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> IntegrationReadiness:
+    # Module-level TTL cache: subprocess probes (promptfoo --version, goose
+    # --version) plus the GitNexus HTTP probe dominate cold startup. Every
+    # service constructor in auto mode would otherwise pay ~800ms per init.
+    # Keyed by (state_dir, integrations_config_path, promptfoo_command,
+    # goose_command, gitnexus_sidecar_url) so overrides don't cross-pollute.
+    cache_key = (
+        runtime_config.state_directory,
+        runtime_config.integrations_config_path,
+        runtime_config.promptfoo_command,
+        runtime_config.goose_command,
+        runtime_config.gitnexus_sidecar_url,
+    )
+    now = time.monotonic()
+    if not force:
+        with _readiness_lock:
+            entry = _readiness_cache.get(cache_key)
+            if entry and now - entry[0] < _READINESS_TTL_SECONDS:
+                return entry[1]
     resolved = resolve_integrations_config(runtime_config)
     checked_at = _timestamp()
     gitnexus_ready = (
@@ -103,7 +125,7 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
         command=resolved.gitnexus_sidecar_command,
         url=resolved.gitnexus_sidecar_url,
     )
-    return IntegrationReadiness(
+    readiness = IntegrationReadiness(
         checked_at=checked_at,
         promptfoo=promptfoo_status,
         goose=goose_status,
@@ -112,6 +134,15 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
         state_path=runtime_config.state_directory,
         integrations_config_path=runtime_config.integrations_config_path,
     )
+    with _readiness_lock:
+        _readiness_cache[cache_key] = (now, readiness)
+    return readiness
+
+
+def invalidate_readiness_cache() -> None:
+    """Drop every cached readiness snapshot. Call after integration config changes."""
+    with _readiness_lock:
+        _readiness_cache.clear()
 
 
 class GitNexusSidecarManager:
