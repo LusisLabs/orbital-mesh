@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from services.evaluation.service import EvaluationService
+from services.orchestrator.hermes_adapter import HermesCliAdapter
 from services.orchestrator.service import OrchestratorService
 from services.pipeline import FirstSlicePipeline
 from services.trigger.service import TriggerService
@@ -76,6 +77,16 @@ class PipelineTests(unittest.TestCase):
 
         self.assertEqual(execution.status, "rejected")
         self.assertEqual(execution.external_refs, {})
+
+    def test_orchestrator_uses_hermes_cli_adapter_for_hermes_mode(self) -> None:
+        config = RuntimeConfig(
+            evaluation_mode="native",
+            orchestration_mode="hermes",
+            hermes_command="python3 -m services.orchestrator.hermes_bridge --hermes-command hermes",
+            state_directory=self.temp_dir.name,
+        )
+        service = OrchestratorService(config=config)
+        self.assertIsInstance(service.adapter, HermesCliAdapter)
 
 
 if __name__ == "__main__":

@@ -16,10 +16,16 @@ VAULT_DIRECTORIES = (
     "Evaluations",
     "Executions",
     "Feedback",
+    "Agents",
+    "Evo",
     "Merkle",
     "Notes",
     "Insights",
     "Visualizations",
+    "MemoryObservations",
+    "MemoryClaims",
+    "MemoryProcedures",
+    "MemoryRetrievals",
 )
 
 
@@ -81,6 +87,8 @@ class VaultManager:
             f"- Evaluation: {self._artifact_link('Evaluations', session.run_id)}",
             f"- Execution: {self._artifact_link('Executions', session.run_id)}",
             f"- Feedback: {self._artifact_link('Feedback', session.run_id)}",
+            f"- Agents: {self._artifact_link('Agents', session.run_id)}",
+            f"- Evo: {self._artifact_link('Evo', session.run_id)}",
             f"- Merkle: {self._artifact_link('Merkle', session.run_id)}",
             f"- Notes: {self._artifact_link('Notes', session.run_id)}",
             f"- Insights: {self._artifact_link('Insights', session.run_id)}",
@@ -110,6 +118,14 @@ class VaultManager:
         self._write_markdown(
             self._artifact_path("Feedback", session.run_id),
             self._artifact_document("Feedback", session.artifacts.get("feedback")),
+        )
+        self._write_markdown(
+            self._artifact_path("Agents", session.run_id),
+            self._artifact_document("Agent Mesh", {"tasks": session.artifacts.get("agent_tasks", [])}),
+        )
+        self._write_markdown(
+            self._artifact_path("Evo", session.run_id),
+            self._artifact_document("Evo", session.artifacts.get("evo_launches")),
         )
         self._write_markdown(
             self._artifact_path("Merkle", session.run_id),
@@ -172,6 +188,86 @@ class VaultManager:
         destination = self.root_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text("\n".join(lines).rstrip() + "\n")
+
+    def write_memory_observation(self, observation: dict[str, Any]) -> str:
+        relative_path = f"MemoryObservations/{observation['observation_id']}.md"
+        lines = [
+            f"# Observation {observation['observation_id']}",
+            "",
+            f"- Kind: `{observation.get('kind')}`",
+            f"- Service: `{observation.get('service') or 'none'}`",
+            f"- Run: `{observation.get('run_id') or 'none'}`",
+            f"- Source Type: `{observation.get('source_type')}`",
+            f"- Author: `{observation.get('author')}`",
+            f"- Created: `{observation.get('created_at')}`",
+            "",
+            "## Content",
+            "",
+            str(observation.get("content") or ""),
+            "",
+            "## Source Refs",
+            "",
+            "```json",
+            json.dumps(observation.get("source_refs", []), indent=2, sort_keys=True),
+            "```",
+        ]
+        self._write_markdown(relative_path, lines)
+        return relative_path
+
+    def write_memory_claim(self, claim: dict[str, Any]) -> str:
+        directory = "MemoryProcedures" if claim.get("tier") == "procedural" else "MemoryClaims"
+        relative_path = f"{directory}/{claim['claim_id']}.md"
+        lines = [
+            f"# Claim {claim['claim_id']}",
+            "",
+            f"- Tier: `{claim.get('tier')}`",
+            f"- State: `{claim.get('state')}`",
+            f"- Confidence: `{claim.get('confidence')}`",
+            f"- Freshness: `{claim.get('freshness')}`",
+            f"- Superseded By: `{claim.get('superseded_by') or 'none'}`",
+            f"- Updated: `{claim.get('updated_at')}`",
+            "",
+            "## Statement",
+            "",
+            str(claim.get("statement") or ""),
+            "",
+            "## Support",
+            "",
+            f"- Supporting observations: {', '.join(claim.get('supporting_observation_ids', [])) or 'none'}",
+            f"- Contradicting claims: {', '.join(claim.get('contradicting_claim_ids', [])) or 'none'}",
+            "",
+            "## Confidence Factors",
+            "",
+            "```json",
+            json.dumps(claim.get("confidence_factors", {}), indent=2, sort_keys=True),
+            "```",
+        ]
+        self._write_markdown(relative_path, lines)
+        return relative_path
+
+    def write_memory_retrieval(self, retrieval: dict[str, Any]) -> str:
+        relative_path = f"MemoryRetrievals/{retrieval['retrieval_id']}.md"
+        lines = [
+            f"# Retrieval {retrieval['retrieval_id']}",
+            "",
+            f"- Query: `{retrieval.get('query')}`",
+            f"- Channels: {', '.join(retrieval.get('channels', [])) or 'none'}",
+            f"- Created: `{retrieval.get('created_at')}`",
+            "",
+            "## Scope",
+            "",
+            "```json",
+            json.dumps(retrieval.get("scope", {}), indent=2, sort_keys=True),
+            "```",
+            "",
+            "## IDs",
+            "",
+            f"- Candidate IDs: {', '.join(retrieval.get('candidate_ids', [])) or 'none'}",
+            f"- Verified IDs: {', '.join(retrieval.get('verified_ids', [])) or 'none'}",
+            f"- Discarded IDs: {', '.join(retrieval.get('discarded_ids', [])) or 'none'}",
+        ]
+        self._write_markdown(relative_path, lines)
+        return relative_path
 
     def _artifact_document(self, title: str, payload: dict[str, Any] | None) -> list[str]:
         lines = [f"# {title}", ""]

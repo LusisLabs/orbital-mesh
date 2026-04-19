@@ -5,34 +5,58 @@ import {
   Copy,
   ExternalLink,
   FileText,
-  FolderGit2,
   Hash,
-  Search,
   Shield,
   XCircle,
 } from "lucide-react";
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { formatDuration, formatTimestamp, humanize, riskColor, truncateHash } from "../lib/format";
-import type { InspectorTab, MerkleProof, RunDetail, VaultTreeEntry } from "../types";
+import type {
+  InspectorTab,
+  MerkleProof,
+  ResearchCorpusIntelligence,
+  ResearchIntelligence,
+  ResearchSessionDetail,
+  RunDetail,
+  VaultTreeEntry,
+} from "../types";
 
 interface InspectorProps {
   tab: InspectorTab;
   run: RunDetail | null;
+  researchCorpus: ResearchCorpusIntelligence | null;
+  researchDetail: ResearchSessionDetail | null;
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
   merkleProof: MerkleProof | null;
-  gitnexusInfo: Record<string, unknown> | null;
-  gitnexusProcesses: Record<string, unknown> | null;
-  gitnexusSearch: string;
-  gitnexusSearchResult: Record<string, unknown> | null;
-  onGitnexusSearchChange: (value: string) => void;
-  onGitnexusSearch: () => void;
   onVaultSelect: (path: string) => void;
 }
 
 export function Inspector(props: InspectorProps) {
   const { tab, run } = props;
+
+  if (tab === "research") {
+    if (!props.researchDetail) {
+      return (
+        <div className="inspector-empty">
+          <FileText size={32} strokeWidth={1.2} />
+          {props.researchCorpus ? (
+            <ResearchCorpusPanel corpus={props.researchCorpus} />
+          ) : (
+            <p>
+              Select a session under <strong>Autonomous Research</strong> in the left rail. These sessions are produced by{" "}
+              <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
+              in the Run Queue.
+            </p>
+          )}
+        </div>
+      );
+    }
+    return <ResearchTab detail={props.researchDetail} corpus={props.researchCorpus} />;
+  }
 
   if (!run) {
     return (
@@ -59,11 +83,157 @@ export function Inspector(props: InspectorProps) {
     case "merkle":
       return <MerkleTab run={run} merkleProof={props.merkleProof} />;
     case "code":
-      return <CodeTab {...props} />;
+      return <CodeTab />;
+    default:
+      return null;
   }
 }
 
-/* ─── Shared helpers ─── */
+function ResearchTab({
+  detail,
+  corpus,
+}: {
+  detail: ResearchSessionDetail;
+  corpus: ResearchCorpusIntelligence | null;
+}) {
+  const m = detail.manifest;
+  const q = typeof m.question === "string" ? m.question : "";
+  const status = typeof m.status === "string" ? m.status : "";
+  const route = typeof m.minimax_route === "string" ? m.minimax_route : "";
+  const model = typeof m.minimax_model === "string" ? m.minimax_model : "";
+  const intelligence = detail.research_intelligence;
+  return (
+    <div className="inspector-scroll research-inspector">
+      <div className="inspector-field">
+        <span className="inspector-label">Session</span>
+        <span className="inspector-value mono">{detail.session_id}</span>
+      </div>
+      {q ? (
+        <div className="inspector-field">
+          <span className="inspector-label">Question</span>
+          <span className="inspector-value">{q}</span>
+        </div>
+      ) : null}
+      <div className="inspector-field-row">
+        {status ? <Badge label={status} color="#41d6b1" /> : null}
+        {route ? <Badge label={`route: ${route}`} color="#8b9bb4" /> : null}
+        {model ? <Badge label={model} color="#6b8cae" /> : null}
+      </div>
+      {corpus ? <ResearchCorpusPanel corpus={corpus} compact /> : null}
+      {intelligence ? <ResearchIntelligencePanel intelligence={intelligence} /> : null}
+      {detail.final_report_markdown ? (
+        <MarkdownDocument className="research-markdown markdown-document" content={detail.final_report_markdown} />
+      ) : (
+        <p className="muted">No synthesis/final-report.md yet.</p>
+      )}
+    </div>
+  );
+}
+
+function ResearchCorpusPanel({
+  corpus,
+  compact,
+}: {
+  corpus: ResearchCorpusIntelligence;
+  compact?: boolean;
+}) {
+  const recurringFlags = Object.entries(corpus.recurring_flags)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, compact ? 3 : 5)
+    .map(([flag, count]) => `${humanize(flag)} (${count})`);
+  const acceptedAnchors = corpus.accepted_anchors
+    .slice(0, compact ? 3 : 5)
+    .map((anchor) => `${anchor.label} (${anchor.session_count})`);
+  const driftSessions = corpus.drift_sessions
+    .slice(0, compact ? 2 : 4)
+    .map((session) => `${session.session_id}: ${session.off_domain_terms.slice(0, 3).join(", ")}`);
+
+  return (
+    <Section title="Research Corpus">
+      <div className="inspector-field-row">
+        <Badge label={`${corpus.sessions_analyzed} analyzed`} color="#41d6b1" />
+        <Badge label={`${corpus.drift_sessions.length} drift sessions`} color="#d76c75" />
+        <Badge label={`${corpus.accepted_anchors.length} accepted anchors`} color="#6b8cae" />
+      </div>
+      {recurringFlags.length > 0 ? <MiniList title="Recurring flags" items={recurringFlags} inline={compact} /> : null}
+      {acceptedAnchors.length > 0 ? <MiniList title="Accepted anchors" items={acceptedAnchors} inline={compact} /> : null}
+      {corpus.next_actions.length > 0 ? (
+        <MiniList title="Next actions" items={corpus.next_actions.slice(0, compact ? 3 : 5)} />
+      ) : null}
+      {driftSessions.length > 0 ? <MiniList title="Recent drift sessions" items={driftSessions} /> : null}
+    </Section>
+  );
+}
+
+function ResearchIntelligencePanel({ intelligence }: { intelligence: ResearchIntelligence }) {
+  return (
+    <Section title="Research Intelligence">
+      <div className="inspector-field-row">
+        <Badge label={humanize(intelligence.classification)} color={researchClassificationColor(intelligence.classification)} />
+        <Badge label={`repo ${intelligence.repo_grounding_score}`} color="#7fcf9f" />
+        <Badge label={`drift ${intelligence.off_domain_score}`} color="#d7a95e" />
+      </div>
+      {intelligence.flags.length > 0 ? (
+        <div className="inspector-field-row">
+          {intelligence.flags.map((flag) => (
+            <Badge key={flag} label={humanize(flag)} color="#d76c75" />
+          ))}
+        </div>
+      ) : null}
+      {intelligence.anchors.length > 0 ? (
+        <MiniList title="Grounded anchors" items={intelligence.anchors.slice(0, 4).map((anchor) => anchor.label)} />
+      ) : null}
+      {intelligence.extracted_actions && intelligence.extracted_actions.length > 0 ? (
+        <MiniList title="Next actions" items={intelligence.extracted_actions.slice(0, 4)} />
+      ) : null}
+      {intelligence.extracted_risks && intelligence.extracted_risks.length > 0 ? (
+        <MiniList title="Extracted risks" items={intelligence.extracted_risks.slice(0, 4)} />
+      ) : null}
+      {intelligence.unsupported_claim_terms && intelligence.unsupported_claim_terms.length > 0 ? (
+        <MiniList title="Unsupported claims" items={intelligence.unsupported_claim_terms.slice(0, 8)} inline />
+      ) : null}
+      {intelligence.evidence_limit_terms && intelligence.evidence_limit_terms.length > 0 ? (
+        <MiniList title="Evidence limits" items={intelligence.evidence_limit_terms.slice(0, 8)} inline />
+      ) : null}
+      {intelligence.off_domain_terms && intelligence.off_domain_terms.length > 0 ? (
+        <MiniList title="Drift terms" items={intelligence.off_domain_terms.slice(0, 8)} inline />
+      ) : null}
+      {intelligence.documents_read && intelligence.documents_read.length > 0 ? (
+        <MiniList title="Documents read" items={intelligence.documents_read.slice(0, 5)} />
+      ) : null}
+    </Section>
+  );
+}
+
+function MiniList({ title, items, inline }: { title: string; items: string[]; inline?: boolean }) {
+  return (
+    <div className="mini-list">
+      <span className="inspector-label">{title}</span>
+      {inline ? (
+        <p className="muted">{items.join(", ")}</p>
+      ) : (
+        <ul>
+          {items.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function researchClassificationColor(classification: ResearchIntelligence["classification"]) {
+  switch (classification) {
+    case "repo_grounded":
+      return "#7fcf9f";
+    case "mixed":
+      return "#d7a95e";
+    case "off_domain":
+      return "#d76c75";
+    default:
+      return "#8b9bb4";
+  }
+}
 
 function Field({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
@@ -127,6 +297,21 @@ function JsonBlock({ data }: { data: unknown }) {
   );
 }
 
+function MarkdownDocument({ content, className }: { content: string; className?: string }) {
+  return (
+    <div className={className}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 function PassFail({ passed }: { passed: boolean }) {
   return passed ? (
     <Badge label="Passed" color="var(--accent-good)" icon={<CheckCircle size={12} />} />
@@ -134,8 +319,6 @@ function PassFail({ passed }: { passed: boolean }) {
     <Badge label="Failed" color="var(--accent-danger)" icon={<XCircle size={12} />} />
   );
 }
-
-/* ─── Overview ─── */
 
 function OverviewTab({ run }: { run: RunDetail }) {
   return (
@@ -207,8 +390,6 @@ function OverviewTab({ run }: { run: RunDetail }) {
     </div>
   );
 }
-
-/* ─── Evidence ─── */
 
 function EvidenceTab({ run }: { run: RunDetail }) {
   const trigger = run.artifacts.trigger;
@@ -283,8 +464,6 @@ function EvidenceTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Policy ─── */
-
 function PolicyTab({ run }: { run: RunDetail }) {
   const evaluation = run.artifacts.evaluation;
   if (!evaluation) {
@@ -354,8 +533,6 @@ function PolicyTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Execution ─── */
-
 function ExecutionTab({ run }: { run: RunDetail }) {
   const exec = run.artifacts.execution;
   if (!exec) {
@@ -416,8 +593,6 @@ function ExecutionTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Feedback ─── */
-
 function FeedbackTab({ run }: { run: RunDetail }) {
   const feedback = run.artifacts.feedback;
   if (!feedback) {
@@ -466,8 +641,6 @@ function FeedbackTab({ run }: { run: RunDetail }) {
   );
 }
 
-/* ─── Vault ─── */
-
 function VaultTab(props: InspectorProps) {
   const { vaultDocument, vaultTree, onVaultSelect } = props;
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set());
@@ -509,7 +682,7 @@ function VaultTab(props: InspectorProps) {
       )}
       <Section title="Document">
         {vaultDocument ? (
-          <pre className="vault-content">{vaultDocument}</pre>
+          <MarkdownDocument className="vault-content markdown-document" content={vaultDocument} />
         ) : (
           <p className="inspector-muted">No vault document loaded.</p>
         )}
@@ -517,8 +690,6 @@ function VaultTab(props: InspectorProps) {
     </div>
   );
 }
-
-/* ─── Merkle ─── */
 
 function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerkleProof | null }) {
   const proofNodes = merkleProof ? buildProofNodes(merkleProof) : [];
@@ -594,53 +765,16 @@ function MerkleTab({ run, merkleProof }: { run: RunDetail; merkleProof: MerklePr
   );
 }
 
-/* ─── Code (GitNexus) ─── */
-
-function CodeTab(props: InspectorProps) {
-  const { gitnexusInfo, gitnexusProcesses, gitnexusSearch, gitnexusSearchResult, onGitnexusSearchChange, onGitnexusSearch } = props;
-
+function CodeTab() {
   return (
     <div className="inspector-scroll">
-      <Section title="GitNexus Search">
-        <div className="gitnexus-search-bar">
-          <Search size={14} />
-          <input
-            value={gitnexusSearch}
-            onChange={(e) => onGitnexusSearchChange(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && onGitnexusSearch()}
-            placeholder="Search code intelligence…"
-          />
-          <button className="action-button compact" onClick={onGitnexusSearch}>
-            <FolderGit2 size={14} />
-            Query
-          </button>
-        </div>
-        {gitnexusSearchResult && <JsonBlock data={gitnexusSearchResult} />}
-      </Section>
-
-      {gitnexusInfo && (
-        <Section title="Repository Info">
-          <JsonBlock data={gitnexusInfo} />
-        </Section>
-      )}
-
-      {gitnexusProcesses && (
-        <Section title="Execution Flows">
-          <JsonBlock data={gitnexusProcesses} />
-        </Section>
-      )}
-
-      {!gitnexusInfo && !gitnexusProcesses && (
-        <div className="inspector-empty compact">
-          <Code size={24} strokeWidth={1.2} />
-          <p>GitNexus sidecar not connected.</p>
-        </div>
-      )}
+      <div className="inspector-empty compact">
+        <Code size={24} strokeWidth={1.2} />
+        <p>Code-side external integrations were removed from this stack.</p>
+      </div>
     </div>
   );
 }
-
-/* ─── Utils ─── */
 
 function stageColor(stage: string): string {
   if (stage === "completed") return "var(--accent-good)";

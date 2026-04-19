@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -9,9 +10,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from services.evaluation.promptfoo_bridge import _parse_promptfoo_output
+from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.goose_adapter import GooseCliAdapter
-from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _run_goose_prompt
-from shared.mesh_runtime import RuntimeConfig, resolve_integrations_config
+from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _profile_timeout_seconds, _run_goose_prompt
+from services.orchestrator.hermes_bridge import _hermes_chat_timeout_seconds
+from shared.mesh_runtime import Decision, EvaluationResult, IntegrationsConfig, RuntimeConfig, Trigger, resolve_integrations_config, save_integrations_config
 from shared.mesh_runtime.integrations import build_readiness
 
 
@@ -30,6 +33,13 @@ class IntegrationsTests(unittest.TestCase):
                     "ollama": "/usr/local/bin/ollama",
                 }
                 return mapping.get(name)
+
+            # Set env vars so goose profile resolution picks up ollama
+            ollama_env = {
+                "GOOSE_PROVIDER": "ollama",
+                "GOOSE_MODEL": "qwen2.5:0.5b",
+                "OLLAMA_HOST": "http://127.0.0.1:11434",
+            }
 
             def fake_run(
                 args: list[str],
@@ -66,6 +76,7 @@ class IntegrationsTests(unittest.TestCase):
             with (
                 patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which),
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run),
+                patch.dict(os.environ, ollama_env),
             ):
                 resolved = resolve_integrations_config(config)
 
@@ -74,6 +85,40 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("services.orchestrator.goose_bridge", resolved.goose_command or "")
         self.assertIn("--provider ollama", resolved.goose_command or "")
         self.assertIn("--model qwen2.5:0.5b", resolved.goose_command or "")
+        self.assertIsNone(resolved.evo_command)
+
+    def test_resolve_integrations_respects_evo_env_saved_config_and_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "integrations.json"
+            save_integrations_config(
+                config_path,
+                IntegrationsConfig(evo_command="uv run --project /repo/evo/plugins/evo evo"),
+            )
+
+            saved = resolve_integrations_config(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    integrations_config_path=str(config_path),
+                )
+            )
+            explicit = resolve_integrations_config(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    integrations_config_path=str(config_path),
+                    evo_command="/opt/bin/evo",
+                )
+            )
+            with patch("shared.mesh_runtime.integrations.shutil.which", side_effect=lambda name: "/usr/local/bin/evo" if name == "evo" else None):
+                discovered = resolve_integrations_config(
+                    RuntimeConfig(
+                        state_directory=temp_dir,
+                        integrations_config_path=str(Path(temp_dir) / "missing.json"),
+                    )
+                )
+
+        self.assertEqual(saved.evo_command, "uv run --project /repo/evo/plugins/evo evo")
+        self.assertEqual(explicit.evo_command, "/opt/bin/evo")
+        self.assertEqual(discovered.evo_command, "/usr/local/bin/evo")
 
     def test_promptfoo_output_parser_extracts_real_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -111,6 +156,35 @@ class IntegrationsTests(unittest.TestCase):
         self.assertEqual(artifact["score"], 0.88)
         self.assertEqual(artifact["assertions"][0]["reason"], "confidence meets minimum threshold")
 
+    def test_resolve_integrations_wraps_hermes_binary_with_bridge_command(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+            )
+
+            def fake_which(name: str) -> str | None:
+                mapping = {
+                    "promptfoo": "/usr/local/bin/promptfoo",
+                    "hermes": "/Users/test/.local/bin/hermes",
+                }
+                return mapping.get(name)
+
+            with patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which):
+                resolved = resolve_integrations_config(config)
+
+        self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
+        self.assertIn("/Users/test/.local/bin/hermes", resolved.hermes_command or "")
+
+    def test_resolve_integrations_wraps_complex_hermes_command_with_bridge_command(self) -> None:
+        config = RuntimeConfig(
+            hermes_command="hermes"
+        )
+
+        resolved = resolve_integrations_config(config)
+
+        self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
+        self.assertIn("--hermes-command hermes", resolved.hermes_command or "")
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_path = Path(temp_dir) / "results.json"
@@ -304,7 +378,16 @@ class IntegrationsTests(unittest.TestCase):
         self.assertEqual(observed["timeout"], 180)
         self.assertEqual(result["status"], "succeeded")
 
-    def test_goose_openai_profile_maps_base_url_to_host(self) -> None:
+    def test_goose_bridge_run_timeout_env_overrides_provider_timeouts(self) -> None:
+        with patch.dict("os.environ", {"MESH_GOOSE_RUN_TIMEOUT_SECONDS": "180"}, clear=False):
+            self.assertEqual(_profile_timeout_seconds("ollama", False), 180)
+            self.assertEqual(_profile_timeout_seconds("openai", True), 180)
+
+    def test_hermes_bridge_chat_timeout_uses_command_budget(self) -> None:
+        with patch.dict("os.environ", {"MESH_HERMES_COMMAND_TIMEOUT_SECONDS": "180"}, clear=False):
+            self.assertEqual(_hermes_chat_timeout_seconds(), 180.0)
+
+    def test_goose_openai_profile_preserves_base_url_without_host_alias(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -314,7 +397,8 @@ class IntegrationsTests(unittest.TestCase):
         ):
             env = _command_env("openai")
 
-        self.assertEqual(env["OPENAI_HOST"], "https://api.minimax.io/v1")
+        self.assertEqual(env["OPENAI_BASE_URL"], "https://api.minimax.io/v1")
+        self.assertNotIn("OPENAI_HOST", env)
 
     def test_parse_review_text_accepts_fenced_json(self) -> None:
         parsed = _parse_review_text(
@@ -326,7 +410,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(parsed["approved"])
         self.assertEqual(parsed["summary"], "Proceed")
 
-    def test_goose_anthropic_profile_maps_base_url_to_host(self) -> None:
+    def test_goose_anthropic_profile_preserves_base_url_without_host_alias(self) -> None:
         with patch.dict(
             "os.environ",
             {
@@ -336,7 +420,8 @@ class IntegrationsTests(unittest.TestCase):
         ):
             env = _command_env("anthropic")
 
-        self.assertEqual(env["ANTHROPIC_HOST"], "https://api.minimax.io/anthropic")
+        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://api.minimax.io/anthropic")
+        self.assertNotIn("ANTHROPIC_HOST", env)
 
     def test_readiness_warns_when_ollama_model_is_missing(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -397,6 +482,182 @@ class IntegrationsTests(unittest.TestCase):
         self.assertEqual(readiness.goose.fallback_route, "openai/MiniMax-M2.5")
         self.assertTrue(readiness.goose.warnings)
         self.assertIn("ollama reachable but model `gemma4:31b-it-q4_K_M` is not loaded", readiness.goose.warnings[0])
+
+    def test_evo_readiness_requires_evo_hq_cli_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_evo = Path(temp_dir) / "evo"
+            fake_evo.write_text("#!/bin/sh\n", encoding="utf-8")
+            fake_evo.chmod(0o755)
+            missing = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+            )
+            wrong = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                evo_command=str(fake_evo),
+            )
+            correct = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                evo_command=str(fake_evo),
+            )
+
+            def wrong_run(
+                args: list[str],
+                capture_output: bool = False,
+                text: bool = False,
+                check: bool = False,
+                timeout: int | float | None = None,
+            ) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo 1.30.0\n", stderr="")
+
+            def correct_run(
+                args: list[str],
+                capture_output: bool = False,
+                text: bool = False,
+                check: bool = False,
+                timeout: int | float | None = None,
+            ) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo-hq-cli 0.2.0\n", stderr="")
+
+            # build_readiness caches its result keyed on RuntimeConfig fields
+            # but cannot see monkeypatched subprocess.run, so force-refresh
+            # between the wrong/correct blocks by invalidating explicitly.
+            from shared.mesh_runtime.integrations import invalidate_readiness_cache
+
+            invalidate_readiness_cache()
+            with (
+                patch("shared.mesh_runtime.integrations.shutil.which", return_value=None),
+                patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
+            ):
+                missing_readiness = build_readiness(missing)
+            invalidate_readiness_cache()
+            with (
+                patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=wrong_run),
+                patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
+            ):
+                wrong_readiness = build_readiness(wrong)
+            invalidate_readiness_cache()
+            with (
+                patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=correct_run),
+                patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
+            ):
+                correct_readiness = build_readiness(correct)
+
+        self.assertFalse(missing_readiness.evo.ready)
+        self.assertEqual(missing_readiness.evo.detail, "command not configured")
+        self.assertFalse(wrong_readiness.evo.ready)
+        self.assertIn("unexpected evo package", wrong_readiness.evo.detail)
+        self.assertTrue(correct_readiness.evo.ready)
+        self.assertEqual(correct_readiness.evo.detail, "evo-hq-cli 0.2.0")
+
+    def test_evo_agent_attempt_reports_patch_and_non_patch_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fake_evo = Path(temp_dir) / "evo"
+            fake_evo.write_text("#!/bin/sh\n", encoding="utf-8")
+            fake_evo.chmod(0o755)
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                evo_command=str(fake_evo),
+            )
+            service = AgentMeshService(config=config)
+            trigger = Trigger(
+                trigger_id="trg_test",
+                trigger_type="kubernetes_crashloop",
+                triggered_at="2026-04-14T00:00:00Z",
+                environment="staging",
+                service="search",
+                endpoint="/search",
+                flag_key="semantic_search",
+                current_rollout_pct=100,
+                comparison_window={"baseline": "30m", "observed": "5m"},
+                segment={},
+                metrics={},
+                related_context={
+                    "code_remediation_candidate": True,
+                    "repo_path": temp_dir,
+                    "allowed_paths": ["app/search.py"],
+                    "test_commands": ["python3 -m unittest discover -s tests"],
+                },
+            )
+            patch_decision = Decision(
+                decision_id="dec_patch",
+                trigger_id="trg_test",
+                summary="Patch search parser.",
+                decision_type="investigate_and_patch",
+                autonomy_tier="autonomous",
+                reasoning={},
+                expected_outcome={},
+                risk={"level": "medium"},
+                confidence=0.8,
+                execution_plan={
+                    "system": "repo_patch_service",
+                    "action": "investigate_and_patch",
+                    "parameters": {
+                        "repo_path": temp_dir,
+                        "allowed_paths": ["app/search.py"],
+                        "test_commands": ["python3 -m unittest discover -s tests"],
+                    },
+                },
+            )
+            non_patch_decision = Decision(
+                decision_id="dec_rollback",
+                trigger_id="trg_test",
+                summary="Rollback deployment.",
+                decision_type="rollback",
+                autonomy_tier="approval_required",
+                reasoning={},
+                expected_outcome={},
+                risk={"level": "medium"},
+                confidence=0.8,
+                execution_plan={
+                    "system": "kubernetes_service",
+                    "action": "rollback_deployment",
+                    "parameters": {},
+                },
+            )
+            evaluation = EvaluationResult(
+                evaluation_id="eval_test",
+                decision_id="dec_patch",
+                passed=True,
+                final_recommendation="execute",
+                stage_results={},
+                blocking_reasons=[],
+            )
+
+            def fake_run(
+                args: list[str],
+                capture_output: bool = False,
+                text: bool = False,
+                check: bool = False,
+                timeout: int | float | None = None,
+            ) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo-hq-cli 0.2.0\n", stderr="")
+
+            with patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run):
+                patch_task = service.build_tasks(
+                    run_id="run_patch",
+                    trigger=trigger,
+                    decision=patch_decision,
+                    evaluation=evaluation,
+                )[0]
+                non_patch_task = service.build_tasks(
+                    run_id="run_rollback",
+                    trigger=trigger,
+                    decision=non_patch_decision,
+                    evaluation=evaluation,
+                )[0]
+
+        patch_evo = [attempt for attempt in patch_task.attempts if attempt.agent == "evo"][0]
+        non_patch_evo = [attempt for attempt in non_patch_task.attempts if attempt.agent == "evo"][0]
+        self.assertEqual(patch_evo.recommended_action, "evo_discover_candidate")
+        self.assertTrue(patch_evo.output["evo_ready"])
+        self.assertIn("evo_workspace_missing", patch_evo.risk_flags)
+        self.assertNotIn("non_code_task", patch_evo.risk_flags)
+        self.assertEqual(non_patch_evo.recommended_action, "human_review")
+        self.assertIn("non_code_task", non_patch_evo.risk_flags)
 
     def test_goose_review_parser_accepts_json_review(self) -> None:
         review = _parse_review_text(

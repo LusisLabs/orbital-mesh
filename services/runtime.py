@@ -1,14 +1,21 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import TYPE_CHECKING
 
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
 from services.orchestrator.service import OrchestratorService
+from services.scenario_analysis.service import ScenarioAnalysisService
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
+from shared.mesh_runtime.active_memory import ActiveMemoryStore
+
+if TYPE_CHECKING:
+    from shared.mesh_runtime.context_store import ContextStore
+    from shared.mesh_runtime.learning import LearningStore
 
 
 class MeshRuntimeEngine:
@@ -16,6 +23,8 @@ class MeshRuntimeEngine:
         self,
         config: RuntimeConfig | None = None,
         state_store: RuntimeStateStore | None = None,
+        learning_store: LearningStore | None = None,
+        context_store: ContextStore | None = None,
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
         decision: DecisionService | None = None,
@@ -25,12 +34,31 @@ class MeshRuntimeEngine:
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
-        self.ingest = ingest or IngestService()
+        self.learning_store = learning_store
+        self.context_store = context_store
+        self.ingest = ingest or IngestService(learning_store=learning_store)
         self.trigger = trigger or TriggerService()
-        self.decision = decision or DecisionService()
+        escalation_reasoner = None
+        if self.config.llm_escalation_enabled and (learning_store or context_store):
+            from services.decision.llm_reasoning import EscalationReasoner
+            escalation_reasoner = EscalationReasoner(
+                config=self.config,
+                context_store=context_store,
+                learning_store=learning_store,
+            )
+        self.decision = decision or DecisionService(
+            learning_store=learning_store,
+            escalation_reasoner=escalation_reasoner,
+        )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
         self.feedback = feedback or FeedbackService()
+        self.scenario_analysis = ScenarioAnalysisService(
+            state_store=None,
+            learning_store=learning_store,
+            context_store=context_store,
+            active_memory=ActiveMemoryStore(self.config.state_directory),
+        )
 
     def run_sync(self, raw_signal: dict, scenario_name: str = "manual") -> dict:
         run_events: list[dict] = []
@@ -71,7 +99,6 @@ class MeshRuntimeEngine:
             result["run_metadata"] = run_record.__dict__
             return result
 
-        decision = self.decision.decide(trigger)
         record_event(
             "trigger_ready",
             "trigger_ready",
@@ -79,6 +106,23 @@ class MeshRuntimeEngine:
             artifact_key="trigger",
             status="recorded",
         )
+        scenario_analysis, memory_compaction = self.scenario_analysis.analyze(trigger)
+        record_event(
+            "scenario_analysis_ready",
+            "scenario_analysis_ready",
+            scenario_analysis.to_dict(),
+            artifact_key="scenario_analysis",
+            status="recorded",
+        )
+        if memory_compaction is not None:
+            record_event(
+                "scenario_analysis_ready",
+                "memory_compaction_recorded",
+                memory_compaction.to_dict(),
+                artifact_key="memory_compaction",
+                status="recorded",
+            )
+        decision = self.decision.decide(trigger, scenario_analysis=scenario_analysis)
         record_event(
             "decision_ready",
             "decision_ready",
@@ -114,14 +158,15 @@ class MeshRuntimeEngine:
             integration_name=self.config.orchestration_mode if self.config.orchestration_mode != "native" else None,
             status=execution.status,
         )
-        goose_review = execution.external_refs.get("goose_review") if isinstance(execution.external_refs, dict) else None
-        if goose_review:
+        review_artifact = _execution_review_artifact(execution)
+        if review_artifact:
+            artifact_key, integration_name, payload = review_artifact
             record_event(
                 "executing",
                 "integration_artifact_recorded",
-                goose_review,
-                artifact_key="goose_review",
-                integration_name="goose",
+                payload,
+                artifact_key=artifact_key,
+                integration_name=integration_name,
                 status="recorded",
             )
         feedback = self.feedback.record(trigger, decision, execution, normalized_event)
@@ -135,6 +180,7 @@ class MeshRuntimeEngine:
         result = {
             "normalized_event": normalized_event.to_dict(),
             "trigger": trigger.to_dict(),
+            "scenario_analysis": scenario_analysis.to_dict(),
             "decision": decision.to_dict(),
             "evaluation": evaluation.to_dict(),
             "execution": execution.to_dict(),
@@ -150,3 +196,12 @@ class MeshRuntimeEngine:
         result["run_metadata"] = run_record.__dict__
         return result
 
+
+def _execution_review_artifact(execution) -> tuple[str, str, dict] | None:
+    if not isinstance(execution.external_refs, dict):
+        return None
+    for artifact_key, integration_name in (("hermes_review", "hermes"), ("goose_review", "goose")):
+        payload = execution.external_refs.get(artifact_key)
+        if isinstance(payload, dict):
+            return artifact_key, integration_name, payload
+    return None

@@ -1,0 +1,35 @@
+{
+  "$id": "https://mesh.local/contracts/claim-record.schema.json",
+  "type": "object",
+  "required": [
+    "claim_id",
+    "statement",
+    "entity_refs",
+    "supporting_observation_ids",
+    "contradicting_claim_ids",
+    "superseded_by",
+    "confidence",
+    "confidence_factors",
+    "freshness",
+    "tier",
+    "state",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "claim_id": { "type": "string" },
+    "statement": { "type": "string" },
+    "entity_refs": { "type": "array", "items": { "type": "string" } },
+    "supporting_observation_ids": { "type": "array", "items": { "type": "string" } },
+    "contradicting_claim_ids": { "type": "array", "items": { "type": "string" } },
+    "superseded_by": { "type": ["string", "null"] },
+    "confidence": { "type": "number" },
+    "confidence_factors": { "type": "object" },
+    "freshness": { "type": "number" },
+    "tier": { "type": "string", "enum": ["episodic", "semantic", "procedural"] },
+    "state": { "type": "string", "enum": ["active", "stale", "contradicted", "superseded", "archived"] },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

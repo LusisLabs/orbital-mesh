@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import fcntl
+from .json_store import LockedJsonFile, parse_state_json_file as _parse_state_json_file
 
 
 @dataclass
@@ -36,7 +36,13 @@ class RunRecord:
     integration_artifact_count: int = 0
 
 
+def parse_state_json_file(path: Path, raw: str) -> dict[str, Any]:
+    return _parse_state_json_file(path, raw)
+
+
 class RuntimeStateStore:
+    _locked_json = LockedJsonFile
+
     def __init__(self, state_directory: str | Path):
         self.state_directory = Path(state_directory)
         self.state_directory.mkdir(parents=True, exist_ok=True)
@@ -139,30 +145,3 @@ class RuntimeStateStore:
         if self._run_snapshots_dir.exists():
             shutil.rmtree(self._run_snapshots_dir)
             self._run_snapshots_dir.mkdir(parents=True, exist_ok=True)
-
-    class _locked_json:
-        def __init__(self, path: Path):
-            self.path = path
-            self.handle = None
-            self.payload: dict[str, Any] = {}
-
-        def __enter__(self) -> dict[str, Any]:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.handle = self.path.open("a+")
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
-            self.handle.seek(0)
-            raw = self.handle.read()
-            self.payload = json.loads(raw) if raw.strip() else {}
-            return self.payload
-
-        def __exit__(self, exc_type, exc, tb) -> None:
-            if self.handle is None:
-                return
-            if exc_type is None:
-                self.handle.seek(0)
-                self.handle.truncate()
-                json.dump(self.payload, self.handle, indent=2, sort_keys=True)
-                self.handle.write("\n")
-                self.handle.flush()
-            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
-            self.handle.close()

@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
-import os
 import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
 from services.ingest.webhook_service import (
@@ -21,6 +20,19 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
+
+
+def _safe_segment(path: str, index: int) -> str | None:
+    """Extract a URL path segment by index, returning None if out of bounds."""
+    segments = [s for s in path.split("/") if s]
+    return segments[index] if index < len(segments) else None
+
+
+def _safe_int(value: str, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
 
 
 class MeshControlPlaneServer(ThreadingHTTPServer):
@@ -47,11 +59,26 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._serve_static(path, head_only=True)
 
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self._add_security_headers()
+        self._add_cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
-            self._send_json({"status": "ok", "timestamp": _timestamp()})
+            self._send_json(
+                {
+                    "status": "ok",
+                    "timestamp": _timestamp(),
+                    "environment": self.server.config.environment,
+                    "version": self.server.config.build_version,
+                    "commit": self.server.config.build_commit,
+                }
+            )
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
@@ -65,21 +92,110 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/runs":
             self._send_json({"runs": self.server.coordinator.list_runs()})
             return
+        if path == "/api/memory/active":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_active_memory(service))
+            return
+        if path == "/api/memory/query":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            limit = _safe_int(parse_qs(parsed.query).get("limit", ["10"])[0], default=10)
+            self._send_json(self.server.coordinator.query_memory(query, {"service": service} if service else {}, limit=limit))
+            return
+        if path.startswith("/api/memory/claims/"):
+            claim_id = _safe_segment(path, 3)
+            if claim_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            claim = self.server.coordinator.get_memory_claim(claim_id)
+            if claim is None:
+                self._send_json({"error": "claim not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(claim)
+            return
+        if path == "/api/memory/graph":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_memory_graph(service))
+            return
+        if path == "/api/research-sessions":
+            self._send_json({"sessions": self.server.coordinator.list_research_sessions()})
+            return
+        if path == "/api/research-corpus":
+            self._send_json(self.server.coordinator.get_research_corpus())
+            return
+        if path.startswith("/api/research-sessions/"):
+            raw = path[len("/api/research-sessions/") :].strip("/")
+            session_id = unquote(raw)
+            detail = self.server.coordinator.get_research_session(session_id)
+            if detail is None:
+                self._send_json({"error": "research session not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(detail)
+            return
         if path.startswith("/api/runs/") and path.endswith("/events"):
-            run_id = path.split("/")[3]
-            after = int(parse_qs(parsed.query).get("after", ["0"])[0])
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            after = _safe_int(parse_qs(parsed.query).get("after", ["0"])[0])
             events = self.server.coordinator.state_store.list_run_events(run_id, after_sequence=after)
             self._send_json({"events": [event.to_dict() for event in events]})
             return
+        if path.startswith("/api/runs/") and path.endswith("/scenario-analysis"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_scenario_analysis(run_id)
+            if payload is None:
+                self._send_json({"error": "scenario analysis not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/evidence-graph"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_evidence_graph(run_id)
+            if payload is None:
+                self._send_json({"error": "evidence graph not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if path.startswith("/api/runs/") and path.endswith("/merkle"):
-            run_id = path.split("/")[3]
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
             return
+        if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
+            run_id = path.split("/")[3]
+            try:
+                self._send_json({"tasks": self.server.coordinator.list_agent_tasks(run_id)})
+            except KeyError:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/memory-crystallization"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_memory_crystallization(run_id)
+            if payload is None:
+                self._send_json({"error": "memory crystallization not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
-            run_id = segments[2]
-            event_id = segments[-1]
+            run_id = segments[2] if len(segments) > 2 else None
+            event_id = segments[-1] if len(segments) > 5 else None
+            if run_id is None or event_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             proof = self.server.coordinator.state_store.get_merkle_proof(run_id, event_id)
             if proof is None:
                 self._send_json({"error": "event not found"}, status=HTTPStatus.NOT_FOUND)
@@ -87,7 +203,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(proof.to_dict())
             return
         if path.startswith("/api/runs/"):
-            run_id = path.split("/")[3]
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             payload = self.server.coordinator.get_run(run_id)
             if payload is None:
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
@@ -107,9 +226,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/alerts":
             query = parse_qs(parsed.query)
             source_id = query.get("source_id", [None])[0]
-            limit = _parse_int(query.get("limit", ["100"])[0], default=100)
+            limit = _safe_int(query.get("limit", ["100"])[0], default=100)
             alerts = self.server.coordinator.list_alert_events(source_id, limit=limit)
             self._send_json({"alerts": alerts})
+            return
+        if path == "/api/watch/status":
+            self._send_json(self.server.coordinator.watch_status())
             return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
@@ -120,13 +242,24 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             if not relative_path:
                 self._send_json({"error": "path is required"}, status=HTTPStatus.BAD_REQUEST)
                 return
+            if ".." in relative_path or relative_path.startswith("/"):
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            vault_root = Path(self.server.config.vault_path).resolve()
+            resolved = (vault_root / relative_path).resolve()
+            if not str(resolved).startswith(str(vault_root)):
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             try:
                 self._send_json(self.server.coordinator.state_store.read_document(relative_path))
             except FileNotFoundError:
                 self._send_json({"error": "document not found"}, status=HTTPStatus.NOT_FOUND)
             return
         if path.startswith("/api/stream/runs/"):
-            run_id = path.split("/")[4]
+            run_id = _safe_segment(path, 3)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             self._stream_run(run_id)
             return
         if path == "/api/stream/system":
@@ -145,23 +278,46 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         raw_body = self._read_request_body()
         try:
             payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
             return
         if not isinstance(payload, dict):
             # Webhook vendors occasionally ship JSON arrays at the root;
             # wrap them so path expressions like "$.alerts[0]" still work.
             payload = {"root": payload}
+        if parsed.path == "/api/watch/start":
+            self._send_json(self.server.coordinator.watch_start())
+            return
+        if parsed.path == "/api/watch/stop":
+            self._send_json(self.server.coordinator.watch_stop())
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
             return
         if parsed.path == "/api/runs":
-            run = self.server.coordinator.create_run(payload)
+            try:
+                run = self.server.coordinator.create_run(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:  # pragma: no cover - defensive; avoid empty TCP replies to clients
+                _LOG.exception("POST /api/runs failed: %s", exc)
+                self._send_json(
+                    {"error": "run creation failed", "detail": str(exc)},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+                return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
+        if parsed.path == "/api/memory/maintenance/run":
+            self._send_json(self.server.coordinator.run_memory_maintenance(), status=HTTPStatus.CREATED)
+            return
         if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/steer"):
-            run_id = parsed.path.split("/")[3]
+            run_id = _safe_segment(parsed.path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
             try:
                 run = self.server.coordinator.steer_run(run_id, payload)
             except KeyError:
@@ -260,9 +416,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Connection", "keep-alive")
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
-        last_id = int(self.headers.get("Last-Event-ID", "0") or "0")
+        last_id = _safe_int(self.headers.get("Last-Event-ID", "0") or "0")
+        deadline = time.monotonic() + self.server.config.sse_max_connection_seconds
         try:
-            while True:
+            while time.monotonic() < deadline:
                 events = self.server.coordinator.state_store.list_run_events(run_id, after_sequence=last_id)
                 for event in events:
                     self._write_sse(
@@ -282,7 +439,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self.wfile.write(b":heartbeat\n\n")
                 self.wfile.flush()
                 time.sleep(1)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        except Exception:
+            _LOG.exception("SSE stream error for run %s", run_id)
             return
 
     def _stream_system(self) -> None:
@@ -294,8 +454,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         event_id = 0
+        deadline = time.monotonic() + self.server.config.sse_max_connection_seconds
         try:
-            while True:
+            while time.monotonic() < deadline:
                 event_id += 1
                 runs = self.server.coordinator.list_runs(limit=10)
                 readiness = self.server.coordinator.build_readiness()
@@ -307,7 +468,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 }
                 self._write_sse(event_id=str(event_id), event_type="system", payload=payload)
                 time.sleep(2)
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+        except Exception:
+            _LOG.exception("SSE system stream error")
             return
 
     def _write_sse(self, event_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -321,6 +485,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self._add_security_headers()
+        self._add_cors_headers()
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -330,25 +495,40 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         limit = self.server.config.max_json_body_bytes
         if limit <= 0:
             return True
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None:
+            return False
+        try:
+            length = int(raw_length)
+        except ValueError:
+            return False
+        return length <= limit
+
+    def _read_json_body(self) -> dict[str, Any]:
         raw_length = self.headers.get("Content-Length", "0")
         try:
             length = int(raw_length)
         except ValueError:
-            return True
-        return length <= limit
+            raise ValueError("invalid Content-Length header")
+        if length == 0:
+            return {}
+        raw = self.rfile.read(length)
+        return json.loads(raw.decode("utf-8"))
 
     def _add_security_headers(self) -> None:
         if not self.server.config.security_headers_enabled:
             return
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
 
-    def _read_json_body(self) -> dict[str, Any]:
-        length = int(self.headers.get("Content-Length", "0"))
-        if length == 0:
-            return {}
-        raw = self.rfile.read(length)
-        return json.loads(raw.decode("utf-8"))
+    def _add_cors_headers(self) -> None:
+        origin = self.headers.get("Origin", "")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
+            self.send_header("Access-Control-Max-Age", "86400")
 
     def _read_request_body(self) -> bytes:
         length = int(self.headers.get("Content-Length", "0"))
@@ -367,10 +547,13 @@ def serve_forever(config: RuntimeConfig | None = None, start_sidecar: bool = Tru
     server = build_server(config)
     if start_sidecar:
         server.coordinator.ensure_sidecar()
+    server.coordinator.start_watch_daemon()
     try:
         server.serve_forever()
     finally:
+        server.coordinator.stop_watch_daemon()
         server.coordinator.sidecar.stop()
+        server.server_close()
     return server
 
 
@@ -379,8 +562,6 @@ def start_server_in_thread(
     start_sidecar: bool = True,
 ) -> tuple[MeshControlPlaneServer, threading.Thread]:
     server = build_server(config)
-    if start_sidecar:
-        server.coordinator.ensure_sidecar()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
@@ -388,11 +569,3 @@ def start_server_in_thread(
 
 def _timestamp() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _parse_int(value: str, default: int) -> int:
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return default
-    return parsed if parsed > 0 else default

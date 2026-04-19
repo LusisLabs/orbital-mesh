@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mesh Intelligence"
+  short_description: "Connect Codex to a Mesh Intelligence control plane"
+  default_prompt: "Connect to Mesh and summarize the latest run."

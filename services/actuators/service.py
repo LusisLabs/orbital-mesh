@@ -2,11 +2,36 @@
 
 from __future__ import annotations
 
-from shared.mesh_runtime import Decision
+import shlex
+import subprocess
+from typing import Any, TypedDict
+
+from shared.mesh_runtime import Decision, RuntimeConfig
+
+
+class ActuatorResult(TypedDict, total=False):
+    """Return shape shared by every actuator adapter.
+
+    ``status`` is always present; ``external_refs`` is populated on success;
+    ``failure`` is populated when status=='failed'.
+    """
+
+    status: str
+    external_refs: dict[str, Any]
+    failure: dict[str, Any]
+    audit_log_id: str
+    idempotency_key: str
+
+
+class KubernetesParameters(TypedDict, total=False):
+    deployment_name: str
+    namespace: str
+    kube_context: str
+    revision: str
 
 
 class FeatureFlagAdapter:
-    def set_rollout(self, parameters: dict) -> dict:
+    def set_rollout(self, parameters: dict[str, Any]) -> ActuatorResult:
         return {
             "status": "succeeded",
             "external_refs": {"flag_change_id": f"ffchg_{parameters['flag_key']}_{parameters['rollout_pct']}"},
@@ -14,7 +39,7 @@ class FeatureFlagAdapter:
 
 
 class IncidentAdapter:
-    def open_incident(self, parameters: dict) -> dict:
+    def open_incident(self, parameters: dict[str, Any]) -> ActuatorResult:
         incident_scope = parameters.get("service") or parameters.get("decision_id") or parameters.get("flag_key") or "unknown"
         return {
             "status": "succeeded",
@@ -23,9 +48,14 @@ class IncidentAdapter:
 
 
 class KubernetesAdapter:
-    def rollback_deployment(self, parameters: dict) -> dict:
+    def __init__(self, config: RuntimeConfig | None = None) -> None:
+        self.config = config or RuntimeConfig()
+
+    def rollback_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
         revision = parameters.get("revision") or "previous"
+        if self.config.kubernetes_live_execution_enabled:
+            return self._live_rollback(parameters, deployment_name, revision)
         return {
             "status": "succeeded",
             "external_refs": {
@@ -34,8 +64,10 @@ class KubernetesAdapter:
             },
         }
 
-    def restart_deployment(self, parameters: dict) -> dict:
+    def restart_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
+        if self.config.kubernetes_live_execution_enabled:
+            return self._live_restart(parameters, deployment_name)
         return {
             "status": "succeeded",
             "external_refs": {
@@ -44,9 +76,87 @@ class KubernetesAdapter:
             },
         }
 
+    def _live_restart(self, parameters: KubernetesParameters, deployment_name: str) -> ActuatorResult:
+        kube_context = parameters.get("kube_context", "")
+        namespace = parameters.get("namespace", "default")
+        try:
+            self._validate_context_and_namespace(kube_context, namespace)
+            self._kubectl(kube_context, "rollout", "restart", f"deployment/{deployment_name}", "-n", namespace)
+            self._kubectl(
+                kube_context, "rollout", "status", f"deployment/{deployment_name}", "-n", namespace,
+                f"--timeout={self.config.kubernetes_rollout_timeout_seconds}s",
+            )
+            return {
+                "status": "succeeded",
+                "external_refs": {
+                    "live_execution": True,
+                    "kube_context": kube_context,
+                    "deployment_name": deployment_name,
+                    "rollout_action": "restart_deployment",
+                },
+            }
+        except _KubectlError as exc:
+            return {
+                "status": "failed",
+                "failure": {"reason": "kubernetes_live_execution_failed", "detail": str(exc)},
+                "external_refs": {"live_execution": True, "kube_context": kube_context},
+            }
+
+    def _live_rollback(self, parameters: KubernetesParameters, deployment_name: str, revision: str) -> ActuatorResult:
+        kube_context = parameters.get("kube_context", "")
+        namespace = parameters.get("namespace", "default")
+        try:
+            self._validate_context_and_namespace(kube_context, namespace)
+            self._kubectl(kube_context, "rollout", "undo", f"deployment/{deployment_name}", "-n", namespace)
+            self._kubectl(
+                kube_context, "rollout", "status", f"deployment/{deployment_name}", "-n", namespace,
+                f"--timeout={self.config.kubernetes_rollout_timeout_seconds}s",
+            )
+            return {
+                "status": "succeeded",
+                "external_refs": {
+                    "live_execution": True,
+                    "kube_context": kube_context,
+                    "deployment_name": deployment_name,
+                    "rollout_action": "rollback_deployment",
+                },
+            }
+        except _KubectlError as exc:
+            return {
+                "status": "failed",
+                "failure": {"reason": "kubernetes_live_execution_failed", "detail": str(exc)},
+                "external_refs": {"live_execution": True, "kube_context": kube_context},
+            }
+
+    def _validate_context_and_namespace(self, kube_context: str, namespace: str) -> None:
+        if self.config.kubernetes_allowed_contexts and kube_context not in self.config.kubernetes_allowed_contexts:
+            raise _KubectlError(f"context '{kube_context}' is not in the allowed list")
+        if self.config.kubernetes_allowed_namespaces and namespace not in self.config.kubernetes_allowed_namespaces:
+            raise _KubectlError(f"namespace '{namespace}' is not in the allowed list")
+
+    def _kubectl(self, kube_context: str, *args: str) -> str:
+        cmd = shlex.split(self.config.kubectl_command)
+        if kube_context:
+            cmd.extend(["--context", kube_context])
+        cmd.extend(args)
+        completed = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=self.config.kubernetes_rollout_timeout_seconds + 10,
+        )
+        if completed.returncode != 0:
+            raise _KubectlError(completed.stderr.strip() or f"kubectl exited {completed.returncode}")
+        return completed.stdout.strip()
+
+
+class _KubectlError(Exception):
+    pass
+
 
 class AuditLogAdapter:
-    def write_record(self, decision: Decision, idempotency_key: str) -> dict:
+    def write_record(self, decision: Decision, idempotency_key: str) -> ActuatorResult:
         return {
             "status": "succeeded",
             "audit_log_id": f"audit_{decision.decision_id}",

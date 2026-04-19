@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from typing import Any
+from uuid import uuid4
 
 
 @dataclass
@@ -76,6 +79,48 @@ class RunSession(JsonModel):
     artifacts: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
+    @classmethod
+    def new(
+        cls,
+        *,
+        goal_id: str | None,
+        scenario_key: str | None,
+        steering_mode: str,
+        auto_mode: bool,
+        pause_points: list[str],
+        evaluation_mode: str,
+        orchestration_mode: str,
+        artifacts: dict[str, Any],
+    ) -> RunSession:
+        """Build a brand-new queued RunSession with a generated run_id.
+
+        Shared factory used by every state backend so the construction
+        logic lives in one place and backends cannot drift.
+        """
+
+        now = datetime.now(timezone.utc).isoformat()
+        return cls(
+            run_id=f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}",
+            created_at=now,
+            updated_at=now,
+            goal_id=goal_id,
+            scenario_key=scenario_key,
+            stage="queued",
+            status="queued",
+            steering_mode=steering_mode,
+            auto_mode=auto_mode,
+            pause_points=list(pause_points),
+            pending_pause_stage=None,
+            evaluation_mode=evaluation_mode,
+            orchestration_mode=orchestration_mode,
+            latest_event_id=None,
+            latest_event_sequence=0,
+            latest_merkle_root=None,
+            operator_notes=[],
+            artifacts=deepcopy(artifacts),
+            error=None,
+        )
+
 
 @dataclass
 class SteeringCommand(JsonModel):
@@ -84,6 +129,50 @@ class SteeringCommand(JsonModel):
     command_type: str
     issued_at: str
     payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentAttempt(JsonModel):
+    attempt_id: str
+    task_id: str
+    run_id: str
+    agent: str
+    adapter: str
+    status: str
+    started_at: str
+    completed_at: str
+    summary: str
+    changed_files: list[str] = field(default_factory=list)
+    test_results: list[dict[str, Any]] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
+    recommended_action: str = "human_review"
+    output: dict[str, Any] = field(default_factory=dict)
+    observations_proposed: list[dict[str, Any]] = field(default_factory=list)
+    claims_proposed: list[dict[str, Any]] = field(default_factory=list)
+    procedures_proposed: list[dict[str, Any]] = field(default_factory=list)
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    contradictions_detected: list[dict[str, Any]] = field(default_factory=list)
+    memory_actions_requested: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AgentTask(JsonModel):
+    task_id: str
+    run_id: str
+    kind: str
+    status: str
+    created_at: str
+    updated_at: str
+    allowed_paths: list[str] = field(default_factory=list)
+    test_commands: list[str] = field(default_factory=list)
+    kubernetes_scope: dict[str, Any] = field(default_factory=dict)
+    memory_scope: dict[str, Any] = field(default_factory=dict)
+    memory_packet: dict[str, Any] = field(default_factory=dict)
+    memory_write_policy: dict[str, Any] = field(default_factory=dict)
+    open_questions: list[str] = field(default_factory=list)
+    agents: list[str] = field(default_factory=list)
+    attempts: list[AgentAttempt] = field(default_factory=list)
+    selected_attempt_id: str | None = None
 
 
 @dataclass
@@ -102,8 +191,11 @@ class IntegrationStatus(JsonModel):
 class IntegrationReadiness(JsonModel):
     checked_at: str
     promptfoo: IntegrationStatus
+    hermes: IntegrationStatus
     goose: IntegrationStatus
-    gitnexus: IntegrationStatus
+    evo: IntegrationStatus
+    latentmas: IntegrationStatus
+    deepagents: IntegrationStatus
     vault_path: str
     state_path: str
     integrations_config_path: str
@@ -131,4 +223,3 @@ class MerkleProof(JsonModel):
     root_hash: str
     proof: list[MerkleProofStep]
     valid: bool
-

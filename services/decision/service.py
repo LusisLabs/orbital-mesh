@@ -2,13 +2,38 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shared.mesh_runtime import Decision, Trigger, load_policy
+from shared.mesh_runtime.review_blockers import classify_review_reasons
+
+if TYPE_CHECKING:
+    from services.decision.llm_reasoning import EscalationReasoner
+    from shared.mesh_runtime import ScenarioAnalysis
+    from shared.mesh_runtime.learning import LearningStore
+
+
+_LLM_ALLOWED_ACTIONS = frozenset({
+    "reduce_rollout",
+    "disable_flag",
+    "restart_deployment",
+    "rollback_deployment",
+    "no_action",
+})
 
 
 class DecisionService:
-    def decide(self, trigger: Trigger) -> Decision:
+    def __init__(
+        self,
+        learning_store: LearningStore | None = None,
+        escalation_reasoner: EscalationReasoner | None = None,
+    ) -> None:
+        self.learning_store = learning_store
+        self.escalation_reasoner = escalation_reasoner
+
+    def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._decide_kubernetes(trigger)
+            return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -22,12 +47,12 @@ class DecisionService:
         protected_tiers = set(load_policy("protected-scope.policy.json")["approval_required_customer_tiers"])
         protected_tier = trigger.segment["customer_tier"] in protected_tiers
         repeated_rollback = trigger.related_context.get("rollbacks_last_24h", 0) > 0
-        conflicting_signals = bool(trigger.related_context.get("conflicting_signals", False))
         high_business_impact = bool(trigger.related_context.get("high_business_impact", False))
         flag_causality_confidence = trigger.related_context.get("flag_causality_confidence")
         active_incidents = int(trigger.related_context.get("active_incidents", 0))
         similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
         trigger_signals = list(trigger.related_context.get("trigger_signals", []))
+        recovery_context = _recovery_context(trigger)
         feature_flag_credentials_available = bool(trigger.related_context.get("feature_flag_credentials_available", True))
         code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
         repo_path = trigger.related_context.get("repo_path")
@@ -52,10 +77,10 @@ class DecisionService:
             decision_type = "investigate_and_patch"
             confidence = 0.78
             risk_level = "medium"
-        elif conflicting_signals or high_business_impact:
+        elif high_business_impact:
             decision_type = "escalate"
             confidence = 0.64
-            risk_level = "high" if high_business_impact else "medium"
+            risk_level = "high"
         elif flag_causality_confidence is not None and float(flag_causality_confidence) <= 0.35 and timeout_rate < 0.02:
             decision_type = "no_action"
             confidence = 0.79
@@ -78,12 +103,29 @@ class DecisionService:
             confidence = min(confidence, 0.7)
             risk_level = "medium"
 
-        confidence = _adjust_confidence(
-            confidence,
+        historical_rate = None
+        if self.learning_store is not None:
+            historical_rate = self.learning_store.get_historical_success_rate(decision_type, trigger.service)
+        confidence_factors = _build_confidence_factors(
+            base_confidence=confidence,
             similar_prior_cases=similar_prior_cases,
             flag_causality_confidence=flag_causality_confidence,
             trigger_signals=trigger_signals,
+            historical_success_rate=historical_rate,
+            recovery_context=recovery_context,
         )
+        confidence = _confidence_from_factors(confidence_factors)
+
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
 
         autonomy_tier = "autonomous"
         if decision_type == "escalate":
@@ -91,7 +133,7 @@ class DecisionService:
         elif multi_service_impact or protected_tier or repeated_rollback:
             autonomy_tier = "approval_required"
 
-        target_rollout = 10 if trigger.current_rollout_pct >= 10 else 0
+        target_rollout = 10 if (trigger.current_rollout_pct or 0) >= 10 else 0
         execution_plan = _execution_plan(trigger, decision_type, target_rollout)
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
@@ -109,6 +151,8 @@ class DecisionService:
                     "similar_prior_cases": similar_prior_cases,
                     "active_incidents": active_incidents,
                     "flag_causality_confidence": flag_causality_confidence,
+                    "recovery_context": recovery_context,
+                    "confidence_factors": confidence_factors,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -127,10 +171,11 @@ class DecisionService:
             confidence=confidence,
             execution_plan=execution_plan,
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
         decision.validate()
         return decision
 
-    def _decide_kubernetes(self, trigger: Trigger) -> Decision:
+    def _decide_kubernetes(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         event_reasons = list(trigger.related_context.get("event_reasons", []))
         rollout_status = str(trigger.related_context.get("rollout_status", "degraded"))
@@ -146,6 +191,7 @@ class DecisionService:
         test_commands = list(trigger.related_context.get("test_commands", []))
         patch_template = trigger.related_context.get("patch_template")
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
+        recovery_context = _recovery_context(trigger)
 
         if (
             code_remediation_candidate
@@ -180,6 +226,32 @@ class DecisionService:
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
 
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+
+        correlation = trigger.related_context.get("correlation", {})
+        if correlation.get("type") in ("blast_wave", "cascading"):
+            autonomy_tier = "approval_required"
+        confidence_factors = _build_confidence_factors(
+            base_confidence=confidence,
+            similar_prior_cases=int(recovery_context.get("related_run_count", 0) or 0),
+            flag_causality_confidence=correlation.get("correlation_confidence"),
+            trigger_signals=error_signatures,
+            historical_success_rate=None,
+            recovery_context=recovery_context,
+        )
+        confidence = _confidence_from_factors(confidence_factors)
+
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
             trigger_id=trigger.trigger_id,
@@ -202,6 +274,8 @@ class DecisionService:
                     "cluster": cluster,
                     "namespace": namespace,
                     "deployment_name": deployment_name,
+                    "recovery_context": recovery_context,
+                    "confidence_factors": confidence_factors,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -220,8 +294,67 @@ class DecisionService:
             confidence=confidence,
             execution_plan=_execution_plan(trigger, decision_type, 0),
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, 0)
         decision.validate()
         return decision
+
+
+def _apply_scenario_analysis(
+    decision: Decision,
+    trigger: Trigger,
+    scenario_analysis: "ScenarioAnalysis | dict | None",
+    target_rollout: int,
+) -> Decision:
+    if scenario_analysis is None:
+        return decision
+    analysis = scenario_analysis.to_dict() if hasattr(scenario_analysis, "to_dict") else dict(scenario_analysis)
+    review_reasons = list(analysis.get("required_review_reasons") or [])
+    suggested = analysis.get("suggested_decision_type")
+    autonomy_hint = analysis.get("autonomy_tier_hint")
+    confidence = float(analysis.get("confidence", decision.confidence) or decision.confidence)
+    risk_level = analysis.get("risk_level")
+    review_analysis = classify_review_reasons(review_reasons)
+
+    if (
+        review_reasons
+        and suggested == "escalate"
+        and (review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"])
+    ):
+        decision.decision_type = "escalate"
+        decision.summary = _summary(trigger, "escalate", target_rollout)
+        decision.execution_plan = _execution_plan(trigger, "escalate", target_rollout)
+        decision.risk["customer_impact_if_wrong"] = _customer_impact_if_wrong("escalate")
+
+    if autonomy_hint in {"approval_required", "escalated"}:
+        decision.autonomy_tier = str(autonomy_hint)
+    elif review_reasons and decision.autonomy_tier == "autonomous":
+        decision.autonomy_tier = "approval_required"
+
+    if risk_level in {"medium", "high"}:
+        current = str(decision.risk.get("level", "medium"))
+        if current == "low" or risk_level == "high":
+            decision.risk["level"] = risk_level
+
+    if review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"]:
+        decision.confidence = min(decision.confidence, confidence, 0.74)
+    else:
+        decision.confidence = min(max(decision.confidence, confidence), 0.95)
+
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["scenario_analysis"] = {
+        "analysis_id": analysis.get("analysis_id"),
+        "suggested_decision_type": suggested,
+        "autonomy_tier_hint": autonomy_hint,
+        "required_review_reasons": review_reasons,
+        "review_classification": review_analysis,
+        "evidence_refs": list(analysis.get("evidence_refs") or []),
+        "merkle_root": analysis.get("merkle_root"),
+    }
+    if review_reasons:
+        decision.reasoning.setdefault("evidence", []).append(
+            "scenario analysis requires review: " + "; ".join(review_reasons)
+        )
+    return decision
 
 
 def _delta_pct(baseline: float, observed: float) -> float:
@@ -243,6 +376,7 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "rollback_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
                 "revision": trigger.related_context.get("release_id"),
@@ -255,6 +389,7 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             "action": "restart_deployment",
             "parameters": {
                 "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
                 "namespace": trigger.related_context.get("namespace"),
                 "deployment_name": trigger.related_context.get("deployment_name"),
             },
@@ -427,18 +562,50 @@ def _customer_impact_if_wrong(decision_type: str) -> str:
     return "continued regression exposure"
 
 
-def _adjust_confidence(
-    base_confidence: float,
+def _build_confidence_factors(
     *,
+    base_confidence: float,
     similar_prior_cases: int,
     flag_causality_confidence: float | None,
     trigger_signals: list[str],
-) -> float:
-    adjusted = base_confidence
+    historical_success_rate: float | None = None,
+    recovery_context: dict[str, object] | None = None,
+) -> dict[str, float]:
+    factors: dict[str, float] = {"base_confidence": round(base_confidence, 2)}
     if similar_prior_cases > 0:
-        adjusted += min(similar_prior_cases, 3) * 0.01
+        factors["similar_prior_cases"] = round(min(similar_prior_cases, 3) * 0.01, 2)
     if flag_causality_confidence is not None:
-        adjusted += max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1
+        factors["flag_causality_confidence"] = round(
+            max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1,
+            2,
+        )
     if len(trigger_signals) >= 2:
-        adjusted += 0.01
-    return max(0.5, min(round(adjusted, 2), 0.95))
+        factors["trigger_signal_consensus"] = 0.01
+    if historical_success_rate is not None:
+        if historical_success_rate >= 0.8:
+            factors["historical_success_rate"] = 0.02
+        elif historical_success_rate < 0.4:
+            factors["historical_success_rate"] = -0.03
+    recovery = recovery_context or {}
+    corroborating_evidence_count = int(recovery.get("corroborating_evidence_count", 0) or 0)
+    active_memory_count = int(recovery.get("active_memory_count", 0) or 0)
+    similar_incident_count = int(recovery.get("similar_incident_count", 0) or 0)
+    related_run_count = int(recovery.get("related_run_count", 0) or 0)
+    if corroborating_evidence_count > 0:
+        factors["corroborating_recovery_evidence"] = round(min(corroborating_evidence_count, 4) * 0.015, 2)
+    if active_memory_count > 0:
+        factors["active_memory_support"] = round(min(active_memory_count, 3) * 0.01, 2)
+    if similar_incident_count > 0:
+        factors["similar_incident_support"] = round(min(similar_incident_count, 3) * 0.01, 2)
+    if related_run_count > 0:
+        factors["related_run_support"] = round(min(related_run_count, 4) * 0.005, 2)
+    return factors
+
+
+def _confidence_from_factors(factors: dict[str, float]) -> float:
+    return max(0.5, min(round(sum(float(value) for value in factors.values()), 2), 0.95))
+
+
+def _recovery_context(trigger: Trigger) -> dict[str, object]:
+    raw = trigger.related_context.get("recovery_context")
+    return dict(raw) if isinstance(raw, dict) else {}

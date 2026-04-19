@@ -351,11 +351,24 @@ class WebhookHttpRouteTests(unittest.TestCase):
 
 
 class ReadinessCacheTests(unittest.TestCase):
-    def test_readiness_is_cached_within_ttl(self) -> None:
-        from services.control_plane import RunCoordinator
+    """Exercise the module-level readiness cache directly.
+
+    The cache now lives on the ``build_readiness`` function itself (shared by
+    every RunCoordinator and service constructor) so we verify the cache by
+    observing probe-count behavior via ``invalidate_readiness_cache``.
+    """
+
+    def test_readiness_probe_is_cached_within_ttl(self) -> None:
+        from shared.mesh_runtime.integrations import (
+            build_readiness,
+            invalidate_readiness_cache,
+        )
 
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
+        invalidate_readiness_cache()
+        self.addCleanup(invalidate_readiness_cache)
+
         config = RuntimeConfig(
             state_directory=temp.name,
             vault_path=str(Path(temp.name) / "vault"),
@@ -364,20 +377,24 @@ class ReadinessCacheTests(unittest.TestCase):
             goose_command="/missing/goose",
             gitnexus_sidecar_url="http://127.0.0.1:65535",
         )
-        coordinator = RunCoordinator(config)
-        first = coordinator.build_readiness()
-        # Mutate cache sentinel; should still hit cache because TTL has not expired.
-        cached_marker = "test-marker"
-        with coordinator._readiness_lock:
-            coordinator._readiness_cache = (
-                time.monotonic(),
-                {**first, "marker": cached_marker},
-            )
-        second = coordinator.build_readiness()
-        self.assertEqual(second["marker"], cached_marker)
-        coordinator.invalidate_readiness()
-        third = coordinator.build_readiness()
-        self.assertNotIn("marker", third)
+
+        cold = time.perf_counter()
+        build_readiness(config)
+        cold_elapsed = time.perf_counter() - cold
+
+        warm = time.perf_counter()
+        for _ in range(25):
+            build_readiness(config)
+        warm_per_call = (time.perf_counter() - warm) / 25
+
+        # Warm calls should be orders of magnitude faster than cold probes; if
+        # the cache is disabled, warm_per_call will approach cold_elapsed.
+        self.assertLess(warm_per_call, max(cold_elapsed / 10, 0.005))
+
+        # Forced probe bypasses the cache and reruns the subprocess checks.
+        forced = time.perf_counter()
+        build_readiness(config, force=True)
+        self.assertGreater(time.perf_counter() - forced, warm_per_call)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,17 @@ services:
   mesh:
     build: .
     init: true
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2"
+        reservations:
+          memory: 512M
+          cpus: "0.5"
+    depends_on:
+      hermes:
+        condition: service_healthy
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
     environment:
@@ -10,43 +21,52 @@ services:
       MESH_ENVIRONMENT: "${MESH_ENVIRONMENT:-production}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
+      HERMES_HOME: /workspace/mesh-intelligence/.hermes-local
+      MESH_RESEARCH_DIRECTORY: "${MESH_RESEARCH_DIRECTORY:-/app/.mesh-runtime-state/research}"
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"
+      MESH_HERMES_COMMAND: "${MESH_HERMES_COMMAND:-hermes}"
+      MESH_HERMES_COMMAND_TIMEOUT_SECONDS: "${MESH_HERMES_COMMAND_TIMEOUT_SECONDS:-180}"
       MESH_GOOSE_COMMAND: "${MESH_GOOSE_COMMAND:-goose}"
       MESH_GOOSE_COMMAND_TIMEOUT_SECONDS: "${MESH_GOOSE_COMMAND_TIMEOUT_SECONDS:-180}"
-      MESH_GITNEXUS_DISABLE_AUTOSTART: "1"
-      MESH_GITNEXUS_SIDECAR_URL: "${MESH_GITNEXUS_SIDECAR_URL:-http://host.docker.internal:4747}"
+      MESH_EVO_COMMAND: "${MESH_EVO_COMMAND:-}"
+      MESH_EVO_COMMAND_TIMEOUT_SECONDS: "${MESH_EVO_COMMAND_TIMEOUT_SECONDS:-60}"
       MESH_ACCESS_LOG: "${MESH_ACCESS_LOG:-1}"
       MESH_STRUCTURED_LOGS: "${MESH_STRUCTURED_LOGS:-1}"
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
       MESH_MAX_JSON_BODY_BYTES: "${MESH_MAX_JSON_BODY_BYTES:-1048576}"
       MESH_VAULT_AI_POSTPROCESS_ENABLED: "${MESH_VAULT_AI_POSTPROCESS_ENABLED:-0}"
-      HERMES_INFERENCE_PROVIDER: "${HERMES_INFERENCE_PROVIDER:-}"
-      HERMES_MODEL: "${HERMES_MODEL:-}"
-      LLM_MODEL: "${LLM_MODEL:-}"
-      GOOSE_PROVIDER: "${GOOSE_PROVIDER:-}"
-      GOOSE_MODEL: "${GOOSE_MODEL:-}"
-      GOOSE_FALLBACK_PROVIDER: "${GOOSE_FALLBACK_PROVIDER:-}"
-      GOOSE_FALLBACK_MODEL: "${GOOSE_FALLBACK_MODEL:-}"
+      HERMES_INFERENCE_PROVIDER: "${MESH_COMPOSE_HERMES_INFERENCE_PROVIDER:-openai}"
+      HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.7}"
+      LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.7}"
+      GOOSE_PROVIDER: "${MESH_COMPOSE_GOOSE_PROVIDER:-openai}"
+      GOOSE_MODEL: "${MESH_COMPOSE_GOOSE_MODEL:-MiniMax-M2.5}"
+      GOOSE_FALLBACK_PROVIDER: "${MESH_COMPOSE_GOOSE_FALLBACK_PROVIDER:-}"
+      GOOSE_FALLBACK_MODEL: "${MESH_COMPOSE_GOOSE_FALLBACK_MODEL:-MiniMax-M2.5}"
       GOOSE_PRIMARY_TIMEOUT_SECONDS: "${GOOSE_PRIMARY_TIMEOUT_SECONDS:-60}"
       GOOSE_OLLAMA_TIMEOUT_SECONDS: "${GOOSE_OLLAMA_TIMEOUT_SECONDS:-45}"
       GOOSE_FALLBACK_TIMEOUT_SECONDS: "${GOOSE_FALLBACK_TIMEOUT_SECONDS:-90}"
-      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
-      OPENAI_HOST: "${OPENAI_HOST:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+      OPENAI_HOST: "${OPENAI_HOST:-https://api.minimax.io/v1}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
       ANTHROPIC_HOST: "${ANTHROPIC_HOST:-}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
-      OLLAMA_HOST: "${OLLAMA_HOST:-http://host.docker.internal:11434}"
+      OLLAMA_HOST: "${MESH_COMPOSE_OLLAMA_HOST:-}"
+      KUBECONFIG: /root/.kube/config
+      MESH_KUBECTL_COMMAND: "${MESH_KUBECTL_COMMAND:-kubectl}"
+      MESH_KUBERNETES_ALLOWED_CONTEXTS: "${MESH_KUBERNETES_ALLOWED_CONTEXTS:-k3d-mesh-e2e}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - mesh_runtime_state:/app/.mesh-runtime-state
+      - hermes_home:/workspace/mesh-intelligence/.hermes-local
       - goose_config:/root/.config/goose
       - ./:/workspace/mesh-intelligence
+      - ${MESH_KUBECONFIG_HOST_PATH:-${HOME}/.kube/config}:/root/.kube/config:ro
     restart: unless-stopped
     logging:
       driver: local
@@ -61,5 +81,6 @@ services:
       start_period: 20s
 
 volumes:
+  hermes_home:
   mesh_runtime_state:
   goose_config:

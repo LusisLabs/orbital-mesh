@@ -10,7 +10,7 @@ class SchemaValidationError(ValueError):
     """Raised when a payload does not match a shared contract schema."""
 
 
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "scaffold" / "contracts" / "schemas"
+SCHEMA_DIR = Path(__file__).resolve().parent / "schemas"
 
 
 @lru_cache(maxsize=None)
