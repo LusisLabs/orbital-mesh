@@ -21,7 +21,7 @@ PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest
 # Lint / typecheck (cache in /tmp if default cache dirs are not writable)
 RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check .
 TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagents --with mypy mypy --strict \
-  --exclude 'deepagents/|evo/|latent-mesh/LatentMAS/|services/skills/'
+  --exclude 'deepagents/|latent-mesh/LatentMAS/|services/skills/'
 ```
 
 Web build (from repo root):
@@ -42,7 +42,7 @@ Rust (when touching LatentMAS):
 ## Scope & refactors
 
 - **In scope for first-party cleanup:** `services/`, `shared/mesh_runtime/`, `control_plane_server.py`, `web/`, scaffold moves under `docs/history/`, and orchestration scripts that reference those paths.
-- **Treat as vendored / upstream (avoid drive-by refactors):** `deepagents/`, `evo/`, `latent-mesh/LatentMAS/` (still run `cargo` when you change Rust there).
+- **Treat as vendored / upstream (avoid drive-by refactors):** `deepagents/`, `latent-mesh/LatentMAS/` (still run `cargo` when you change Rust there). Evo is no longer vendored in-tree; the `evo` CLI must be installed separately (see `MESH_EVO_COMMAND` / `evo-hq-cli`).
 - **Critical paths** (extra care; prefer small, reviewed diffs): `services/control_plane.py`, `shared/mesh_runtime/contracts.py`, `shared/mesh_runtime/schemas/`, `control_plane_server.py`.
 
 ## Contracts & schemas
