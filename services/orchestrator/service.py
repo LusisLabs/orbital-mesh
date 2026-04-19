@@ -11,6 +11,7 @@ from shared.mesh_runtime import (
     EvaluationResult,
     ExecutionRecord,
     RuntimeConfig,
+    build_readiness,
     log_runtime_event,
     resolve_integrations_config,
 )
@@ -33,20 +34,46 @@ class OrchestratorService:
         self.sleeper = sleeper or time.sleep
 
     def _build_adapter(self) -> GooseAdapter | HermesAdapter:
-        if self.config.orchestration_mode == "goose":
+        mode = (self.config.orchestration_mode or "auto").lower()
+        if mode == "goose":
             resolved = resolve_integrations_config(self.config)
             return GooseCliAdapter(
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
-        if self.config.orchestration_mode == "hermes":
+        if mode == "hermes":
             resolved = resolve_integrations_config(self.config)
             return HermesCliAdapter(
                 command=resolved.hermes_command,
                 timeout_seconds=self.config.hermes_command_timeout_seconds,
             )
-        if self.config.orchestration_mode == "native":
+        if mode == "native":
+            # Explicit ``native`` keeps the legacy in-process Goose adapter.
             return NativeGooseAdapter(config=self.config)
+        # auto: prefer Hermes, then Goose, then fall back to the modern native
+        # Hermes adapter so offline/dev setups still work.
+        readiness = build_readiness(self.config)
+        if readiness.hermes.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("orchestration_adapter_selected", adapter="hermes", reason="auto_ready")
+            return HermesCliAdapter(
+                command=resolved.hermes_command,
+                timeout_seconds=self.config.hermes_command_timeout_seconds,
+            )
+        if readiness.goose.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("orchestration_adapter_selected", adapter="goose", reason="auto_ready")
+            return GooseCliAdapter(
+                command=resolved.goose_command,
+                timeout_seconds=self.config.goose_command_timeout_seconds,
+            )
+        log_runtime_event(
+            "orchestration_adapter_selected",
+            adapter="native_hermes",
+            reason="auto_fallback",
+            hermes_detail=readiness.hermes.detail,
+            goose_detail=readiness.goose.detail,
+        )
         return NativeHermesAdapter(config=self.config)
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:

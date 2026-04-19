@@ -7,6 +7,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,9 @@ from .control_plane_models import IntegrationReadiness, IntegrationStatus
 
 
 DEFAULT_GITNEXUS_PORT = 4747
+_READINESS_TTL_SECONDS = 10.0
+_readiness_lock = threading.Lock()
+_readiness_cache: dict[tuple, tuple[float, IntegrationReadiness]] = {}
 # GitNexus exposes `/api/heartbeat` as SSE (long-lived); use `/api/info` for probes.
 GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
@@ -89,7 +93,33 @@ def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsCo
     )
 
 
-def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
+def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> IntegrationReadiness:
+    # Module-level TTL cache: subprocess probes (promptfoo --version, goose
+    # --version, evo --version) plus the latentmas/deepagents HTTP probes
+    # dominate cold startup. Every service constructor in auto mode would
+    # otherwise pay ~800ms per init. The key includes every field the probe
+    # consults so changing e.g. latentmas_url in a new RuntimeConfig triggers
+    # a fresh probe rather than returning a stale snapshot.
+    cache_key = (
+        runtime_config.state_directory,
+        runtime_config.integrations_config_path,
+        runtime_config.promptfoo_command,
+        runtime_config.hermes_command,
+        runtime_config.goose_command,
+        runtime_config.evo_command,
+        runtime_config.gitnexus_sidecar_url,
+        runtime_config.latentmas_enabled,
+        runtime_config.latentmas_url,
+        runtime_config.latentmas_model_name,
+        runtime_config.agent_fabric_mode,
+        runtime_config.mesh_deepagents_model,
+    )
+    now = time.monotonic()
+    if not force:
+        with _readiness_lock:
+            entry = _readiness_cache.get(cache_key)
+            if entry and now - entry[0] < _READINESS_TTL_SECONDS:
+                return entry[1]
     resolved = resolve_integrations_config(runtime_config)
     checked_at = _timestamp()
     promptfoo_status = _command_status("promptfoo", resolved.promptfoo_command)
@@ -98,7 +128,7 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
     evo_status = build_evo_status(runtime_config, resolved.evo_command)
     latentmas_status = _latentmas_status(runtime_config)
     deepagents_status = _deepagents_status(runtime_config)
-    return IntegrationReadiness(
+    readiness = IntegrationReadiness(
         checked_at=checked_at,
         promptfoo=promptfoo_status,
         hermes=hermes_status,
@@ -110,6 +140,15 @@ def build_readiness(runtime_config: RuntimeConfig) -> IntegrationReadiness:
         state_path=runtime_config.state_directory,
         integrations_config_path=runtime_config.integrations_config_path,
     )
+    with _readiness_lock:
+        _readiness_cache[cache_key] = (now, readiness)
+    return readiness
+
+
+def invalidate_readiness_cache() -> None:
+    """Drop every cached readiness snapshot. Call after integration config changes."""
+    with _readiness_lock:
+        _readiness_cache.clear()
 
 
 def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool = False) -> dict[str, Any]:

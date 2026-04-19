@@ -521,16 +521,24 @@ class IntegrationsTests(unittest.TestCase):
             ) -> subprocess.CompletedProcess[str]:
                 return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo-hq-cli 0.2.0\n", stderr="")
 
+            # build_readiness caches its result keyed on RuntimeConfig fields
+            # but cannot see monkeypatched subprocess.run, so force-refresh
+            # between the wrong/correct blocks by invalidating explicitly.
+            from shared.mesh_runtime.integrations import invalidate_readiness_cache
+
+            invalidate_readiness_cache()
             with (
                 patch("shared.mesh_runtime.integrations.shutil.which", return_value=None),
                 patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
             ):
                 missing_readiness = build_readiness(missing)
+            invalidate_readiness_cache()
             with (
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=wrong_run),
                 patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
             ):
                 wrong_readiness = build_readiness(wrong)
+            invalidate_readiness_cache()
             with (
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=correct_run),
                 patch("shared.mesh_runtime.integrations._url_responds", return_value=False),
