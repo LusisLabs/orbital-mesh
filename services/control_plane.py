@@ -6,7 +6,6 @@ import logging
 import os
 import shutil
 import threading
-import time
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timezone

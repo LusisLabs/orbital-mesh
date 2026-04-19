@@ -37,7 +37,10 @@ exclude = [
   ".cursor",
   ".hermes-local",
   ".mesh-runtime-state",
+  "deepagents",
   "docs",
+  "latent-mesh",
+  "plugins",
 ]
 
 [tool.ruff.lint]

@@ -20,7 +20,6 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import (
     ACTION_FIRE,
     ACTION_RESOLVE,
-    ACTION_WARN,
     AlertStore,
     RuntimeConfig,
     WebhookTemplate,
