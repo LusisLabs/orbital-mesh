@@ -5,23 +5,17 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
+from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
 
-
-@dataclass
-class HermesExecutionResult:
-    status: str
-    external_refs: dict[str, object]
-    failure: dict | None = None
-    retryable: bool = False
+HermesExecutionResult = CliExecutionResult
 
 
 class HermesAdapter:
@@ -29,6 +23,24 @@ class HermesAdapter:
         raise NotImplementedError
 
     def open_execution_incident(self, decision: Decision, failure_reason: str) -> dict[str, str]:
+        raise NotImplementedError
+
+    def explain_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+    ) -> dict[str, object]:
+        raise NotImplementedError
+
+    def chat_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+        history: list[dict[str, str]],
+        user_message: str,
+    ) -> dict[str, object]:
         raise NotImplementedError
 
 
@@ -92,6 +104,58 @@ class NativeHermesAdapter(HermesAdapter):
         )
         return result.get("external_refs", {})
 
+    def explain_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+    ) -> dict[str, object]:
+        recommendation = str(evaluation.get("final_recommendation", "human_review"))
+        reasons = [reason for reason in blocking_reasons if isinstance(reason, str) and reason.strip()]
+        summary = (
+            f"Hermes local summary: decision {decision.decision_type} is held at "
+            f"{recommendation} because {', '.join(reasons[:3]) or 'evaluation did not pass'}."
+        )
+        return {
+            "mode": "native",
+            "approved": False,
+            "summary": summary,
+            "assistant_reply": summary,
+            "risk_flags": reasons[:5],
+            "next_action": "operator_override_or_fix_blockers",
+            "recommendation": recommendation,
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+
+    def chat_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+        history: list[dict[str, str]],
+        user_message: str,
+    ) -> dict[str, object]:
+        recommendation = str(evaluation.get("final_recommendation", "human_review"))
+        reasons = [reason for reason in blocking_reasons if isinstance(reason, str) and reason.strip()]
+        reply = (
+            f"Hermes local follow-up: {user_message.strip()} "
+            f"The run remains at {recommendation} because {', '.join(reasons[:3]) or 'evaluation did not pass'}."
+        ).strip()
+        return {
+            "mode": "native",
+            "approved": False,
+            "summary": reply,
+            "assistant_reply": reply,
+            "risk_flags": reasons[:5],
+            "next_action": "operator_override_or_fix_blockers",
+            "recommendation": recommendation,
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+
 
 class HermesCliAdapter(HermesAdapter):
     def __init__(self, command: str | None = None, timeout_seconds: int = 30):
@@ -128,6 +192,66 @@ class HermesCliAdapter(HermesAdapter):
             }
         )
         return result.get("external_refs", {})
+
+    def explain_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+    ) -> dict[str, object]:
+        result = self._invoke(
+            {
+                "mode": "explain",
+                "decision": decision.to_dict(),
+                "evaluation": evaluation,
+                "blocking_reasons": blocking_reasons,
+            }
+        )
+        if result.get("error"):
+            return {
+                "approved": False,
+                "summary": str(result["error"]),
+                "assistant_reply": str(result["error"]),
+                "risk_flags": ["subprocess_error"],
+                "next_action": "human_review",
+                "recommendation": str(evaluation.get("final_recommendation", "human_review")),
+                "operator_actions": ["fix_blockers_or_override"],
+                "proposed_command": None,
+                "proposed_payload": None,
+            }
+        return result
+
+    def chat_blockers(
+        self,
+        decision: Decision,
+        evaluation: dict,
+        blocking_reasons: list[str],
+        history: list[dict[str, str]],
+        user_message: str,
+    ) -> dict[str, object]:
+        result = self._invoke(
+            {
+                "mode": "chat_blockers",
+                "decision": decision.to_dict(),
+                "evaluation": evaluation,
+                "blocking_reasons": blocking_reasons,
+                "history": history,
+                "user_message": user_message,
+            }
+        )
+        if result.get("error"):
+            return {
+                "approved": False,
+                "summary": str(result["error"]),
+                "assistant_reply": str(result["error"]),
+                "risk_flags": ["subprocess_error"],
+                "next_action": "human_review",
+                "recommendation": str(evaluation.get("final_recommendation", "human_review")),
+                "operator_actions": ["fix_blockers_or_override"],
+                "proposed_command": None,
+                "proposed_payload": None,
+            }
+        return result
 
     def _invoke(self, payload: dict) -> dict:
         try:

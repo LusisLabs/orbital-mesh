@@ -1,0 +1,24 @@
+{
+  "source_id": "prometheus",
+  "source_type": "alertmanager",
+  "display_name": "Prometheus Alertmanager webhook",
+  "fields": {
+    "alert_id": "$.alerts[0].fingerprint",
+    "timestamp": { "path": "$.alerts[0].startsAt", "format": "iso8601" },
+    "action": {
+      "path": "$.alerts[0].status",
+      "map": {
+        "firing": "fire",
+        "resolved": "resolve"
+      },
+      "default": "fire"
+    },
+    "severity": { "path": "$.commonLabels.severity" },
+    "service": { "path": "$.commonLabels.service" },
+    "environment": { "path": "$.commonLabels.env" },
+    "title": "$.commonLabels.alertname",
+    "description": "$.commonAnnotations.description"
+  },
+  "labels_path": "$.commonLabels",
+  "signature_header": "X-Mesh-Signature"
+}

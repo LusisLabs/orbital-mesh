@@ -350,11 +350,8 @@ class VaultAiPostprocessor:
         return "\n".join(lines)
 
     def _write_markdown(self, path: Path, content: str) -> None:
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content.rstrip() + "\n")
-        except FileNotFoundError:
-            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content.rstrip() + "\n")
 
     def _is_current(self, session: RunSession, merkle: MerkleSnapshot) -> bool:
         meta_path = self.meta_dir / f"{session.run_id}.json"
@@ -368,23 +365,20 @@ class VaultAiPostprocessor:
 
     def _write_meta(self, session: RunSession, merkle: MerkleSnapshot, proof_event: RunEvent | None) -> None:
         meta_path = self.meta_dir / f"{session.run_id}.json"
-        try:
-            meta_path.parent.mkdir(parents=True, exist_ok=True)
-            meta_path.write_text(
-                json.dumps(
-                    {
-                        "run_id": session.run_id,
-                        "root_hash": merkle.root_hash,
-                        "stage": session.stage,
-                        "proof_event_id": proof_event.event_id if proof_event else None,
-                    },
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n"
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "run_id": session.run_id,
+                    "root_hash": merkle.root_hash,
+                    "stage": session.stage,
+                    "proof_event_id": proof_event.event_id if proof_event else None,
+                },
+                indent=2,
+                sort_keys=True,
             )
-        except FileNotFoundError:
-            return
+            + "\n"
+        )
 
     def _flag_value(self, tokens: list[str], flag: str) -> str | None:
         try:
@@ -396,12 +390,7 @@ class VaultAiPostprocessor:
         return tokens[index + 1]
 
     def _command_env(self, provider: str | None) -> dict[str, str]:
-        env = os.environ.copy()
-        if provider == "openai" and env.get("OPENAI_BASE_URL") and not env.get("OPENAI_HOST"):
-            env["OPENAI_HOST"] = env["OPENAI_BASE_URL"]
-        if provider == "anthropic" and env.get("ANTHROPIC_BASE_URL") and not env.get("ANTHROPIC_HOST"):
-            env["ANTHROPIC_HOST"] = env["ANTHROPIC_BASE_URL"]
-        return env
+        return os.environ.copy()
 
     def _assistant_text(self, payload: dict[str, Any]) -> str:
         messages = payload.get("messages", [])

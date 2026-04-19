@@ -153,15 +153,6 @@ def _copy_allowed_workspace(
     return snapshot
 
 
-def _workspace_file_paths(workspace: Path) -> list[str]:
-    paths: list[str] = []
-    root = workspace.resolve()
-    for path in root.rglob("*"):
-        if path.is_file():
-            paths.append(str(path.relative_to(root).as_posix()))
-    return sorted(paths)
-
-
 def _diff_against_snapshot(snapshot: dict[str, str], workspace: Path) -> tuple[str, list[str]]:
     changed: list[str] = []
     chunks: list[str] = []
@@ -215,6 +206,10 @@ def _bounded_task_context(
         "allowed_paths": task.allowed_paths,
         "test_commands": task.test_commands,
         "kubernetes_scope": task.kubernetes_scope,
+        "memory_scope": task.memory_scope,
+        "memory_packet": task.memory_packet,
+        "memory_write_policy": task.memory_write_policy,
+        "open_questions": task.open_questions,
         "trigger": {
             "trigger_type": trigger.trigger_type,
             "related_context": trigger.related_context,
@@ -239,23 +234,29 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
         return parsed if isinstance(parsed, dict) else None
     except json.JSONDecodeError:
         pass
-    start = text.find("{")
-    if start < 0:
-        return None
-    depth = 0
-    for i in range(start, len(text)):
-        ch = text[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                try:
-                    parsed = json.loads(text[start : i + 1])
-                    return parsed if isinstance(parsed, dict) else None
-                except json.JSONDecodeError:
-                    return None
-    return None
+    cursor = 0
+    while True:
+        start = text.find("{", cursor)
+        if start < 0:
+            return None
+        depth = 0
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        parsed = json.loads(text[start : i + 1])
+                        if isinstance(parsed, dict):
+                            return parsed
+                    except json.JSONDecodeError:
+                        pass
+                    cursor = start + 1
+                    break
+        else:
+            return None
 
 
 def _final_ai_text(messages: list[Any]) -> str:
@@ -279,11 +280,20 @@ def _final_ai_text(messages: list[Any]) -> str:
 def _model_env_warnings(model: str) -> list[str]:
     warnings: list[str] = []
     lower = model.lower()
-    if lower.startswith("openai:") and not (os.getenv("OPENAI_API_KEY") or "").strip():
+    if lower.startswith("openai:") and not _openai_api_key_for_model(model):
         warnings.append("OPENAI_API_KEY is not set")
     if lower.startswith("anthropic:") and not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
         warnings.append("ANTHROPIC_API_KEY is not set")
     return warnings
+
+
+def _openai_api_key_for_model(model: str) -> str:
+    openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if openai_api_key:
+        return openai_api_key
+    if "minimax" in model.lower():
+        return (os.getenv("MINIMAX_API_KEY") or "").strip()
+    return ""
 
 
 def _import_deepagents() -> tuple[Any, Any]:
@@ -306,7 +316,14 @@ def _uses_minimax_openai_compatible_route(model: str) -> bool:
 
 def _resolve_deepagents_model(model: str) -> Any:
     if model.lower().startswith("openai:") and _uses_minimax_openai_compatible_route(model):
-        return init_chat_model(model, use_responses_api=False)
+        kwargs: dict[str, Any] = {"use_responses_api": False}
+        openai_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()
+        if openai_base_url:
+            kwargs["base_url"] = openai_base_url
+        openai_api_key = _openai_api_key_for_model(model)
+        if openai_api_key:
+            kwargs["api_key"] = openai_api_key
+        return init_chat_model(model, **kwargs)
     return model
 
 
@@ -378,9 +395,13 @@ class DeepAgentsAdapter:
             "\n\nYou may delegate via the task tool to these subagents. "
             "Mesh forbids production Kubernetes access, mutating the real git checkout on main, "
             "and any Mesh actuation — proposals only.\n"
+            "Shared memory is read-mostly. You may propose observations, claims, procedures, citations, "
+            "and contradiction flags, but you may not mutate shared semantic or procedural memory directly.\n"
             "After analysis, respond with a single JSON object (no markdown fences) containing:\n"
             '{ "summary": string, "recommended_action": string, "risk_flags": string[], '
-            '"changed_files": string[], "test_results": [ { "name": string, "passed": boolean, "detail": string } ] }\n'
+            '"changed_files": string[], "test_results": [ { "name": string, "passed": boolean, "detail": string } ], '
+            '"observations_proposed": object[], "claims_proposed": object[], "procedures_proposed": object[], '
+            '"citations": object[], "contradictions_detected": object[], "memory_actions_requested": string[] }\n'
             "Use changed_files only for sandbox paths you touched; use test_results only if you have concrete check outcomes."
         )
 
@@ -463,6 +484,12 @@ class DeepAgentsAdapter:
 
         changed_files: list[str] = []
         test_results: list[dict[str, Any]] = []
+        observations_proposed: list[dict[str, Any]] = []
+        claims_proposed: list[dict[str, Any]] = []
+        procedures_proposed: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = list(task.memory_packet.get("citations", []))
+        contradictions_detected: list[dict[str, Any]] = list(task.memory_packet.get("contradictions", []))
+        memory_actions_requested: list[str] = ["review"]
         summary = self._cap_text(final_text or "Deep Agents lane completed without parseable summary.")
         recommended_action = "human_review"
 
@@ -478,6 +505,18 @@ class DeepAgentsAdapter:
             tr = parsed.get("test_results")
             if isinstance(tr, list):
                 test_results = [x for x in tr if isinstance(x, dict)]
+            if isinstance(parsed.get("observations_proposed"), list):
+                observations_proposed = [x for x in parsed["observations_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("claims_proposed"), list):
+                claims_proposed = [x for x in parsed["claims_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("procedures_proposed"), list):
+                procedures_proposed = [x for x in parsed["procedures_proposed"] if isinstance(x, dict)]
+            if isinstance(parsed.get("citations"), list):
+                citations = [x for x in parsed["citations"] if isinstance(x, dict)]
+            if isinstance(parsed.get("contradictions_detected"), list):
+                contradictions_detected = [x for x in parsed["contradictions_detected"] if isinstance(x, dict)]
+            if isinstance(parsed.get("memory_actions_requested"), list):
+                memory_actions_requested = [str(x) for x in parsed["memory_actions_requested"]]
 
         if diff_changed:
             for path in diff_changed:
@@ -512,4 +551,11 @@ class DeepAgentsAdapter:
             risk_flags=sorted(set(risk_flags)),
             recommended_action=recommended_action,
             output=output,
+            observations_proposed=observations_proposed
+            or [{"kind": "agent_observation", "service": trigger.service, "author": agent, "content": summary}],
+            claims_proposed=claims_proposed,
+            procedures_proposed=procedures_proposed,
+            citations=citations,
+            contradictions_detected=contradictions_detected,
+            memory_actions_requested=memory_actions_requested,
         )

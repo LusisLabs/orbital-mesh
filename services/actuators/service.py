@@ -4,12 +4,34 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+from typing import Any, TypedDict
 
 from shared.mesh_runtime import Decision, RuntimeConfig
 
 
+class ActuatorResult(TypedDict, total=False):
+    """Return shape shared by every actuator adapter.
+
+    ``status`` is always present; ``external_refs`` is populated on success;
+    ``failure`` is populated when status=='failed'.
+    """
+
+    status: str
+    external_refs: dict[str, Any]
+    failure: dict[str, Any]
+    audit_log_id: str
+    idempotency_key: str
+
+
+class KubernetesParameters(TypedDict, total=False):
+    deployment_name: str
+    namespace: str
+    kube_context: str
+    revision: str
+
+
 class FeatureFlagAdapter:
-    def set_rollout(self, parameters: dict) -> dict:
+    def set_rollout(self, parameters: dict[str, Any]) -> ActuatorResult:
         return {
             "status": "succeeded",
             "external_refs": {"flag_change_id": f"ffchg_{parameters['flag_key']}_{parameters['rollout_pct']}"},
@@ -17,7 +39,7 @@ class FeatureFlagAdapter:
 
 
 class IncidentAdapter:
-    def open_incident(self, parameters: dict) -> dict:
+    def open_incident(self, parameters: dict[str, Any]) -> ActuatorResult:
         incident_scope = parameters.get("service") or parameters.get("decision_id") or parameters.get("flag_key") or "unknown"
         return {
             "status": "succeeded",
@@ -29,7 +51,7 @@ class KubernetesAdapter:
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         self.config = config or RuntimeConfig()
 
-    def rollback_deployment(self, parameters: dict) -> dict:
+    def rollback_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
         revision = parameters.get("revision") or "previous"
         if self.config.kubernetes_live_execution_enabled:
@@ -42,7 +64,7 @@ class KubernetesAdapter:
             },
         }
 
-    def restart_deployment(self, parameters: dict) -> dict:
+    def restart_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
         if self.config.kubernetes_live_execution_enabled:
             return self._live_restart(parameters, deployment_name)
@@ -54,7 +76,7 @@ class KubernetesAdapter:
             },
         }
 
-    def _live_restart(self, parameters: dict, deployment_name: str) -> dict:
+    def _live_restart(self, parameters: KubernetesParameters, deployment_name: str) -> ActuatorResult:
         kube_context = parameters.get("kube_context", "")
         namespace = parameters.get("namespace", "default")
         try:
@@ -80,7 +102,7 @@ class KubernetesAdapter:
                 "external_refs": {"live_execution": True, "kube_context": kube_context},
             }
 
-    def _live_rollback(self, parameters: dict, deployment_name: str, revision: str) -> dict:
+    def _live_rollback(self, parameters: KubernetesParameters, deployment_name: str, revision: str) -> ActuatorResult:
         kube_context = parameters.get("kube_context", "")
         namespace = parameters.get("namespace", "default")
         try:
@@ -134,7 +156,7 @@ class _KubectlError(Exception):
 
 
 class AuditLogAdapter:
-    def write_record(self, decision: Decision, idempotency_key: str) -> dict:
+    def write_record(self, decision: Decision, idempotency_key: str) -> ActuatorResult:
         return {
             "status": "succeeded",
             "audit_log_id": f"audit_{decision.decision_id}",

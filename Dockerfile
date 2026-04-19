@@ -8,7 +8,6 @@ RUN npm ci
 COPY web/ ./
 COPY scripts/generate_control_plane_contracts.py /repo/scripts/generate_control_plane_contracts.py
 COPY shared /repo/shared
-COPY scaffold /repo/scaffold
 RUN npm run build
 
 FROM node:22-bookworm-slim AS promptfoo
@@ -71,6 +70,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
+  && install -m 755 /root/.local/bin/uv /usr/local/bin/uv \
+  && if [ -f /root/.local/bin/uvx ]; then install -m 755 /root/.local/bin/uvx /usr/local/bin/uvx; fi \
   && git init /opt/hermes-agent \
   && cd /opt/hermes-agent \
   && git remote add origin https://github.com/NousResearch/hermes-agent.git \
@@ -100,7 +101,6 @@ COPY services ./services
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
 RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
-COPY scaffold ./scaffold
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies

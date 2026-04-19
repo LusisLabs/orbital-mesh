@@ -1,0 +1,26 @@
+{
+  "source_id": "pagerduty",
+  "source_type": "pagerduty_v3",
+  "display_name": "PagerDuty V3 webhook",
+  "fields": {
+    "alert_id": "$.event.data.id",
+    "timestamp": { "path": "$.event.occurred_at", "format": "iso8601" },
+    "action": {
+      "path": "$.event.event_type",
+      "map": {
+        "incident.triggered": "fire",
+        "incident.escalated": "fire",
+        "incident.reopened": "fire",
+        "incident.acknowledged": "warn",
+        "incident.resolved": "resolve"
+      },
+      "default": "fire"
+    },
+    "severity": { "path": "$.event.data.urgency" },
+    "service": { "path": "$.event.data.service.summary" },
+    "environment": { "path": "$.event.data.service.type" },
+    "title": "$.event.data.title",
+    "description": "$.event.data.description"
+  },
+  "signature_header": "X-PagerDuty-Signature"
+}

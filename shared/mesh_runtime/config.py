@@ -45,8 +45,13 @@ def _resolve_relative_path(raw: str, anchor: Path = _REPO_ROOT) -> str:
 @dataclass
 class RuntimeConfig:
     environment: str = "local"
-    evaluation_mode: str = "native"
-    orchestration_mode: str = "native"
+    # ``auto`` probes integration readiness at startup and uses Promptfoo /
+    # Goose when they can actually run. Falls back to the in-process native
+    # adapters when not ready (offline dev, air-gapped, CI without CLIs). Set
+    # explicitly to ``native`` / ``promptfoo`` / ``goose`` to opt out of the
+    # probe and pin one adapter.
+    evaluation_mode: str = "auto"
+    orchestration_mode: str = "auto"
     feature_flag_credentials_available: bool = True
     incident_credentials_available: bool = True
     audit_logging_available: bool = True
@@ -96,6 +101,7 @@ class RuntimeConfig:
     latentmas_use_vllm: bool = False
     latentmas_max_artifact_chars: int = 20_000
     agent_fabric_mode: str = "native"
+    agent_mesh_task_timeout_seconds: float = 15.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
@@ -120,6 +126,11 @@ class RuntimeConfig:
             raise ValueError(f"max_transient_retries must be >= 0, got {self.max_transient_retries}")
         if self.max_json_body_bytes < 0:
             raise ValueError(f"max_json_body_bytes must be >= 0, got {self.max_json_body_bytes}")
+        if self.agent_mesh_task_timeout_seconds <= 0:
+            raise ValueError(
+                "agent_mesh_task_timeout_seconds must be > 0, "
+                f"got {self.agent_mesh_task_timeout_seconds}"
+            )
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
@@ -136,8 +147,8 @@ class RuntimeConfig:
         )
         return cls(
             environment=os.getenv("MESH_ENVIRONMENT", "local"),
-            evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "native"),
-            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "native"),
+            evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "auto"),
+            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "auto"),
             feature_flag_credentials_available=os.getenv("MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             incident_credentials_available=os.getenv("MESH_INCIDENT_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             audit_logging_available=os.getenv("MESH_AUDIT_LOGGING_AVAILABLE", "true").lower() == "true",
@@ -199,6 +210,7 @@ class RuntimeConfig:
             latentmas_use_vllm=os.getenv("MESH_LATENTMAS_USE_VLLM", "").lower() in ("1", "true", "yes"),
             latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
             agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
+            agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
             mesh_deepagents_workspace_root=_env_path_anchored_to_repo(

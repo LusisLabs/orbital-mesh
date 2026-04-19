@@ -11,17 +11,19 @@ from shared.mesh_runtime import (
     EvaluationResult,
     ExecutionRecord,
     RuntimeConfig,
+    build_readiness,
     log_runtime_event,
     resolve_integrations_config,
 )
 
 from .goose_adapter import GooseAdapter, GooseCliAdapter, NativeGooseAdapter
+from .hermes_adapter import HermesAdapter, HermesCliAdapter, NativeHermesAdapter
 
 
 class OrchestratorService:
     def __init__(
         self,
-        adapter: GooseAdapter | None = None,
+        adapter: GooseAdapter | HermesAdapter | None = None,
         config: RuntimeConfig | None = None,
         clock: Callable[[], float] | None = None,
         sleeper: Callable[[float], None] | None = None,
@@ -31,14 +33,48 @@ class OrchestratorService:
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
 
-    def _build_adapter(self) -> GooseAdapter:
-        if self.config.orchestration_mode == "goose":
+    def _build_adapter(self) -> GooseAdapter | HermesAdapter:
+        mode = (self.config.orchestration_mode or "auto").lower()
+        if mode == "goose":
             resolved = resolve_integrations_config(self.config)
             return GooseCliAdapter(
                 command=resolved.goose_command,
                 timeout_seconds=self.config.goose_command_timeout_seconds,
             )
-        return NativeGooseAdapter(config=self.config)
+        if mode == "hermes":
+            resolved = resolve_integrations_config(self.config)
+            return HermesCliAdapter(
+                command=resolved.hermes_command,
+                timeout_seconds=self.config.hermes_command_timeout_seconds,
+            )
+        if mode == "native":
+            # Explicit ``native`` keeps the legacy in-process Goose adapter.
+            return NativeGooseAdapter(config=self.config)
+        # auto: prefer Hermes, then Goose, then fall back to the modern native
+        # Hermes adapter so offline/dev setups still work.
+        readiness = build_readiness(self.config)
+        if readiness.hermes.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("orchestration_adapter_selected", adapter="hermes", reason="auto_ready")
+            return HermesCliAdapter(
+                command=resolved.hermes_command,
+                timeout_seconds=self.config.hermes_command_timeout_seconds,
+            )
+        if readiness.goose.ready:
+            resolved = resolve_integrations_config(self.config)
+            log_runtime_event("orchestration_adapter_selected", adapter="goose", reason="auto_ready")
+            return GooseCliAdapter(
+                command=resolved.goose_command,
+                timeout_seconds=self.config.goose_command_timeout_seconds,
+            )
+        log_runtime_event(
+            "orchestration_adapter_selected",
+            adapter="native_hermes",
+            reason="auto_fallback",
+            hermes_detail=readiness.hermes.detail,
+            goose_detail=readiness.goose.detail,
+        )
+        return NativeHermesAdapter(config=self.config)
 
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
         started_at = datetime.now(timezone.utc).isoformat()

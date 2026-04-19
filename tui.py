@@ -255,9 +255,6 @@ class MeshOperatorController:
         self._scenario_title_index = {scenario.title: scenario for scenario in self.scenarios}
         self._run_counter = 0
 
-    def scenario_keys(self) -> list[str]:
-        return [scenario.key for scenario in self.scenarios]
-
     def get_scenario(self, key: str) -> ScenarioDefinition:
         return self._scenario_index[key]
 

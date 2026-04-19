@@ -1,0 +1,24 @@
+{
+  "source_id": "grafana",
+  "source_type": "grafana_alerting",
+  "display_name": "Grafana Alerting v9+ webhook",
+  "fields": {
+    "alert_id": "$.alerts[0].fingerprint",
+    "timestamp": { "path": "$.alerts[0].startsAt", "format": "iso8601" },
+    "action": {
+      "path": "$.status",
+      "map": {
+        "firing": "fire",
+        "resolved": "resolve"
+      },
+      "default": "fire"
+    },
+    "severity": { "path": "$.commonLabels.severity" },
+    "service": { "path": "$.commonLabels.service" },
+    "environment": { "path": "$.commonLabels.env" },
+    "title": "$.commonAnnotations.summary",
+    "description": "$.commonAnnotations.description"
+  },
+  "labels_path": "$.commonLabels",
+  "signature_header": "X-Mesh-Signature"
+}

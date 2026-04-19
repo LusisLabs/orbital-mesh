@@ -52,6 +52,7 @@ The browser UI is the primary interface.
 - Runs the existing feature-flag remediation loop end to end
 - Streams stage-by-stage run updates through HTTP + SSE
 - Pauses at the approval gate before execution by default
+- In `interruptible_auto`, can launch a bounded child retry when the gate fails for recoverable evidence blockers
 - Supports bounded steering commands while a run is in progress
 - Persists goals, runs, notes, and artifact state in structured runtime storage
 - Mirrors that memory into a fixed Obsidian-compatible vault layout
@@ -78,7 +79,7 @@ Each run advances through explicit stages:
 6. `awaiting_operator`
 7. `executing`
 8. `feedback_ready`
-9. `completed`, `failed`, or `cancelled`
+9. `completed`, `failed`, `cancelled`, or `recovery_spawned`
 
 Steering is bounded. Supported commands are:
 
@@ -92,6 +93,7 @@ Steering is bounded. Supported commands are:
 - `attach_note`
 
 Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
+Recoverable blockers such as low confidence or Promptfoo failures can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
 
 ## Runtime Modes
 

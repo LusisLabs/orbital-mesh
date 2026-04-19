@@ -29,15 +29,23 @@ class MeshLatentMasRuntime:
         self._model_name: str | None = None
         self._model_backend: str | None = None
         self._loaded_at: float | None = None
+        self._device_warning: str | None = None
+        self._last_error: str | None = None
 
     def health(self) -> dict[str, Any]:
+        preflight = _latentmas_preflight(self.config)
+        detail = preflight["detail"]
+        if self._last_error:
+            detail = f"{detail}; last_error={self._last_error}"
         return {
-            "ready": _LATENTMAS_ROOT.is_dir(),
+            "ready": bool(preflight["ready"] and self._last_error is None),
             "model_loaded": self._model is not None,
             "model_name": self._model_name or self.config.latentmas_model_name,
             "backend": self._model_backend or ("vllm" if self.config.latentmas_use_vllm else "transformers"),
             "latentmas_root": str(_LATENTMAS_ROOT),
             "use_vllm": self.config.latentmas_use_vllm,
+            "detail": detail,
+            "device_warning": self._device_warning,
         }
 
     def infer(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -45,6 +53,10 @@ class MeshLatentMasRuntime:
             started = time.monotonic()
             options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
             runtime_config = self._config_from_options(options)
+            preflight = _latentmas_preflight(runtime_config)
+            if not preflight["ready"]:
+                self._last_error = str(preflight["detail"])
+                raise RuntimeError(str(preflight["detail"]))
             model = self._ensure_model(runtime_config)
             question = _build_mesh_question(payload)
             raw_prediction, traces = _run_latentmas_inference(model, runtime_config, question)
@@ -55,7 +67,7 @@ class MeshLatentMasRuntime:
             elapsed = round(time.monotonic() - started, 4)
             raw_summary = parsed.get("summary") or (raw_prediction.splitlines()[0] if raw_prediction.splitlines() else None)
             summary = str(raw_summary or "LatentMAS inference completed.")
-            return {
+            result = {
                 "status": "completed",
                 "summary": summary[:1000],
                 "recommended_action": str(parsed.get("recommended_action") or "human_review"),
@@ -69,10 +81,14 @@ class MeshLatentMasRuntime:
                     "latent_steps": runtime_config.latentmas_latent_steps,
                     "prompt_mode": runtime_config.latentmas_prompt_mode,
                     "backend": self._model_backend or "transformers",
+                    "device": str(getattr(model, "device", runtime_config.latentmas_device)),
+                    "device_warning": self._device_warning,
                     "model_loaded_at": self._loaded_at,
                     "parse_error": parse_error,
                 },
             }
+            self._last_error = None
+            return result
 
     def _config_from_options(self, options: dict[str, Any]) -> RuntimeConfig:
         return replace(
@@ -101,9 +117,10 @@ class MeshLatentMasRuntime:
         if str(_LATENTMAS_ROOT) not in sys.path:
             sys.path.insert(0, str(_LATENTMAS_ROOT))
         from models import ModelWrapper
-        from utils import auto_device, set_seed
+        from utils import set_seed
 
-        device = auto_device(config.latentmas_device)
+        device, device_warning = _resolve_runtime_device(config.latentmas_device)
+        self._device_warning = device_warning
         args = SimpleNamespace(
             model_name=config.latentmas_model_name,
             method="latent_mas",
@@ -150,6 +167,11 @@ class LatentMasRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = self._read_json()
+        except (json.JSONDecodeError, ValueError) as exc:
+            _LOG.info("LatentMAS inference rejected bad request: %s", exc)
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        try:
             result = self.server.runtime.infer(payload)
         except Exception as exc:
             _LOG.exception("LatentMAS inference failed")
@@ -222,6 +244,41 @@ def _run_latentmas_inference(model: Any, config: RuntimeConfig, question: str) -
             }
         )
     return final_text, traces
+
+
+def _latentmas_preflight(config: RuntimeConfig) -> dict[str, object]:
+    if not _LATENTMAS_ROOT.is_dir():
+        return {"ready": False, "detail": f"LatentMAS root not found: {_LATENTMAS_ROOT}"}
+    try:
+        _, device_warning = _resolve_runtime_device(config.latentmas_device)
+    except RuntimeError as exc:
+        return {"ready": False, "detail": str(exc)}
+    detail = "sidecar reachable"
+    if device_warning:
+        detail = f"sidecar reachable; {device_warning}"
+    return {"ready": True, "detail": detail}
+
+
+def _resolve_runtime_device(device_name: str | None) -> tuple[object, str | None]:
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - sidecar image should always include torch
+        raise RuntimeError("torch is required for LatentMAS sidecar") from exc
+
+    requested = (device_name or "").strip()
+    if not requested:
+        from utils import auto_device
+
+        return auto_device(None), None
+
+    lower = requested.lower()
+    if lower.startswith("cuda") and not torch.cuda.is_available():
+        return torch.device("cpu"), f"requested device `{requested}` unavailable; falling back to cpu"
+    if lower.startswith("mps"):
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is None or not mps_backend.is_available():
+            return torch.device("cpu"), f"requested device `{requested}` unavailable; falling back to cpu"
+    return torch.device(requested), None
 
 
 def _run_latentmas_inference_vllm(model: Any, config: RuntimeConfig, question: str) -> tuple[str, list[dict[str, Any]]]:

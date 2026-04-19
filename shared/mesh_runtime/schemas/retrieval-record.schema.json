@@ -1,0 +1,25 @@
+{
+  "$id": "https://mesh.local/contracts/retrieval-record.schema.json",
+  "type": "object",
+  "required": [
+    "retrieval_id",
+    "query",
+    "scope",
+    "channels",
+    "candidate_ids",
+    "verified_ids",
+    "discarded_ids",
+    "created_at"
+  ],
+  "properties": {
+    "retrieval_id": { "type": "string" },
+    "query": { "type": "string" },
+    "scope": { "type": "object" },
+    "channels": { "type": "array", "items": { "type": "string" } },
+    "candidate_ids": { "type": "array", "items": { "type": "string" } },
+    "verified_ids": { "type": "array", "items": { "type": "string" } },
+    "discarded_ids": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

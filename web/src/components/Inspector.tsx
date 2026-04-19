@@ -14,11 +14,20 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { formatDuration, formatTimestamp, humanize, riskColor, truncateHash } from "../lib/format";
-import type { InspectorTab, MerkleProof, ResearchIntelligence, ResearchSessionDetail, RunDetail, VaultTreeEntry } from "../types";
+import type {
+  InspectorTab,
+  MerkleProof,
+  ResearchCorpusIntelligence,
+  ResearchIntelligence,
+  ResearchSessionDetail,
+  RunDetail,
+  VaultTreeEntry,
+} from "../types";
 
 interface InspectorProps {
   tab: InspectorTab;
   run: RunDetail | null;
+  researchCorpus: ResearchCorpusIntelligence | null;
   researchDetail: ResearchSessionDetail | null;
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
@@ -34,15 +43,19 @@ export function Inspector(props: InspectorProps) {
       return (
         <div className="inspector-empty">
           <FileText size={32} strokeWidth={1.2} />
-          <p>
-            Select a session under <strong>Autonomous Research</strong> in the left rail. These sessions are produced by{" "}
-            <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
-            in the Run Queue.
-          </p>
+          {props.researchCorpus ? (
+            <ResearchCorpusPanel corpus={props.researchCorpus} />
+          ) : (
+            <p>
+              Select a session under <strong>Autonomous Research</strong> in the left rail. These sessions are produced by{" "}
+              <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
+              in the Run Queue.
+            </p>
+          )}
         </div>
       );
     }
-    return <ResearchTab detail={props.researchDetail} />;
+    return <ResearchTab detail={props.researchDetail} corpus={props.researchCorpus} />;
   }
 
   if (!run) {
@@ -76,7 +89,13 @@ export function Inspector(props: InspectorProps) {
   }
 }
 
-function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
+function ResearchTab({
+  detail,
+  corpus,
+}: {
+  detail: ResearchSessionDetail;
+  corpus: ResearchCorpusIntelligence | null;
+}) {
   const m = detail.manifest;
   const q = typeof m.question === "string" ? m.question : "";
   const status = typeof m.status === "string" ? m.status : "";
@@ -100,6 +119,7 @@ function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
         {route ? <Badge label={`route: ${route}`} color="#8b9bb4" /> : null}
         {model ? <Badge label={model} color="#6b8cae" /> : null}
       </div>
+      {corpus ? <ResearchCorpusPanel corpus={corpus} compact /> : null}
       {intelligence ? <ResearchIntelligencePanel intelligence={intelligence} /> : null}
       {detail.final_report_markdown ? (
         <MarkdownDocument className="research-markdown markdown-document" content={detail.final_report_markdown} />
@@ -107,6 +127,41 @@ function ResearchTab({ detail }: { detail: ResearchSessionDetail }) {
         <p className="muted">No synthesis/final-report.md yet.</p>
       )}
     </div>
+  );
+}
+
+function ResearchCorpusPanel({
+  corpus,
+  compact,
+}: {
+  corpus: ResearchCorpusIntelligence;
+  compact?: boolean;
+}) {
+  const recurringFlags = Object.entries(corpus.recurring_flags)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, compact ? 3 : 5)
+    .map(([flag, count]) => `${humanize(flag)} (${count})`);
+  const acceptedAnchors = corpus.accepted_anchors
+    .slice(0, compact ? 3 : 5)
+    .map((anchor) => `${anchor.label} (${anchor.session_count})`);
+  const driftSessions = corpus.drift_sessions
+    .slice(0, compact ? 2 : 4)
+    .map((session) => `${session.session_id}: ${session.off_domain_terms.slice(0, 3).join(", ")}`);
+
+  return (
+    <Section title="Research Corpus">
+      <div className="inspector-field-row">
+        <Badge label={`${corpus.sessions_analyzed} analyzed`} color="#41d6b1" />
+        <Badge label={`${corpus.drift_sessions.length} drift sessions`} color="#d76c75" />
+        <Badge label={`${corpus.accepted_anchors.length} accepted anchors`} color="#6b8cae" />
+      </div>
+      {recurringFlags.length > 0 ? <MiniList title="Recurring flags" items={recurringFlags} inline={compact} /> : null}
+      {acceptedAnchors.length > 0 ? <MiniList title="Accepted anchors" items={acceptedAnchors} inline={compact} /> : null}
+      {corpus.next_actions.length > 0 ? (
+        <MiniList title="Next actions" items={corpus.next_actions.slice(0, compact ? 3 : 5)} />
+      ) : null}
+      {driftSessions.length > 0 ? <MiniList title="Recent drift sessions" items={driftSessions} /> : null}
+    </Section>
   );
 }
 
@@ -131,8 +186,20 @@ function ResearchIntelligencePanel({ intelligence }: { intelligence: ResearchInt
       {intelligence.extracted_actions && intelligence.extracted_actions.length > 0 ? (
         <MiniList title="Next actions" items={intelligence.extracted_actions.slice(0, 4)} />
       ) : null}
+      {intelligence.extracted_risks && intelligence.extracted_risks.length > 0 ? (
+        <MiniList title="Extracted risks" items={intelligence.extracted_risks.slice(0, 4)} />
+      ) : null}
+      {intelligence.unsupported_claim_terms && intelligence.unsupported_claim_terms.length > 0 ? (
+        <MiniList title="Unsupported claims" items={intelligence.unsupported_claim_terms.slice(0, 8)} inline />
+      ) : null}
+      {intelligence.evidence_limit_terms && intelligence.evidence_limit_terms.length > 0 ? (
+        <MiniList title="Evidence limits" items={intelligence.evidence_limit_terms.slice(0, 8)} inline />
+      ) : null}
       {intelligence.off_domain_terms && intelligence.off_domain_terms.length > 0 ? (
         <MiniList title="Drift terms" items={intelligence.off_domain_terms.slice(0, 8)} inline />
+      ) : null}
+      {intelligence.documents_read && intelligence.documents_read.length > 0 ? (
+        <MiniList title="Documents read" items={intelligence.documents_read.slice(0, 5)} />
       ) : null}
     </Section>
   );

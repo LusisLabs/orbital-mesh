@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/evidence-node.schema.json",
+  "title": "EvidenceNode",
+  "type": "object",
+  "required": [
+    "evidence_id",
+    "run_id",
+    "analyzer",
+    "kind",
+    "summary",
+    "payload",
+    "source_event_ids",
+    "confidence",
+    "trusted"
+  ],
+  "properties": {
+    "evidence_id": { "type": "string" },
+    "run_id": { "type": ["string", "null"] },
+    "analyzer": { "type": "string" },
+    "kind": { "type": "string" },
+    "summary": { "type": "string" },
+    "payload": { "type": "object" },
+    "source_event_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": { "type": "number" },
+    "trusted": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

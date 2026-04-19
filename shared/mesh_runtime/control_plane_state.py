@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import threading
+from collections import deque
 from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Deque
 from uuid import uuid4
 
 from .config import RuntimeConfig
+from .contracts import ClaimRecord, MemoryPacket, ObservationRecord, RelationshipRecord, RetrievalRecord, SupersessionRecord
 from .control_plane_models import GoalRecord, RunEvent, RunSession
 from .json_store import LockedJsonFile
 from .learning_logic import historical_success_rate, learning_context_from_outcomes, recovery_patterns
@@ -15,6 +18,9 @@ from .mesh_state_store import RunFilters
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .state import RuntimeStateStore
 from .vault import VaultManager
+
+
+_EVENT_CACHE_SIZE = 512
 
 
 class FileStateStore:
@@ -28,6 +34,20 @@ class FileStateStore:
         self._run_sessions_path = self.state_directory / "run_sessions.json"
         self._run_events_dir = self.state_directory / "run_events"
         self._run_events_dir.mkdir(parents=True, exist_ok=True)
+        self._memory_dir = self.state_directory / "memory"
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
+        self._observations_path = self._memory_dir / "observations.json"
+        self._claims_path = self._memory_dir / "claims.json"
+        self._relationships_path = self._memory_dir / "relationships.json"
+        self._supersessions_path = self._memory_dir / "supersessions.json"
+        self._retrievals_path = self._memory_dir / "retrievals.json"
+        self._packets_path = self._memory_dir / "packets.json"
+        # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
+        # JSON from disk + redeserializing is 10-50x more expensive than a
+        # deque slice. The tail is bounded per run_id, populated on append
+        # and warmed on first read.
+        self._event_tail_cache: dict[str, Deque[RunEvent]] = {}
+        self._event_cache_lock = threading.Lock()
 
     def ensure_default_goal(self) -> GoalRecord:
         goals = self.list_goals()
@@ -83,27 +103,15 @@ class FileStateStore:
         orchestration_mode: str,
         artifacts: dict[str, Any],
     ) -> RunSession:
-        now = _timestamp()
-        session = RunSession(
-            run_id=f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}",
-            created_at=now,
-            updated_at=now,
+        session = RunSession.new(
             goal_id=goal_id,
             scenario_key=scenario_key,
-            stage="queued",
-            status="queued",
             steering_mode=steering_mode,
             auto_mode=auto_mode,
-            pause_points=list(pause_points),
-            pending_pause_stage=None,
+            pause_points=pause_points,
             evaluation_mode=evaluation_mode,
             orchestration_mode=orchestration_mode,
-            latest_event_id=None,
-            latest_event_sequence=0,
-            latest_merkle_root=None,
-            operator_notes=[],
-            artifacts=deepcopy(artifacts),
-            error=None,
+            artifacts=artifacts,
         )
         self.save_run_session(session)
         return session
@@ -191,6 +199,12 @@ class FileStateStore:
             existing_events.append(event)
             event_payload["events"] = [record.to_dict() for record in existing_events]
 
+        with self._event_cache_lock:
+            tail = self._event_tail_cache.setdefault(
+                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
+            )
+            tail.append(event)
+
         snapshot = self.get_merkle_snapshot(run_id)
         session = self.get_run_session(run_id)
         if session is not None:
@@ -213,6 +227,11 @@ class FileStateStore:
                 event.merkle_leaf_hash = leaf_hash_for_payload(event.canonical_payload())
             existing_events.append(event)
             event_payload["events"] = [record.to_dict() for record in existing_events]
+        with self._event_cache_lock:
+            tail = self._event_tail_cache.setdefault(
+                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
+            )
+            tail.append(event)
         snapshot = self.get_merkle_snapshot(run_id)
         session = self.get_run_session(run_id)
         if session is not None:
@@ -224,12 +243,21 @@ class FileStateStore:
         return event
 
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:
+        with self._event_cache_lock:
+            cached = self._event_tail_cache.get(run_id)
+            if cached is not None:
+                return [event for event in cached if event.sequence > after_sequence]
         event_path = self._run_events_dir / f"{run_id}.json"
         if not event_path.exists():
             return []
         with LockedJsonFile(event_path) as payload:
             records = payload.get("events", [])
             events = [RunEvent(**record) for record in records if isinstance(record, dict)]
+        with self._event_cache_lock:
+            # Warm the cache with whatever we just loaded; subsequent polls hit
+            # the hot path.
+            tail = deque(events[-_EVENT_CACHE_SIZE:], maxlen=_EVENT_CACHE_SIZE)
+            self._event_tail_cache[run_id] = tail
         return [event for event in events if event.sequence > after_sequence]
 
     def list_events(self, run_id: str) -> list[RunEvent]:
@@ -290,24 +318,129 @@ class FileStateStore:
             records = payload.setdefault("artifacts", [])
             records.append(deepcopy(artifact))
 
-    def search_memory(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]:
+    def append_observation(self, record: dict[str, Any]) -> dict[str, Any]:
+        observation = ObservationRecord.from_dict(record)
+        with LockedJsonFile(self._observations_path) as payload:
+            records = payload.setdefault("observations", [])
+            records.append(observation.to_dict())
+        self.vault.write_memory_observation(observation.to_dict())
+        return observation.to_dict()
+
+    def list_observations(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        filters = filters or {}
+        with LockedJsonFile(self._observations_path) as payload:
+            records = list(payload.get("observations", []))
+        matches = [record for record in records if _scope_matches(record.get("scope", {}), scope) and _observation_matches(record, filters)]
+        return matches[: int(filters.get("limit", len(matches)))]
+
+    def save_claim(self, record: dict[str, Any]) -> dict[str, Any]:
+        claim = ClaimRecord.from_dict(record)
+        with LockedJsonFile(self._claims_path) as payload:
+            records = payload.setdefault("claims", [])
+            for index, existing in enumerate(records):
+                if existing.get("claim_id") == claim.claim_id:
+                    records[index] = claim.to_dict()
+                    break
+            else:
+                records.append(claim.to_dict())
+        self.vault.write_memory_claim(claim.to_dict())
+        return claim.to_dict()
+
+    def get_claim(self, claim_id: str) -> dict[str, Any] | None:
+        for record in self.list_claims({}, {"limit": 1000}):
+            if record.get("claim_id") == claim_id:
+                return record
+        return None
+
+    def list_claims(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        filters = filters or {}
+        with LockedJsonFile(self._claims_path) as payload:
+            records = list(payload.get("claims", []))
+        matches = [record for record in records if _claim_scope_matches(record, scope) and _claim_matches(record, filters)]
+        matches.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        return matches[: int(filters.get("limit", len(matches)))]
+
+    def save_relationship(self, record: dict[str, Any]) -> dict[str, Any]:
+        relationship = RelationshipRecord.from_dict(record)
+        with LockedJsonFile(self._relationships_path) as payload:
+            records = payload.setdefault("relationships", [])
+            for index, existing in enumerate(records):
+                if existing.get("relationship_id") == relationship.relationship_id:
+                    records[index] = relationship.to_dict()
+                    break
+            else:
+                records.append(relationship.to_dict())
+        return relationship.to_dict()
+
+    def list_relationships(
+        self,
+        node_ids: list[str] | None = None,
+        relationship_types: list[str] | None = None,
+        scope: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         del scope
-        needle = query.strip().lower()
-        if not needle:
-            return []
-        results: list[dict[str, Any]] = []
-        for session in self.list_run_sessions(limit=200):
-            haystack = " ".join([
-                session.run_id,
-                session.scenario_key or "",
-                session.stage,
-                session.status,
-                str(session.artifacts),
-                " ".join(session.operator_notes),
-            ]).lower()
-            if needle in haystack:
-                results.append({"kind": "run", "run_id": session.run_id, "summary": session.to_dict()})
-        return results
+        with LockedJsonFile(self._relationships_path) as payload:
+            records = list(payload.get("relationships", []))
+        return [
+            record
+            for record in records
+            if _relationship_matches(record, node_ids=node_ids, relationship_types=relationship_types)
+        ]
+
+    def save_supersession(self, record: dict[str, Any]) -> dict[str, Any]:
+        supersession = SupersessionRecord.from_dict(record)
+        with LockedJsonFile(self._supersessions_path) as payload:
+            records = payload.setdefault("supersessions", [])
+            records.append(supersession.to_dict())
+        old_claim = self.get_claim(supersession.old_claim_id)
+        if old_claim is not None:
+            old_claim["state"] = "superseded"
+            old_claim["superseded_by"] = supersession.new_claim_id
+            old_claim["updated_at"] = supersession.created_at
+            self.save_claim(old_claim)
+        return supersession.to_dict()
+
+    def retrieve_memory(self, request: dict[str, Any]) -> dict[str, Any]:
+        from .memory_retrieval import MemoryRetrievalService
+
+        return MemoryRetrievalService(self).retrieve(request)
+
+    def record_memory_retrieval(self, record: dict[str, Any]) -> dict[str, Any]:
+        retrieval = RetrievalRecord.from_dict(record)
+        with LockedJsonFile(self._retrievals_path) as payload:
+            records = payload.setdefault("retrievals", [])
+            records.append(retrieval.to_dict())
+        self.vault.write_memory_retrieval(retrieval.to_dict())
+        return retrieval.to_dict()
+
+    def save_memory_packet(self, packet: dict[str, Any]) -> dict[str, Any]:
+        model = MemoryPacket.from_dict(packet)
+        with LockedJsonFile(self._packets_path) as payload:
+            records = payload.setdefault("packets", [])
+            for index, existing in enumerate(records):
+                if existing.get("packet_id") == model.packet_id:
+                    records[index] = model.to_dict()
+                    break
+            else:
+                records.append(model.to_dict())
+        return model.to_dict()
+
+    def get_memory_packet(self, packet_id: str) -> dict[str, Any] | None:
+        with LockedJsonFile(self._packets_path) as payload:
+            for record in payload.get("packets", []):
+                if record.get("packet_id") == packet_id:
+                    return deepcopy(record)
+        return None
+
+    def run_memory_maintenance(self, now: str | None = None) -> dict[str, Any]:
+        from .memory_lifecycle import MemoryLifecycleService
+
+        return MemoryLifecycleService(self).run_memory_maintenance(now=now)
+
+    def search_memory(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]:
+        from .memory_retrieval import MemoryRetrievalService
+
+        return MemoryRetrievalService(self).legacy_search(query, scope)
 
     def tree(self) -> list[dict[str, Any]]:
         return self.vault.tree()
@@ -341,6 +474,65 @@ class FileStateStore:
 
 
 ControlPlaneStateStore = FileStateStore
+
+
+def _scope_matches(candidate: dict[str, Any], scope: dict[str, Any]) -> bool:
+    if not scope:
+        return True
+    for key, value in scope.items():
+        if value is None:
+            continue
+        candidate_value = candidate.get(key)
+        if candidate_value is None:
+            continue
+        if candidate_value != value:
+            return False
+    return True
+
+
+def _observation_matches(record: dict[str, Any], filters: dict[str, Any]) -> bool:
+    if "service" in filters and filters["service"] is not None and record.get("service") != filters["service"]:
+        return False
+    if "run_id" in filters and filters["run_id"] is not None and record.get("run_id") != filters["run_id"]:
+        return False
+    if "kind" in filters and filters["kind"] is not None and record.get("kind") != filters["kind"]:
+        return False
+    return True
+
+
+def _claim_scope_matches(record: dict[str, Any], scope: dict[str, Any]) -> bool:
+    if not scope:
+        return True
+    candidate_scope = record.get("scope")
+    if isinstance(candidate_scope, dict) and _scope_matches(candidate_scope, scope):
+        return True
+    service = scope.get("service")
+    if service is None:
+        return True
+    return service in record.get("entity_refs", [])
+
+
+def _claim_matches(record: dict[str, Any], filters: dict[str, Any]) -> bool:
+    if "tier" in filters and filters["tier"] is not None and record.get("tier") != filters["tier"]:
+        return False
+    if "state" in filters and filters["state"] is not None and record.get("state") != filters["state"]:
+        return False
+    return True
+
+
+def _relationship_matches(
+    record: dict[str, Any],
+    *,
+    node_ids: list[str] | None,
+    relationship_types: list[str] | None,
+) -> bool:
+    if relationship_types and record.get("type") not in relationship_types:
+        return False
+    if not node_ids:
+        return True
+    node_set = set(node_ids)
+    return record.get("from_id") in node_set or record.get("to_id") in node_set
+
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()

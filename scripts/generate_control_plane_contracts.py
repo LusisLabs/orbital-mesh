@@ -15,7 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from shared.mesh_runtime import control_plane_models as models  # noqa: E402
 
-SCHEMA_PATH = REPO_ROOT / "scaffold" / "contracts" / "schemas" / "control-plane.schema.json"
+SCHEMA_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "schemas" / "control-plane.schema.json"
 TYPES_PATH = REPO_ROOT / "web" / "src" / "types.ts"
 GENERATED_START = "// <generated-control-plane-contracts>"
 GENERATED_END = "// </generated-control-plane-contracts>"

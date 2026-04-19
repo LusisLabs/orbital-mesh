@@ -14,7 +14,7 @@ from services.evaluation.service import EvaluationService
 from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.trigger.service import TriggerService
-from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
+from shared.mesh_runtime import FileStateStore, RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
 
 
 class LatentMasAgentMeshTests(unittest.TestCase):
@@ -73,6 +73,72 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             self.assertEqual(task.attempts[0].output["metrics"]["model_name"], "fake-qwen")
             self.assertEqual(task.selected_attempt_id, task.attempts[0].attempt_id)
             self.assertEqual(_FakeLatentMasHandler.last_payload["task"]["task_id"], task.task_id)
+            self.assertIn("memory_packet", _FakeLatentMasHandler.last_payload["task"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_latentmas_attempt_carries_memory_citations(self) -> None:
+        state_store = FileStateStore(self.config)
+        state_store.append_observation({
+            "observation_id": "obs_memory",
+            "scope": {"shared": True, "service": "api-gateway"},
+            "kind": "note",
+            "content": "API gateway regressions should be escalated with citations.",
+            "service": "api-gateway",
+            "run_id": "run_seed",
+            "source_type": "run_event",
+            "source_refs": [{"run_id": "run_seed", "event_id": "evt_1"}],
+            "created_at": "2026-04-16T00:00:00+00:00",
+            "author": "mesh",
+            "tags": [],
+            "metadata": {},
+        })
+        state_store.save_claim({
+            "claim_id": "claim_memory",
+            "statement": "API gateway regressions benefit from cited memory packets.",
+            "entity_refs": ["api-gateway"],
+            "supporting_observation_ids": ["obs_memory"],
+            "contradicting_claim_ids": [],
+            "superseded_by": None,
+            "confidence": 0.83,
+            "confidence_factors": {
+                "support_score": 0.8,
+                "recency_score": 0.8,
+                "authority_score": 0.8,
+                "consistency_score": 0.8,
+                "verification_score": 0.9,
+            },
+            "freshness": 0.8,
+            "tier": "semantic",
+            "state": "active",
+            "created_at": "2026-04-16T00:00:00+00:00",
+            "updated_at": "2026-04-16T00:00:00+00:00",
+        })
+        server, thread = _start_fake_latentmas(
+            {
+                "summary": "LatentMAS recommends the gated execution path.",
+                "recommended_action": "execute",
+                "risk_flags": [],
+                "confidence": 0.91,
+                "raw_prediction": "{\"summary\":\"ok\"}",
+                "agent_traces": [],
+                "metrics": {"model_name": "fake-qwen", "elapsed_time_sec": 0.01},
+            }
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            attempt = AgentMeshService(config=self.config, state_store=state_store).build_tasks(
+                run_id="run_enabled",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0].attempts[0]
+            self.assertTrue(attempt.citations)
+            self.assertEqual(attempt.memory_actions_requested, ["review"])
         finally:
             server.shutdown()
             server.server_close()
@@ -108,6 +174,51 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             )[0]
             self.assertEqual(task.attempts[0].risk_flags, ["latentmas_output_unparseable"])
             self.assertIn("raw_response", task.attempts[0].output)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_latentmas_health_not_ready_skips_infer(self) -> None:
+        server, thread = _start_fake_latentmas(
+            {"summary": "should not run"},
+            health_payload={"ready": False, "detail": "requested device `cuda` unavailable; falling back to cpu"},
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            task = AgentMeshService(config=self.config).build_tasks(
+                run_id="run_not_ready",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0]
+            self.assertEqual(task.attempts[0].status, "failed")
+            self.assertIn("LatentMAS sidecar not ready", task.attempts[0].summary)
+            self.assertEqual(_FakeLatentMasHandler.last_payload, {})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_latentmas_http_error_surfaces_server_reason(self) -> None:
+        server, thread = _start_fake_latentmas(
+            {"error": "model load failed: CUDA driver not available"},
+            response_status=HTTPStatus.INTERNAL_SERVER_ERROR,
+        )
+        try:
+            self.config.latentmas_enabled = True
+            self.config.latentmas_url = f"http://127.0.0.1:{server.server_address[1]}"
+            trigger, decision, evaluation = self._build_runtime_artifacts()
+            task = AgentMeshService(config=self.config).build_tasks(
+                run_id="run_http_error",
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+            )[0]
+            self.assertEqual(task.attempts[0].status, "failed")
+            self.assertIn("CUDA driver not available", task.attempts[0].summary)
         finally:
             server.shutdown()
             server.server_close()
@@ -174,6 +285,8 @@ class LatentMasAgentMeshTests(unittest.TestCase):
 
 class _FakeLatentMasHandler(BaseHTTPRequestHandler):
     response_payload: Any = {}
+    health_payload: dict[str, Any] = {"ready": True}
+    response_status = HTTPStatus.OK
     raw_response = False
     last_payload: dict[str, Any] = {}
 
@@ -182,7 +295,7 @@ class _FakeLatentMasHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if self.path == "/health":
-            self._send_json({"ready": True})
+            self._send_json(self.health_payload)
             return
         self.send_response(HTTPStatus.NOT_FOUND)
         self.end_headers()
@@ -197,25 +310,33 @@ class _FakeLatentMasHandler(BaseHTTPRequestHandler):
         _FakeLatentMasHandler.last_payload = json.loads(body.decode("utf-8"))
         if self.raw_response:
             data = str(self.response_payload).encode("utf-8")
-            self.send_response(HTTPStatus.OK)
+            self.send_response(self.response_status)
             self.send_header("Content-Type", "text/plain")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
             return
-        self._send_json(self.response_payload)
+        self._send_json(self.response_payload, status=self.response_status)
 
-    def _send_json(self, payload: dict[str, Any]) -> None:
+    def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         data = json.dumps(payload).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
 
-def _start_fake_latentmas(payload: Any, raw: bool = False) -> tuple[ThreadingHTTPServer, threading.Thread]:
+def _start_fake_latentmas(
+    payload: Any,
+    raw: bool = False,
+    *,
+    health_payload: dict[str, Any] | None = None,
+    response_status: HTTPStatus = HTTPStatus.OK,
+) -> tuple[ThreadingHTTPServer, threading.Thread]:
     _FakeLatentMasHandler.response_payload = payload
+    _FakeLatentMasHandler.health_payload = health_payload or {"ready": True}
+    _FakeLatentMasHandler.response_status = response_status
     _FakeLatentMasHandler.raw_response = raw
     _FakeLatentMasHandler.last_payload = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeLatentMasHandler)

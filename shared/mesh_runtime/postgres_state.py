@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from .config import RuntimeConfig
+from .contracts import ClaimRecord, MemoryPacket, ObservationRecord, RelationshipRecord, RetrievalRecord, SupersessionRecord
 from .control_plane_models import GoalRecord, RunEvent, RunSession
 from .learning_logic import historical_success_rate, learning_context_from_outcomes, recovery_patterns
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
@@ -15,7 +16,7 @@ from .mesh_state_store import RunFilters
 from .state import RuntimeStateStore
 from .vault import VaultManager
 
-MIGRATION_PATH = Path(__file__).resolve().parents[2] / "migrations" / "postgres" / "001_live_persistence.sql"
+MIGRATION_DIR = Path(__file__).resolve().parents[2] / "migrations" / "postgres"
 
 
 class PostgresStateStore:
@@ -82,27 +83,15 @@ class PostgresStateStore:
         orchestration_mode: str,
         artifacts: dict[str, Any],
     ) -> RunSession:
-        now = _timestamp()
-        session = RunSession(
-            run_id=f"run_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}_{uuid4().hex[:8]}",
-            created_at=now,
-            updated_at=now,
+        session = RunSession.new(
             goal_id=goal_id,
             scenario_key=scenario_key,
-            stage="queued",
-            status="queued",
             steering_mode=steering_mode,
             auto_mode=auto_mode,
-            pause_points=list(pause_points),
-            pending_pause_stage=None,
+            pause_points=pause_points,
             evaluation_mode=evaluation_mode,
             orchestration_mode=orchestration_mode,
-            latest_event_id=None,
-            latest_event_sequence=0,
-            latest_merkle_root=None,
-            operator_notes=[],
-            artifacts=deepcopy(artifacts),
-            error=None,
+            artifacts=artifacts,
         )
         self.save_run_session(session)
         return session
@@ -312,30 +301,232 @@ class PostgresStateStore:
                 ),
             )
 
-    def search_memory(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]:
-        del scope
+    def append_observation(self, record: dict[str, Any]) -> dict[str, Any]:
+        observation = ObservationRecord.from_dict(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO observation_records
+                (observation_id, service, run_id, scope, kind, content, payload, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (observation_id) DO NOTHING
+                """,
+                (
+                    observation.observation_id,
+                    observation.service,
+                    observation.run_id,
+                    self._jsonb(observation.scope),
+                    observation.kind,
+                    observation.content,
+                    self._jsonb(observation.to_dict()),
+                    observation.created_at,
+                ),
+            )
+        self.vault.write_memory_observation(observation.to_dict())
+        return observation.to_dict()
+
+    def list_observations(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        filters = filters or {}
+        where = []
+        params: list[Any] = []
+        if scope.get("service") is not None:
+            where.append("service = %s")
+            params.append(scope["service"])
+        if scope.get("run_id") is not None:
+            where.append("(run_id = %s OR run_id IS NULL)")
+            params.append(scope["run_id"])
+        if filters.get("kind") is not None:
+            where.append("kind = %s")
+            params.append(filters["kind"])
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(int(filters.get("limit", 250)))
         with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT memory_id, run_id, kind, content, metadata, created_at
-                FROM memory_items
-                WHERE to_tsvector('english', content) @@ plainto_tsquery('english', %s)
+                f"""
+                SELECT payload
+                FROM observation_records
+                {where_sql}
                 ORDER BY created_at DESC
-                LIMIT 25
+                LIMIT %s
                 """,
-                (query,),
+                tuple(params),
             ).fetchall()
-        return [
-            {
-                "memory_id": row[0],
-                "run_id": row[1],
-                "kind": row[2],
-                "content": row[3],
-                "metadata": _json_payload(row[4]),
-                "created_at": str(row[5]),
-            }
-            for row in rows
-        ]
+        return [_json_payload(row[0]) for row in rows]
+
+    def save_claim(self, record: dict[str, Any]) -> dict[str, Any]:
+        claim = ClaimRecord.from_dict(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO claim_records
+                (claim_id, state, tier, statement, confidence, payload, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (claim_id) DO UPDATE SET
+                  state = EXCLUDED.state,
+                  tier = EXCLUDED.tier,
+                  statement = EXCLUDED.statement,
+                  confidence = EXCLUDED.confidence,
+                  payload = EXCLUDED.payload,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    claim.claim_id,
+                    claim.state,
+                    claim.tier,
+                    claim.statement,
+                    claim.confidence,
+                    self._jsonb(claim.to_dict()),
+                    claim.updated_at,
+                ),
+            )
+        self.vault.write_memory_claim(claim.to_dict())
+        return claim.to_dict()
+
+    def get_claim(self, claim_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM claim_records WHERE claim_id = %s", (claim_id,)).fetchone()
+        return _json_payload(row[0]) if row else None
+
+    def list_claims(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+        filters = filters or {}
+        rows_payload = self._load_claim_rows(filters)
+        claims = [_json_payload(row) for row in rows_payload]
+        if scope.get("service") is not None:
+            claims = [record for record in claims if scope["service"] in record.get("entity_refs", [])]
+        return claims[: int(filters.get("limit", len(claims)))]
+
+    def save_relationship(self, record: dict[str, Any]) -> dict[str, Any]:
+        relationship = RelationshipRecord.from_dict(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO relationship_records
+                (relationship_id, from_id, to_id, relationship_type, payload)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (relationship_id) DO UPDATE SET
+                  from_id = EXCLUDED.from_id,
+                  to_id = EXCLUDED.to_id,
+                  relationship_type = EXCLUDED.relationship_type,
+                  payload = EXCLUDED.payload
+                """,
+                (
+                    relationship.relationship_id,
+                    relationship.from_id,
+                    relationship.to_id,
+                    relationship.type,
+                    self._jsonb(relationship.to_dict()),
+                ),
+            )
+        return relationship.to_dict()
+
+    def list_relationships(
+        self,
+        node_ids: list[str] | None = None,
+        relationship_types: list[str] | None = None,
+        scope: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        del scope
+        where = []
+        params: list[Any] = []
+        if node_ids:
+            where.append("(from_id = ANY(%s) OR to_id = ANY(%s))")
+            params.extend([node_ids, node_ids])
+        if relationship_types:
+            where.append("relationship_type = ANY(%s)")
+            params.append(relationship_types)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT payload FROM relationship_records {where_sql}",
+                tuple(params),
+            ).fetchall()
+        return [_json_payload(row[0]) for row in rows]
+
+    def save_supersession(self, record: dict[str, Any]) -> dict[str, Any]:
+        supersession = SupersessionRecord.from_dict(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO supersession_records
+                (supersession_id, old_claim_id, new_claim_id, payload, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (supersession_id) DO UPDATE SET payload = EXCLUDED.payload
+                """,
+                (
+                    supersession.supersession_id,
+                    supersession.old_claim_id,
+                    supersession.new_claim_id,
+                    self._jsonb(supersession.to_dict()),
+                    supersession.created_at,
+                ),
+            )
+        old_claim = self.get_claim(supersession.old_claim_id)
+        if old_claim is not None:
+            old_claim["state"] = "superseded"
+            old_claim["superseded_by"] = supersession.new_claim_id
+            old_claim["updated_at"] = supersession.created_at
+            self.save_claim(old_claim)
+        return supersession.to_dict()
+
+    def retrieve_memory(self, request: dict[str, Any]) -> dict[str, Any]:
+        from .memory_retrieval import MemoryRetrievalService
+
+        return MemoryRetrievalService(self).retrieve(request)
+
+    def record_memory_retrieval(self, record: dict[str, Any]) -> dict[str, Any]:
+        retrieval = RetrievalRecord.from_dict(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO retrieval_records
+                (retrieval_id, query, scope, channels, payload, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (retrieval_id) DO UPDATE SET payload = EXCLUDED.payload
+                """,
+                (
+                    retrieval.retrieval_id,
+                    retrieval.query,
+                    self._jsonb(retrieval.scope),
+                    retrieval.channels,
+                    self._jsonb(retrieval.to_dict()),
+                    retrieval.created_at,
+                ),
+            )
+        self.vault.write_memory_retrieval(retrieval.to_dict())
+        return retrieval.to_dict()
+
+    def save_memory_packet(self, packet: dict[str, Any]) -> dict[str, Any]:
+        model = MemoryPacket.from_dict(packet)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_packets (packet_id, scope, payload, generated_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (packet_id) DO UPDATE SET payload = EXCLUDED.payload, generated_at = EXCLUDED.generated_at
+                """,
+                (
+                    model.packet_id,
+                    self._jsonb(model.scope),
+                    self._jsonb(model.to_dict()),
+                    model.generated_at,
+                ),
+            )
+        return model.to_dict()
+
+    def get_memory_packet(self, packet_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute("SELECT payload FROM memory_packets WHERE packet_id = %s", (packet_id,)).fetchone()
+        return _json_payload(row[0]) if row else None
+
+    def run_memory_maintenance(self, now: str | None = None) -> dict[str, Any]:
+        from .memory_lifecycle import MemoryLifecycleService
+
+        return MemoryLifecycleService(self).run_memory_maintenance(now=now)
+
+    def search_memory(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]:
+        from .memory_retrieval import MemoryRetrievalService
+
+        return MemoryRetrievalService(self).legacy_search(query, scope)
 
     def tree(self) -> list[dict[str, Any]]:
         return self.vault.tree()
@@ -345,7 +536,8 @@ class PostgresStateStore:
 
     def _initialize_schema(self) -> None:
         with self._connect() as conn:
-            conn.execute(MIGRATION_PATH.read_text(encoding="utf-8"))
+            for path in sorted(MIGRATION_DIR.glob("*.sql")):
+                conn.execute(path.read_text(encoding="utf-8"))
 
     def _connect(self):
         try:
@@ -500,6 +692,30 @@ class PostgresStateStore:
             }
             for row in rows
         ]
+
+    def _load_claim_rows(self, filters: dict[str, Any]) -> list[Any]:
+        where = []
+        params: list[Any] = []
+        if filters.get("tier") is not None:
+            where.append("tier = %s")
+            params.append(filters["tier"])
+        if filters.get("state") is not None:
+            where.append("state = %s")
+            params.append(filters["state"])
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        params.append(int(filters.get("limit", 1000)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT payload
+                FROM claim_records
+                {where_sql}
+                ORDER BY updated_at DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            ).fetchall()
+        return [row[0] for row in rows]
 
     def _materialize_vault(self, run_id: str) -> None:
         session = self.get_run_session(run_id)

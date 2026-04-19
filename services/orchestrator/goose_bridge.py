@@ -27,10 +27,6 @@ GOOSE_CODE_PATCH_SYSTEM_PROMPT = (
 )
 
 
-def _goose_run_timeout_seconds() -> float:
-    return float(os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS", "60"))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mesh Intelligence Goose bridge")
     parser.add_argument("--goose-bin", required=True, help="Path to the goose binary")
@@ -353,12 +349,7 @@ def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
 
 
 def _command_env(provider: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    if provider == "openai" and env.get("OPENAI_BASE_URL") and not env.get("OPENAI_HOST"):
-        env["OPENAI_HOST"] = env["OPENAI_BASE_URL"]
-    if provider == "anthropic" and env.get("ANTHROPIC_BASE_URL") and not env.get("ANTHROPIC_HOST"):
-        env["ANTHROPIC_HOST"] = env["ANTHROPIC_BASE_URL"]
-    return env
+    return os.environ.copy()
 
 
 def _parse_review_text(text: str) -> dict[str, object]:

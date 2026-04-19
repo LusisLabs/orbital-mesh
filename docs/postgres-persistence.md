@@ -5,6 +5,8 @@ Mesh supports two runtime state backends:
 - `file`: default local mode. Runs, events, learning outcomes, vault mirrors, and Merkle audit output stay under `.mesh-runtime-state`.
 - `postgres`: production mode. Canonical run state is stored in Postgres using `MESH_DATABASE_URL`.
 
+File mode uses lock files plus atomic replace writes for JSON state. If a state file is malformed, Mesh writes a `.corrupt.<timestamp>` backup and recreates an empty object instead of crashing the control-plane read path.
+
 Supabase is supported as a hosted Postgres target by setting `MESH_DATABASE_URL`. Mesh does not use Supabase-specific APIs in this version.
 
 ## Configuration

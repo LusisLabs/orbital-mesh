@@ -1,0 +1,27 @@
+{
+  "source_id": "datadog",
+  "source_type": "datadog_monitor",
+  "display_name": "Datadog monitor webhook",
+  "fields": {
+    "alert_id": "$.alert_id",
+    "timestamp": { "path": "$.date", "format": "unix_ms" },
+    "action": {
+      "path": "$.alert_transition",
+      "map": {
+        "Triggered": "fire",
+        "Re-Triggered": "fire",
+        "Warn": "warn",
+        "No Data": "warn",
+        "Recovered": "resolve"
+      },
+      "default": "fire"
+    },
+    "severity": { "path": "$.priority" },
+    "service": { "path": "$.tags.service" },
+    "environment": { "path": "$.tags.env" },
+    "title": "$.event_title",
+    "description": "$.event_msg"
+  },
+  "labels_path": "$.tags",
+  "signature_header": "X-Mesh-Signature"
+}

@@ -39,10 +39,8 @@ exclude = [
   ".mesh-runtime-state",
   "deepagents",
   "docs",
-  "evo",
   "latent-mesh",
   "plugins",
-  "scaffold",
 ]
 
 [tool.ruff.lint]

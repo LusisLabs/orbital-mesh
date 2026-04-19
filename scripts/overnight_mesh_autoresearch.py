@@ -692,7 +692,7 @@ def _run_showcase_session_dir(
 
 
 def _run_minimax(session_dir: Path) -> None:
-    runner = REPO_ROOT / ".cursor/skills/goose-autoresearch/scripts/run_minimax_research.py"
+    runner = REPO_ROOT / "services/skills/goose-autoresearch/scripts/run_minimax_research.py"
     if not runner.is_file():
         raise FileNotFoundError(runner)
     proc = subprocess.run(
