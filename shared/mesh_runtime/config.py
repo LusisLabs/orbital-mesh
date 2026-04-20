@@ -118,6 +118,14 @@ class RuntimeConfig:
     correlation_enabled: bool = False
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
+    argocd_url: str | None = None
+    argocd_token: str | None = None
+    argocd_ca_bundle: str | None = None
+    argocd_timeout_seconds: int = 30
+    trust_ladder_enabled: bool = False
+    trust_ladder_min_draft_runs: int = 3
+    trust_ladder_min_approve_runs: int = 10
+    trust_ladder_min_auto_runs: int = 30
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -231,6 +239,14 @@ class RuntimeConfig:
             in ("1", "true", "yes"),
             correlation_window_seconds=int(os.getenv("MESH_CORRELATION_WINDOW_SECONDS", "300")),
             correlation_min_signals=int(os.getenv("MESH_CORRELATION_MIN_SIGNALS", "2")),
+            argocd_url=os.getenv("MESH_ARGOCD_URL") or None,
+            argocd_token=os.getenv("MESH_ARGOCD_TOKEN") or None,
+            argocd_ca_bundle=os.getenv("MESH_ARGOCD_CA_BUNDLE") or None,
+            argocd_timeout_seconds=int(os.getenv("MESH_ARGOCD_TIMEOUT_SECONDS", "30")),
+            trust_ladder_enabled=os.getenv("MESH_TRUST_LADDER_ENABLED", "").lower() in ("1", "true", "yes"),
+            trust_ladder_min_draft_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_DRAFT_RUNS", "3")),
+            trust_ladder_min_approve_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_APPROVE_RUNS", "10")),
+            trust_ladder_min_auto_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_AUTO_RUNS", "30")),
         )
 
 

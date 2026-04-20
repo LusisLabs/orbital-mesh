@@ -395,6 +395,80 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             },
             "rollback_plan": "rollback deployment to the previous stable revision if restart does not restore readiness",
         }
+    if decision_type == "restart_pod":
+        return {
+            "system": "kubernetes_service",
+            "action": "restart_pod",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "pod_name": trigger.related_context.get("pod_name"),
+            },
+            "rollback_plan": (
+                "if recreated pod remains unhealthy, restart the owning deployment or rollback"
+            ),
+        }
+    if decision_type == "scale_deployment":
+        return {
+            "system": "kubernetes_service",
+            "action": "scale_deployment",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "replicas": trigger.related_context.get("target_replicas") or trigger.related_context.get("replicas"),
+            },
+            "rollback_plan": (
+                f"scale back to previous replica count "
+                f"{trigger.related_context.get('previous_replicas', 'unknown')} if scaling does not restore health"
+            ),
+        }
+    if decision_type == "cordon_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "cordon_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+            },
+            "rollback_plan": "kubectl uncordon the node once underlying hardware issue is resolved",
+        }
+    if decision_type == "drain_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "drain_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+                "grace_period_seconds": int(trigger.related_context.get("grace_period_seconds", 60)),
+            },
+            "rollback_plan": "kubectl uncordon the node; pods will reschedule naturally",
+        }
+    if decision_type == "argocd_sync":
+        return {
+            "system": "argocd_service",
+            "action": "sync_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "revision": trigger.related_context.get("argocd_revision"),
+                "prune": bool(trigger.related_context.get("argocd_prune", False)),
+            },
+            "rollback_plan": "argocd rollback application to the previous synced revision if sync destabilizes the deployment",
+        }
+    if decision_type == "argocd_rollback":
+        return {
+            "system": "argocd_service",
+            "action": "rollback_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "target_revision": trigger.related_context.get("argocd_target_revision"),
+            },
+            "rollback_plan": "re-sync the application to the original revision once the underlying defect is fixed",
+        }
     if decision_type == "investigate_and_patch":
         patch_template = trigger.related_context.get("patch_template", {})
         return {
@@ -476,6 +550,37 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"Restart Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
             f"{trigger.related_context.get('namespace', 'default')} to clear the unhealthy rollout state."
         )
+    if decision_type == "restart_pod":
+        return (
+            f"Restart pod {trigger.related_context.get('pod_name', 'unknown')} in "
+            f"{trigger.related_context.get('namespace', 'default')} to recover from a single-pod failure."
+        )
+    if decision_type == "scale_deployment":
+        return (
+            f"Scale Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} "
+            f"to {trigger.related_context.get('target_replicas', trigger.related_context.get('replicas', '?'))} replicas "
+            f"to relieve capacity pressure."
+        )
+    if decision_type == "cordon_node":
+        return (
+            f"Cordon node {trigger.related_context.get('node_name', 'unknown')} to prevent new pod scheduling "
+            f"while the underlying issue is diagnosed."
+        )
+    if decision_type == "drain_node":
+        return (
+            f"Drain node {trigger.related_context.get('node_name', 'unknown')} to safely evacuate workloads "
+            f"before maintenance or hardware replacement."
+        )
+    if decision_type == "argocd_sync":
+        return (
+            f"Trigger ArgoCD sync for application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to reconcile the live cluster state."
+        )
+    if decision_type == "argocd_rollback":
+        return (
+            f"Rollback ArgoCD application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to a prior revision."
+        )
     if decision_type == "investigate_and_patch":
         return (
             f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
@@ -551,6 +656,16 @@ def _alternatives(decision_type: str) -> list[str]:
 def _customer_impact_if_wrong(decision_type: str) -> str:
     if decision_type in {"rollback_deployment", "restart_deployment"}:
         return "temporary deployment churn or additional recovery time"
+    if decision_type == "restart_pod":
+        return "brief request loss for one pod's share of traffic"
+    if decision_type == "scale_deployment":
+        return "transient capacity shift; over/under-scaling may amplify latency or cost"
+    if decision_type == "cordon_node":
+        return "new pods won't schedule on this node until uncordoned"
+    if decision_type == "drain_node":
+        return "workloads briefly reschedule elsewhere; capacity pressure if cluster is tight"
+    if decision_type in {"argocd_sync", "argocd_rollback"}:
+        return "temporary Argo-managed state drift during reconciliation"
     if decision_type == "investigate_and_patch":
         return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":

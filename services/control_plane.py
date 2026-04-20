@@ -56,6 +56,7 @@ from services.signal_correlator import SignalCorrelator
 from services.watch_daemon import WatchDaemon, WatchTarget
 from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.infra_graph import InfraGraph
+from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
@@ -224,6 +225,12 @@ class RunCoordinator:
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
         self.infra_graph = InfraGraph(self.config.state_directory)
+        self.trust_ladder = TrustLadder(
+            self.config.state_directory,
+            min_draft_runs=self.config.trust_ladder_min_draft_runs,
+            min_approve_runs=self.config.trust_ladder_min_approve_runs,
+            min_auto_runs=self.config.trust_ladder_min_auto_runs,
+        )
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=self.state_store,
             learning_store=self.learning_store,
@@ -356,6 +363,24 @@ class RunCoordinator:
         namespace: str,
     ) -> list[str]:
         return self.infra_graph.affected_services(deployment_name, namespace)
+
+    # --- Trust ladder -------------------------------------------------
+
+    def trust_ladder_list(self) -> list[dict[str, Any]]:
+        return self.trust_ladder.list_entries()
+
+    def trust_ladder_entry(self, action_class: str, service: str) -> dict[str, Any]:
+        return self.trust_ladder.get_entry(action_class, service)
+
+    def trust_ladder_override(
+        self,
+        action_class: str,
+        service: str,
+        level: str,
+        *,
+        reason: str = "operator_override",
+    ) -> dict[str, Any]:
+        return self.trust_ladder.override_level(action_class, service, level, reason=reason)
 
     def build_readiness(self) -> dict[str, Any]:
         # build_readiness() itself has a module-level TTL cache, so no wrapper
@@ -1079,6 +1104,14 @@ class RunCoordinator:
             completed_session = self.state_store.get_run_session(run_id)
             if completed_session:
                 self.context_store.update_from_run(completed_session.to_dict())
+            # Trust-ladder update: track per-(action_class, service) graduation
+            action_class = decision.decision_type
+            if action_class not in ("no_action", "escalate"):
+                self.trust_ladder.record_outcome(
+                    action_class=action_class,
+                    service=trigger.service,
+                    outcome=feedback.outcome,
+                )
         except Exception:
             _LOG.exception("Learning persistence failed for run %s", run_id)
 

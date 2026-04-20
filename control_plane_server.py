@@ -283,6 +283,18 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             services = self.server.coordinator.graph_affected_services(deployment, namespace)
             self._send_json({"affected_services": services})
             return
+        if path == "/api/trust-ladder":
+            self._send_json({"entries": self.server.coordinator.trust_ladder_list()})
+            return
+        if path.startswith("/api/trust-ladder/"):
+            parts = path[len("/api/trust-ladder/"):].split("/", 1)
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/trust-ladder/{action_class}/{service}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            action_class, service = parts
+            entry = self.server.coordinator.trust_ladder_entry(action_class, service)
+            self._send_json(entry)
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -340,6 +352,26 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/watch/stop":
             self._send_json(self.server.coordinator.watch_stop())
+            return
+        if parsed.path == "/api/trust-ladder/override":
+            action_class = str(payload.get("action_class", "")).strip()
+            service = str(payload.get("service", "")).strip()
+            level = str(payload.get("level", "")).strip()
+            reason = str(payload.get("reason", "operator_override"))
+            if not action_class or not service or not level:
+                self._send_json(
+                    {"error": "action_class, service, and level are required"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                entry = self.server.coordinator.trust_ladder_override(
+                    action_class, service, level, reason=reason,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(entry)
             return
         if parsed.path == "/api/graph/refresh":
             namespaces_raw = payload.get("namespaces") if isinstance(payload, dict) else None
