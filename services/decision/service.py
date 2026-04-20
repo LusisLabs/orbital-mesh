@@ -8,6 +8,7 @@ from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.review_blockers import classify_review_reasons
 
 if TYPE_CHECKING:
+    from services.decision.hypothesis_engine import HypothesisEngine
     from services.decision.llm_reasoning import EscalationReasoner
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
@@ -27,9 +28,11 @@ class DecisionService:
         self,
         learning_store: LearningStore | None = None,
         escalation_reasoner: EscalationReasoner | None = None,
+        hypothesis_engine: HypothesisEngine | None = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
+        self.hypothesis_engine = hypothesis_engine
 
     def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
@@ -193,6 +196,16 @@ class DecisionService:
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
         recovery_context = _recovery_context(trigger)
 
+        # Generate falsifiable hypotheses early. The top hypothesis is surfaced in
+        # the decision reasoning and can upgrade the escalate fallback — but it
+        # cannot override concrete rule matches (guardrails intact).
+        hypotheses = []
+        if self.hypothesis_engine is not None:
+            try:
+                hypotheses = [h.to_dict() for h in self.hypothesis_engine.generate(trigger)]
+            except Exception:
+                hypotheses = []
+
         if (
             code_remediation_candidate
             and "application_error" in error_signatures
@@ -225,6 +238,23 @@ class DecisionService:
             risk_level = "high"
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
+
+        # Hypothesis-driven bias: if rule fell through to escalate *and* the top
+        # hypothesis has high posterior confidence + concrete action, upgrade it.
+        hypothesis_upgrade = False
+        if decision_type == "escalate" and hypotheses:
+            top = hypotheses[0]
+            allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
+            if (
+                top.get("posterior_confidence", 0.0) >= 0.55
+                and top.get("recommended_action") in allowed_upgrades
+            ):
+                decision_type = top["recommended_action"]
+                confidence = min(top["posterior_confidence"], 0.82)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+                hypothesis_upgrade = True
 
         if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
             reasoning = self.escalation_reasoner.reason(trigger)
@@ -276,6 +306,8 @@ class DecisionService:
                     "deployment_name": deployment_name,
                     "recovery_context": recovery_context,
                     "confidence_factors": confidence_factors,
+                    "hypotheses": hypotheses,
+                    "hypothesis_upgrade_applied": hypothesis_upgrade,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },

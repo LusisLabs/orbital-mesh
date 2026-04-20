@@ -745,6 +745,8 @@ class RunCoordinator:
             state_store=self.state_store.runtime_store,
             learning_store=self.learning_store,
             context_store=self.context_store,
+            infra_graph=self.infra_graph,
+            alert_store=self.alert_store,
         )
         try:
             self._update_session(run_id, stage="ingesting", status="running")
