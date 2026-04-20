@@ -233,6 +233,56 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/watch/status":
             self._send_json(self.server.coordinator.watch_status())
             return
+        if path == "/api/graph/status":
+            self._send_json(self.server.coordinator.graph_status())
+            return
+        if path == "/api/graph/snapshot":
+            snap = self.server.coordinator.graph_snapshot()
+            if snap is None:
+                self._send_json({"error": "graph not populated"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(snap)
+            return
+        if path.startswith("/api/graph/neighbors/"):
+            parts = path[len("/api/graph/neighbors/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/neighbors/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            query = parse_qs(parsed.query)
+            depth = _safe_int(query.get("depth", ["1"])[0], default=1)
+            direction = query.get("direction", ["both"])[0]
+            edge_kinds_raw = query.get("edge_kinds", [""])[0]
+            edge_kinds = [k for k in edge_kinds_raw.split(",") if k] or None
+            neighbors = self.server.coordinator.graph_neighbors(
+                kind, name, namespace_arg,
+                depth=depth, edge_kinds=edge_kinds, direction=direction,
+            )
+            self._send_json({"neighbors": neighbors})
+            return
+        if path.startswith("/api/graph/node/"):
+            parts = path[len("/api/graph/node/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/node/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            node = self.server.coordinator.graph_node(kind, name, namespace_arg)
+            if node is None:
+                self._send_json({"error": "node not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(node)
+            return
+        if path.startswith("/api/graph/affected/"):
+            parts = path[len("/api/graph/affected/"):].split("/")
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/graph/affected/{namespace}/{deployment}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            namespace, deployment = parts
+            services = self.server.coordinator.graph_affected_services(deployment, namespace)
+            self._send_json({"affected_services": services})
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -290,6 +340,15 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/watch/stop":
             self._send_json(self.server.coordinator.watch_stop())
+            return
+        if parsed.path == "/api/graph/refresh":
+            namespaces_raw = payload.get("namespaces") if isinstance(payload, dict) else None
+            namespaces = None
+            if isinstance(namespaces_raw, list):
+                namespaces = [str(n) for n in namespaces_raw if n]
+            result = self.server.coordinator.graph_refresh(namespaces=namespaces)
+            status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(result, status=status)
             return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)

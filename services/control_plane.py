@@ -55,6 +55,7 @@ from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, Ste
 from services.signal_correlator import SignalCorrelator
 from services.watch_daemon import WatchDaemon, WatchTarget
 from shared.mesh_runtime.context_store import ContextStore
+from shared.mesh_runtime.infra_graph import InfraGraph
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
@@ -222,6 +223,7 @@ class RunCoordinator:
         self.learning_store = LearningStore(self.config.state_directory, state_store=self.state_store)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        self.infra_graph = InfraGraph(self.config.state_directory)
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=self.state_store,
             learning_store=self.learning_store,
@@ -295,6 +297,65 @@ class RunCoordinator:
     def stop_watch_daemon(self) -> None:
         if self._watch_daemon is not None:
             self._watch_daemon.stop()
+
+    # --- Infra graph --------------------------------------------------
+
+    def graph_status(self) -> dict[str, Any]:
+        return self.infra_graph.status()
+
+    def graph_refresh(self, *, namespaces: list[str] | None = None) -> dict[str, Any]:
+        """Collect cluster topology via kubectl and update the graph."""
+        from services.ingest.kubernetes_topology import collect_topology, TopologyCollectionError
+        try:
+            nodes, edges = collect_topology(
+                kubectl_command=self.config.kubectl_command,
+                namespaces=namespaces,
+            )
+        except TopologyCollectionError as exc:
+            return {"status": "failed", "error": str(exc)}
+        snapshot = self.infra_graph.update_snapshot(nodes, edges)
+        return {
+            "status": "succeeded",
+            "recorded_at": snapshot.recorded_at,
+            "node_count": len(snapshot.nodes),
+            "edge_count": len(snapshot.edges),
+        }
+
+    def graph_snapshot(self) -> dict[str, Any] | None:
+        snap = self.infra_graph.snapshot()
+        return snap.to_dict() if snap is not None else None
+
+    def graph_node(
+        self,
+        kind: str,
+        name: str,
+        namespace: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self.infra_graph.get_node(kind, name, namespace)
+
+    def graph_neighbors(
+        self,
+        kind: str,
+        name: str,
+        namespace: str | None = None,
+        *,
+        depth: int = 1,
+        edge_kinds: list[str] | None = None,
+        direction: str = "both",
+    ) -> list[dict[str, Any]]:
+        return self.infra_graph.neighbors(
+            kind, name, namespace,
+            depth=depth,
+            edge_kinds=edge_kinds,
+            direction=direction,
+        )
+
+    def graph_affected_services(
+        self,
+        deployment_name: str,
+        namespace: str,
+    ) -> list[str]:
+        return self.infra_graph.affected_services(deployment_name, namespace)
 
     def build_readiness(self) -> dict[str, Any]:
         # build_readiness() itself has a module-level TTL cache, so no wrapper
