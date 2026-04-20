@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
-from services.actuators.service import KubernetesAdapter, _KubectlError
+from services.actuators.service import KubernetesAdapter
 from shared.mesh_runtime import RuntimeConfig
 
 

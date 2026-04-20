@@ -286,6 +286,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/trust-ladder":
             self._send_json({"entries": self.server.coordinator.trust_ladder_list()})
             return
+        if path == "/api/agent/slo":
+            self._send_json(self.server.coordinator.agent_slo_report())
+            return
+        if path == "/metrics":
+            body = self.server.coordinator.agent_slo_prometheus().encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if path.startswith("/api/trust-ladder/"):
             parts = path[len("/api/trust-ladder/"):].split("/", 1)
             if len(parts) != 2:

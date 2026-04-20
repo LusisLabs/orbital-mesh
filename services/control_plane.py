@@ -382,6 +382,22 @@ class RunCoordinator:
     ) -> dict[str, Any]:
         return self.trust_ladder.override_level(action_class, service, level, reason=reason)
 
+    # --- Agent SLO / self-observability -------------------------------
+
+    def agent_slo_report(self) -> dict[str, Any]:
+        from shared.mesh_runtime.agent_slo import AgentSLOCalculator
+        calculator = AgentSLOCalculator()
+        # Pull recent runs to compute (cap at 500 for cost).
+        runs = self.state_store.list_run_sessions(limit=500)
+        return calculator.compute(runs).to_dict()
+
+    def agent_slo_prometheus(self) -> str:
+        from shared.mesh_runtime.agent_slo import AgentSLOCalculator, report_to_prometheus
+        calculator = AgentSLOCalculator()
+        runs = self.state_store.list_run_sessions(limit=500)
+        report = calculator.compute(runs)
+        return report_to_prometheus(report)
+
     def build_readiness(self) -> dict[str, Any]:
         # build_readiness() itself has a module-level TTL cache, so no wrapper
         # state is needed here; this method exists for the HTTP surface.
