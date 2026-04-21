@@ -233,6 +233,21 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/watch/status":
             self._send_json(self.server.coordinator.watch_status())
             return
+        if path == "/api/watchers":
+            self._send_json(self.server.coordinator.watchers_status())
+            return
+        if path.startswith("/api/watchers/") and path.count("/") == 3:
+            # GET /api/watchers/{name}
+            name = path.split("/", 3)[3]
+            detail = self.server.coordinator._watcher_detail(name)
+            if not detail.get("registered", False):
+                self._send_json(
+                    {"error": f"watcher {name!r} not registered"},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+                return
+            self._send_json(detail)
+            return
         if path == "/api/graph/status":
             self._send_json(self.server.coordinator.graph_status())
             return
@@ -363,6 +378,26 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/watch/stop":
             self._send_json(self.server.coordinator.watch_stop())
+            return
+        if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/start"):
+            name = parsed.path[len("/api/watchers/"):-len("/start")]
+            if not name:
+                self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                self._send_json(self.server.coordinator.watcher_start(name))
+            except KeyError:
+                self._send_json(
+                    {"error": f"watcher {name!r} not registered"},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+            return
+        if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/stop"):
+            name = parsed.path[len("/api/watchers/"):-len("/stop")]
+            if not name:
+                self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(self.server.coordinator.watcher_stop(name))
             return
         if parsed.path == "/api/trust-ladder/override":
             action_class = str(payload.get("action_class", "")).strip()
