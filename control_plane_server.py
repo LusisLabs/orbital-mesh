@@ -248,6 +248,79 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(detail)
             return
+        if path == "/api/graph/status":
+            self._send_json(self.server.coordinator.graph_status())
+            return
+        if path == "/api/graph/snapshot":
+            snap = self.server.coordinator.graph_snapshot()
+            if snap is None:
+                self._send_json({"error": "graph not populated"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(snap)
+            return
+        if path.startswith("/api/graph/neighbors/"):
+            parts = path[len("/api/graph/neighbors/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/neighbors/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            query = parse_qs(parsed.query)
+            depth = _safe_int(query.get("depth", ["1"])[0], default=1)
+            direction = query.get("direction", ["both"])[0]
+            edge_kinds_raw = query.get("edge_kinds", [""])[0]
+            edge_kinds = [k for k in edge_kinds_raw.split(",") if k] or None
+            neighbors = self.server.coordinator.graph_neighbors(
+                kind, name, namespace_arg,
+                depth=depth, edge_kinds=edge_kinds, direction=direction,
+            )
+            self._send_json({"neighbors": neighbors})
+            return
+        if path.startswith("/api/graph/node/"):
+            parts = path[len("/api/graph/node/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/node/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            node = self.server.coordinator.graph_node(kind, name, namespace_arg)
+            if node is None:
+                self._send_json({"error": "node not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(node)
+            return
+        if path.startswith("/api/graph/affected/"):
+            parts = path[len("/api/graph/affected/"):].split("/")
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/graph/affected/{namespace}/{deployment}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            namespace, deployment = parts
+            services = self.server.coordinator.graph_affected_services(deployment, namespace)
+            self._send_json({"affected_services": services})
+            return
+        if path == "/api/trust-ladder":
+            self._send_json({"entries": self.server.coordinator.trust_ladder_list()})
+            return
+        if path == "/api/agent/slo":
+            self._send_json(self.server.coordinator.agent_slo_report())
+            return
+        if path == "/metrics":
+            body = self.server.coordinator.agent_slo_prometheus().encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path.startswith("/api/trust-ladder/"):
+            parts = path[len("/api/trust-ladder/"):].split("/", 1)
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/trust-ladder/{action_class}/{service}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            action_class, service = parts
+            entry = self.server.coordinator.trust_ladder_entry(action_class, service)
+            self._send_json(entry)
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -325,6 +398,35 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(self.server.coordinator.watcher_stop(name))
+            return
+        if parsed.path == "/api/trust-ladder/override":
+            action_class = str(payload.get("action_class", "")).strip()
+            service = str(payload.get("service", "")).strip()
+            level = str(payload.get("level", "")).strip()
+            reason = str(payload.get("reason", "operator_override"))
+            if not action_class or not service or not level:
+                self._send_json(
+                    {"error": "action_class, service, and level are required"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                entry = self.server.coordinator.trust_ladder_override(
+                    action_class, service, level, reason=reason,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(entry)
+            return
+        if parsed.path == "/api/graph/refresh":
+            namespaces_raw = payload.get("namespaces") if isinstance(payload, dict) else None
+            namespaces = None
+            if isinstance(namespaces_raw, list):
+                namespaces = [str(n) for n in namespaces_raw if n]
+            result = self.server.coordinator.graph_refresh(namespaces=namespaces)
+            status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(result, status=status)
             return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)

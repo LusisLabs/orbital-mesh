@@ -8,6 +8,7 @@ from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.review_blockers import classify_review_reasons
 
 if TYPE_CHECKING:
+    from services.decision.hypothesis_engine import HypothesisEngine
     from services.decision.llm_reasoning import EscalationReasoner
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
@@ -27,9 +28,11 @@ class DecisionService:
         self,
         learning_store: LearningStore | None = None,
         escalation_reasoner: EscalationReasoner | None = None,
+        hypothesis_engine: HypothesisEngine | None = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
+        self.hypothesis_engine = hypothesis_engine
 
     def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
@@ -193,6 +196,16 @@ class DecisionService:
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
         recovery_context = _recovery_context(trigger)
 
+        # Generate falsifiable hypotheses early. The top hypothesis is surfaced in
+        # the decision reasoning and can upgrade the escalate fallback — but it
+        # cannot override concrete rule matches (guardrails intact).
+        hypotheses = []
+        if self.hypothesis_engine is not None:
+            try:
+                hypotheses = [h.to_dict() for h in self.hypothesis_engine.generate(trigger)]
+            except Exception:
+                hypotheses = []
+
         if (
             code_remediation_candidate
             and "application_error" in error_signatures
@@ -225,6 +238,23 @@ class DecisionService:
             risk_level = "high"
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
+
+        # Hypothesis-driven bias: if rule fell through to escalate *and* the top
+        # hypothesis has high posterior confidence + concrete action, upgrade it.
+        hypothesis_upgrade = False
+        if decision_type == "escalate" and hypotheses:
+            top = hypotheses[0]
+            allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
+            if (
+                top.get("posterior_confidence", 0.0) >= 0.55
+                and top.get("recommended_action") in allowed_upgrades
+            ):
+                decision_type = top["recommended_action"]
+                confidence = min(top["posterior_confidence"], 0.82)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+                hypothesis_upgrade = True
 
         if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
             reasoning = self.escalation_reasoner.reason(trigger)
@@ -276,6 +306,8 @@ class DecisionService:
                     "deployment_name": deployment_name,
                     "recovery_context": recovery_context,
                     "confidence_factors": confidence_factors,
+                    "hypotheses": hypotheses,
+                    "hypothesis_upgrade_applied": hypothesis_upgrade,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -395,6 +427,80 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
             },
             "rollback_plan": "rollback deployment to the previous stable revision if restart does not restore readiness",
         }
+    if decision_type == "restart_pod":
+        return {
+            "system": "kubernetes_service",
+            "action": "restart_pod",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "pod_name": trigger.related_context.get("pod_name"),
+            },
+            "rollback_plan": (
+                "if recreated pod remains unhealthy, restart the owning deployment or rollback"
+            ),
+        }
+    if decision_type == "scale_deployment":
+        return {
+            "system": "kubernetes_service",
+            "action": "scale_deployment",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "replicas": trigger.related_context.get("target_replicas") or trigger.related_context.get("replicas"),
+            },
+            "rollback_plan": (
+                f"scale back to previous replica count "
+                f"{trigger.related_context.get('previous_replicas', 'unknown')} if scaling does not restore health"
+            ),
+        }
+    if decision_type == "cordon_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "cordon_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+            },
+            "rollback_plan": "kubectl uncordon the node once underlying hardware issue is resolved",
+        }
+    if decision_type == "drain_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "drain_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+                "grace_period_seconds": int(trigger.related_context.get("grace_period_seconds", 60)),
+            },
+            "rollback_plan": "kubectl uncordon the node; pods will reschedule naturally",
+        }
+    if decision_type == "argocd_sync":
+        return {
+            "system": "argocd_service",
+            "action": "sync_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "revision": trigger.related_context.get("argocd_revision"),
+                "prune": bool(trigger.related_context.get("argocd_prune", False)),
+            },
+            "rollback_plan": "argocd rollback application to the previous synced revision if sync destabilizes the deployment",
+        }
+    if decision_type == "argocd_rollback":
+        return {
+            "system": "argocd_service",
+            "action": "rollback_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "target_revision": trigger.related_context.get("argocd_target_revision"),
+            },
+            "rollback_plan": "re-sync the application to the original revision once the underlying defect is fixed",
+        }
     if decision_type == "investigate_and_patch":
         patch_template = trigger.related_context.get("patch_template", {})
         return {
@@ -476,6 +582,37 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"Restart Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
             f"{trigger.related_context.get('namespace', 'default')} to clear the unhealthy rollout state."
         )
+    if decision_type == "restart_pod":
+        return (
+            f"Restart pod {trigger.related_context.get('pod_name', 'unknown')} in "
+            f"{trigger.related_context.get('namespace', 'default')} to recover from a single-pod failure."
+        )
+    if decision_type == "scale_deployment":
+        return (
+            f"Scale Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} "
+            f"to {trigger.related_context.get('target_replicas', trigger.related_context.get('replicas', '?'))} replicas "
+            f"to relieve capacity pressure."
+        )
+    if decision_type == "cordon_node":
+        return (
+            f"Cordon node {trigger.related_context.get('node_name', 'unknown')} to prevent new pod scheduling "
+            f"while the underlying issue is diagnosed."
+        )
+    if decision_type == "drain_node":
+        return (
+            f"Drain node {trigger.related_context.get('node_name', 'unknown')} to safely evacuate workloads "
+            f"before maintenance or hardware replacement."
+        )
+    if decision_type == "argocd_sync":
+        return (
+            f"Trigger ArgoCD sync for application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to reconcile the live cluster state."
+        )
+    if decision_type == "argocd_rollback":
+        return (
+            f"Rollback ArgoCD application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to a prior revision."
+        )
     if decision_type == "investigate_and_patch":
         return (
             f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
@@ -551,6 +688,16 @@ def _alternatives(decision_type: str) -> list[str]:
 def _customer_impact_if_wrong(decision_type: str) -> str:
     if decision_type in {"rollback_deployment", "restart_deployment"}:
         return "temporary deployment churn or additional recovery time"
+    if decision_type == "restart_pod":
+        return "brief request loss for one pod's share of traffic"
+    if decision_type == "scale_deployment":
+        return "transient capacity shift; over/under-scaling may amplify latency or cost"
+    if decision_type == "cordon_node":
+        return "new pods won't schedule on this node until uncordoned"
+    if decision_type == "drain_node":
+        return "workloads briefly reschedule elsewhere; capacity pressure if cluster is tight"
+    if decision_type in {"argocd_sync", "argocd_rollback"}:
+        return "temporary Argo-managed state drift during reconciliation"
     if decision_type == "investigate_and_patch":
         return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":

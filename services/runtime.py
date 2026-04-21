@@ -14,7 +14,9 @@ from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 
 if TYPE_CHECKING:
+    from shared.mesh_runtime.alert_store import AlertStore
     from shared.mesh_runtime.context_store import ContextStore
+    from shared.mesh_runtime.infra_graph import InfraGraph
     from shared.mesh_runtime.learning import LearningStore
 
 
@@ -25,6 +27,8 @@ class MeshRuntimeEngine:
         state_store: RuntimeStateStore | None = None,
         learning_store: LearningStore | None = None,
         context_store: ContextStore | None = None,
+        infra_graph: InfraGraph | None = None,
+        alert_store: AlertStore | None = None,
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
         decision: DecisionService | None = None,
@@ -46,9 +50,18 @@ class MeshRuntimeEngine:
                 context_store=context_store,
                 learning_store=learning_store,
             )
+        hypothesis_engine = None
+        if infra_graph is not None or alert_store is not None or context_store is not None:
+            from services.decision.hypothesis_engine import HypothesisEngine
+            hypothesis_engine = HypothesisEngine(
+                infra_graph=infra_graph,
+                alert_store=alert_store,
+                context_store=context_store,
+            )
         self.decision = decision or DecisionService(
             learning_store=learning_store,
             escalation_reasoner=escalation_reasoner,
+            hypothesis_engine=hypothesis_engine,
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)

@@ -57,6 +57,8 @@ from services.watch_daemon import WatchDaemon, WatchTarget  # noqa: F401 (legacy
 from services.watchers.base import WatcherRegistry
 from services.watchers.compat import LEGACY_WATCHER_NAME, register_legacy_watchers
 from shared.mesh_runtime.context_store import ContextStore
+from shared.mesh_runtime.infra_graph import InfraGraph
+from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
@@ -224,6 +226,13 @@ class RunCoordinator:
         self.learning_store = LearningStore(self.config.state_directory, state_store=self.state_store)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        self.infra_graph = InfraGraph(self.config.state_directory)
+        self.trust_ladder = TrustLadder(
+            self.config.state_directory,
+            min_draft_runs=self.config.trust_ladder_min_draft_runs,
+            min_approve_runs=self.config.trust_ladder_min_approve_runs,
+            min_auto_runs=self.config.trust_ladder_min_auto_runs,
+        )
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=self.state_store,
             learning_store=self.learning_store,
@@ -336,6 +345,99 @@ class RunCoordinator:
             "interval_seconds": watcher.interval_seconds,
             "detail": watcher.status(),
         }
+
+    # --- Infra graph --------------------------------------------------
+
+    def graph_status(self) -> dict[str, Any]:
+        return self.infra_graph.status()
+
+    def graph_refresh(self, *, namespaces: list[str] | None = None) -> dict[str, Any]:
+        """Collect cluster topology via kubectl and update the graph."""
+        from services.ingest.kubernetes_topology import collect_topology, TopologyCollectionError
+        try:
+            nodes, edges = collect_topology(
+                kubectl_command=self.config.kubectl_command,
+                namespaces=namespaces,
+            )
+        except TopologyCollectionError as exc:
+            return {"status": "failed", "error": str(exc)}
+        snapshot = self.infra_graph.update_snapshot(nodes, edges)
+        return {
+            "status": "succeeded",
+            "recorded_at": snapshot.recorded_at,
+            "node_count": len(snapshot.nodes),
+            "edge_count": len(snapshot.edges),
+        }
+
+    def graph_snapshot(self) -> dict[str, Any] | None:
+        snap = self.infra_graph.snapshot()
+        return snap.to_dict() if snap is not None else None
+
+    def graph_node(
+        self,
+        kind: str,
+        name: str,
+        namespace: str | None = None,
+    ) -> dict[str, Any] | None:
+        return self.infra_graph.get_node(kind, name, namespace)
+
+    def graph_neighbors(
+        self,
+        kind: str,
+        name: str,
+        namespace: str | None = None,
+        *,
+        depth: int = 1,
+        edge_kinds: list[str] | None = None,
+        direction: str = "both",
+    ) -> list[dict[str, Any]]:
+        return self.infra_graph.neighbors(
+            kind, name, namespace,
+            depth=depth,
+            edge_kinds=edge_kinds,
+            direction=direction,
+        )
+
+    def graph_affected_services(
+        self,
+        deployment_name: str,
+        namespace: str,
+    ) -> list[str]:
+        return self.infra_graph.affected_services(deployment_name, namespace)
+
+    # --- Trust ladder -------------------------------------------------
+
+    def trust_ladder_list(self) -> list[dict[str, Any]]:
+        return self.trust_ladder.list_entries()
+
+    def trust_ladder_entry(self, action_class: str, service: str) -> dict[str, Any]:
+        return self.trust_ladder.get_entry(action_class, service)
+
+    def trust_ladder_override(
+        self,
+        action_class: str,
+        service: str,
+        level: str,
+        *,
+        reason: str = "operator_override",
+    ) -> dict[str, Any]:
+        return self.trust_ladder.override_level(action_class, service, level, reason=reason)
+
+    # --- Agent SLO / self-observability -------------------------------
+
+    def agent_slo_report(self) -> dict[str, Any]:
+        from shared.mesh_runtime.agent_slo import AgentSLOCalculator
+        calculator = AgentSLOCalculator()
+        # Pull recent runs to compute (cap at 500 for cost).
+        runs = self.state_store.list_run_sessions(limit=500)
+        return calculator.compute(runs).to_dict()
+
+    def agent_slo_prometheus(self) -> str:
+        from shared.mesh_runtime.agent_slo import AgentSLOCalculator, report_to_prometheus
+        calculator = AgentSLOCalculator()
+        runs = self.state_store.list_run_sessions(limit=500)
+        report = calculator.compute(runs)
+        return report_to_prometheus(report)
 
     def build_readiness(self) -> dict[str, Any]:
         # build_readiness() itself has a module-level TTL cache, so no wrapper
@@ -700,6 +802,8 @@ class RunCoordinator:
             state_store=self.state_store.runtime_store,
             learning_store=self.learning_store,
             context_store=self.context_store,
+            infra_graph=self.infra_graph,
+            alert_store=self.alert_store,
         )
         try:
             self._update_session(run_id, stage="ingesting", status="running")
@@ -1059,6 +1163,14 @@ class RunCoordinator:
             completed_session = self.state_store.get_run_session(run_id)
             if completed_session:
                 self.context_store.update_from_run(completed_session.to_dict())
+            # Trust-ladder update: track per-(action_class, service) graduation
+            action_class = decision.decision_type
+            if action_class not in ("no_action", "escalate"):
+                self.trust_ladder.record_outcome(
+                    action_class=action_class,
+                    service=trigger.service,
+                    outcome=feedback.outcome,
+                )
         except Exception:
             _LOG.exception("Learning persistence failed for run %s", run_id)
 
