@@ -5,34 +5,24 @@ on:
     branches: [main, master]
   pull_request:
 
-# Cancel in-flight runs when a newer commit lands on the same branch.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Read-only token by default; opt jobs into more if they ever need it.
-permissions:
-  contents: read
-
 jobs:
-  # ─── Python: ruff lint ─────────────────────────────────────────────────
   python-lint:
-    name: Python lint (ruff)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
       - name: Install ruff
         run: pip install ruff==0.7.4
       - name: Lint
         run: ruff check .
 
-  # ─── Python: unit tests on every supported interpreter ────────────────
   python-test:
-    name: Python tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,16 +33,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
       - name: Run unit tests
-        # Suppress DeprecationWarning chatter from the legacy WatchDaemon shim.
         run: python -W ignore::DeprecationWarning -m unittest discover -s tests -v
       - name: Smoke-import RuntimeConfig
         run: python -c "from shared.mesh_runtime import RuntimeConfig; print('RuntimeConfig OK on', RuntimeConfig.from_env().environment)"
 
-  # ─── Web: typecheck + build + vitest ──────────────────────────────────
   web:
-    name: Web (typecheck + build + test)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -65,37 +51,22 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - name: Lint (tsc --noEmit)
+      - name: Lint
         run: npm run lint
       - name: Build
         run: npm run build
       - name: Test
         run: npm test --silent
 
-  # ─── Docker build + healthcheck (PR + main only — slower, costlier) ───
   docker-build:
-    name: Docker build + smoke test
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     needs: [python-test]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build image (with build-arg metadata)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile
-          push: false
-          load: true
-          tags: mesh-intelligence:ci
-          build-args: |
-            MESH_BUILD_VERSION=ci-${{ github.run_number }}
-            MESH_BUILD_COMMIT=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Run container + healthcheck
+      - name: Build Docker image
+        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t mesh-intelligence:ci .
+      - name: Healthcheck smoke test
         run: |
           set -euo pipefail
           docker run -d --name mesh-ci \
@@ -125,11 +96,9 @@ jobs:
         if: always()
         run: docker stop mesh-ci || true
 
-  # ─── Optional: swarmclaw typecheck (only when that subtree exists) ────
   swarmclaw-typecheck:
-    name: Swarmclaw typecheck
-    runs-on: ubuntu-latest
     if: ${{ hashFiles('swarmclaw/package.json') != '' }}
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: swarmclaw
