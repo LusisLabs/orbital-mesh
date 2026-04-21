@@ -53,7 +53,9 @@ from shared.mesh_runtime import (
 from shared.mesh_runtime.alert_store import AlertStore
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
 from services.signal_correlator import SignalCorrelator
-from services.watch_daemon import WatchDaemon, WatchTarget
+from services.watch_daemon import WatchDaemon, WatchTarget  # noqa: F401 (legacy re-export)
+from services.watchers.base import WatcherRegistry
+from services.watchers.compat import LEGACY_WATCHER_NAME, register_legacy_watchers
 from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
@@ -233,29 +235,21 @@ class RunCoordinator:
         self.evo_launcher = EvoLaunchService(self.config)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
-        self._watch_daemon: WatchDaemon | None = None
-        if self.config.watch_enabled and self.config.watch_targets:
-            targets = [
-                WatchTarget(
-                    deployment_name=t["deployment_name"],
-                    namespace=t.get("namespace", "default"),
-                    kube_context=t.get("kube_context"),
-                )
-                for t in self.config.watch_targets
-            ]
-            correlator = None
-            if self.config.correlation_enabled:
-                correlator = SignalCorrelator(
-                    window_seconds=self.config.correlation_window_seconds,
-                    min_signals=self.config.correlation_min_signals,
-                )
-            self._watch_daemon = WatchDaemon(
-                coordinator=self,
-                targets=targets,
-                interval_seconds=self.config.watch_interval_seconds,
-                default_cooldown_seconds=self.config.watch_cooldown_seconds,
-                correlator=correlator,
+        # Typed watcher registry (replaces the single-threaded WatchDaemon).
+        # The legacy env-var path (MESH_WATCH_TARGETS) is handled by the compat
+        # shim below, so existing deployments require no config change.
+        self.watcher_registry = WatcherRegistry()
+        correlator = None
+        if self.config.watch_enabled and self.config.watch_targets and self.config.correlation_enabled:
+            correlator = SignalCorrelator(
+                window_seconds=self.config.correlation_window_seconds,
+                min_signals=self.config.correlation_min_signals,
             )
+        register_legacy_watchers(
+            coordinator=self,
+            registry=self.watcher_registry,
+            correlator=correlator,
+        )
         self.state_store.ensure_default_goal()
         self.alert_store = AlertStore(self.config.state_directory)
         self.webhook_service = WebhookIngestService(
@@ -273,28 +267,75 @@ class RunCoordinator:
     def ensure_sidecar(self) -> bool:
         return self.sidecar.ensure_running()
 
+    # ---- legacy /api/watch surface (delegates to WatcherRegistry) --------
+
     def start_watch_daemon(self) -> None:
-        if self._watch_daemon is not None:
-            self._watch_daemon.start()
+        """Start every registered watcher. Called at server boot."""
+        self.watcher_registry.start_all()
+
+    def stop_watch_daemon(self) -> None:
+        """Stop every registered watcher. Called during graceful shutdown."""
+        self.watcher_registry.stop_all()
 
     def watch_status(self) -> dict[str, Any]:
-        if self._watch_daemon is None:
+        """Legacy-shape status for the single Kubernetes watcher, if present.
+
+        New code should use ``watchers_status()`` which surfaces every
+        registered watcher.  This method preserves the old HTTP contract for
+        existing UI clients.
+        """
+        legacy = self.watcher_registry.get(LEGACY_WATCHER_NAME)
+        if legacy is None:
             return {"running": False, "targets": [], "enabled": False}
-        return {**self._watch_daemon.status(), "enabled": True}
+        detail = legacy.status()
+        return {
+            "running": self.watcher_registry.is_running(LEGACY_WATCHER_NAME),
+            "targets": detail.get("targets", []),
+            "interval_seconds": detail.get("interval_seconds"),
+            "dedup_entries": detail.get("dedup_entries"),
+            "enabled": True,
+        }
 
     def watch_start(self) -> dict[str, Any]:
-        if self._watch_daemon is not None:
-            self._watch_daemon.start()
+        if self.watcher_registry.get(LEGACY_WATCHER_NAME) is not None:
+            self.watcher_registry.start(LEGACY_WATCHER_NAME)
+        else:
+            # No legacy watcher — honor the call by starting everything.
+            self.watcher_registry.start_all()
         return self.watch_status()
 
     def watch_stop(self) -> dict[str, Any]:
-        if self._watch_daemon is not None:
-            self._watch_daemon.stop()
+        if self.watcher_registry.get(LEGACY_WATCHER_NAME) is not None:
+            self.watcher_registry.stop(LEGACY_WATCHER_NAME)
+        else:
+            self.watcher_registry.stop_all()
         return self.watch_status()
 
-    def stop_watch_daemon(self) -> None:
-        if self._watch_daemon is not None:
-            self._watch_daemon.stop()
+    # ---- new /api/watchers surface ---------------------------------------
+
+    def watchers_status(self) -> dict[str, Any]:
+        return self.watcher_registry.status()
+
+    def watcher_start(self, name: str) -> dict[str, Any]:
+        self.watcher_registry.start(name)
+        return self._watcher_detail(name)
+
+    def watcher_stop(self, name: str) -> dict[str, Any]:
+        self.watcher_registry.stop(name)
+        return self._watcher_detail(name)
+
+    def _watcher_detail(self, name: str) -> dict[str, Any]:
+        watcher = self.watcher_registry.get(name)
+        if watcher is None:
+            return {"name": name, "running": False, "registered": False}
+        return {
+            "name": name,
+            "registered": True,
+            "running": self.watcher_registry.is_running(name),
+            "signal_source": watcher.signal_source,
+            "interval_seconds": watcher.interval_seconds,
+            "detail": watcher.status(),
+        }
 
     def build_readiness(self) -> dict[str, Any]:
         # build_readiness() itself has a module-level TTL cache, so no wrapper
