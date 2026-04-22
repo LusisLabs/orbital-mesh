@@ -12,6 +12,8 @@ class TriggerService:
         payload = envelope.payload
         if payload.get("signal_type") == "kubernetes_deployment_issue":
             return self._detect_kubernetes_trigger(envelope)
+        if payload.get("signal_type") == "otel_metric_regression":
+            return self._detect_otel_metric_trigger(envelope)
         return self._detect_feature_flag_trigger(envelope)
 
     def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
@@ -154,6 +156,109 @@ class TriggerService:
         )
         trigger.validate()
         return trigger
+
+
+    def _detect_otel_metric_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        """Emit a trigger for an OTel metric regression signal.
+
+        OTel signals don't fit the feature-flag or Kubernetes shapes. The trigger
+        we produce here is intentionally thin — the real decision lives in the
+        metric-action rule engine, which reads the full ``metric_regression``
+        block out of ``related_context``. We still run the basic suppression
+        checks (incident owned by human, upstream outage) so a runaway alert
+        stream doesn't flood the system during a known incident.
+        """
+        payload = envelope.payload
+        metric_regression = payload.get("metric_regression") or {}
+        related_context = payload.get("related_context") or {}
+
+        suppressed = (
+            related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        )
+        if suppressed:
+            return None
+
+        # A regression with no numeric delta and no threshold crossing is a
+        # metrics pipeline artifact, not something worth running the full
+        # pipeline for. Emit nothing so the run ends at no_trigger.
+        delta_pct = metric_regression.get("delta_pct")
+        observed = metric_regression.get("observed_value")
+        baseline = metric_regression.get("baseline_value")
+        if delta_pct is None and observed == baseline:
+            return None
+
+        trigger_signals = [f"metric_regression:{metric_regression.get('metric_name')}"]
+
+        trigger_context = {
+            "release_id": related_context.get("release_id"),
+            "active_incidents": int(related_context.get("active_incidents", 0)),
+            "similar_prior_cases": int(related_context.get("similar_prior_cases", 0)),
+            "rollbacks_last_24h": int(related_context.get("rollbacks_last_24h", 0)),
+            "regressions_last_7d": int(related_context.get("regressions_last_7d", 0)),
+            "metric_regression": metric_regression,
+            "resource_attributes": payload.get("resource_attributes", {}),
+            "related_metrics": payload.get("related_metrics", []),
+            "otel_source": payload.get("source"),
+            "trigger_signals": trigger_signals,
+            "cluster": payload.get("cluster"),
+            "namespace": payload.get("namespace"),
+            **{k: v for k, v in related_context.items() if k not in {
+                "release_id",
+                "active_incidents",
+                "similar_prior_cases",
+                "rollbacks_last_24h",
+                "regressions_last_7d",
+            }},
+        }
+
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="otel_metric_regression",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=payload["endpoint"],
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=payload.get("comparison_window"),
+            segment=payload.get("segment", {"customer_tier": "system", "region": "unknown"}),
+            # Metrics block: we always provide the canonical four latency/error
+            # fields so downstream schema validation passes, but they're only
+            # meaningful when the signal itself carried a latency or error
+            # projection. Rule-based decisions read metric_regression directly.
+            metrics={
+                "baseline_p95_latency_ms": _metric_projection(payload, "p95_latency_ms", "baseline"),
+                "observed_p95_latency_ms": _metric_projection(payload, "p95_latency_ms", "observed"),
+                "baseline_error_rate": _metric_projection(payload, "error_rate", "baseline"),
+                "observed_error_rate": _metric_projection(payload, "error_rate", "observed"),
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": payload.get("request_telemetry", {}).get("sample_size", 1),
+            },
+            related_context=trigger_context,
+        )
+        trigger.validate()
+        return trigger
+
+
+def _metric_projection(payload: dict, field: str, window: str) -> float | None:
+    """Pull a latency or error projection from the payload when present.
+
+    When the OTel signal was a latency metric, ``IngestService`` projects it
+    into ``request_telemetry`` so the decision engine's existing thresholds
+    still work. For non-projected signals (``kafka.consumer.lag``,
+    ``memory.usage``, etc.), we return ``None`` — the trigger schema allows
+    nulls for these fields and the rule engine reads ``metric_regression``
+    directly.
+    """
+    telemetry = payload.get("request_telemetry")
+    if not telemetry:
+        return None
+    bucket = telemetry.get(window) or {}
+    value = bucket.get(field)
+    return float(value) if value is not None else None
 
 
 def _parse_timestamp(timestamp: str) -> datetime:

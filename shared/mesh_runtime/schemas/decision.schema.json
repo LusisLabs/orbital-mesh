@@ -31,7 +31,9 @@
         "escalate",
         "investigate_and_patch",
         "rollback_deployment",
-        "restart_deployment"
+        "restart_deployment",
+        "scale_deployment",
+        "patch_resources"
       ]
     },
     "autonomy_tier": {
@@ -162,7 +164,9 @@
             "record_no_action",
             "investigate_and_patch",
             "rollback_deployment",
-            "restart_deployment"
+            "restart_deployment",
+            "scale_deployment",
+            "patch_resources"
           ]
         },
         "parameters": {

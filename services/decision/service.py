@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import Decision, Trigger, load_policy
+from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
 from shared.mesh_runtime.review_blockers import classify_review_reasons
 
 if TYPE_CHECKING:
     from services.decision.hypothesis_engine import HypothesisEngine
+    from services.decision.llm_fallback import LlmActionProposer
     from services.decision.llm_reasoning import EscalationReasoner
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
@@ -29,12 +31,23 @@ class DecisionService:
         learning_store: LearningStore | None = None,
         escalation_reasoner: EscalationReasoner | None = None,
         hypothesis_engine: HypothesisEngine | None = None,
+        metric_action_rules_path: str | None = None,
+        llm_proposer: "LlmActionProposer | None" = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
         self.hypothesis_engine = hypothesis_engine
+        # Layer 2: declarative rule matcher for OTel metric-regression signals.
+        # Load lazily through the cached loader so constructing DecisionService
+        # stays cheap for tests.
+        self._metric_action_matcher: MetricActionMatcher = load_metric_action_rules(metric_action_rules_path)
+        # Layer 3: optional LLM fallback invoked only when no rule matched.
+        # Injected rather than constructed here so tests can pass a mock.
+        self._llm_proposer = llm_proposer
 
     def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+        if trigger.trigger_type == "otel_metric_regression":
+            return self._decide_otel_metric(trigger)
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
         latency_delta_pct = _delta_pct(
@@ -175,6 +188,187 @@ class DecisionService:
             execution_plan=execution_plan,
         )
         decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
+        decision.validate()
+        return decision
+
+    # ------------------------------------------------------------------ OTel
+
+    def _decide_otel_metric(self, trigger: Trigger) -> Decision:
+        """Decide on an OTel metric-regression trigger.
+
+        Order of precedence:
+        1. Declarative rule match (Layer 2)
+        2. LLM proposal from the bounded allowlist (Layer 3, if enabled)
+        3. Escalate with risk flags naming why neither matched
+
+        Keeping rule-match deterministic and short-circuiting before the LLM
+        runs means policy-authored rules always win over non-deterministic
+        proposals, which is the invariant that makes Layer 3 safe to enable.
+        """
+        signal_view = _build_signal_view_from_trigger(trigger)
+        rule_match = self._metric_action_matcher.match(signal_view)
+        if rule_match is not None:
+            return self._decision_from_rule_match(trigger, rule_match)
+
+        llm_risk_flags: list[str] = []
+        if self._llm_proposer is not None:
+            llm_result = self._llm_proposer.propose(signal_view)
+            if llm_result.match is not None:
+                return self._decision_from_rule_match(
+                    trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags
+                )
+            llm_risk_flags = llm_result.risk_flags
+
+        return self._escalate_for_unmatched_metric(trigger, llm_risk_flags=llm_risk_flags)
+
+    def _decision_from_rule_match(
+        self,
+        trigger: Trigger,
+        rule_match: RuleMatch,
+        llm_risk_flags: list[str] | None = None,
+    ) -> Decision:
+        """Materialize a Decision from a matched rule (rule engine or LLM)."""
+        metric_regression = trigger.related_context.get("metric_regression", {})
+        metric_name = metric_regression.get("metric_name", "unknown_metric")
+        delta_pct = metric_regression.get("delta_pct")
+        autonomy_tier = {
+            "low": "autonomous",
+            "medium": "approval_required",
+            "high": "escalated",
+        }.get(rule_match.risk_level, "approval_required")
+
+        evidence: list[str] = [f"rule {rule_match.rule_name!r} matched metric {metric_name!r}"]
+        if delta_pct is not None:
+            evidence.append(f"observed delta {delta_pct:.1f}% vs baseline")
+        if rule_match.matched_on.get("resource_attributes"):
+            attrs_summary = ", ".join(
+                f"{k}={v}" for k, v in rule_match.matched_on["resource_attributes"].items()
+            )
+            evidence.append(f"resource attributes: {attrs_summary}")
+        if llm_risk_flags:
+            evidence.append(f"llm fallback risk flags: {', '.join(llm_risk_flags)}")
+
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type=rule_match.decision_type,
+            autonomy_tier=autonomy_tier,
+            summary=(
+                f"Apply {rule_match.action} on {trigger.service} because rule "
+                f"{rule_match.rule_name!r} matched metric {metric_name}."
+            ),
+            reasoning={
+                "primary_hypothesis": (
+                    f"{metric_name} regressed on {trigger.service}; rule "
+                    f"{rule_match.rule_name!r} proposes {rule_match.decision_type}."
+                ),
+                "evidence": evidence,
+                "evidence_pack": {
+                    "matched_rule": rule_match.rule_name,
+                    "matched_on": rule_match.matched_on,
+                    "metric_regression": metric_regression,
+                    "bounds": rule_match.bounds,
+                },
+                "alternatives_considered": [
+                    "continue with no change",
+                    "escalate to human review",
+                    rule_match.decision_type,
+                ],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= unchanged (metric-driven action)",
+                    "error_rate": "<= unchanged (metric-driven action)",
+                },
+                "time_to_effect": "10m",
+            },
+            risk={
+                "level": rule_match.risk_level,
+                "blast_radius": (
+                    "single_deployment"
+                    if rule_match.system == "kubernetes_service"
+                    else "service_level"
+                ),
+                "customer_impact_if_wrong": _customer_impact_if_wrong(rule_match.decision_type),
+            },
+            confidence=rule_match.confidence,
+            execution_plan={
+                "system": rule_match.system,
+                "action": rule_match.action,
+                "parameters": rule_match.parameters,
+                "rollback_plan": rule_match.rollback_plan,
+            },
+        )
+        decision.validate()
+        return decision
+
+    def _escalate_for_unmatched_metric(
+        self,
+        trigger: Trigger,
+        llm_risk_flags: list[str] | None = None,
+    ) -> Decision:
+        """Escalation path when no rule and no LLM proposal succeeded."""
+        metric_regression = trigger.related_context.get("metric_regression", {})
+        metric_name = metric_regression.get("metric_name", "unknown_metric")
+        evidence = [
+            f"metric {metric_name!r} has no matching rule",
+            f"delta {metric_regression.get('delta_pct')}%",
+        ]
+        if llm_risk_flags:
+            evidence.append(f"llm fallback: {', '.join(llm_risk_flags)}")
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type="escalate",
+            autonomy_tier="escalated",
+            summary=(
+                f"Escalate {trigger.service}: metric {metric_name} regressed but no "
+                "metric-action rule matched."
+            ),
+            reasoning={
+                "primary_hypothesis": (
+                    f"Metric {metric_name} on {trigger.service} crossed its threshold, but no "
+                    "rule knows how to act on it."
+                ),
+                "evidence": evidence,
+                "evidence_pack": {
+                    "metric_regression": metric_regression,
+                    "available_rules": [rule.name for rule in self._metric_action_matcher.rules],
+                    "llm_risk_flags": llm_risk_flags or [],
+                },
+                "alternatives_considered": [
+                    "continue with no change",
+                    "escalate to human review",
+                    "author a metric-action rule and reprocess",
+                ],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= dependent on human response",
+                    "error_rate": "<= dependent on human response",
+                },
+                "time_to_effect": "dependent on operator",
+            },
+            risk={
+                "level": "high",
+                "blast_radius": "service_level",
+                "customer_impact_if_wrong": _customer_impact_if_wrong("escalate"),
+            },
+            confidence=0.6,
+            execution_plan={
+                "system": "incident_service",
+                "action": "open_incident",
+                "parameters": {
+                    "service": trigger.service,
+                    "endpoint": trigger.endpoint,
+                    "flag_key": None,
+                    "environment": trigger.environment,
+                    "severity": "medium",
+                    "reason": f"metric {metric_name} regressed with no matching rule",
+                },
+                "rollback_plan": "close the incident if no action is warranted",
+            },
+        )
         decision.validate()
         return decision
 
@@ -387,6 +581,23 @@ def _apply_scenario_analysis(
             "scenario analysis requires review: " + "; ".join(review_reasons)
         )
     return decision
+
+
+def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
+    """Reshape a Trigger into the signal-shaped dict the rule matcher expects.
+
+    The matcher is deliberately decoupled from the Trigger model so it can be
+    unit-tested with plain dicts. Keeping this translation in one place means
+    the rule engine's inputs stay stable when trigger internals change.
+    """
+    return {
+        "service": trigger.service,
+        "endpoint": trigger.endpoint,
+        "environment": trigger.environment,
+        "metric_regression": trigger.related_context.get("metric_regression", {}),
+        "resource_attributes": trigger.related_context.get("resource_attributes", {}),
+        "related_metrics": trigger.related_context.get("related_metrics", []),
+    }
 
 
 def _delta_pct(baseline: float, observed: float) -> float:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -126,6 +126,24 @@ class RuntimeConfig:
     trust_ladder_min_draft_runs: int = 3
     trust_ladder_min_approve_runs: int = 10
     trust_ladder_min_auto_runs: int = 30
+    # OpenTelemetry consumer: Mesh accepts OTLP/HTTP pushes at POST /v1/metrics and can
+    # pull Prometheus (or any PromQL-compatible endpoint exposed by an OTel collector)
+    # during feedback verification. Disabled by default — the receiver has no auth
+    # beyond the optional bearer token, so it's opt-in.
+    otel_receiver_enabled: bool = False
+    otel_receiver_token: str | None = None
+    prometheus_url: str | None = None
+    prometheus_query_timeout_seconds: float = 10.0
+    feedback_prometheus_enabled: bool = False
+    # Layer 3: LLM-backed decision fallback for OTel signals that don't match
+    # any metric-action rule. Opt-in because it adds LLM latency (5-30s) to
+    # the decision stage for unknown signals.
+    llm_decision_fallback_enabled: bool = False
+    llm_decision_fallback_timeout_seconds: float = 30.0
+    # Layer 4: learn from operator overrides and surface candidate rules.
+    rule_learning_enabled: bool = False
+    rule_learning_min_observations: int = 5
+    rule_learning_max_age_days: int = 30
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -247,6 +265,19 @@ class RuntimeConfig:
             trust_ladder_min_draft_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_DRAFT_RUNS", "3")),
             trust_ladder_min_approve_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_APPROVE_RUNS", "10")),
             trust_ladder_min_auto_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_AUTO_RUNS", "30")),
+            otel_receiver_enabled=os.getenv("MESH_OTEL_RECEIVER_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            otel_receiver_token=os.getenv("MESH_OTEL_RECEIVER_TOKEN") or None,
+            prometheus_url=os.getenv("MESH_PROMETHEUS_URL") or None,
+            prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
+            feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_decision_fallback_enabled=os.getenv("MESH_LLM_DECISION_FALLBACK_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_decision_fallback_timeout_seconds=float(os.getenv("MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS", "30")),
+            rule_learning_enabled=os.getenv("MESH_RULE_LEARNING_ENABLED", "").lower() in ("1", "true", "yes"),
+            rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
+            rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
         )
 
 

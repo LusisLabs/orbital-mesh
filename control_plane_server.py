@@ -83,6 +83,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
             return
+        if path == "/api/rules/suggestions":
+            # Layer 4 admin surface. Returns [] when rule_learning_enabled is
+            # off or too few overrides have accumulated. Suggestions never
+            # auto-apply — operators paste approved rules into the policy file.
+            self._send_json({"suggestions": self.server.coordinator.list_rule_suggestions()})
+            return
         if path == "/api/scenarios":
             self._send_json({"scenarios": self.server.coordinator.list_scenarios()})
             return
@@ -373,6 +379,18 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             # Webhook vendors occasionally ship JSON arrays at the root;
             # wrap them so path expressions like "$.alerts[0]" still work.
             payload = {"root": payload}
+        if parsed.path == "/v1/metrics":
+            # OTLP/HTTP metrics receiver — opt-in. When enabled, an OTel
+            # Collector (or any OTLP producer) posts here and the payload
+            # becomes a Mesh run via the OtlpPushIngester.
+            if not self.server.config.otel_receiver_enabled:
+                self._send_json(
+                    {"error": "otlp receiver disabled"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._handle_otlp_metrics(payload)
+            return
         if parsed.path == "/api/watch/start":
             self._send_json(self.server.coordinator.watch_start())
             return
@@ -510,6 +528,59 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"deleted": source_id})
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _handle_otlp_metrics(self, otlp_payload: dict[str, Any]) -> None:
+        """Accept an OTLP/HTTP JSON metrics payload and spawn a Mesh run.
+
+        Optional bearer-token auth via ``MESH_OTEL_RECEIVER_TOKEN``. The
+        sender can attach ``x-mesh-alert-context`` as a JSON header naming the
+        metric that tripped and supplying a baseline value; without it the
+        ingester falls back to heuristics (latency/error name matching).
+        """
+        expected_token = self.server.config.otel_receiver_token
+        if expected_token:
+            provided = self.headers.get("Authorization", "")
+            if provided != f"Bearer {expected_token}":
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+
+        alert_context: dict[str, Any] = {}
+        raw_alert_header = self.headers.get("x-mesh-alert-context") or self.headers.get("X-Mesh-Alert-Context")
+        if raw_alert_header:
+            try:
+                parsed_alert = json.loads(raw_alert_header)
+                if isinstance(parsed_alert, dict):
+                    alert_context = parsed_alert
+            except json.JSONDecodeError:
+                self._send_json(
+                    {"error": "invalid x-mesh-alert-context header"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+
+        create_payload: dict[str, Any] = {
+            "otlp_payload": otlp_payload,
+            "alert_context": alert_context,
+            "evaluation_mode": self.server.config.evaluation_mode,
+            "orchestration_mode": self.server.config.orchestration_mode,
+            "steering_mode": self.server.config.default_steering_mode,
+        }
+        try:
+            run = self.server.coordinator.create_run(create_payload)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        except Exception as exc:  # pragma: no cover - defensive
+            _LOG.exception("OTLP metric ingestion failed: %s", exc)
+            self._send_json(
+                {"error": "otlp ingestion failed", "detail": str(exc)},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        self._send_json(
+            {"status": "accepted", "run_id": run.get("run_id"), "scenario_key": run.get("scenario_key")},
+            status=HTTPStatus.ACCEPTED,
+        )
 
     def log_message(self, format: str, *args: Any) -> None:
         if not self.server.config.access_log_enabled:

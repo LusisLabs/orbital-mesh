@@ -422,6 +422,43 @@ Every canonical run event is hashed as a leaf. The server recomputes the root wh
 
 This is intended for run inspection and auditability, not blockchain settlement.
 
+## OpenTelemetry Consumer
+
+Mesh accepts OpenTelemetry signals as a first-class input. Two paths:
+
+**Push (OTLP/HTTP receiver)** — `POST /v1/metrics` accepts OTLP/HTTP JSON metric payloads; each creates a run with signal type `otel_metric_regression`.
+
+```bash
+export MESH_OTEL_RECEIVER_ENABLED=1
+export MESH_OTEL_RECEIVER_TOKEN=a-strong-bearer-token  # optional
+```
+
+Senders can attach an optional `x-mesh-alert-context` JSON header naming the metric that tripped; without it the ingester falls back to heuristics.
+
+**Pull (Prometheus queries)** — Point Mesh at any PromQL endpoint for feedback-stage verification with real metrics instead of stub observations.
+
+```bash
+export MESH_PROMETHEUS_URL=http://prometheus:9090
+export MESH_FEEDBACK_PROMETHEUS_ENABLED=1
+```
+
+## Decision Layers
+
+The decision stage handles OTel metric-regression signals through four composable layers:
+
+| Layer | Coverage | Determinism | Enable |
+|-------|----------|-------------|--------|
+| 1. Curated action catalog | ~8 actions | Full | Always on |
+| 2. Declarative rule matcher | ~70% of signals | Full | `policies/metric-actions.policy.json` |
+| 3. LLM fallback (Goose) | +15% long-tail | Non-deterministic | `MESH_LLM_DECISION_FALLBACK_ENABLED=1` |
+| 4. Rule learning from overrides | Grows over time | Human-reviewed | `MESH_RULE_LEARNING_ENABLED=1` |
+
+**Layer 2 rules** match on metric-name patterns + OTel attributes and propose bounded actions. See `shared/mesh_runtime/metric_action_rules.py` for the format and `policies/metric-actions.policy.json` for starter rules (queue lag, CPU saturation, memory pressure, traffic spikes).
+
+**Layer 3 LLM fallback** — when no rule matches, Goose proposes an action from a hardcoded allowlist. Outputs are schema-validated and numeric parameters clamped to bounds; LLM timeouts or invalid responses fall through to escalate with a named risk flag.
+
+**Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
+
 ## TUI
 
 The TUI remains available as a local terminal companion:
