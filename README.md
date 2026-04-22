@@ -275,6 +275,237 @@ The production-hardened server includes:
 - Thread-safe run coordination with lock-protected state
 - Corrupt state file recovery with automatic backup
 
+## OpenTelemetry Consumer
+
+Mesh accepts OpenTelemetry signals as a first-class input — no external alerting pipeline required. Two paths are supported:
+
+### Push — OTLP/HTTP receiver
+
+Send OTLP/HTTP JSON metric payloads to `POST /v1/metrics` on the control plane. Each accepted payload creates a Mesh run with signal type `otel_metric_regression`.
+
+```bash
+# Enable the receiver
+export MESH_OTEL_RECEIVER_ENABLED=1
+export MESH_OTEL_RECEIVER_TOKEN=a-strong-bearer-token  # optional but recommended
+
+# Example: forward from an OTel Collector
+# (in your collector config)
+exporters:
+  otlphttp/mesh:
+    endpoint: http://mesh:8787
+    headers:
+      Authorization: "Bearer a-strong-bearer-token"
+      x-mesh-alert-context: '{"metric_name":"http.server.duration","service":"api-gateway","baseline_value":420,"threshold_pct":30}'
+```
+
+The optional `x-mesh-alert-context` header tells Mesh which metric tripped and supplies a baseline value. Without it, Mesh falls back to heuristics (latency/error-name matching and using the first data point as baseline).
+
+### Pull — Prometheus queries
+
+Point Mesh at any PromQL-compatible endpoint to pull metrics during ingest or to verify remediation outcomes during the feedback stage.
+
+```bash
+export MESH_PROMETHEUS_URL=http://prometheus:9090
+export MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS=10
+export MESH_FEEDBACK_PROMETHEUS_ENABLED=1
+```
+
+When `MESH_FEEDBACK_PROMETHEUS_ENABLED=1`, the feedback stage samples real post-action metrics at 10m and 30m instead of trusting stub observations on the signal payload. A monitoring outage never makes a run look like it failed — the observer silently falls back to stub observations if Prometheus is unreachable.
+
+### Architecture
+
+```
+OTel Collector ──OTLP/HTTP──▶ POST /v1/metrics ──▶ OtlpPushIngester ──▶ IngestService ──▶ Run
+Prometheus    ──PromQL────▶ PrometheusClient ──▶ PrometheusPullIngester ──▶ IngestService ──▶ Run
+Prometheus    ──PromQL────▶ PrometheusFeedbackObserver ──▶ post_action_observations ──▶ FeedbackService
+```
+
+## Metric-Action Rules
+
+The decision stage handles OTel signals through a **declarative rule registry** at `policies/metric-actions.policy.json`. When a metric Mesh wasn't hardcoded to recognize regresses, the rule engine matches it against patterns you've authored and proposes a bounded action. Unmatched signals escalate rather than silently `no_action` — the gap is always visible.
+
+### Rule shape
+
+```json
+{
+  "rules": [
+    {
+      "name": "scale on consumer lag",
+      "match": {
+        "metric_name_pattern": "(consumer_lag|queue_depth|backlog)",
+        "direction": "increasing",
+        "delta_pct_min": 30,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "scale_deployment",
+        "system": "kubernetes_service",
+        "action": "scale_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "replicas_delta": 2
+        }
+      },
+      "bounds": {"replicas_delta_max": 3, "cooldown_seconds": 300},
+      "confidence": 0.78,
+      "risk_level": "low",
+      "rollback_plan": "scale deployment back to the prior replica count"
+    }
+  ]
+}
+```
+
+### Matching semantics
+
+| Field | Behavior |
+|-------|----------|
+| `metric_name_pattern` | Case-insensitive regex against the signal's metric name |
+| `direction` | `increasing` or `decreasing` — compares observed vs baseline |
+| `delta_pct_min` / `delta_pct_max` | Inclusive bounds on the absolute percent change |
+| `resource_attributes` | All key/value pairs must match. `"*"` means "key must exist" |
+| `attributes` | Same semantics but on the metric data point's attributes |
+
+Rules are evaluated top-to-bottom; **the first match wins**. Put specific rules before generic ones.
+
+### Parameter rendering
+
+Parameters use `{dotted.path}` placeholders resolved against the signal:
+- `{resource_attributes.k8s.deployment.name}` → the deployment name from OTel
+- `{attributes.http.route}` → a metric data point attribute
+- `{service}` → a top-level signal field
+
+OTel attribute keys commonly contain dots (`k8s.deployment.name`). The resolver greedy-matches longest keys first, so this works correctly.
+
+### Bounds enforcement
+
+Numeric bounds are enforced at match time:
+- `replicas_delta_max: 3` clamps any replica delta the rule produces to `[-3, +3]`
+- A rule author writing `replicas_delta: 50` with `replicas_delta_max: 3` still emits `3` — typos don't become runaway actuations
+
+### Starter rules
+
+The shipped policy covers four common patterns:
+
+| Rule | Metrics it catches | Action |
+|------|-------------------|--------|
+| `scale on consumer lag` | Kafka, RabbitMQ, Celery, SQS queue metrics | +2 replicas (max +3) |
+| `scale on cpu saturation` | OTel + Prometheus CPU utilization variants | +2 replicas (max +4) |
+| `raise memory limit on saturation` | Memory utilization / usage bytes | Patch to 2Gi limit |
+| `scale on request rate spike` | HTTP request count, active connections | +1 replica (max +2) |
+
+### Adding rules
+
+1. Edit `policies/metric-actions.policy.json`
+2. Rules load on service startup with LRU caching — restart the server to reload
+3. `python3 -m unittest tests.test_metric_action_rules` verifies your rule parses and matches
+
+### Available actions
+
+| `decision_type` | `system` | `action` | Used for |
+|-----------------|----------|----------|----------|
+| `scale_deployment` | `kubernetes_service` | `scale_deployment` | Adjust replica count by delta or absolute |
+| `patch_resources` | `kubernetes_service` | `patch_resources` | Adjust CPU/memory limits or requests |
+| `rollback_deployment` | `kubernetes_service` | `rollback_deployment` | Revert to previous revision |
+| `restart_deployment` | `kubernetes_service` | `restart_deployment` | Rolling restart |
+| `disable_flag` / `reduce_rollout` | `feature_flag_service` | `set_rollout` | Feature flag control |
+| `escalate` | `incident_service` | `open_incident` | Hand off to human |
+| `no_action` | `audit_log_sink` | `record_no_action` | Record the signal, do nothing |
+
+Add actuator methods in `services/actuators/service.py` and wire the action in `services/orchestrator/goose_adapter.py` + `goose_bridge.py` before adding a new action to the schema enum.
+
+## Decision Layers
+
+The decision stage has four layers, each covering more of the long tail than the last. All are composable — disable what you don't need, enable what you want.
+
+```
+OTel signal
+    │
+    ▼
+┌─── Layer 1: Hardcoded action catalog (scale_deployment, rollback, disable_flag, ...)
+│
+▼
+Layer 2: Declarative rule matcher — policies/metric-actions.policy.json
+│
+▼ (no rule matched)
+Layer 3: LLM fallback — Goose proposes a bounded action from the allowlist
+│
+▼ (LLM unavailable or rejected)
+Layer 4: escalate → learning store captures operator override → candidate rule
+```
+
+| Layer | Coverage | Determinism | Cost | Enable |
+|-------|----------|-------------|------|--------|
+| 1. Curated catalog | 8 actions | Full | Code | Always on |
+| 2. Rule matcher | ~70% of signals | Full | YAML | Always on |
+| 3. LLM fallback | +15% (long tail) | Non-deterministic | 5-30s LLM call | `MESH_LLM_DECISION_FALLBACK_ENABLED=1` |
+| 4. Rule learning | Grows over time | Requires human approval | File I/O | `MESH_RULE_LEARNING_ENABLED=1` |
+
+### Layer 3 — LLM fallback
+
+When a signal doesn't match any rule, Mesh asks the LLM to propose a bounded action from an allowlist. Hard constraints:
+
+- The LLM can only propose `(system, action)` pairs from a hardcoded allowlist in `services/decision/llm_fallback.py`
+- Required parameters are validated against a schema
+- Numeric parameters (`replicas_delta`, `replicas`) are clamped to bounds
+- Confidence capped at 0.85 — the LLM can't claim certainty
+- Unknown keys dropped silently
+- Any failure mode (timeout, invalid JSON, bad action) falls through to `escalate` with a specific risk flag in the reasoning
+
+Enable:
+
+```bash
+export MESH_LLM_DECISION_FALLBACK_ENABLED=1
+export MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS=30
+export MESH_GOOSE_COMMAND=goose  # goose bridge must already be configured
+```
+
+### Layer 4 — Rule learning from operator overrides
+
+Every time an operator uses `override_decision` or `override_execution_parameters` on an OTel-shaped signal, Mesh records the override. When ≥5 overrides for similar signals agree on the same action and the resulting runs succeeded, Mesh synthesizes a candidate rule and surfaces it at `/api/rules/suggestions`.
+
+Enable:
+
+```bash
+export MESH_RULE_LEARNING_ENABLED=1
+export MESH_RULE_LEARNING_MIN_OBSERVATIONS=5
+export MESH_RULE_LEARNING_MAX_AGE_DAYS=30
+```
+
+Review suggestions:
+
+```bash
+curl http://127.0.0.1:8787/api/rules/suggestions
+```
+
+Each suggestion returns a ready-to-paste rule alongside supporting evidence:
+
+```json
+{
+  "suggestions": [
+    {
+      "fingerprint": "lag:payments:default:up",
+      "rule": { "name": "...", "match": {...}, "propose": {...}, "bounds": {...} },
+      "observation_count": 7,
+      "success_rate": 0.86,
+      "supporting_evidence": {
+        "action_votes": {"scale_deployment": 6, "restart_deployment": 1},
+        "sample_run_ids": ["run_20260401...", "..."]
+      }
+    }
+  ]
+}
+```
+
+**Suggestions never auto-apply.** Operators review, edit if needed, paste into `policies/metric-actions.policy.json`, and restart the server. A typo in a learned rule reaches the same actuators as a hand-written one — the friction is intentional.
+
+**Fingerprinting.** Signals are grouped by `(normalized_metric_name, service, namespace, direction)`. Normalization collapses naming variants: `kafka.consumer.lag`, `kafka_consumer_lag_total`, and `ConsumerLag` all fingerprint identically so overrides cluster correctly across exporter versions.
+
+**Parameter synthesis.** Numeric values use the median across observations (outlier-resistant); strings use the mode. Integer observations stay integers.
+
 ## Environment Variables
 
 See [`.env.example`](./.env.example) for the full list with comments. Key variables:
@@ -294,6 +525,16 @@ See [`.env.example`](./.env.example) for the full list with comments. Key variab
 | `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` | `false` | Enable live kubectl actuation |
 | `MESH_KUBERNETES_ALLOWED_CONTEXTS` | (none) | Comma-separated allowed kube contexts |
 | `MESH_KUBERNETES_ALLOWED_NAMESPACES` | (none) | Comma-separated allowed namespaces |
+| `MESH_OTEL_RECEIVER_ENABLED` | `false` | Enable the `POST /v1/metrics` OTLP receiver |
+| `MESH_OTEL_RECEIVER_TOKEN` | (none) | Bearer token required on OTLP requests when set |
+| `MESH_PROMETHEUS_URL` | (none) | Prometheus/PromQL endpoint for pull ingest + feedback |
+| `MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS` | `10` | Per-query timeout |
+| `MESH_FEEDBACK_PROMETHEUS_ENABLED` | `false` | Sample real post-action metrics during feedback |
+| `MESH_LLM_DECISION_FALLBACK_ENABLED` | `false` | Layer 3: consult the LLM when no rule matches |
+| `MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS` | `30` | Per-call LLM timeout |
+| `MESH_RULE_LEARNING_ENABLED` | `false` | Layer 4: capture overrides and synthesize rule suggestions |
+| `MESH_RULE_LEARNING_MIN_OBSERVATIONS` | `5` | Minimum overrides before a rule is suggested |
+| `MESH_RULE_LEARNING_MAX_AGE_DAYS` | `30` | Only consider overrides from the last N days |
 
 ## Development
 

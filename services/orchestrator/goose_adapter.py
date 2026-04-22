@@ -63,10 +63,29 @@ class NativeGooseAdapter(GooseAdapter):
         elif execution_plan["system"] == "incident_service":
             result = self.incidents.open_incident(execution_plan["parameters"])
         elif execution_plan["system"] == "kubernetes_service":
-            if execution_plan["action"] == "rollback_deployment":
+            # Explicit dispatch by action keeps the routing self-documenting and
+            # gives the decision schema's action enum a single source of truth.
+            # New actions added to the enum must be wired here — the else branch
+            # returns no_action so an unrouted action fails loudly rather than
+            # silently executing the wrong thing.
+            k8s_action = execution_plan["action"]
+            if k8s_action == "rollback_deployment":
                 result = self.kubernetes.rollback_deployment(execution_plan["parameters"])
-            else:
+            elif k8s_action == "restart_deployment":
                 result = self.kubernetes.restart_deployment(execution_plan["parameters"])
+            elif k8s_action == "scale_deployment":
+                result = self.kubernetes.scale_deployment(execution_plan["parameters"])
+            elif k8s_action == "patch_resources":
+                result = self.kubernetes.patch_resources(execution_plan["parameters"])
+            else:
+                result = {
+                    "status": "failed",
+                    "failure": {
+                        "reason": "unknown_kubernetes_action",
+                        "detail": f"action {k8s_action!r} is not routed in the orchestrator",
+                    },
+                    "external_refs": {},
+                }
         elif execution_plan["system"] == "repo_patch_service":
             result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:

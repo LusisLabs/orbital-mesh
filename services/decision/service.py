@@ -1,12 +1,56 @@
-"""Convert a validated trigger into one bounded remediation decision."""
+"""Convert a validated trigger into one bounded remediation decision.
+
+The decision stage has three dispatch paths, one per trigger type:
+
+* ``feature_flag_performance_regression`` — original hand-coded branches.
+  Feature flag math, protected-scope checks, the full policy-heavy path.
+* ``kubernetes_deployment_unhealthy`` — hand-coded symptom matching on event
+  reasons and error signatures.
+* ``otel_metric_regression`` — the **declarative rule engine**. See
+  :mod:`shared.mesh_runtime.metric_action_rules` for the rule format. Rules
+  are matched against the incoming signal; when one matches we build a
+  ``Decision`` from the rule's ``propose`` block. On no match, we fall
+  through to ``escalate`` (a human needs to name the action), which is the
+  right default for a signal Mesh has not been taught to handle.
+
+The two hardcoded paths remain because they encode policy nuance (protected
+customer tiers, rollback counts) that isn't easy to express in a rule. The
+OTel path gets the declarative treatment because the metric surface is
+effectively unbounded — we can't ship a Python branch per metric.
+"""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from shared.mesh_runtime import Decision, Trigger, load_policy
+from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
+
+if TYPE_CHECKING:
+    from services.decision.llm_fallback import LlmActionProposer
+    from shared.mesh_runtime.learning import LearningStore
 
 
 class DecisionService:
+    def __init__(
+        self,
+        learning_store: LearningStore | None = None,
+        metric_action_rules_path: str | None = None,
+        llm_proposer: "LlmActionProposer | None" = None,
+    ) -> None:
+        self.learning_store = learning_store
+        # Rules load lazily on first access via the cached loader, so constructing
+        # DecisionService is still cheap. Passing an explicit path here is mostly
+        # for tests — production uses the default policy file.
+        self._metric_action_matcher: MetricActionMatcher = load_metric_action_rules(metric_action_rules_path)
+        # Optional Layer 3 fallback. When None, unmatched metrics escalate directly.
+        # Injecting the proposer (rather than building it inside DecisionService)
+        # keeps the service testable with mock LLMs and zero subprocess overhead.
+        self._llm_proposer = llm_proposer
+
     def decide(self, trigger: Trigger) -> Decision:
+        if trigger.trigger_type == "otel_metric_regression":
+            return self._decide_otel_metric(trigger)
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             return self._decide_kubernetes(trigger)
         latency_delta_pct = _delta_pct(
@@ -78,11 +122,15 @@ class DecisionService:
             confidence = min(confidence, 0.7)
             risk_level = "medium"
 
+        historical_rate = None
+        if self.learning_store is not None:
+            historical_rate = self.learning_store.get_historical_success_rate(decision_type, trigger.service)
         confidence = _adjust_confidence(
             confidence,
             similar_prior_cases=similar_prior_cases,
             flag_causality_confidence=flag_causality_confidence,
             trigger_signals=trigger_signals,
+            historical_success_rate=historical_rate,
         )
 
         autonomy_tier = "autonomous"
@@ -126,6 +174,231 @@ class DecisionService:
             },
             confidence=confidence,
             execution_plan=execution_plan,
+        )
+        decision.validate()
+        return decision
+
+    def _decide_otel_metric(self, trigger: Trigger) -> Decision:
+        """Decide from an OTel metric regression trigger using the rule engine.
+
+        We reconstruct a minimal signal-shaped dict from the trigger so the
+        matcher can run its standard evaluation. When a rule matches we stamp
+        its output onto a ``Decision``; when nothing matches we emit
+        ``escalate`` with the metric name in the reasoning so a human can add
+        a rule.
+
+        The fallthrough is deliberately conservative. Earlier designs returned
+        ``no_action`` here, but that silently absorbs unknown metrics — the
+        run finishes "successfully" with nothing done. ``escalate`` surfaces
+        the gap instead. Operators who want silent handling for specific
+        metrics can author a rule that proposes ``no_action``.
+        """
+        signal_view = _build_signal_view_from_trigger(trigger)
+        rule_match = self._metric_action_matcher.match(signal_view)
+        if rule_match is not None:
+            return self._decision_from_rule_match(trigger, rule_match)
+
+        # Layer 3: the LLM fallback runs only when:
+        #   - a proposer was injected at construction time
+        #   - no rule matched (we never short-circuit a deterministic rule)
+        # LLM failures fall through to escalate; the risk_flags from the
+        # proposer are attached to the escalation reasoning so the operator
+        # can distinguish "LLM rejected" from "no rules authored".
+        llm_risk_flags: list[str] = []
+        if self._llm_proposer is not None:
+            llm_result = self._llm_proposer.propose(signal_view)
+            if llm_result.match is not None:
+                return self._decision_from_rule_match(trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags)
+            llm_risk_flags = llm_result.risk_flags
+
+        return self._escalate_for_unmatched_metric(trigger, llm_risk_flags=llm_risk_flags)
+
+    def _decision_from_rule_match(
+        self,
+        trigger: Trigger,
+        rule_match: RuleMatch,
+        llm_risk_flags: list[str] | None = None,
+    ) -> Decision:
+        """Materialize a Decision from a matched rule.
+
+        Autonomy tier is derived from the rule's declared risk level. Low-risk
+        rules go straight to ``autonomous`` (the approval gate still gates the
+        run if the steering mode requires it — the decision stage only sets
+        the *floor*, the control plane sets the ceiling).
+
+        Confidence is also taken from the rule, then nudged by observed
+        priors: if the same service has seen this pattern before and the
+        remediation succeeded, we bump confidence slightly. This is the same
+        adjustment we apply to the feature-flag path.
+        """
+        metric_regression = trigger.related_context.get("metric_regression", {})
+        metric_name = metric_regression.get("metric_name", "unknown_metric")
+        delta_pct = metric_regression.get("delta_pct")
+
+        autonomy_tier = {
+            "low": "autonomous",
+            "medium": "approval_required",
+            "high": "escalated",
+        }.get(rule_match.risk_level, "approval_required")
+
+        historical_rate = None
+        if self.learning_store is not None:
+            historical_rate = self.learning_store.get_historical_success_rate(
+                rule_match.decision_type, trigger.service
+            )
+
+        similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
+        confidence = _adjust_confidence(
+            rule_match.confidence,
+            similar_prior_cases=similar_prior_cases,
+            flag_causality_confidence=None,
+            trigger_signals=list(trigger.related_context.get("trigger_signals", [])),
+            historical_success_rate=historical_rate,
+        )
+
+        evidence: list[str] = [
+            f"rule {rule_match.rule_name!r} matched metric {metric_name!r}",
+        ]
+        if delta_pct is not None:
+            evidence.append(f"observed delta {delta_pct:.1f}% vs baseline")
+        if rule_match.matched_on.get("resource_attributes"):
+            attrs_summary = ", ".join(f"{k}={v}" for k, v in rule_match.matched_on["resource_attributes"].items())
+            evidence.append(f"resource attributes: {attrs_summary}")
+        # When the match came from the LLM fallback, surface the risk flags in
+        # the evidence so a reviewer sees "llm_bound_clamped" (or similar) at
+        # the decision step rather than having to trace through logs.
+        if llm_risk_flags:
+            evidence.append(f"llm fallback risk flags: {', '.join(llm_risk_flags)}")
+
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type=rule_match.decision_type,
+            autonomy_tier=autonomy_tier,
+            summary=(
+                f"Apply {rule_match.action} on {trigger.service} because rule {rule_match.rule_name!r} "
+                f"matched metric {metric_name}."
+            ),
+            reasoning={
+                "primary_hypothesis": (
+                    f"{metric_name} regressed on {trigger.service}; rule {rule_match.rule_name!r} "
+                    f"proposes {rule_match.decision_type}."
+                ),
+                "evidence": evidence,
+                "evidence_pack": {
+                    "matched_rule": rule_match.rule_name,
+                    "matched_on": rule_match.matched_on,
+                    "metric_regression": metric_regression,
+                    "related_metrics": trigger.related_context.get("related_metrics", []),
+                    "bounds": rule_match.bounds,
+                },
+                "alternatives_considered": [
+                    "continue with no change",
+                    "escalate to human review",
+                    rule_match.decision_type,
+                ],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= unchanged (metric-driven action)",
+                    "error_rate": "<= unchanged (metric-driven action)",
+                },
+                "time_to_effect": "10m",
+            },
+            risk={
+                "level": rule_match.risk_level,
+                "blast_radius": _metric_blast_radius(rule_match),
+                "customer_impact_if_wrong": _customer_impact_if_wrong(rule_match.decision_type),
+            },
+            confidence=confidence,
+            execution_plan={
+                "system": rule_match.system,
+                "action": rule_match.action,
+                "parameters": rule_match.parameters,
+                "rollback_plan": rule_match.rollback_plan,
+            },
+        )
+        decision.validate()
+        return decision
+
+    def _escalate_for_unmatched_metric(
+        self,
+        trigger: Trigger,
+        llm_risk_flags: list[str] | None = None,
+    ) -> Decision:
+        """Fall-through when no rule matched and (if enabled) the LLM declined.
+
+        This is the honest response to "Mesh has never been taught what to do
+        when metric X regresses". We open an incident and name the metric so a
+        human can either act manually or author a rule for next time.
+
+        When the LLM fallback was consulted and also failed, we attach its
+        risk flags to the escalation reasoning. That distinction matters for
+        operators triaging coverage gaps — "LLM timed out" is an infrastructure
+        issue to fix, while "LLM said no action applies" is a real gap that
+        deserves a new rule.
+        """
+        metric_regression = trigger.related_context.get("metric_regression", {})
+        metric_name = metric_regression.get("metric_name", "unknown_metric")
+        evidence = [
+            f"metric {metric_name!r} has no matching rule",
+            f"delta {metric_regression.get('delta_pct')}%",
+        ]
+        if llm_risk_flags:
+            evidence.append(f"llm fallback did not produce a usable proposal: {', '.join(llm_risk_flags)}")
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type="escalate",
+            autonomy_tier="escalated",
+            summary=(
+                f"Escalate {trigger.service}: metric {metric_name} regressed but no "
+                "metric-action rule matched."
+            ),
+            reasoning={
+                "primary_hypothesis": (
+                    f"Metric {metric_name} on {trigger.service} crossed its threshold, but no rule in the "
+                    "metric-action catalog knows how to act on it."
+                ),
+                "evidence": evidence,
+                "evidence_pack": {
+                    "metric_regression": metric_regression,
+                    "related_metrics": trigger.related_context.get("related_metrics", []),
+                    "available_rules": [rule.name for rule in self._metric_action_matcher.rules],
+                    "llm_risk_flags": llm_risk_flags or [],
+                },
+                "alternatives_considered": [
+                    "continue with no change",
+                    "escalate to human review",
+                    "author a metric-action rule and reprocess",
+                ],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= dependent on human response",
+                    "error_rate": "<= dependent on human response",
+                },
+                "time_to_effect": "dependent on operator",
+            },
+            risk={
+                "level": "high",
+                "blast_radius": "service_level",
+                "customer_impact_if_wrong": _customer_impact_if_wrong("escalate"),
+            },
+            confidence=0.6,
+            execution_plan={
+                "system": "incident_service",
+                "action": "open_incident",
+                "parameters": {
+                    "service": trigger.service,
+                    "endpoint": trigger.endpoint,
+                    "flag_key": None,
+                    "environment": trigger.environment,
+                    "severity": "medium",
+                    "reason": f"metric {metric_name} regressed with no matching rule",
+                },
+                "rollback_plan": "close the incident if the operator determines no action is needed",
+            },
         )
         decision.validate()
         return decision
@@ -222,6 +495,39 @@ class DecisionService:
         )
         decision.validate()
         return decision
+
+
+def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
+    """Reconstruct the signal-shaped view the rule matcher expects.
+
+    The trigger carries everything we need — we just reshape it so the
+    matcher doesn't have to know about the Trigger model. Keeping the two
+    decoupled means the matcher is easy to test directly with signal
+    fixtures.
+    """
+    return {
+        "service": trigger.service,
+        "endpoint": trigger.endpoint,
+        "environment": trigger.environment,
+        "metric_regression": trigger.related_context.get("metric_regression", {}),
+        "resource_attributes": trigger.related_context.get("resource_attributes", {}),
+        "related_metrics": trigger.related_context.get("related_metrics", []),
+    }
+
+
+def _metric_blast_radius(rule_match: RuleMatch) -> str:
+    """Name the scope of a metric-action decision for the risk block.
+
+    Distinguishing "single deployment" from "cluster wide" in the decision
+    reasoning helps reviewers spot rules that were scoped too broadly. The
+    naming is intentionally coarse — the exact blast radius is implicit in
+    the bounds.
+    """
+    if rule_match.system == "kubernetes_service":
+        return "single_deployment"
+    if rule_match.system == "feature_flag_service":
+        return "single_flag"
+    return "service_level"
 
 
 def _delta_pct(baseline: float, observed: float) -> float:
@@ -424,6 +730,10 @@ def _customer_impact_if_wrong(decision_type: str) -> str:
         return "temporary feature unavailability"
     if decision_type == "reduce_rollout":
         return "temporary feature degradation"
+    if decision_type == "scale_deployment":
+        return "temporary cluster cost increase or capacity pressure if the scaling was unnecessary"
+    if decision_type == "patch_resources":
+        return "temporary pod restarts and potentially wasted resources if the limits were misjudged"
     if decision_type == "escalate":
         return "continued customer impact until a human operator intervenes"
     return "continued regression exposure"
@@ -435,6 +745,7 @@ def _adjust_confidence(
     similar_prior_cases: int,
     flag_causality_confidence: float | None,
     trigger_signals: list[str],
+    historical_success_rate: float | None = None,
 ) -> float:
     adjusted = base_confidence
     if similar_prior_cases > 0:
@@ -443,4 +754,9 @@ def _adjust_confidence(
         adjusted += max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1
     if len(trigger_signals) >= 2:
         adjusted += 0.01
+    if historical_success_rate is not None:
+        if historical_success_rate >= 0.8:
+            adjusted += 0.02
+        elif historical_success_rate < 0.4:
+            adjusted -= 0.03
     return max(0.5, min(round(adjusted, 2), 0.95))

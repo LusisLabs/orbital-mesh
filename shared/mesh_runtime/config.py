@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -17,6 +18,18 @@ def _derive_research_directory(state_directory: str, explicit: str | None) -> st
     if explicit is not None:
         return explicit
     return str(Path(state_directory) / "research")
+
+
+def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
+    if not raw:
+        return ()
+    try:
+        targets = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return ()
+    if not isinstance(targets, list):
+        return ()
+    return tuple(t for t in targets if isinstance(t, dict) and "deployment_name" in t)
 
 
 def _resolve_relative_path(raw: str, anchor: Path = _REPO_ROOT) -> str:
@@ -65,6 +78,40 @@ class RuntimeConfig:
     kubernetes_allowed_contexts: tuple[str, ...] = ()
     kubernetes_allowed_namespaces: tuple[str, ...] = ()
     kubernetes_rollout_timeout_seconds: int = 120
+    watch_enabled: bool = False
+    watch_interval_seconds: int = 60
+    watch_cooldown_seconds: int = 300
+    watch_targets: tuple[dict[str, str], ...] = ()
+    llm_escalation_enabled: bool = False
+    llm_escalation_provider: str = "goose"
+    llm_escalation_model: str | None = None
+    llm_escalation_timeout_seconds: int = 30
+    correlation_enabled: bool = False
+    correlation_window_seconds: int = 300
+    correlation_min_signals: int = 2
+    # OpenTelemetry consumer: Mesh accepts OTLP/HTTP pushes at POST /v1/metrics and can
+    # pull Prometheus (or any PromQL-compatible endpoint exposed by an OTel collector)
+    # during feedback verification. Disabled by default — the receiver has no auth
+    # beyond the optional bearer token, so it's opt-in.
+    otel_receiver_enabled: bool = False
+    otel_receiver_token: str | None = None
+    prometheus_url: str | None = None
+    prometheus_query_timeout_seconds: float = 10.0
+    feedback_prometheus_enabled: bool = False
+    # Layer 3: LLM-backed decision fallback for OTel signals that don't match
+    # any metric-action rule. Opt-in because it adds LLM latency (5-30s) to
+    # the decision stage for unknown signals, and because the caller must
+    # understand the cost/risk tradeoffs before enabling non-deterministic
+    # decisions in production.
+    llm_decision_fallback_enabled: bool = False
+    llm_decision_fallback_timeout_seconds: float = 30.0
+    # Layer 4: learn from operator overrides and surface candidate rules.
+    # The recorder runs unconditionally once enabled — override events are
+    # cheap to log and the data accrues over time. Rule suggestions surface
+    # via the admin API; suggestions never auto-apply.
+    rule_learning_enabled: bool = False
+    rule_learning_min_observations: int = 5
+    rule_learning_max_age_days: int = 30
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -73,6 +120,8 @@ class RuntimeConfig:
             raise ValueError(f"max_transient_retries must be >= 0, got {self.max_transient_retries}")
         if self.max_json_body_bytes < 0:
             raise ValueError(f"max_json_body_bytes must be >= 0, got {self.max_json_body_bytes}")
+        if self.watch_interval_seconds < 10:
+            raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
             self.research_directory = str(Path(self.state_directory) / "research")
 
@@ -127,4 +176,30 @@ class RuntimeConfig:
             not in ("0", "false", "no"),
             vault_ai_postprocess_enabled=os.getenv("MESH_VAULT_AI_POSTPROCESS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            watch_enabled=os.getenv("MESH_WATCH_ENABLED", "").lower() in ("1", "true", "yes"),
+            watch_interval_seconds=int(os.getenv("MESH_WATCH_INTERVAL_SECONDS", "60")),
+            watch_cooldown_seconds=int(os.getenv("MESH_WATCH_COOLDOWN_SECONDS", "300")),
+            watch_targets=_parse_watch_targets(os.getenv("MESH_WATCH_TARGETS")),
+            llm_escalation_enabled=os.getenv("MESH_LLM_ESCALATION_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_escalation_provider=os.getenv("MESH_LLM_ESCALATION_PROVIDER", "goose"),
+            llm_escalation_model=os.getenv("MESH_LLM_ESCALATION_MODEL") or None,
+            llm_escalation_timeout_seconds=int(os.getenv("MESH_LLM_ESCALATION_TIMEOUT_SECONDS", "30")),
+            correlation_enabled=os.getenv("MESH_CORRELATION_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            correlation_window_seconds=int(os.getenv("MESH_CORRELATION_WINDOW_SECONDS", "300")),
+            correlation_min_signals=int(os.getenv("MESH_CORRELATION_MIN_SIGNALS", "2")),
+            otel_receiver_enabled=os.getenv("MESH_OTEL_RECEIVER_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            otel_receiver_token=os.getenv("MESH_OTEL_RECEIVER_TOKEN") or None,
+            prometheus_url=os.getenv("MESH_PROMETHEUS_URL") or None,
+            prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
+            feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_decision_fallback_enabled=os.getenv("MESH_LLM_DECISION_FALLBACK_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            llm_decision_fallback_timeout_seconds=float(os.getenv("MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS", "30")),
+            rule_learning_enabled=os.getenv("MESH_RULE_LEARNING_ENABLED", "").lower() in ("1", "true", "yes"),
+            rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
+            rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
         )

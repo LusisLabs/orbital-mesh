@@ -73,6 +73,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
             return
+        if path == "/api/rules/suggestions":
+            # Layer 4 admin surface. Returns [] when rule_learning_enabled is
+            # off or not enough overrides have accumulated yet. Suggestions
+            # never auto-apply — operators review and paste approved rules
+            # into the policy file.
+            self._send_json({"suggestions": self.server.coordinator.list_rule_suggestions()})
+            return
         if path == "/api/scenarios":
             self._send_json({"scenarios": self.server.coordinator.list_scenarios()})
             return
@@ -138,6 +145,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload)
             return
+        if path == "/api/watch/status":
+            self._send_json(self.server.coordinator.watch_status())
+            return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
             return
@@ -186,6 +196,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         except (json.JSONDecodeError, ValueError):
             self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
             return
+        if parsed.path == "/api/watch/start":
+            self._send_json(self.server.coordinator.watch_start())
+            return
+        if parsed.path == "/api/watch/stop":
+            self._send_json(self.server.coordinator.watch_stop())
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
@@ -197,6 +213,15 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/v1/metrics":
+            if not self.server.config.otel_receiver_enabled:
+                self._send_json(
+                    {"error": "otlp receiver disabled"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._handle_otlp_metrics(payload)
             return
         if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/steer"):
             run_id = _safe_segment(parsed.path, 2)
@@ -214,6 +239,66 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(run)
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    # ---------------------------------------------------------------- OTLP receiver
+    def _handle_otlp_metrics(self, otlp_payload: dict[str, Any]) -> None:
+        """Accept an OTLP/HTTP JSON metrics payload and turn it into a Mesh run.
+
+        The OTLP spec is lenient about alert context — a sender can tag the metric
+        that tripped via a standard header so we don't have to guess. We accept
+        ``x-mesh-alert-context`` as a JSON blob carrying fields like ``metric_name``,
+        ``baseline_value``, ``threshold_pct``, and ``service`` that flow through to
+        the ingester's ``AlertContext``. Without it the ingester falls back to
+        heuristics (latency/error name matching).
+
+        Optional token auth: when ``MESH_OTEL_RECEIVER_TOKEN`` is set, every inbound
+        request must present a matching ``Authorization: Bearer <token>`` header.
+        This keeps the receiver usable on trusted networks without a reverse proxy.
+        """
+        expected_token = self.server.config.otel_receiver_token
+        if expected_token:
+            provided = self.headers.get("Authorization", "")
+            if provided != f"Bearer {expected_token}":
+                self._send_json({"error": "unauthorized"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+
+        alert_context: dict[str, Any] = {}
+        raw_alert_header = self.headers.get("x-mesh-alert-context") or self.headers.get("X-Mesh-Alert-Context")
+        if raw_alert_header:
+            try:
+                parsed_alert = json.loads(raw_alert_header)
+                if isinstance(parsed_alert, dict):
+                    alert_context = parsed_alert
+            except json.JSONDecodeError:
+                self._send_json(
+                    {"error": "invalid x-mesh-alert-context header"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+
+        create_payload: dict[str, Any] = {
+            "otlp_payload": otlp_payload,
+            "alert_context": alert_context,
+            "evaluation_mode": self.server.config.evaluation_mode,
+            "orchestration_mode": self.server.config.orchestration_mode,
+            "steering_mode": self.server.config.default_steering_mode,
+        }
+        try:
+            run = self.server.coordinator.create_run(create_payload)
+        except ValueError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        except Exception as exc:  # pragma: no cover - defensive; never swallow silently
+            _LOG.exception("OTLP metric ingestion failed: %s", exc)
+            self._send_json(
+                {"error": "otlp ingestion failed", "detail": str(exc)},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+            return
+        self._send_json(
+            {"status": "accepted", "run_id": run.get("run_id"), "scenario_key": run.get("scenario_key")},
+            status=HTTPStatus.ACCEPTED,
+        )
 
     # ---------------------------------------------------------------- logging
     def log_message(self, format: str, *args: Any) -> None:
@@ -390,9 +475,11 @@ def serve_forever(config: RuntimeConfig | None = None, start_sidecar: bool = Tru
     server = build_server(config)
     if start_sidecar:
         server.coordinator.ensure_sidecar()
+    server.coordinator.start_watch_daemon()
     try:
         server.serve_forever()
     finally:
+        server.coordinator.stop_watch_daemon()
         server.coordinator.sidecar.stop()
     return server
 
