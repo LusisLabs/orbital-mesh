@@ -29,7 +29,7 @@
     "source": {
       "type": "string",
       "description": "Which OTel ingest path produced this signal.",
-      "enum": ["otlp_push", "prometheus_pull", "otel_collector_alert"]
+      "enum": ["otlp_push", "prometheus_pull", "otel_collector_alert", "bare_metal_probe"]
     },
     "comparison_window": {
       "type": "object",

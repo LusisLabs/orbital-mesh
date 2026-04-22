@@ -126,6 +126,62 @@
       "confidence": 0.65,
       "risk_level": "low",
       "rollback_plan": "scale back to prior replica count once the traffic burst subsides"
+    },
+    {
+      "name": "restart on solana slot lag",
+      "$doc": "Fires when a Solana validator falls >128 slots (~50s) behind the reference cluster head. Slot lag this large usually means the process has stalled on disk I/O, GC, or a gossip partition; a rolling restart clears transient state. NOT an appropriate response if the validator is actively voting — operators should review `vote_in_progress` in related_context before approving. Risk level is medium so the approval gate fires by default.",
+      "match": {
+        "metric_name_pattern": "solana\\.slot_lag",
+        "direction": "increasing",
+        "resource_attributes": {
+          "mesh.node.kind": "solana",
+          "mesh.node.host": "*",
+          "mesh.node.service": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "restart_systemd_service",
+        "system": "systemd_service",
+        "action": "restart_systemd_service",
+        "parameters": {
+          "host": "{resource_attributes.mesh.node.host}",
+          "service": "{resource_attributes.mesh.node.service}"
+        }
+      },
+      "bounds": {
+        "cooldown_seconds": 900
+      },
+      "confidence": 0.7,
+      "risk_level": "medium",
+      "rollback_plan": "no rollback — the restart is the remediation; escalate if lag persists >5m after restart"
+    },
+    {
+      "name": "restart on geth peer starvation",
+      "$doc": "Fires when a geth/reth node is below the configured minimum peer count. Zero or very-low peers usually means the discovery service is stuck or the network interface has a routing issue; a restart re-seeds peer discovery. Also fires on reth via the shared `mesh.node.kind` attribute.",
+      "match": {
+        "metric_name_pattern": "geth\\.peer_count",
+        "direction": "decreasing",
+        "resource_attributes": {
+          "mesh.node.kind": "*",
+          "mesh.node.host": "*",
+          "mesh.node.service": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "restart_systemd_service",
+        "system": "systemd_service",
+        "action": "restart_systemd_service",
+        "parameters": {
+          "host": "{resource_attributes.mesh.node.host}",
+          "service": "{resource_attributes.mesh.node.service}"
+        }
+      },
+      "bounds": {
+        "cooldown_seconds": 600
+      },
+      "confidence": 0.72,
+      "risk_level": "medium",
+      "rollback_plan": "no rollback — if peers do not recover within 5 minutes, escalate to network team"
     }
   ]
 }

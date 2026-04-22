@@ -459,6 +459,95 @@ The decision stage handles OTel metric-regression signals through four composabl
 
 **Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
 
+## Bare-Metal Nodes (Solana, geth/reth, etc.)
+
+Mesh runs the full closed-loop — ingest → trigger → decision → execution → feedback — against bare-metal blockchain nodes, not just Kubernetes workloads. This is how Solana/Agave validators, geth archival nodes, reth, lighthouse, and similar long-running services are typically operated.
+
+### Architecture
+
+```
+Solana / geth / reth node (bare metal, systemd-managed)
+          │                                       ▲
+          │ JSON-RPC (getSlot, eth_syncing, ...)  │
+          │ Prometheus scrape                     │ ssh sudo systemctl ...
+          ▼                                       │
+  ┌────────────────────────┐          ┌──────────────────────┐
+  │ BareMetalNodeIngester  │─signal─▶ │ SystemdSshAdapter    │
+  │ (SolanaNodeIngester,   │          │  (mock/live gated by │
+  │  EthereumNodeIngester) │          │   safety envelope)   │
+  └────────────┬───────────┘          └──────────┬───────────┘
+               │                                 ▲
+               ▼                                 │
+         Mesh pipeline: Ingest → Trigger → Decision (4-layer engine)
+                                                 │
+                                                 └── policies/metric-actions.policy.json
+```
+
+### Safety envelope (non-negotiable)
+
+Bare-metal actuation has no Kubernetes safety net. The SSH adapter enforces four overlapping constraints — every real SSH command must pass all four:
+
+1. **Enable flag** — `MESH_SSH_EXECUTION_ENABLED=1`. Mock-by-default. Tests and CI run in mock mode.
+2. **Host allowlist** — `MESH_SSH_ALLOWED_HOSTS=vault-prod-07,vault-prod-08`. Empty allowlist rejects every SSH.
+3. **Service allowlist** — `MESH_SSH_ALLOWED_SERVICES=solana-validator.service,geth.service`. Prevents restarting `sshd` or `systemd-journald` by mistake.
+4. **Command allowlist** — hardcoded in `services/actuators/systemd_ssh.py`. Only `systemctl restart|start|stop|status` + diagnostic reads (`df`, `free`, `uptime`). No arbitrary commands, ever.
+
+### What the adapter does not do
+
+- **No arbitrary shell.** `ssh host bash -c ...` is not available. The remote command is assembled from the command allowlist only.
+- **No validator-specific operations.** Identity rotation, vote account changes, snapshot creation are out of scope — they carry data-loss risk and belong in a dedicated follow-up with stronger policy gates.
+- **No config file patching.** `systemctl daemon-reload` is not in the allowlist. Configuration changes go through your existing config-management tool.
+- **No credential handling.** SSH keys are managed by the host's SSH client; the adapter passes `-i` when `MESH_SSH_IDENTITY_FILE` is set but never reads or logs key material.
+
+### Signal ingest
+
+`services/ingest/bare_metal_node.py` builds Mesh signals from JSON-RPC:
+
+| Node type | Primary metric | Related metrics |
+|-----------|----------------|-----------------|
+| Solana (Agave) | `solana.slot_lag` — slots behind reference cluster head | `solana.delinquent` (vote account status) |
+| geth / reth | `geth.peer_count` (when < min) or `geth.block_lag` | `geth.syncing`, `geth.peer_count`, `geth.block_lag` |
+
+Each signal carries `mesh.node.host` and `mesh.node.service` in `resource_attributes` so the metric-action rule engine can route to the correct SSH target.
+
+### Starter rules
+
+Two bare-metal rules ship in `policies/metric-actions.policy.json`:
+
+| Rule | Fires on | Action | Risk |
+|------|----------|--------|------|
+| `restart on solana slot lag` | Validator > 128 slots behind | `restart_systemd_service` | medium (approval gate on) |
+| `restart on geth peer starvation` | geth/reth peer count below min | `restart_systemd_service` | medium |
+
+Both default to the approval gate — a validator restart during active voting can cost SOL, so a human signs off unless you've explicitly flipped the run to `interruptible_auto` and the operator has reviewed the context.
+
+### Setup
+
+```bash
+# 1. Add the operator's SSH key to each bare-metal host's authorized_keys
+#    The key must be able to `sudo systemctl restart <service>` without a password prompt
+#    (configure via /etc/sudoers.d with NOPASSWD for exactly these commands).
+
+# 2. Populate known_hosts on the Mesh host
+ssh-keyscan vault-prod-07 vault-prod-08 >> ~/.ssh/known_hosts
+
+# 3. Configure the safety envelope
+export MESH_SSH_EXECUTION_ENABLED=1
+export MESH_SSH_IDENTITY_FILE=/etc/mesh/id_ed25519
+export MESH_SSH_ALLOWED_HOSTS=vault-prod-07,vault-prod-08
+export MESH_SSH_ALLOWED_SERVICES=solana-validator.service,geth.service
+
+# 4. (Optional) Register node targets for the ingester
+export MESH_BARE_METAL_NODE_TARGETS='[
+  {"name":"vault-prod-07","kind":"solana","rpc_url":"http://127.0.0.1:8899","host":"vault-prod-07","service":"solana-validator.service"},
+  {"name":"eth-archival-02","kind":"geth","rpc_url":"http://127.0.0.1:8545","host":"eth-archival-02","service":"geth.service"}
+]'
+```
+
+### Path to an agent-based alternative
+
+SSH is the right first step because it reuses existing keypair infrastructure. An agent-based adapter (`SystemdAgentAdapter`) could land later without changing the decision or orchestrator layers — the adapter pattern keeps this swap contained.
+
 ## TUI
 
 The TUI remains available as a local terminal companion:
