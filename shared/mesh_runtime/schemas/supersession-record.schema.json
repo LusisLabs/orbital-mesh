@@ -1,0 +1,21 @@
+{
+  "$id": "https://mesh.local/contracts/supersession-record.schema.json",
+  "type": "object",
+  "required": [
+    "supersession_id",
+    "old_claim_id",
+    "new_claim_id",
+    "reason",
+    "created_at",
+    "created_by"
+  ],
+  "properties": {
+    "supersession_id": { "type": "string" },
+    "old_claim_id": { "type": "string" },
+    "new_claim_id": { "type": "string" },
+    "reason": { "type": "string" },
+    "created_at": { "type": "string" },
+    "created_by": { "type": "string" }
+  },
+  "additionalProperties": false
+}

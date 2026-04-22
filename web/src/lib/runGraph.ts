@@ -287,6 +287,7 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
     ["decision", "Decision", "#65a7ff"],
     ["evaluation", "Evaluation", "#f2b84b"],
     ["promptfoo_artifact", "Promptfoo Artifact", "#f2b84b"],
+    ["hermes_explanation", "Hermes Explanation", "#4aa8ff"],
     ["execution", "Execution", "#41d6b1"],
     ["goose_review", "Goose Review", "#57d5c8"],
     ["hermes_review", "Hermes Review", "#4aa8ff"],

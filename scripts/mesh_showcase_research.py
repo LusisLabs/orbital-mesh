@@ -285,7 +285,7 @@ def _write_insights_md(summaries: list[dict[str, Any]], out_dir: Path, modes_lab
             "",
             "---",
             "",
-            "*Extend with `python3 .cursor/skills/goose-autoresearch/scripts/run_minimax_research.py --session-dir "
+            "*Extend with `python3 services/skills/goose-autoresearch/scripts/run_minimax_research.py --session-dir "
             f"{out_dir.as_posix()}` (use `--minimax` on this script to chain automatically).*",
             "",
         ]
@@ -442,9 +442,9 @@ def main() -> None:
     print((out_dir / "synthesis" / "showcase-insights.md").as_posix())
 
     if args.minimax:
-        runner = REPO_ROOT / ".cursor/skills/goose-autoresearch/scripts/run_minimax_research.py"
+        runner = REPO_ROOT / "services/skills/goose-autoresearch/scripts/run_minimax_research.py"
         if not runner.is_file():
-            raise SystemExit("MiniMax runner not found; expected .cursor/skills/goose-autoresearch/scripts/run_minimax_research.py")
+            raise SystemExit("MiniMax runner not found; expected services/skills/goose-autoresearch/scripts/run_minimax_research.py")
         proc = subprocess.run(
             [sys.executable, str(runner), "--session-dir", str(out_dir)],
             cwd=REPO_ROOT,

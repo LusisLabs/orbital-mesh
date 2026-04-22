@@ -5,22 +5,40 @@ on:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  mesh-python:
+  python-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install linter
-        run: pip install ruff
-      - name: Lint Python
+      - name: Install ruff
+        run: pip install ruff==0.7.4
+      - name: Lint
         run: ruff check .
-      - name: Run Python tests
-        run: python3 -m unittest discover -s tests -v
 
-  mesh-web:
+  python-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run unit tests
+        run: python -W ignore::DeprecationWarning -m unittest discover -s tests -v
+      - name: Smoke-import RuntimeConfig
+        run: python -c "from shared.mesh_runtime import RuntimeConfig; print('RuntimeConfig OK on', RuntimeConfig.from_env().environment)"
+
+  web:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -33,10 +51,50 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
-      - name: Type check
-        run: npx tsc --noEmit
-      - run: npm run build
-      - run: npm test
+      - name: Lint
+        run: npm run lint
+      - name: Build
+        run: npm run build
+      - name: Test
+        run: npm test --silent
+
+  docker-build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    needs: [python-test]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t mesh-intelligence:ci .
+      - name: Healthcheck smoke test
+        run: |
+          set -euo pipefail
+          docker run -d --name mesh-ci \
+            -e MESH_SERVER_HOST=0.0.0.0 \
+            -e MESH_SERVER_PORT=8787 \
+            -e MESH_ENVIRONMENT=ci \
+            -e MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
+            -p 8787:8787 \
+            mesh-intelligence:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8787/api/health > /dev/null; then
+              echo "Server healthy after ${i}s"
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Server failed to become healthy in 30s"
+              docker logs mesh-ci || true
+              exit 1
+            fi
+            sleep 1
+          done
+          curl -sf http://localhost:8787/api/health | tee /dev/stderr | python3 -c "import sys, json; assert json.load(sys.stdin)['status'] == 'ok'"
+      - name: Capture container logs on failure
+        if: failure()
+        run: docker logs mesh-ci || true
+      - name: Stop container
+        if: always()
+        run: docker stop mesh-ci || true
 
   swarmclaw-typecheck:
     if: ${{ hashFiles('swarmclaw/package.json') != '' }}

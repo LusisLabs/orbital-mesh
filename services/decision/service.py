@@ -1,23 +1,4 @@
-"""Convert a validated trigger into one bounded remediation decision.
-
-The decision stage has three dispatch paths, one per trigger type:
-
-* ``feature_flag_performance_regression`` — original hand-coded branches.
-  Feature flag math, protected-scope checks, the full policy-heavy path.
-* ``kubernetes_deployment_unhealthy`` — hand-coded symptom matching on event
-  reasons and error signatures.
-* ``otel_metric_regression`` — the **declarative rule engine**. See
-  :mod:`shared.mesh_runtime.metric_action_rules` for the rule format. Rules
-  are matched against the incoming signal; when one matches we build a
-  ``Decision`` from the rule's ``propose`` block. On no match, we fall
-  through to ``escalate`` (a human needs to name the action), which is the
-  right default for a signal Mesh has not been taught to handle.
-
-The two hardcoded paths remain because they encode policy nuance (protected
-customer tiers, rollback counts) that isn't easy to express in a rule. The
-OTel path gets the declarative treatment because the metric surface is
-effectively unbounded — we can't ship a Python branch per metric.
-"""
+"""Convert a validated trigger into one bounded remediation decision."""
 
 from __future__ import annotations
 
@@ -25,34 +6,50 @@ from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
+from shared.mesh_runtime.review_blockers import classify_review_reasons
 
 if TYPE_CHECKING:
+    from services.decision.hypothesis_engine import HypothesisEngine
     from services.decision.llm_fallback import LlmActionProposer
+    from services.decision.llm_reasoning import EscalationReasoner
+    from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
+
+
+_LLM_ALLOWED_ACTIONS = frozenset({
+    "reduce_rollout",
+    "disable_flag",
+    "restart_deployment",
+    "rollback_deployment",
+    "no_action",
+})
 
 
 class DecisionService:
     def __init__(
         self,
         learning_store: LearningStore | None = None,
+        escalation_reasoner: EscalationReasoner | None = None,
+        hypothesis_engine: HypothesisEngine | None = None,
         metric_action_rules_path: str | None = None,
         llm_proposer: "LlmActionProposer | None" = None,
     ) -> None:
         self.learning_store = learning_store
-        # Rules load lazily on first access via the cached loader, so constructing
-        # DecisionService is still cheap. Passing an explicit path here is mostly
-        # for tests — production uses the default policy file.
+        self.escalation_reasoner = escalation_reasoner
+        self.hypothesis_engine = hypothesis_engine
+        # Layer 2: declarative rule matcher for OTel metric-regression signals.
+        # Load lazily through the cached loader so constructing DecisionService
+        # stays cheap for tests.
         self._metric_action_matcher: MetricActionMatcher = load_metric_action_rules(metric_action_rules_path)
-        # Optional Layer 3 fallback. When None, unmatched metrics escalate directly.
-        # Injecting the proposer (rather than building it inside DecisionService)
-        # keeps the service testable with mock LLMs and zero subprocess overhead.
+        # Layer 3: optional LLM fallback invoked only when no rule matched.
+        # Injected rather than constructed here so tests can pass a mock.
         self._llm_proposer = llm_proposer
 
-    def decide(self, trigger: Trigger) -> Decision:
+    def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         if trigger.trigger_type == "otel_metric_regression":
             return self._decide_otel_metric(trigger)
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._decide_kubernetes(trigger)
+            return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -66,12 +63,12 @@ class DecisionService:
         protected_tiers = set(load_policy("protected-scope.policy.json")["approval_required_customer_tiers"])
         protected_tier = trigger.segment["customer_tier"] in protected_tiers
         repeated_rollback = trigger.related_context.get("rollbacks_last_24h", 0) > 0
-        conflicting_signals = bool(trigger.related_context.get("conflicting_signals", False))
         high_business_impact = bool(trigger.related_context.get("high_business_impact", False))
         flag_causality_confidence = trigger.related_context.get("flag_causality_confidence")
         active_incidents = int(trigger.related_context.get("active_incidents", 0))
         similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
         trigger_signals = list(trigger.related_context.get("trigger_signals", []))
+        recovery_context = _recovery_context(trigger)
         feature_flag_credentials_available = bool(trigger.related_context.get("feature_flag_credentials_available", True))
         code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
         repo_path = trigger.related_context.get("repo_path")
@@ -96,10 +93,10 @@ class DecisionService:
             decision_type = "investigate_and_patch"
             confidence = 0.78
             risk_level = "medium"
-        elif conflicting_signals or high_business_impact:
+        elif high_business_impact:
             decision_type = "escalate"
             confidence = 0.64
-            risk_level = "high" if high_business_impact else "medium"
+            risk_level = "high"
         elif flag_causality_confidence is not None and float(flag_causality_confidence) <= 0.35 and timeout_rate < 0.02:
             decision_type = "no_action"
             confidence = 0.79
@@ -125,13 +122,26 @@ class DecisionService:
         historical_rate = None
         if self.learning_store is not None:
             historical_rate = self.learning_store.get_historical_success_rate(decision_type, trigger.service)
-        confidence = _adjust_confidence(
-            confidence,
+        confidence_factors = _build_confidence_factors(
+            base_confidence=confidence,
             similar_prior_cases=similar_prior_cases,
             flag_causality_confidence=flag_causality_confidence,
             trigger_signals=trigger_signals,
             historical_success_rate=historical_rate,
+            recovery_context=recovery_context,
         )
+        confidence = _confidence_from_factors(confidence_factors)
+
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
 
         autonomy_tier = "autonomous"
         if decision_type == "escalate":
@@ -139,7 +149,7 @@ class DecisionService:
         elif multi_service_impact or protected_tier or repeated_rollback:
             autonomy_tier = "approval_required"
 
-        target_rollout = 10 if trigger.current_rollout_pct >= 10 else 0
+        target_rollout = 10 if (trigger.current_rollout_pct or 0) >= 10 else 0
         execution_plan = _execution_plan(trigger, decision_type, target_rollout)
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
@@ -157,6 +167,8 @@ class DecisionService:
                     "similar_prior_cases": similar_prior_cases,
                     "active_incidents": active_incidents,
                     "flag_causality_confidence": flag_causality_confidence,
+                    "recovery_context": recovery_context,
+                    "confidence_factors": confidence_factors,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -175,40 +187,36 @@ class DecisionService:
             confidence=confidence,
             execution_plan=execution_plan,
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
         decision.validate()
         return decision
 
+    # ------------------------------------------------------------------ OTel
+
     def _decide_otel_metric(self, trigger: Trigger) -> Decision:
-        """Decide from an OTel metric regression trigger using the rule engine.
+        """Decide on an OTel metric-regression trigger.
 
-        We reconstruct a minimal signal-shaped dict from the trigger so the
-        matcher can run its standard evaluation. When a rule matches we stamp
-        its output onto a ``Decision``; when nothing matches we emit
-        ``escalate`` with the metric name in the reasoning so a human can add
-        a rule.
+        Order of precedence:
+        1. Declarative rule match (Layer 2)
+        2. LLM proposal from the bounded allowlist (Layer 3, if enabled)
+        3. Escalate with risk flags naming why neither matched
 
-        The fallthrough is deliberately conservative. Earlier designs returned
-        ``no_action`` here, but that silently absorbs unknown metrics — the
-        run finishes "successfully" with nothing done. ``escalate`` surfaces
-        the gap instead. Operators who want silent handling for specific
-        metrics can author a rule that proposes ``no_action``.
+        Keeping rule-match deterministic and short-circuiting before the LLM
+        runs means policy-authored rules always win over non-deterministic
+        proposals, which is the invariant that makes Layer 3 safe to enable.
         """
         signal_view = _build_signal_view_from_trigger(trigger)
         rule_match = self._metric_action_matcher.match(signal_view)
         if rule_match is not None:
             return self._decision_from_rule_match(trigger, rule_match)
 
-        # Layer 3: the LLM fallback runs only when:
-        #   - a proposer was injected at construction time
-        #   - no rule matched (we never short-circuit a deterministic rule)
-        # LLM failures fall through to escalate; the risk_flags from the
-        # proposer are attached to the escalation reasoning so the operator
-        # can distinguish "LLM rejected" from "no rules authored".
         llm_risk_flags: list[str] = []
         if self._llm_proposer is not None:
             llm_result = self._llm_proposer.propose(signal_view)
             if llm_result.match is not None:
-                return self._decision_from_rule_match(trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags)
+                return self._decision_from_rule_match(
+                    trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags
+                )
             llm_risk_flags = llm_result.risk_flags
 
         return self._escalate_for_unmatched_metric(trigger, llm_risk_flags=llm_risk_flags)
@@ -219,54 +227,24 @@ class DecisionService:
         rule_match: RuleMatch,
         llm_risk_flags: list[str] | None = None,
     ) -> Decision:
-        """Materialize a Decision from a matched rule.
-
-        Autonomy tier is derived from the rule's declared risk level. Low-risk
-        rules go straight to ``autonomous`` (the approval gate still gates the
-        run if the steering mode requires it — the decision stage only sets
-        the *floor*, the control plane sets the ceiling).
-
-        Confidence is also taken from the rule, then nudged by observed
-        priors: if the same service has seen this pattern before and the
-        remediation succeeded, we bump confidence slightly. This is the same
-        adjustment we apply to the feature-flag path.
-        """
+        """Materialize a Decision from a matched rule (rule engine or LLM)."""
         metric_regression = trigger.related_context.get("metric_regression", {})
         metric_name = metric_regression.get("metric_name", "unknown_metric")
         delta_pct = metric_regression.get("delta_pct")
-
         autonomy_tier = {
             "low": "autonomous",
             "medium": "approval_required",
             "high": "escalated",
         }.get(rule_match.risk_level, "approval_required")
 
-        historical_rate = None
-        if self.learning_store is not None:
-            historical_rate = self.learning_store.get_historical_success_rate(
-                rule_match.decision_type, trigger.service
-            )
-
-        similar_prior_cases = int(trigger.related_context.get("similar_prior_cases", 0))
-        confidence = _adjust_confidence(
-            rule_match.confidence,
-            similar_prior_cases=similar_prior_cases,
-            flag_causality_confidence=None,
-            trigger_signals=list(trigger.related_context.get("trigger_signals", [])),
-            historical_success_rate=historical_rate,
-        )
-
-        evidence: list[str] = [
-            f"rule {rule_match.rule_name!r} matched metric {metric_name!r}",
-        ]
+        evidence: list[str] = [f"rule {rule_match.rule_name!r} matched metric {metric_name!r}"]
         if delta_pct is not None:
             evidence.append(f"observed delta {delta_pct:.1f}% vs baseline")
         if rule_match.matched_on.get("resource_attributes"):
-            attrs_summary = ", ".join(f"{k}={v}" for k, v in rule_match.matched_on["resource_attributes"].items())
+            attrs_summary = ", ".join(
+                f"{k}={v}" for k, v in rule_match.matched_on["resource_attributes"].items()
+            )
             evidence.append(f"resource attributes: {attrs_summary}")
-        # When the match came from the LLM fallback, surface the risk flags in
-        # the evidence so a reviewer sees "llm_bound_clamped" (or similar) at
-        # the decision step rather than having to trace through logs.
         if llm_risk_flags:
             evidence.append(f"llm fallback risk flags: {', '.join(llm_risk_flags)}")
 
@@ -276,20 +254,19 @@ class DecisionService:
             decision_type=rule_match.decision_type,
             autonomy_tier=autonomy_tier,
             summary=(
-                f"Apply {rule_match.action} on {trigger.service} because rule {rule_match.rule_name!r} "
-                f"matched metric {metric_name}."
+                f"Apply {rule_match.action} on {trigger.service} because rule "
+                f"{rule_match.rule_name!r} matched metric {metric_name}."
             ),
             reasoning={
                 "primary_hypothesis": (
-                    f"{metric_name} regressed on {trigger.service}; rule {rule_match.rule_name!r} "
-                    f"proposes {rule_match.decision_type}."
+                    f"{metric_name} regressed on {trigger.service}; rule "
+                    f"{rule_match.rule_name!r} proposes {rule_match.decision_type}."
                 ),
                 "evidence": evidence,
                 "evidence_pack": {
                     "matched_rule": rule_match.rule_name,
                     "matched_on": rule_match.matched_on,
                     "metric_regression": metric_regression,
-                    "related_metrics": trigger.related_context.get("related_metrics", []),
                     "bounds": rule_match.bounds,
                 },
                 "alternatives_considered": [
@@ -307,10 +284,14 @@ class DecisionService:
             },
             risk={
                 "level": rule_match.risk_level,
-                "blast_radius": _metric_blast_radius(rule_match),
+                "blast_radius": (
+                    "single_deployment"
+                    if rule_match.system == "kubernetes_service"
+                    else "service_level"
+                ),
                 "customer_impact_if_wrong": _customer_impact_if_wrong(rule_match.decision_type),
             },
-            confidence=confidence,
+            confidence=rule_match.confidence,
             execution_plan={
                 "system": rule_match.system,
                 "action": rule_match.action,
@@ -326,18 +307,7 @@ class DecisionService:
         trigger: Trigger,
         llm_risk_flags: list[str] | None = None,
     ) -> Decision:
-        """Fall-through when no rule matched and (if enabled) the LLM declined.
-
-        This is the honest response to "Mesh has never been taught what to do
-        when metric X regresses". We open an incident and name the metric so a
-        human can either act manually or author a rule for next time.
-
-        When the LLM fallback was consulted and also failed, we attach its
-        risk flags to the escalation reasoning. That distinction matters for
-        operators triaging coverage gaps — "LLM timed out" is an infrastructure
-        issue to fix, while "LLM said no action applies" is a real gap that
-        deserves a new rule.
-        """
+        """Escalation path when no rule and no LLM proposal succeeded."""
         metric_regression = trigger.related_context.get("metric_regression", {})
         metric_name = metric_regression.get("metric_name", "unknown_metric")
         evidence = [
@@ -345,7 +315,7 @@ class DecisionService:
             f"delta {metric_regression.get('delta_pct')}%",
         ]
         if llm_risk_flags:
-            evidence.append(f"llm fallback did not produce a usable proposal: {', '.join(llm_risk_flags)}")
+            evidence.append(f"llm fallback: {', '.join(llm_risk_flags)}")
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
             trigger_id=trigger.trigger_id,
@@ -357,13 +327,12 @@ class DecisionService:
             ),
             reasoning={
                 "primary_hypothesis": (
-                    f"Metric {metric_name} on {trigger.service} crossed its threshold, but no rule in the "
-                    "metric-action catalog knows how to act on it."
+                    f"Metric {metric_name} on {trigger.service} crossed its threshold, but no "
+                    "rule knows how to act on it."
                 ),
                 "evidence": evidence,
                 "evidence_pack": {
                     "metric_regression": metric_regression,
-                    "related_metrics": trigger.related_context.get("related_metrics", []),
                     "available_rules": [rule.name for rule in self._metric_action_matcher.rules],
                     "llm_risk_flags": llm_risk_flags or [],
                 },
@@ -397,13 +366,13 @@ class DecisionService:
                     "severity": "medium",
                     "reason": f"metric {metric_name} regressed with no matching rule",
                 },
-                "rollback_plan": "close the incident if the operator determines no action is needed",
+                "rollback_plan": "close the incident if no action is warranted",
             },
         )
         decision.validate()
         return decision
 
-    def _decide_kubernetes(self, trigger: Trigger) -> Decision:
+    def _decide_kubernetes(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         event_reasons = list(trigger.related_context.get("event_reasons", []))
         rollout_status = str(trigger.related_context.get("rollout_status", "degraded"))
@@ -419,6 +388,17 @@ class DecisionService:
         test_commands = list(trigger.related_context.get("test_commands", []))
         patch_template = trigger.related_context.get("patch_template")
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
+        recovery_context = _recovery_context(trigger)
+
+        # Generate falsifiable hypotheses early. The top hypothesis is surfaced in
+        # the decision reasoning and can upgrade the escalate fallback — but it
+        # cannot override concrete rule matches (guardrails intact).
+        hypotheses = []
+        if self.hypothesis_engine is not None:
+            try:
+                hypotheses = [h.to_dict() for h in self.hypothesis_engine.generate(trigger)]
+            except Exception:
+                hypotheses = []
 
         if (
             code_remediation_candidate
@@ -453,6 +433,49 @@ class DecisionService:
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
 
+        # Hypothesis-driven bias: if rule fell through to escalate *and* the top
+        # hypothesis has high posterior confidence + concrete action, upgrade it.
+        hypothesis_upgrade = False
+        if decision_type == "escalate" and hypotheses:
+            top = hypotheses[0]
+            allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
+            if (
+                top.get("posterior_confidence", 0.0) >= 0.55
+                and top.get("recommended_action") in allowed_upgrades
+            ):
+                decision_type = top["recommended_action"]
+                confidence = min(top["posterior_confidence"], 0.82)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+                hypothesis_upgrade = True
+
+        if self.escalation_reasoner and (decision_type == "escalate" or confidence < 0.65):
+            reasoning = self.escalation_reasoner.reason(trigger)
+            if (
+                reasoning.confidence > confidence
+                and reasoning.suggested_action != "escalate"
+                and reasoning.suggested_action in _LLM_ALLOWED_ACTIONS
+            ):
+                decision_type = reasoning.suggested_action
+                confidence = min(reasoning.confidence, 0.85)
+                risk_level = "medium"
+                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                blast_radius = "single_deployment"
+
+        correlation = trigger.related_context.get("correlation", {})
+        if correlation.get("type") in ("blast_wave", "cascading"):
+            autonomy_tier = "approval_required"
+        confidence_factors = _build_confidence_factors(
+            base_confidence=confidence,
+            similar_prior_cases=int(recovery_context.get("related_run_count", 0) or 0),
+            flag_causality_confidence=correlation.get("correlation_confidence"),
+            trigger_signals=error_signatures,
+            historical_success_rate=None,
+            recovery_context=recovery_context,
+        )
+        confidence = _confidence_from_factors(confidence_factors)
+
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
             trigger_id=trigger.trigger_id,
@@ -475,6 +498,10 @@ class DecisionService:
                     "cluster": cluster,
                     "namespace": namespace,
                     "deployment_name": deployment_name,
+                    "recovery_context": recovery_context,
+                    "confidence_factors": confidence_factors,
+                    "hypotheses": hypotheses,
+                    "hypothesis_upgrade_applied": hypothesis_upgrade,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -493,17 +520,75 @@ class DecisionService:
             confidence=confidence,
             execution_plan=_execution_plan(trigger, decision_type, 0),
         )
+        decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, 0)
         decision.validate()
         return decision
 
 
-def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
-    """Reconstruct the signal-shaped view the rule matcher expects.
+def _apply_scenario_analysis(
+    decision: Decision,
+    trigger: Trigger,
+    scenario_analysis: "ScenarioAnalysis | dict | None",
+    target_rollout: int,
+) -> Decision:
+    if scenario_analysis is None:
+        return decision
+    analysis = scenario_analysis.to_dict() if hasattr(scenario_analysis, "to_dict") else dict(scenario_analysis)
+    review_reasons = list(analysis.get("required_review_reasons") or [])
+    suggested = analysis.get("suggested_decision_type")
+    autonomy_hint = analysis.get("autonomy_tier_hint")
+    confidence = float(analysis.get("confidence", decision.confidence) or decision.confidence)
+    risk_level = analysis.get("risk_level")
+    review_analysis = classify_review_reasons(review_reasons)
 
-    The trigger carries everything we need — we just reshape it so the
-    matcher doesn't have to know about the Trigger model. Keeping the two
-    decoupled means the matcher is easy to test directly with signal
-    fixtures.
+    if (
+        review_reasons
+        and suggested == "escalate"
+        and (review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"])
+    ):
+        decision.decision_type = "escalate"
+        decision.summary = _summary(trigger, "escalate", target_rollout)
+        decision.execution_plan = _execution_plan(trigger, "escalate", target_rollout)
+        decision.risk["customer_impact_if_wrong"] = _customer_impact_if_wrong("escalate")
+
+    if autonomy_hint in {"approval_required", "escalated"}:
+        decision.autonomy_tier = str(autonomy_hint)
+    elif review_reasons and decision.autonomy_tier == "autonomous":
+        decision.autonomy_tier = "approval_required"
+
+    if risk_level in {"medium", "high"}:
+        current = str(decision.risk.get("level", "medium"))
+        if current == "low" or risk_level == "high":
+            decision.risk["level"] = risk_level
+
+    if review_analysis["terminal_review_reasons"] or review_analysis["unclassified_review_reasons"]:
+        decision.confidence = min(decision.confidence, confidence, 0.74)
+    else:
+        decision.confidence = min(max(decision.confidence, confidence), 0.95)
+
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["scenario_analysis"] = {
+        "analysis_id": analysis.get("analysis_id"),
+        "suggested_decision_type": suggested,
+        "autonomy_tier_hint": autonomy_hint,
+        "required_review_reasons": review_reasons,
+        "review_classification": review_analysis,
+        "evidence_refs": list(analysis.get("evidence_refs") or []),
+        "merkle_root": analysis.get("merkle_root"),
+    }
+    if review_reasons:
+        decision.reasoning.setdefault("evidence", []).append(
+            "scenario analysis requires review: " + "; ".join(review_reasons)
+        )
+    return decision
+
+
+def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
+    """Reshape a Trigger into the signal-shaped dict the rule matcher expects.
+
+    The matcher is deliberately decoupled from the Trigger model so it can be
+    unit-tested with plain dicts. Keeping this translation in one place means
+    the rule engine's inputs stay stable when trigger internals change.
     """
     return {
         "service": trigger.service,
@@ -513,21 +598,6 @@ def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
         "resource_attributes": trigger.related_context.get("resource_attributes", {}),
         "related_metrics": trigger.related_context.get("related_metrics", []),
     }
-
-
-def _metric_blast_radius(rule_match: RuleMatch) -> str:
-    """Name the scope of a metric-action decision for the risk block.
-
-    Distinguishing "single deployment" from "cluster wide" in the decision
-    reasoning helps reviewers spot rules that were scoped too broadly. The
-    naming is intentionally coarse — the exact blast radius is implicit in
-    the bounds.
-    """
-    if rule_match.system == "kubernetes_service":
-        return "single_deployment"
-    if rule_match.system == "feature_flag_service":
-        return "single_flag"
-    return "service_level"
 
 
 def _delta_pct(baseline: float, observed: float) -> float:
@@ -567,6 +637,80 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
                 "deployment_name": trigger.related_context.get("deployment_name"),
             },
             "rollback_plan": "rollback deployment to the previous stable revision if restart does not restore readiness",
+        }
+    if decision_type == "restart_pod":
+        return {
+            "system": "kubernetes_service",
+            "action": "restart_pod",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "pod_name": trigger.related_context.get("pod_name"),
+            },
+            "rollback_plan": (
+                "if recreated pod remains unhealthy, restart the owning deployment or rollback"
+            ),
+        }
+    if decision_type == "scale_deployment":
+        return {
+            "system": "kubernetes_service",
+            "action": "scale_deployment",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "replicas": trigger.related_context.get("target_replicas") or trigger.related_context.get("replicas"),
+            },
+            "rollback_plan": (
+                f"scale back to previous replica count "
+                f"{trigger.related_context.get('previous_replicas', 'unknown')} if scaling does not restore health"
+            ),
+        }
+    if decision_type == "cordon_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "cordon_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+            },
+            "rollback_plan": "kubectl uncordon the node once underlying hardware issue is resolved",
+        }
+    if decision_type == "drain_node":
+        return {
+            "system": "kubernetes_service",
+            "action": "drain_node",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "node_name": trigger.related_context.get("node_name"),
+                "grace_period_seconds": int(trigger.related_context.get("grace_period_seconds", 60)),
+            },
+            "rollback_plan": "kubectl uncordon the node; pods will reschedule naturally",
+        }
+    if decision_type == "argocd_sync":
+        return {
+            "system": "argocd_service",
+            "action": "sync_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "revision": trigger.related_context.get("argocd_revision"),
+                "prune": bool(trigger.related_context.get("argocd_prune", False)),
+            },
+            "rollback_plan": "argocd rollback application to the previous synced revision if sync destabilizes the deployment",
+        }
+    if decision_type == "argocd_rollback":
+        return {
+            "system": "argocd_service",
+            "action": "rollback_application",
+            "parameters": {
+                "application": trigger.related_context.get("argocd_application"),
+                "target_revision": trigger.related_context.get("argocd_target_revision"),
+            },
+            "rollback_plan": "re-sync the application to the original revision once the underlying defect is fixed",
         }
     if decision_type == "investigate_and_patch":
         patch_template = trigger.related_context.get("patch_template", {})
@@ -649,6 +793,37 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"Restart Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
             f"{trigger.related_context.get('namespace', 'default')} to clear the unhealthy rollout state."
         )
+    if decision_type == "restart_pod":
+        return (
+            f"Restart pod {trigger.related_context.get('pod_name', 'unknown')} in "
+            f"{trigger.related_context.get('namespace', 'default')} to recover from a single-pod failure."
+        )
+    if decision_type == "scale_deployment":
+        return (
+            f"Scale Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} "
+            f"to {trigger.related_context.get('target_replicas', trigger.related_context.get('replicas', '?'))} replicas "
+            f"to relieve capacity pressure."
+        )
+    if decision_type == "cordon_node":
+        return (
+            f"Cordon node {trigger.related_context.get('node_name', 'unknown')} to prevent new pod scheduling "
+            f"while the underlying issue is diagnosed."
+        )
+    if decision_type == "drain_node":
+        return (
+            f"Drain node {trigger.related_context.get('node_name', 'unknown')} to safely evacuate workloads "
+            f"before maintenance or hardware replacement."
+        )
+    if decision_type == "argocd_sync":
+        return (
+            f"Trigger ArgoCD sync for application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to reconcile the live cluster state."
+        )
+    if decision_type == "argocd_rollback":
+        return (
+            f"Rollback ArgoCD application "
+            f"{trigger.related_context.get('argocd_application', 'unknown')} to a prior revision."
+        )
     if decision_type == "investigate_and_patch":
         return (
             f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
@@ -724,39 +899,71 @@ def _alternatives(decision_type: str) -> list[str]:
 def _customer_impact_if_wrong(decision_type: str) -> str:
     if decision_type in {"rollback_deployment", "restart_deployment"}:
         return "temporary deployment churn or additional recovery time"
+    if decision_type == "restart_pod":
+        return "brief request loss for one pod's share of traffic"
+    if decision_type == "scale_deployment":
+        return "transient capacity shift; over/under-scaling may amplify latency or cost"
+    if decision_type == "cordon_node":
+        return "new pods won't schedule on this node until uncordoned"
+    if decision_type == "drain_node":
+        return "workloads briefly reschedule elsewhere; capacity pressure if cluster is tight"
+    if decision_type in {"argocd_sync", "argocd_rollback"}:
+        return "temporary Argo-managed state drift during reconciliation"
     if decision_type == "investigate_and_patch":
         return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":
         return "temporary feature unavailability"
     if decision_type == "reduce_rollout":
         return "temporary feature degradation"
-    if decision_type == "scale_deployment":
-        return "temporary cluster cost increase or capacity pressure if the scaling was unnecessary"
-    if decision_type == "patch_resources":
-        return "temporary pod restarts and potentially wasted resources if the limits were misjudged"
     if decision_type == "escalate":
         return "continued customer impact until a human operator intervenes"
     return "continued regression exposure"
 
 
-def _adjust_confidence(
-    base_confidence: float,
+def _build_confidence_factors(
     *,
+    base_confidence: float,
     similar_prior_cases: int,
     flag_causality_confidence: float | None,
     trigger_signals: list[str],
     historical_success_rate: float | None = None,
-) -> float:
-    adjusted = base_confidence
+    recovery_context: dict[str, object] | None = None,
+) -> dict[str, float]:
+    factors: dict[str, float] = {"base_confidence": round(base_confidence, 2)}
     if similar_prior_cases > 0:
-        adjusted += min(similar_prior_cases, 3) * 0.01
+        factors["similar_prior_cases"] = round(min(similar_prior_cases, 3) * 0.01, 2)
     if flag_causality_confidence is not None:
-        adjusted += max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1
+        factors["flag_causality_confidence"] = round(
+            max(min(float(flag_causality_confidence) - 0.5, 0.2), -0.2) * 0.1,
+            2,
+        )
     if len(trigger_signals) >= 2:
-        adjusted += 0.01
+        factors["trigger_signal_consensus"] = 0.01
     if historical_success_rate is not None:
         if historical_success_rate >= 0.8:
-            adjusted += 0.02
+            factors["historical_success_rate"] = 0.02
         elif historical_success_rate < 0.4:
-            adjusted -= 0.03
-    return max(0.5, min(round(adjusted, 2), 0.95))
+            factors["historical_success_rate"] = -0.03
+    recovery = recovery_context or {}
+    corroborating_evidence_count = int(recovery.get("corroborating_evidence_count", 0) or 0)
+    active_memory_count = int(recovery.get("active_memory_count", 0) or 0)
+    similar_incident_count = int(recovery.get("similar_incident_count", 0) or 0)
+    related_run_count = int(recovery.get("related_run_count", 0) or 0)
+    if corroborating_evidence_count > 0:
+        factors["corroborating_recovery_evidence"] = round(min(corroborating_evidence_count, 4) * 0.015, 2)
+    if active_memory_count > 0:
+        factors["active_memory_support"] = round(min(active_memory_count, 3) * 0.01, 2)
+    if similar_incident_count > 0:
+        factors["similar_incident_support"] = round(min(similar_incident_count, 3) * 0.01, 2)
+    if related_run_count > 0:
+        factors["related_run_support"] = round(min(related_run_count, 4) * 0.005, 2)
+    return factors
+
+
+def _confidence_from_factors(factors: dict[str, float]) -> float:
+    return max(0.5, min(round(sum(float(value) for value in factors.values()), 2), 0.95))
+
+
+def _recovery_context(trigger: Trigger) -> dict[str, object]:
+    raw = trigger.related_context.get("recovery_context")
+    return dict(raw) if isinstance(raw, dict) else {}

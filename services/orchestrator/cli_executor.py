@@ -78,10 +78,37 @@ def main() -> None:
     elif execution_plan["system"] == "incident_service":
         result = incidents.open_incident(execution_plan["parameters"])
     elif execution_plan["system"] == "kubernetes_service":
-        if execution_plan["action"] == "rollback_deployment":
+        action = execution_plan["action"]
+        if action == "rollback_deployment":
             result = kubernetes.rollback_deployment(execution_plan["parameters"])
+        elif action == "restart_pod":
+            result = kubernetes.restart_pod(execution_plan["parameters"])
+        elif action == "scale_deployment":
+            result = kubernetes.scale_deployment(execution_plan["parameters"])
+        elif action == "cordon_node":
+            result = kubernetes.cordon_node(execution_plan["parameters"])
+        elif action == "drain_node":
+            result = kubernetes.drain_node(execution_plan["parameters"])
         else:
             result = kubernetes.restart_deployment(execution_plan["parameters"])
+    elif execution_plan["system"] == "argocd_service":
+        from services.actuators.argocd import ArgoCDAdapter
+        from shared.mesh_runtime import RuntimeConfig as _RC
+        _cfg = _RC.from_env()
+        argocd = ArgoCDAdapter(
+            url=_cfg.argocd_url,
+            token=_cfg.argocd_token,
+            ca_bundle=_cfg.argocd_ca_bundle,
+            timeout_seconds=_cfg.argocd_timeout_seconds,
+        )
+        action = execution_plan["action"]
+        if action == "sync_application":
+            result = argocd.sync_application(execution_plan["parameters"])
+        elif action == "rollback_application":
+            result = argocd.rollback_application(execution_plan["parameters"])
+        else:
+            result = {"status": "failed", "failure": {"reason": "unknown_argocd_action", "detail": action},
+                      "external_refs": {}}
     elif execution_plan["system"] == "repo_patch_service":
         result = repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
     else:

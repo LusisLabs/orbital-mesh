@@ -7,6 +7,14 @@ name = "mesh-intelligence"
 version = "0.1.0"
 description = "Python multi-service closed-loop platform scaffold"
 requires-python = ">=3.11"
+dependencies = [
+  "deepagents",
+  "langchain-openai>=1.0.0,<2.0.0",
+  "psycopg[binary]>=3.2,<4",
+]
+
+[tool.uv.sources]
+deepagents = { path = "deepagents/libs/deepagents", editable = true }
 
 [tool.setuptools]
 packages = [
@@ -29,8 +37,10 @@ exclude = [
   ".cursor",
   ".hermes-local",
   ".mesh-runtime-state",
+  "deepagents",
   "docs",
-  "scaffold",
+  "latent-mesh",
+  "plugins",
 ]
 
 [tool.ruff.lint]

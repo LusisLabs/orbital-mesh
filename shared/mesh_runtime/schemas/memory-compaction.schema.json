@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/memory-compaction.schema.json",
+  "title": "MemoryCompactionRecord",
+  "type": "object",
+  "required": [
+    "compaction_id",
+    "run_id",
+    "service",
+    "created_at",
+    "active_facts",
+    "suppressed_facts",
+    "source_event_ids"
+  ],
+  "properties": {
+    "compaction_id": { "type": "string" },
+    "run_id": { "type": ["string", "null"] },
+    "service": { "type": "string" },
+    "created_at": { "type": "string" },
+    "active_facts": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "suppressed_facts": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "source_event_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "merkle_root": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

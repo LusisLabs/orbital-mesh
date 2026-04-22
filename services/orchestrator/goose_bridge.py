@@ -27,10 +27,6 @@ GOOSE_CODE_PATCH_SYSTEM_PROMPT = (
 )
 
 
-def _goose_run_timeout_seconds() -> float:
-    return float(os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS", "60"))
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Mesh Intelligence Goose bridge")
     parser.add_argument("--goose-bin", required=True, help="Path to the goose binary")
@@ -200,7 +196,14 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
 
 
 def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
-    payload, error = _run_goose_prompt(args, prompt, GOOSE_SYSTEM_PROMPT)
+    return _run_goose_review_cli(args, prompt, system_prompt=GOOSE_SYSTEM_PROMPT)
+
+
+def _run_goose_review_cli(
+    args: argparse.Namespace, prompt: str, *, system_prompt: str
+) -> dict[str, object]:
+    """Run Goose once and parse approval JSON (shared by incident review and execution review)."""
+    payload, error = _run_goose_prompt(args, prompt, system_prompt)
     if payload is None:
         return error or {
             "approved": False,
@@ -349,6 +352,9 @@ def _profiles_for_prompt(args: argparse.Namespace) -> list[tuple[str | None, str
 
 
 def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
+    explicit = (os.getenv("MESH_GOOSE_RUN_TIMEOUT_SECONDS") or "").strip()
+    if explicit:
+        return int(float(explicit))
     if is_fallback:
         return int(os.getenv("GOOSE_FALLBACK_TIMEOUT_SECONDS", "90"))
     if provider == "ollama":
@@ -357,12 +363,7 @@ def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
 
 
 def _command_env(provider: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    if provider == "openai" and env.get("OPENAI_BASE_URL") and not env.get("OPENAI_HOST"):
-        env["OPENAI_HOST"] = env["OPENAI_BASE_URL"]
-    if provider == "anthropic" and env.get("ANTHROPIC_BASE_URL") and not env.get("ANTHROPIC_HOST"):
-        env["ANTHROPIC_HOST"] = env["ANTHROPIC_BASE_URL"]
-    return env
+    return os.environ.copy()
 
 
 def _parse_review_text(text: str) -> dict[str, object]:

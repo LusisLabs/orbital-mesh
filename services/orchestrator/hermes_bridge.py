@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -26,6 +27,24 @@ HERMES_CODE_PATCH_SYSTEM_PROMPT = (
     '"patch": {"target_file": string, "find": string, "replace": string}, "test_commands": string[]}. '
     "Do not include markdown."
 )
+HERMES_EXPLAIN_SYSTEM_PROMPT = (
+    "Reply with only compact JSON matching this shape: "
+    '{"approved": false, "summary": string, "risk_flags": string[], "next_action": string, '
+    '"recommendation": string, "operator_actions": string[], '
+    '"assistant_reply": string, "proposed_command": string | null, "proposed_payload": object | null}. '
+    "When you have a concrete operator move, set proposed_command to override_decision or "
+    "override_execution_parameters and make proposed_payload match that steering command exactly. "
+    "Explain why execution is blocked in plain operational terms. Do not include markdown."
+)
+
+
+def _hermes_chat_timeout_seconds() -> float:
+    raw = (
+        os.getenv("MESH_HERMES_RUN_TIMEOUT_SECONDS")
+        or os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS")
+        or "180"
+    )
+    return float(raw)
 
 
 def main() -> None:
@@ -99,6 +118,27 @@ def main() -> None:
         )
         sys.stdout.write("\n")
         log_runtime_event("hermes_bridge_incident_completed", review=review)
+        return
+
+    if mode == "explain":
+        explanation = _explain_blockers(args, decision, payload.get("evaluation", {}), payload.get("blocking_reasons", []))
+        json.dump(explanation, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        log_runtime_event("hermes_bridge_explanation_completed", explanation=explanation)
+        return
+
+    if mode == "chat_blockers":
+        chat = _chat_blockers(
+            args,
+            decision,
+            payload.get("evaluation", {}),
+            payload.get("blocking_reasons", []),
+            payload.get("history", []),
+            str(payload.get("user_message", "")).strip(),
+        )
+        json.dump(chat, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        log_runtime_event("hermes_bridge_blocker_chat_completed", chat=chat)
         return
 
     review = _review_execution(args, payload["idempotency_key"], decision)
@@ -191,7 +231,7 @@ def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=_hermes_chat_timeout_seconds(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -242,7 +282,7 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
             capture_output=True,
             text=True,
             check=False,
-            timeout=60,
+            timeout=_hermes_chat_timeout_seconds(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -267,6 +307,211 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
             "next_action": "human_review",
         }
     return _parse_review_text(text)
+
+
+def _explain_blockers(
+    args: argparse.Namespace,
+    decision: Decision,
+    evaluation: object,
+    blocking_reasons: object,
+) -> dict[str, object]:
+    prompt = (
+        "Explain this blocked control-plane evaluation for an operator.\n\n"
+        f"Decision: {json.dumps(decision.to_dict(), sort_keys=True, separators=(',', ':'))}\n"
+        f"Evaluation: {json.dumps(evaluation, sort_keys=True, default=str, separators=(',', ':'))}\n"
+        f"Blocking reasons: {json.dumps(blocking_reasons, sort_keys=True, default=str, separators=(',', ':'))}"
+    )
+    command = _resolve_command(args) + [
+        "chat",
+        "-q",
+        f"{HERMES_EXPLAIN_SYSTEM_PROMPT}\n\n{prompt}",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=MESH_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_hermes_chat_timeout_seconds(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "approved": False,
+            "summary": f"hermes subprocess failed: {exc}",
+            "risk_flags": ["subprocess_error"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+        }
+    if completed.returncode != 0:
+        return {
+            "approved": False,
+            "summary": completed.stderr.strip() or completed.stdout.strip() or "hermes chat failed",
+            "risk_flags": ["cli_error"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+        }
+    text = _assistant_text(completed.stdout)
+    if not text:
+        return {
+            "approved": False,
+            "summary": "hermes did not return assistant text",
+            "risk_flags": ["empty_response"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+        }
+    try:
+        parsed = _parse_json_like_review(text)
+    except json.JSONDecodeError:
+        return {
+            "approved": False,
+            "summary": _clean_assistant_text(text) or "hermes explanation did not return valid JSON",
+            "risk_flags": ["invalid_json"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+        }
+    operator_actions = parsed.get("operator_actions") or []
+    if not isinstance(operator_actions, list):
+        operator_actions = [str(operator_actions)]
+    risk_flags = parsed.get("risk_flags") or []
+    if not isinstance(risk_flags, list):
+        risk_flags = [str(risk_flags)]
+    return {
+        "approved": False,
+        "summary": str(parsed.get("summary", "evaluation is blocked")).strip(),
+        "assistant_reply": str(parsed.get("assistant_reply", parsed.get("summary", "evaluation is blocked"))).strip(),
+        "risk_flags": [str(item) for item in risk_flags],
+        "next_action": str(parsed.get("next_action", "human_review")).strip() or "human_review",
+        "recommendation": str(parsed.get("recommendation", _evaluation_recommendation(evaluation))).strip()
+        or _evaluation_recommendation(evaluation),
+        "operator_actions": [str(item) for item in operator_actions] or ["fix_blockers_or_override"],
+        "proposed_command": _optional_string(parsed.get("proposed_command")),
+        "proposed_payload": parsed.get("proposed_payload") if isinstance(parsed.get("proposed_payload"), dict) else None,
+        "raw_text": _clean_assistant_text(text),
+    }
+
+
+def _chat_blockers(
+    args: argparse.Namespace,
+    decision: Decision,
+    evaluation: object,
+    blocking_reasons: object,
+    history: object,
+    user_message: str,
+) -> dict[str, object]:
+    if not user_message:
+        return {
+            "approved": False,
+            "summary": "chat message is required",
+            "assistant_reply": "chat message is required",
+            "risk_flags": ["invalid_request"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+    prompt = (
+        "Continue this blocked-evaluation operator conversation. "
+        "Answer the user's latest question, keep the response operational, and propose a concrete override only if warranted.\n\n"
+        f"Decision: {json.dumps(decision.to_dict(), sort_keys=True, separators=(',', ':'))}\n"
+        f"Evaluation: {json.dumps(evaluation, sort_keys=True, default=str, separators=(',', ':'))}\n"
+        f"Blocking reasons: {json.dumps(blocking_reasons, sort_keys=True, default=str, separators=(',', ':'))}\n"
+        f"Conversation history: {json.dumps(history, sort_keys=True, default=str, separators=(',', ':'))}\n"
+        f"Latest user message: {json.dumps(user_message)}"
+    )
+    command = _resolve_command(args) + [
+        "chat",
+        "-q",
+        f"{HERMES_EXPLAIN_SYSTEM_PROMPT}\n\n{prompt}",
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=MESH_ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=_hermes_chat_timeout_seconds(),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "approved": False,
+            "summary": f"hermes subprocess failed: {exc}",
+            "assistant_reply": f"hermes subprocess failed: {exc}",
+            "risk_flags": ["subprocess_error"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+    if completed.returncode != 0:
+        reply = completed.stderr.strip() or completed.stdout.strip() or "hermes chat failed"
+        return {
+            "approved": False,
+            "summary": reply,
+            "assistant_reply": reply,
+            "risk_flags": ["cli_error"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+    text = _assistant_text(completed.stdout)
+    if not text:
+        return {
+            "approved": False,
+            "summary": "hermes did not return assistant text",
+            "assistant_reply": "hermes did not return assistant text",
+            "risk_flags": ["empty_response"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+    try:
+        parsed = _parse_json_like_review(text)
+    except json.JSONDecodeError:
+        cleaned = _clean_assistant_text(text)
+        return {
+            "approved": False,
+            "summary": cleaned or "hermes explanation did not return valid JSON",
+            "assistant_reply": cleaned or "hermes explanation did not return valid JSON",
+            "risk_flags": ["invalid_json"],
+            "next_action": "human_review",
+            "recommendation": _evaluation_recommendation(evaluation),
+            "operator_actions": ["fix_blockers_or_override"],
+            "proposed_command": None,
+            "proposed_payload": None,
+        }
+    operator_actions = parsed.get("operator_actions") or []
+    if not isinstance(operator_actions, list):
+        operator_actions = [str(operator_actions)]
+    risk_flags = parsed.get("risk_flags") or []
+    if not isinstance(risk_flags, list):
+        risk_flags = [str(risk_flags)]
+    summary = str(parsed.get("summary", parsed.get("assistant_reply", "hermes reply recorded"))).strip()
+    assistant_reply = str(parsed.get("assistant_reply", summary)).strip() or summary
+    return {
+        "approved": False,
+        "summary": summary,
+        "assistant_reply": assistant_reply,
+        "risk_flags": [str(item) for item in risk_flags],
+        "next_action": str(parsed.get("next_action", "human_review")).strip() or "human_review",
+        "recommendation": str(parsed.get("recommendation", _evaluation_recommendation(evaluation))).strip()
+        or _evaluation_recommendation(evaluation),
+        "operator_actions": [str(item) for item in operator_actions] or ["fix_blockers_or_override"],
+        "proposed_command": _optional_string(parsed.get("proposed_command")),
+        "proposed_payload": parsed.get("proposed_payload") if isinstance(parsed.get("proposed_payload"), dict) else None,
+        "raw_text": _clean_assistant_text(text),
+    }
 
 
 def _parse_review_text(text: str) -> dict[str, object]:
@@ -341,6 +586,23 @@ def _assistant_text(output: str) -> str:
         if line.startswith("{") and line.endswith("}"):
             return line
     return cleaned
+
+
+def _clean_assistant_text(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text).strip()
+
+
+def _evaluation_recommendation(evaluation: object) -> str:
+    if isinstance(evaluation, dict):
+        return str(evaluation.get("final_recommendation", "human_review"))
+    return "human_review"
+
+
+def _optional_string(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _resolve_command(args: argparse.Namespace) -> list[str]:

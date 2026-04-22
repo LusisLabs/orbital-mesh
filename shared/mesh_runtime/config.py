@@ -12,13 +12,15 @@ DEFAULT_RESEARCH_DIRECTORY = DEFAULT_STATE_DIRECTORY / "research"
 DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
+DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 
 
-def _derive_research_directory(state_directory: str, explicit: str | None) -> str:
-    if explicit is not None:
-        return explicit
-    return str(Path(state_directory) / "research")
-
+def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
+    value = (raw or "").strip() or default
+    p = Path(value)
+    if p.is_absolute():
+        return str(p.resolve())
+    return str((_REPO_ROOT / p).resolve())
 
 def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
     if not raw:
@@ -43,14 +45,21 @@ def _resolve_relative_path(raw: str, anchor: Path = _REPO_ROOT) -> str:
 @dataclass
 class RuntimeConfig:
     environment: str = "local"
-    evaluation_mode: str = "native"
-    orchestration_mode: str = "native"
+    # ``auto`` probes integration readiness at startup and uses Promptfoo /
+    # Goose when they can actually run. Falls back to the in-process native
+    # adapters when not ready (offline dev, air-gapped, CI without CLIs). Set
+    # explicitly to ``native`` / ``promptfoo`` / ``goose`` to opt out of the
+    # probe and pin one adapter.
+    evaluation_mode: str = "auto"
+    orchestration_mode: str = "auto"
     feature_flag_credentials_available: bool = True
     incident_credentials_available: bool = True
     audit_logging_available: bool = True
     max_transient_retries: int = 2
     max_retry_window_seconds: int = 60
     goose_timeout_seconds: int = 180
+    state_backend: str = "file"
+    database_url: str | None = None
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
@@ -65,6 +74,13 @@ class RuntimeConfig:
     hermes_command_timeout_seconds: int = 180
     goose_command: str | None = None
     goose_command_timeout_seconds: int = 180
+    evo_command: str | None = None
+    evo_command_timeout_seconds: int = 60
+    kubernetes_live_execution_enabled: bool = False
+    kubectl_command: str = "kubectl"
+    kubernetes_rollout_timeout_seconds: int = 120
+    kubernetes_allowed_contexts: tuple[str, ...] = ()
+    kubernetes_allowed_namespaces: tuple[str, ...] = ()
     gitnexus_sidecar_url: str | None = None
     gitnexus_sidecar_command: str | None = None
     gitnexus_disable_autostart: bool = False
@@ -72,12 +88,25 @@ class RuntimeConfig:
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
     vault_ai_postprocess_enabled: bool = False
+    build_version: str = "dev"
+    build_commit: str = "unknown"
+    latentmas_enabled: bool = False
+    latentmas_url: str | None = None
+    latentmas_timeout_seconds: float = 60.0
+    latentmas_model_name: str = "Qwen/Qwen3-4B"
+    latentmas_device: str = "cuda"
+    latentmas_prompt_mode: str = "sequential"
+    latentmas_latent_steps: int = 10
+    latentmas_max_new_tokens: int = 1024
+    latentmas_use_vllm: bool = False
+    latentmas_max_artifact_chars: int = 20_000
+    agent_fabric_mode: str = "native"
+    agent_mesh_task_timeout_seconds: float = 15.0
+    mesh_deepagents_model: str = "openai:MiniMax-M2.7"
+    mesh_deepagents_timeout_seconds: float = 120.0
+    mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
+    mesh_deepagents_max_artifact_chars: int = 20_000
     sse_max_connection_seconds: int = 1800
-    kubernetes_live_execution_enabled: bool = False
-    kubectl_command: str = "kubectl"
-    kubernetes_allowed_contexts: tuple[str, ...] = ()
-    kubernetes_allowed_namespaces: tuple[str, ...] = ()
-    kubernetes_rollout_timeout_seconds: int = 120
     watch_enabled: bool = False
     watch_interval_seconds: int = 60
     watch_cooldown_seconds: int = 300
@@ -89,6 +118,14 @@ class RuntimeConfig:
     correlation_enabled: bool = False
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
+    argocd_url: str | None = None
+    argocd_token: str | None = None
+    argocd_ca_bundle: str | None = None
+    argocd_timeout_seconds: int = 30
+    trust_ladder_enabled: bool = False
+    trust_ladder_min_draft_runs: int = 3
+    trust_ladder_min_approve_runs: int = 10
+    trust_ladder_min_auto_runs: int = 30
     # OpenTelemetry consumer: Mesh accepts OTLP/HTTP pushes at POST /v1/metrics and can
     # pull Prometheus (or any PromQL-compatible endpoint exposed by an OTel collector)
     # during feedback verification. Disabled by default — the receiver has no auth
@@ -100,15 +137,10 @@ class RuntimeConfig:
     feedback_prometheus_enabled: bool = False
     # Layer 3: LLM-backed decision fallback for OTel signals that don't match
     # any metric-action rule. Opt-in because it adds LLM latency (5-30s) to
-    # the decision stage for unknown signals, and because the caller must
-    # understand the cost/risk tradeoffs before enabling non-deterministic
-    # decisions in production.
+    # the decision stage for unknown signals.
     llm_decision_fallback_enabled: bool = False
     llm_decision_fallback_timeout_seconds: float = 30.0
     # Layer 4: learn from operator overrides and surface candidate rules.
-    # The recorder runs unconditionally once enabled — override events are
-    # cheap to log and the data accrues over time. Rule suggestions surface
-    # via the admin API; suggestions never auto-apply.
     rule_learning_enabled: bool = False
     rule_learning_min_observations: int = 5
     rule_learning_max_age_days: int = 30
@@ -120,6 +152,11 @@ class RuntimeConfig:
             raise ValueError(f"max_transient_retries must be >= 0, got {self.max_transient_retries}")
         if self.max_json_body_bytes < 0:
             raise ValueError(f"max_json_body_bytes must be >= 0, got {self.max_json_body_bytes}")
+        if self.agent_mesh_task_timeout_seconds <= 0:
+            raise ValueError(
+                "agent_mesh_task_timeout_seconds must be > 0, "
+                f"got {self.agent_mesh_task_timeout_seconds}"
+            )
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
@@ -136,14 +173,16 @@ class RuntimeConfig:
         )
         return cls(
             environment=os.getenv("MESH_ENVIRONMENT", "local"),
-            evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "native"),
-            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "native"),
+            evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "auto"),
+            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "auto"),
             feature_flag_credentials_available=os.getenv("MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             incident_credentials_available=os.getenv("MESH_INCIDENT_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             audit_logging_available=os.getenv("MESH_AUDIT_LOGGING_AVAILABLE", "true").lower() == "true",
             max_transient_retries=int(os.getenv("MESH_MAX_TRANSIENT_RETRIES", "2")),
             max_retry_window_seconds=int(os.getenv("MESH_MAX_RETRY_WINDOW_SECONDS", "60")),
             goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
+            state_backend=_normalize_state_backend(os.getenv("MESH_STATE_BACKEND", "file")),
+            database_url=os.getenv("MESH_DATABASE_URL") or None,
             state_directory=state_directory,
             research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),
@@ -166,6 +205,14 @@ class RuntimeConfig:
                     os.getenv("MESH_GOOSE_BRIDGE_TIMEOUT_SECONDS", "180"),
                 )
             ),
+            evo_command=os.getenv("MESH_EVO_COMMAND") or None,
+            evo_command_timeout_seconds=int(os.getenv("MESH_EVO_COMMAND_TIMEOUT_SECONDS", "60")),
+            kubernetes_live_execution_enabled=os.getenv("MESH_KUBERNETES_LIVE_EXECUTION_ENABLED", "").lower()
+            in ("1", "true", "yes"),
+            kubectl_command=os.getenv("MESH_KUBECTL_COMMAND", "kubectl"),
+            kubernetes_rollout_timeout_seconds=int(os.getenv("MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS", "120")),
+            kubernetes_allowed_contexts=_csv_env("MESH_KUBERNETES_ALLOWED_CONTEXTS"),
+            kubernetes_allowed_namespaces=_csv_env("MESH_KUBERNETES_ALLOWED_NAMESPACES"),
             gitnexus_sidecar_url=os.getenv("MESH_GITNEXUS_SIDECAR_URL") or None,
             gitnexus_sidecar_command=os.getenv("MESH_GITNEXUS_SIDECAR_COMMAND") or None,
             gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()
@@ -176,6 +223,27 @@ class RuntimeConfig:
             not in ("0", "false", "no"),
             vault_ai_postprocess_enabled=os.getenv("MESH_VAULT_AI_POSTPROCESS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            build_version=os.getenv("MESH_BUILD_VERSION") or os.getenv("MESH_IMAGE_TAG") or "dev",
+            build_commit=os.getenv("MESH_BUILD_COMMIT") or os.getenv("GIT_COMMIT") or "unknown",
+            latentmas_enabled=os.getenv("MESH_LATENTMAS_ENABLED", "").lower() in ("1", "true", "yes"),
+            latentmas_url=os.getenv("MESH_LATENTMAS_URL") or None,
+            latentmas_timeout_seconds=float(os.getenv("MESH_LATENTMAS_TIMEOUT_SECONDS", "60")),
+            latentmas_model_name=os.getenv("MESH_LATENTMAS_MODEL_NAME", "Qwen/Qwen3-4B"),
+            latentmas_device=os.getenv("MESH_LATENTMAS_DEVICE", "cuda"),
+            latentmas_prompt_mode=os.getenv("MESH_LATENTMAS_PROMPT_MODE", "sequential"),
+            latentmas_latent_steps=int(os.getenv("MESH_LATENTMAS_LATENT_STEPS", "10")),
+            latentmas_max_new_tokens=int(os.getenv("MESH_LATENTMAS_MAX_NEW_TOKENS", "1024")),
+            latentmas_use_vllm=os.getenv("MESH_LATENTMAS_USE_VLLM", "").lower() in ("1", "true", "yes"),
+            latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
+            agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
+            agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
+            mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
+            mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
+            mesh_deepagents_workspace_root=_env_path_anchored_to_repo(
+                os.getenv("MESH_DEEPAGENTS_WORKSPACE_ROOT"),
+                default=str(DEFAULT_DEEPAGENTS_WORKSPACE),
+            ),
+            mesh_deepagents_max_artifact_chars=int(os.getenv("MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS", "20000")),
             watch_enabled=os.getenv("MESH_WATCH_ENABLED", "").lower() in ("1", "true", "yes"),
             watch_interval_seconds=int(os.getenv("MESH_WATCH_INTERVAL_SECONDS", "60")),
             watch_cooldown_seconds=int(os.getenv("MESH_WATCH_COOLDOWN_SECONDS", "300")),
@@ -189,6 +257,14 @@ class RuntimeConfig:
             in ("1", "true", "yes"),
             correlation_window_seconds=int(os.getenv("MESH_CORRELATION_WINDOW_SECONDS", "300")),
             correlation_min_signals=int(os.getenv("MESH_CORRELATION_MIN_SIGNALS", "2")),
+            argocd_url=os.getenv("MESH_ARGOCD_URL") or None,
+            argocd_token=os.getenv("MESH_ARGOCD_TOKEN") or None,
+            argocd_ca_bundle=os.getenv("MESH_ARGOCD_CA_BUNDLE") or None,
+            argocd_timeout_seconds=int(os.getenv("MESH_ARGOCD_TIMEOUT_SECONDS", "30")),
+            trust_ladder_enabled=os.getenv("MESH_TRUST_LADDER_ENABLED", "").lower() in ("1", "true", "yes"),
+            trust_ladder_min_draft_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_DRAFT_RUNS", "3")),
+            trust_ladder_min_approve_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_APPROVE_RUNS", "10")),
+            trust_ladder_min_auto_runs=int(os.getenv("MESH_TRUST_LADDER_MIN_AUTO_RUNS", "30")),
             otel_receiver_enabled=os.getenv("MESH_OTEL_RECEIVER_ENABLED", "").lower()
             in ("1", "true", "yes"),
             otel_receiver_token=os.getenv("MESH_OTEL_RECEIVER_TOKEN") or None,
@@ -203,3 +279,22 @@ class RuntimeConfig:
             rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
             rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
         )
+
+
+def _csv_env(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name, "")
+    if not raw.strip():
+        return ()
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _normalize_agent_fabric_mode(raw: str) -> str:
+    mode = (raw or "native").strip().lower()
+    return mode if mode in ("native", "deepagents") else "native"
+
+
+def _normalize_state_backend(raw: str) -> str:
+    backend = (raw or "file").strip().lower()
+    if backend not in ("file", "postgres"):
+        raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
+    return backend

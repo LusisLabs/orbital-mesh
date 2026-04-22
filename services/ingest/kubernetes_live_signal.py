@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import shlex
 import subprocess
 from datetime import datetime, timezone
@@ -28,6 +29,11 @@ def collect_kubernetes_signal(
     patch_template: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     kubectl_base = shlex.split(kubectl_command)
+    if not kubectl_base:
+        raise RuntimeError("kubectl command is empty; set MESH_KUBECTL_COMMAND or pass --kubectl-command")
+    executable = kubectl_base[0]
+    if shutil.which(executable) is None and not executable.startswith("/"):
+        raise RuntimeError(f"kubectl command not found: {kubectl_command}")
     if kube_context:
         kubectl_base.extend(["--context", kube_context])
         active_context = kube_context
@@ -254,7 +260,10 @@ def _run_text(command: list[str], allow_failure: bool = False) -> str:
 
 
 def _run_completed(command: list[str], allow_failure: bool = False) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    try:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"{shlex.join(command)} failed: {exc}") from exc
     if completed.returncode != 0 and not allow_failure:
         message = completed.stderr.strip() or completed.stdout.strip() or "command failed"
         raise RuntimeError(f"{shlex.join(command)} failed: {message}")

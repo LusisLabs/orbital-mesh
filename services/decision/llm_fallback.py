@@ -79,16 +79,10 @@ _LOG = logging.getLogger("mesh.decision.llm_fallback")
 # consistency is checked by the integration tests in test_metric_action_rules.
 _ACTION_ALLOWLIST: dict[tuple[str, str], dict[str, Any]] = {
     ("kubernetes_service", "scale_deployment"): {
-        "required": {"deployment_name", "namespace"},
-        "optional": {"cluster", "kube_context", "replicas_delta", "replicas"},
-        "numeric_bounds": {"replicas_delta": (-5, 5), "replicas": (0, 50)},
-        "description": "Scale a deployment by a signed replica delta, or to an absolute replica count.",
-    },
-    ("kubernetes_service", "patch_resources"): {
-        "required": {"deployment_name", "namespace", "container"},
-        "optional": {"cluster", "kube_context", "limits", "requests"},
-        "numeric_bounds": {},
-        "description": "Adjust CPU/memory limits or requests on one container in a deployment.",
+        "required": {"deployment_name", "namespace", "replicas"},
+        "optional": {"cluster", "kube_context"},
+        "numeric_bounds": {"replicas": (0, 50)},
+        "description": "Scale a deployment to an absolute replica count.",
     },
     ("kubernetes_service", "restart_deployment"): {
         "required": {"deployment_name", "namespace"},

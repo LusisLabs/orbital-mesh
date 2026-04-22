@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts.overnight_mesh_autoresearch import (  # noqa: E402
     _falsy,
     _minimax_env_configured,
+    _sanitize_prior_for_merge,
     _truthy,
 )
 
@@ -30,6 +31,22 @@ class OvernightEnvParsingTests(unittest.TestCase):
         self.assertFalse(_falsy("0", True))
         self.assertFalse(_falsy("false", True))
         self.assertTrue(_falsy("1", False))
+
+
+class PriorSanitizeTests(unittest.TestCase):
+    def test_sanitize_rejects_off_domain_prior(self) -> None:
+        blob = "Wireless mesh ROI and cabling payback in rural deployments. " * 20
+        self.assertIsNone(_sanitize_prior_for_merge(blob))
+
+    def test_sanitize_accepts_repo_grounded_prior(self) -> None:
+        text = (
+            "## Report\n\nWe analyzed **FirstSlicePipeline** `run_summaries` and **holistic_matrix** "
+            "cells for **promptfoo** + **goose**.\n"
+        )
+        out = _sanitize_prior_for_merge(text)
+        self.assertIsNotNone(out)
+        assert out is not None
+        self.assertIn("FirstSlicePipeline", out)
 
 
 class MinimaxEnvTests(unittest.TestCase):

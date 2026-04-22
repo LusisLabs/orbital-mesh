@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/subdecision.schema.json",
+  "title": "Subdecision",
+  "type": "object",
+  "required": [
+    "subdecision_id",
+    "analyzer",
+    "recommendation",
+    "confidence",
+    "risk_level",
+    "reasons",
+    "evidence_refs",
+    "requires_review"
+  ],
+  "properties": {
+    "subdecision_id": { "type": "string" },
+    "analyzer": { "type": "string" },
+    "recommendation": {
+      "type": "string",
+      "enum": [
+        "no_action",
+        "reduce_rollout",
+        "disable_flag",
+        "escalate",
+        "investigate_and_patch",
+        "rollback_deployment",
+        "restart_deployment",
+        "approval_required"
+      ]
+    },
+    "confidence": { "type": "number" },
+    "risk_level": {
+      "type": "string",
+      "enum": ["low", "medium", "high"]
+    },
+    "reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "requires_review": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

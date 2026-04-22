@@ -2,15 +2,16 @@
 
 ## Scope
 
-`mesh-intelligence` is a bounded closed-loop remediation system for feature-flag performance
-regressions. It is an operator control plane with a fixed action surface, not a general autonomous
-platform for arbitrary infra changes, code changes, or open-ended planning.
+`mesh-intelligence` is a bounded closed-loop remediation system for feature-flag and Kubernetes
+deployment regressions. It is an operator control plane with a fixed action surface, not a general
+autonomous platform for arbitrary infra changes, code changes, or open-ended planning.
 
 ## Current Runtime Shape
 
 ```mermaid
 flowchart LR
     raw[Telemetry + Flag + Release Context] --> ingest[IngestService]
+    k8s[Live Kubernetes Snapshot] --> ingest
     ingest --> trigger[TriggerService]
     trigger -->|valid regression| decision[DecisionService]
     decision --> evaluation[EvaluationService]
@@ -27,12 +28,43 @@ flowchart LR
 
 ## Main Layers
 
+### Production boundary
+
+- Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
+- The static web bundle is served from `MESH_WEB_ASSET_PATH` and calls the same HTTP API under `/api/*`.
+- Persistent state lives under `MESH_STATE_DIRECTORY`; autoresearch sessions live under `MESH_RESEARCH_DIRECTORY`; vault artifacts live under `MESH_VAULT_PATH`.
+- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; Hermes is an optional external integration boundary.
+- Kubernetes is a foundational production path, but it has two separate requirements: the runtime must have a kubeconfig/context that passes the allowlists, and the API server endpoint inside that kubeconfig must be reachable from the container namespace. Local `localhost` kubeconfig server URLs generally fail inside containers unless rewritten to a container-reachable host, as the e2e scripts do for k3d.
+
+### Local all-in-one topology
+
+`docker-compose.stack.yml` is the local whole-system topology. It runs Mesh, dedicated Hermes and GitNexus sidecars, embedded k3s, a one-shot Kubernetes bootstrap job, and a one-shot smoke verifier in one Compose project.
+
+```mermaid
+flowchart LR
+    operator[Operator Browser] --> mesh[Mesh API + UI]
+    smoke[mesh-smoke] --> mesh
+    smoke --> k8s[k3s API]
+    bootstrap[mesh-kube-bootstrap] --> k8s
+    mesh --> k8s
+    mesh --> hermes[Hermes Sidecar]
+    mesh --> gitnexus[GitNexus Sidecar]
+    mesh --> state[mesh_runtime_state]
+    mesh --> kubeconfig[mesh_kubeconfig]
+    k8s --> kubeconfig
+    latentmas[LatentMAS Profile] -. optional .-> mesh
+```
+
+This topology is not the production template. It intentionally uses a privileged k3s container, repository bind mounts, a Docker socket mount for the Hermes sidecar command path, and local published ports so the complete system can be launched and tested from one command. The production-like template remains `docker-compose.prod.yml`, which removes the repository bind mount and Docker socket and requires externally provided kubeconfig and allowlists.
+
 ### 1. Core remediation loop
 
 - `IngestService` normalizes raw telemetry, flag metadata, deployment context, segment context, and
   post-action observations into one event envelope.
 - `TriggerService` emits a trigger only when evidence is recent, persistent, above thresholds, and
   not suppressed.
+- `ScenarioAnalysisService` records cross-run evidence, modular subdecisions, active-memory
+  compaction, and a Merkle-bound advisory synthesis before final decision creation.
 - `DecisionService` produces exactly one bounded decision from the allowed set:
   `no_action`, `reduce_rollout`, `disable_flag`, `escalate`.
 - `EvaluationService` merges policy and business gates with Promptfoo-backed quality artifacts.
@@ -58,7 +90,7 @@ runs **in-process** on that payload, then `TriggerService` and the rest of the l
 | Method | Path | Role |
 | --- | --- | --- |
 | `GET` | `/api/health` | Liveness probe |
-| `GET` | `/api/readiness` | Integration readiness (Promptfoo, Goose, GitNexus, etc.) |
+| `GET` | `/api/readiness` | Integration readiness (Promptfoo, Goose, Hermes, etc.) |
 | `GET` | `/api/scenarios` | List fixture-backed scenario keys |
 | `GET` | `/api/goals` | List goals |
 | `POST` | `/api/goals` | Create a goal |
@@ -95,12 +127,13 @@ Telemetry is **not** pushed service-by-service over HTTP. One **`POST /api/runs`
 | --- | --- | --- | --- |
 | 1 | `IngestService.normalize_signal` | Raw signal dict → `EventEnvelope` | `ingesting` |
 | 2 | `TriggerService.detect` | Envelope → `Trigger` or `None` | `trigger_ready` or `no_trigger` (then terminal if no trigger) |
-| 3 | `DecisionService.decide` | `Trigger` → `Decision` | `decision_ready` |
-| 4 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
+| 3 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
+| 4 | `DecisionService.decide` | `Trigger` + advisory analysis → `Decision` | `decision_ready` |
+| 5 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
 | — | *Operator gate* | If approval mode or failed auto conditions: **`awaiting_operator`** until `POST .../steer` | `awaiting_operator` |
-| 5 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
-| 6 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 4) |
-| 7 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
+| 6 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
+| 7 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 5) |
+| 8 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
 
 Overrides (`override_decision`, `override_execution_parameters`) cause **re-evaluation**: `decide` is not re-run from scratch in all cases, but evaluation is run again with the updated decision path before execution resumes.
 
@@ -155,6 +188,10 @@ sequenceDiagram
   capture structured review metadata, and then perform bounded local actuation.
 - `native` mode keeps everything local and in-process while using the same contracts and
   persistence model.
+- Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
+  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, and OpenClaw. These
+  artifacts let agents plug into Mesh without getting production write access; Mesh still owns
+  evaluation, tests, audit, Kubernetes actuation, and promotion gates.
 
 ## Run Lifecycle
 
@@ -207,11 +244,11 @@ Disallowed side effects:
 
 Active shared contracts live in:
 
-- `scaffold/contracts/schemas/trigger.schema.json`
-- `scaffold/contracts/schemas/decision.schema.json`
-- `scaffold/contracts/schemas/evaluation-result.schema.json`
-- `scaffold/contracts/schemas/execution-record.schema.json`
-- `scaffold/contracts/schemas/feedback-record.schema.json`
+- `shared/mesh_runtime/schemas/trigger.schema.json`
+- `shared/mesh_runtime/schemas/decision.schema.json`
+- `shared/mesh_runtime/schemas/evaluation-result.schema.json`
+- `shared/mesh_runtime/schemas/execution-record.schema.json`
+- `shared/mesh_runtime/schemas/feedback-record.schema.json`
 
 These schemas back the Python contract models in `shared/mesh_runtime/contracts.py`.
 

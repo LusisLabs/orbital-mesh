@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-SCRIPTS = Path(__file__).resolve().parents[1] / ".cursor/skills/goose-autoresearch/scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "services/skills/goose-autoresearch/scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from minimax_client import (  # noqa: E402

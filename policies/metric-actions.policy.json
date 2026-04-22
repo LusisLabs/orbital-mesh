@@ -22,11 +22,11 @@
           "namespace": "{resource_attributes.k8s.namespace.name}",
           "cluster": "{resource_attributes.k8s.cluster.name}",
           "kube_context": "{resource_attributes.k8s.cluster.name}",
-          "replicas_delta": 2
+          "replicas": 4
         }
       },
       "bounds": {
-        "replicas_delta_max": 3,
+        "replicas_max": 8,
         "cooldown_seconds": 300
       },
       "confidence": 0.78,
@@ -54,11 +54,11 @@
           "namespace": "{resource_attributes.k8s.namespace.name}",
           "cluster": "{resource_attributes.k8s.cluster.name}",
           "kube_context": "{resource_attributes.k8s.cluster.name}",
-          "replicas_delta": 2
+          "replicas": 6
         }
       },
       "bounds": {
-        "replicas_delta_max": 4,
+        "replicas_max": 12,
         "cooldown_seconds": 300
       },
       "confidence": 0.72,
@@ -66,30 +66,26 @@
       "rollback_plan": "scale back down once CPU utilization returns below 60% for 10 minutes"
     },
     {
-      "name": "raise memory limit on saturation",
-      "$doc": "When memory.usage climbs toward memory.limit, the right answer is usually to raise the limit rather than scale replicas — unless the workload is actually leaking, in which case the subsequent restart still buys time. We patch limits instead of resetting the pod because Mesh already has restart_deployment for the leak case.",
+      "name": "restart on memory saturation",
+      "$doc": "When memory.usage climbs toward memory.limit, the workload is usually close to OOMKill. A rolling restart clears the pressure and buys time while the operator reviews for a real leak. (A future patch_resources rule would raise the limit instead, but the actuator isn't wired yet.)",
       "match": {
         "metric_name_pattern": "(memory\\.utilization|memory_utilization|memory_usage_bytes)",
         "direction": "increasing",
         "delta_pct_min": 25,
         "resource_attributes": {
           "k8s.deployment.name": "*",
-          "k8s.namespace.name": "*",
-          "k8s.container.name": "*"
+          "k8s.namespace.name": "*"
         }
       },
       "propose": {
-        "decision_type": "patch_resources",
+        "decision_type": "restart_deployment",
         "system": "kubernetes_service",
-        "action": "patch_resources",
+        "action": "restart_deployment",
         "parameters": {
           "deployment_name": "{resource_attributes.k8s.deployment.name}",
           "namespace": "{resource_attributes.k8s.namespace.name}",
           "cluster": "{resource_attributes.k8s.cluster.name}",
-          "kube_context": "{resource_attributes.k8s.cluster.name}",
-          "container": "{resource_attributes.k8s.container.name}",
-          "limits": {"memory": "2Gi"},
-          "requests": {"memory": "1Gi"}
+          "kube_context": "{resource_attributes.k8s.cluster.name}"
         }
       },
       "bounds": {
@@ -97,7 +93,7 @@
       },
       "confidence": 0.68,
       "risk_level": "medium",
-      "rollback_plan": "restore the previous memory limits using the captured baseline before patching"
+      "rollback_plan": "if memory pressure returns within 10 minutes, escalate for a real leak investigation"
     },
     {
       "name": "scale on request rate spike",
@@ -120,11 +116,11 @@
           "namespace": "{resource_attributes.k8s.namespace.name}",
           "cluster": "{resource_attributes.k8s.cluster.name}",
           "kube_context": "{resource_attributes.k8s.cluster.name}",
-          "replicas_delta": 1
+          "replicas": 3
         }
       },
       "bounds": {
-        "replicas_delta_max": 2,
+        "replicas_max": 6,
         "cooldown_seconds": 300
       },
       "confidence": 0.65,

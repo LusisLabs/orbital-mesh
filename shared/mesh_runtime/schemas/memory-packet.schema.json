@@ -1,0 +1,25 @@
+{
+  "$id": "https://mesh.local/contracts/memory-packet.schema.json",
+  "type": "object",
+  "required": [
+    "packet_id",
+    "scope",
+    "observations",
+    "claims",
+    "procedures",
+    "contradictions",
+    "citations",
+    "generated_at"
+  ],
+  "properties": {
+    "packet_id": { "type": "string" },
+    "scope": { "type": "object" },
+    "observations": { "type": "array", "items": { "type": "object" } },
+    "claims": { "type": "array", "items": { "type": "object" } },
+    "procedures": { "type": "array", "items": { "type": "object" } },
+    "contradictions": { "type": "array", "items": { "type": "object" } },
+    "citations": { "type": "array", "items": { "type": "object" } },
+    "generated_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

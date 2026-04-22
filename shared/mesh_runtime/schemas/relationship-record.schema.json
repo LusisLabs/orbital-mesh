@@ -1,0 +1,23 @@
+{
+  "$id": "https://mesh.local/contracts/relationship-record.schema.json",
+  "type": "object",
+  "required": [
+    "relationship_id",
+    "from_id",
+    "to_id",
+    "type",
+    "confidence",
+    "supporting_observation_ids",
+    "state"
+  ],
+  "properties": {
+    "relationship_id": { "type": "string" },
+    "from_id": { "type": "string" },
+    "to_id": { "type": "string" },
+    "type": { "type": "string" },
+    "confidence": { "type": "number" },
+    "supporting_observation_ids": { "type": "array", "items": { "type": "string" } },
+    "state": { "type": "string" }
+  },
+  "additionalProperties": false
+}

@@ -33,9 +33,9 @@ class Trigger(ContractModel):
     environment: str
     service: str
     endpoint: str
-    flag_key: str
-    current_rollout_pct: int
-    comparison_window: dict[str, str]
+    flag_key: str | None
+    current_rollout_pct: int | None
+    comparison_window: dict[str, str] | None
     segment: dict[str, Any]
     metrics: dict[str, Any]
     related_context: dict[str, Any]
@@ -54,6 +54,148 @@ class Decision(ContractModel):
     risk: dict[str, Any]
     confidence: float
     execution_plan: dict[str, Any]
+
+
+@dataclass
+class EvidenceNode(ContractModel):
+    schema_name: ClassVar[str] = "evidence-node.schema.json"
+    evidence_id: str
+    run_id: str | None
+    analyzer: str
+    kind: str
+    summary: str
+    payload: dict[str, Any]
+    source_event_ids: list[str]
+    confidence: float
+    trusted: bool
+
+
+@dataclass
+class Subdecision(ContractModel):
+    schema_name: ClassVar[str] = "subdecision.schema.json"
+    subdecision_id: str
+    analyzer: str
+    recommendation: str
+    confidence: float
+    risk_level: str
+    reasons: list[str]
+    evidence_refs: list[str]
+    requires_review: bool
+
+
+@dataclass
+class ScenarioAnalysis(ContractModel):
+    schema_name: ClassVar[str] = "scenario-analysis.schema.json"
+    analysis_id: str
+    trigger_id: str
+    created_at: str
+    suggested_decision_type: str
+    confidence: float
+    risk_level: str
+    autonomy_tier_hint: str
+    required_review_reasons: list[str]
+    evidence_refs: list[str]
+    subdecisions: list[dict[str, Any]]
+    evidence_nodes: list[dict[str, Any]]
+    merkle_root: str | None = None
+    merkle_event_ids: list[str] | None = None
+
+
+@dataclass
+class MemoryCompactionRecord(ContractModel):
+    schema_name: ClassVar[str] = "memory-compaction.schema.json"
+    compaction_id: str
+    run_id: str | None
+    service: str
+    created_at: str
+    active_facts: list[dict[str, Any]]
+    suppressed_facts: list[dict[str, Any]]
+    source_event_ids: list[str]
+    merkle_root: str | None = None
+
+
+@dataclass
+class ObservationRecord(ContractModel):
+    schema_name: ClassVar[str] = "observation-record.schema.json"
+    observation_id: str
+    scope: dict[str, Any]
+    kind: str
+    content: str
+    service: str | None
+    run_id: str | None
+    source_type: str
+    source_refs: list[dict[str, Any]]
+    created_at: str
+    author: str
+    tags: list[str]
+    metadata: dict[str, Any]
+
+
+@dataclass
+class ClaimRecord(ContractModel):
+    schema_name: ClassVar[str] = "claim-record.schema.json"
+    claim_id: str
+    statement: str
+    entity_refs: list[str]
+    supporting_observation_ids: list[str]
+    contradicting_claim_ids: list[str]
+    superseded_by: str | None
+    confidence: float
+    confidence_factors: dict[str, float]
+    freshness: float
+    tier: str
+    state: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class RelationshipRecord(ContractModel):
+    schema_name: ClassVar[str] = "relationship-record.schema.json"
+    relationship_id: str
+    from_id: str
+    to_id: str
+    type: str
+    confidence: float
+    supporting_observation_ids: list[str]
+    state: str
+
+
+@dataclass
+class SupersessionRecord(ContractModel):
+    schema_name: ClassVar[str] = "supersession-record.schema.json"
+    supersession_id: str
+    old_claim_id: str
+    new_claim_id: str
+    reason: str
+    created_at: str
+    created_by: str
+
+
+@dataclass
+class RetrievalRecord(ContractModel):
+    schema_name: ClassVar[str] = "retrieval-record.schema.json"
+    retrieval_id: str
+    query: str
+    scope: dict[str, Any]
+    channels: list[str]
+    candidate_ids: list[str]
+    verified_ids: list[str]
+    discarded_ids: list[str]
+    created_at: str
+
+
+@dataclass
+class MemoryPacket(ContractModel):
+    schema_name: ClassVar[str] = "memory-packet.schema.json"
+    packet_id: str
+    scope: dict[str, Any]
+    observations: list[dict[str, Any]]
+    claims: list[dict[str, Any]]
+    procedures: list[dict[str, Any]]
+    contradictions: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    generated_at: str
 
 
 @dataclass

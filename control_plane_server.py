@@ -12,6 +12,11 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
+from services.ingest.webhook_service import (
+    SignatureMismatchError,
+    UnknownWebhookSourceError,
+    WebhookIngestError,
+)
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
@@ -44,7 +49,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     server: MeshControlPlaneServer
     protocol_version = "HTTP/1.1"
 
-    # ------------------------------------------------------------------ HEAD
     def do_HEAD(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
@@ -55,7 +59,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._serve_static(path, head_only=True)
 
-    # ---------------------------------------------------------- OPTIONS (CORS)
     def do_OPTIONS(self) -> None:  # noqa: N802
         self.send_response(HTTPStatus.NO_CONTENT)
         self._add_security_headers()
@@ -63,21 +66,27 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
-    # ------------------------------------------------------------------- GET
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
         if path == "/api/health":
-            self._send_json({"status": "ok", "timestamp": _timestamp()})
+            self._send_json(
+                {
+                    "status": "ok",
+                    "timestamp": _timestamp(),
+                    "environment": self.server.config.environment,
+                    "version": self.server.config.build_version,
+                    "commit": self.server.config.build_commit,
+                }
+            )
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
             return
         if path == "/api/rules/suggestions":
             # Layer 4 admin surface. Returns [] when rule_learning_enabled is
-            # off or not enough overrides have accumulated yet. Suggestions
-            # never auto-apply — operators review and paste approved rules
-            # into the policy file.
+            # off or too few overrides have accumulated. Suggestions never
+            # auto-apply — operators paste approved rules into the policy file.
             self._send_json({"suggestions": self.server.coordinator.list_rule_suggestions()})
             return
         if path == "/api/scenarios":
@@ -88,6 +97,31 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/runs":
             self._send_json({"runs": self.server.coordinator.list_runs()})
+            return
+        if path == "/api/memory/active":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_active_memory(service))
+            return
+        if path == "/api/memory/query":
+            query = parse_qs(parsed.query).get("q", [""])[0]
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            limit = _safe_int(parse_qs(parsed.query).get("limit", ["10"])[0], default=10)
+            self._send_json(self.server.coordinator.query_memory(query, {"service": service} if service else {}, limit=limit))
+            return
+        if path.startswith("/api/memory/claims/"):
+            claim_id = _safe_segment(path, 3)
+            if claim_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            claim = self.server.coordinator.get_memory_claim(claim_id)
+            if claim is None:
+                self._send_json({"error": "claim not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(claim)
+            return
+        if path == "/api/memory/graph":
+            service = parse_qs(parsed.query).get("service", [None])[0]
+            self._send_json(self.server.coordinator.get_memory_graph(service))
             return
         if path == "/api/research-sessions":
             self._send_json({"sessions": self.server.coordinator.list_research_sessions()})
@@ -113,6 +147,28 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             events = self.server.coordinator.state_store.list_run_events(run_id, after_sequence=after)
             self._send_json({"events": [event.to_dict() for event in events]})
             return
+        if path.startswith("/api/runs/") and path.endswith("/scenario-analysis"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_scenario_analysis(run_id)
+            if payload is None:
+                self._send_json({"error": "scenario analysis not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/evidence-graph"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_evidence_graph(run_id)
+            if payload is None:
+                self._send_json({"error": "evidence graph not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if path.startswith("/api/runs/") and path.endswith("/merkle"):
             run_id = _safe_segment(path, 2)
             if run_id is None:
@@ -120,6 +176,24 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
+            return
+        if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
+            run_id = path.split("/")[3]
+            try:
+                self._send_json({"tasks": self.server.coordinator.list_agent_tasks(run_id)})
+            except KeyError:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/memory-crystallization"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_memory_crystallization(run_id)
+            if payload is None:
+                self._send_json({"error": "memory crystallization not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
@@ -145,8 +219,113 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(payload)
             return
+        if path == "/api/webhook-sources":
+            self._send_json({"sources": self.server.coordinator.list_webhook_sources()})
+            return
+        if path.startswith("/api/webhook-sources/"):
+            source_id = path.split("/")[-1]
+            try:
+                self._send_json(self.server.coordinator.get_webhook_source(source_id))
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        if path == "/api/alerts":
+            query = parse_qs(parsed.query)
+            source_id = query.get("source_id", [None])[0]
+            limit = _safe_int(query.get("limit", ["100"])[0], default=100)
+            alerts = self.server.coordinator.list_alert_events(source_id, limit=limit)
+            self._send_json({"alerts": alerts})
+            return
         if path == "/api/watch/status":
             self._send_json(self.server.coordinator.watch_status())
+            return
+        if path == "/api/watchers":
+            self._send_json(self.server.coordinator.watchers_status())
+            return
+        if path.startswith("/api/watchers/") and path.count("/") == 3:
+            # GET /api/watchers/{name}
+            name = path.split("/", 3)[3]
+            detail = self.server.coordinator._watcher_detail(name)
+            if not detail.get("registered", False):
+                self._send_json(
+                    {"error": f"watcher {name!r} not registered"},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+                return
+            self._send_json(detail)
+            return
+        if path == "/api/graph/status":
+            self._send_json(self.server.coordinator.graph_status())
+            return
+        if path == "/api/graph/snapshot":
+            snap = self.server.coordinator.graph_snapshot()
+            if snap is None:
+                self._send_json({"error": "graph not populated"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(snap)
+            return
+        if path.startswith("/api/graph/neighbors/"):
+            parts = path[len("/api/graph/neighbors/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/neighbors/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            query = parse_qs(parsed.query)
+            depth = _safe_int(query.get("depth", ["1"])[0], default=1)
+            direction = query.get("direction", ["both"])[0]
+            edge_kinds_raw = query.get("edge_kinds", [""])[0]
+            edge_kinds = [k for k in edge_kinds_raw.split(",") if k] or None
+            neighbors = self.server.coordinator.graph_neighbors(
+                kind, name, namespace_arg,
+                depth=depth, edge_kinds=edge_kinds, direction=direction,
+            )
+            self._send_json({"neighbors": neighbors})
+            return
+        if path.startswith("/api/graph/node/"):
+            parts = path[len("/api/graph/node/"):].split("/")
+            if len(parts) < 3:
+                self._send_json({"error": "usage: /api/graph/node/{kind}/{namespace}/{name}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            kind, namespace, name = parts[0], parts[1], "/".join(parts[2:])
+            namespace_arg = None if namespace in ("_cluster", "-") else namespace
+            node = self.server.coordinator.graph_node(kind, name, namespace_arg)
+            if node is None:
+                self._send_json({"error": "node not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(node)
+            return
+        if path.startswith("/api/graph/affected/"):
+            parts = path[len("/api/graph/affected/"):].split("/")
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/graph/affected/{namespace}/{deployment}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            namespace, deployment = parts
+            services = self.server.coordinator.graph_affected_services(deployment, namespace)
+            self._send_json({"affected_services": services})
+            return
+        if path == "/api/trust-ladder":
+            self._send_json({"entries": self.server.coordinator.trust_ladder_list()})
+            return
+        if path == "/api/agent/slo":
+            self._send_json(self.server.coordinator.agent_slo_report())
+            return
+        if path == "/metrics":
+            body = self.server.coordinator.agent_slo_prometheus().encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path.startswith("/api/trust-ladder/"):
+            parts = path[len("/api/trust-ladder/"):].split("/", 1)
+            if len(parts) != 2:
+                self._send_json({"error": "usage: /api/trust-ladder/{action_class}/{service}"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            action_class, service = parts
+            entry = self.server.coordinator.trust_ladder_entry(action_class, service)
+            self._send_json(entry)
             return
         if path == "/api/vault/tree":
             self._send_json({"tree": self.server.coordinator.state_store.tree()})
@@ -182,7 +361,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._serve_static(path)
 
-    # ------------------------------------------------------------------ POST
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if not self._request_body_within_limit():
@@ -191,16 +369,82 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
             )
             return
+        raw_body = self._read_request_body()
         try:
-            payload = self._read_json_body()
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
         except (json.JSONDecodeError, ValueError):
             self._send_json({"error": "invalid json"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if not isinstance(payload, dict):
+            # Webhook vendors occasionally ship JSON arrays at the root;
+            # wrap them so path expressions like "$.alerts[0]" still work.
+            payload = {"root": payload}
+        if parsed.path == "/v1/metrics":
+            # OTLP/HTTP metrics receiver — opt-in. When enabled, an OTel
+            # Collector (or any OTLP producer) posts here and the payload
+            # becomes a Mesh run via the OtlpPushIngester.
+            if not self.server.config.otel_receiver_enabled:
+                self._send_json(
+                    {"error": "otlp receiver disabled"},
+                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                )
+                return
+            self._handle_otlp_metrics(payload)
             return
         if parsed.path == "/api/watch/start":
             self._send_json(self.server.coordinator.watch_start())
             return
         if parsed.path == "/api/watch/stop":
             self._send_json(self.server.coordinator.watch_stop())
+            return
+        if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/start"):
+            name = parsed.path[len("/api/watchers/"):-len("/start")]
+            if not name:
+                self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                self._send_json(self.server.coordinator.watcher_start(name))
+            except KeyError:
+                self._send_json(
+                    {"error": f"watcher {name!r} not registered"},
+                    status=HTTPStatus.NOT_FOUND,
+                )
+            return
+        if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/stop"):
+            name = parsed.path[len("/api/watchers/"):-len("/stop")]
+            if not name:
+                self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(self.server.coordinator.watcher_stop(name))
+            return
+        if parsed.path == "/api/trust-ladder/override":
+            action_class = str(payload.get("action_class", "")).strip()
+            service = str(payload.get("service", "")).strip()
+            level = str(payload.get("level", "")).strip()
+            reason = str(payload.get("reason", "operator_override"))
+            if not action_class or not service or not level:
+                self._send_json(
+                    {"error": "action_class, service, and level are required"},
+                    status=HTTPStatus.BAD_REQUEST,
+                )
+                return
+            try:
+                entry = self.server.coordinator.trust_ladder_override(
+                    action_class, service, level, reason=reason,
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(entry)
+            return
+        if parsed.path == "/api/graph/refresh":
+            namespaces_raw = payload.get("namespaces") if isinstance(payload, dict) else None
+            namespaces = None
+            if isinstance(namespaces_raw, list):
+                namespaces = [str(n) for n in namespaces_raw if n]
+            result = self.server.coordinator.graph_refresh(namespaces=namespaces)
+            status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.SERVICE_UNAVAILABLE
+            self._send_json(result, status=status)
             return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
@@ -212,16 +456,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
-            self._send_json(run, status=HTTPStatus.CREATED)
-            return
-        if parsed.path == "/v1/metrics":
-            if not self.server.config.otel_receiver_enabled:
+            except Exception as exc:  # pragma: no cover - defensive; avoid empty TCP replies to clients
+                _LOG.exception("POST /api/runs failed: %s", exc)
                 self._send_json(
-                    {"error": "otlp receiver disabled"},
-                    status=HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "run creation failed", "detail": str(exc)},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
                 return
-            self._handle_otlp_metrics(payload)
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/memory/maintenance/run":
+            self._send_json(self.server.coordinator.run_memory_maintenance(), status=HTTPStatus.CREATED)
             return
         if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/steer"):
             run_id = _safe_segment(parsed.path, 2)
@@ -238,22 +483,59 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(run)
             return
+        if parsed.path == "/api/webhook-sources":
+            try:
+                record = self.server.coordinator.register_webhook_source(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(record, status=HTTPStatus.CREATED)
+            return
+        if parsed.path.startswith("/api/webhooks/"):
+            source_id = parsed.path.split("/", 3)[-1]
+            signature = self.headers.get("X-Mesh-Signature") or self.headers.get(
+                "X-Hub-Signature-256"
+            )
+            try:
+                outcome = self.server.coordinator.ingest_webhook(
+                    source_id,
+                    payload,
+                    raw_body=raw_body,
+                    signature=signature,
+                )
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except SignatureMismatchError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            except WebhookIngestError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(outcome, status=HTTPStatus.ACCEPTED)
+            return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
-    # ---------------------------------------------------------------- OTLP receiver
+    def do_DELETE(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/webhook-sources/"):
+            source_id = parsed.path.split("/")[-1]
+            try:
+                self.server.coordinator.delete_webhook_source(source_id)
+            except UnknownWebhookSourceError:
+                self._send_json({"error": "source not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json({"deleted": source_id})
+            return
+        self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
     def _handle_otlp_metrics(self, otlp_payload: dict[str, Any]) -> None:
-        """Accept an OTLP/HTTP JSON metrics payload and turn it into a Mesh run.
+        """Accept an OTLP/HTTP JSON metrics payload and spawn a Mesh run.
 
-        The OTLP spec is lenient about alert context — a sender can tag the metric
-        that tripped via a standard header so we don't have to guess. We accept
-        ``x-mesh-alert-context`` as a JSON blob carrying fields like ``metric_name``,
-        ``baseline_value``, ``threshold_pct``, and ``service`` that flow through to
-        the ingester's ``AlertContext``. Without it the ingester falls back to
-        heuristics (latency/error name matching).
-
-        Optional token auth: when ``MESH_OTEL_RECEIVER_TOKEN`` is set, every inbound
-        request must present a matching ``Authorization: Bearer <token>`` header.
-        This keeps the receiver usable on trusted networks without a reverse proxy.
+        Optional bearer-token auth via ``MESH_OTEL_RECEIVER_TOKEN``. The
+        sender can attach ``x-mesh-alert-context`` as a JSON header naming the
+        metric that tripped and supplying a baseline value; without it the
+        ingester falls back to heuristics (latency/error name matching).
         """
         expected_token = self.server.config.otel_receiver_token
         if expected_token:
@@ -288,7 +570,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
-        except Exception as exc:  # pragma: no cover - defensive; never swallow silently
+        except Exception as exc:  # pragma: no cover - defensive
             _LOG.exception("OTLP metric ingestion failed: %s", exc)
             self._send_json(
                 {"error": "otlp ingestion failed", "detail": str(exc)},
@@ -300,7 +582,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status=HTTPStatus.ACCEPTED,
         )
 
-    # ---------------------------------------------------------------- logging
     def log_message(self, format: str, *args: Any) -> None:
         if not self.server.config.access_log_enabled:
             return
@@ -310,7 +591,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             client_host = "-"
         _LOG.info("%s - %s", client_host, format % args)
 
-    # ----------------------------------------------------------- static files
     def _serve_static(self, path: str, head_only: bool = False) -> None:
         assets_root = Path(self.server.config.web_asset_path)
         if not assets_root.exists():
@@ -336,7 +616,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if not head_only:
             self.wfile.write(raw)
 
-    # ----------------------------------------------------------- SSE streams
     def _stream_run(self, run_id: str) -> None:
         self.send_response(HTTPStatus.OK)
         self._add_security_headers()
@@ -409,7 +688,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
         self.wfile.flush()
 
-    # ----------------------------------------------------------- JSON response
     def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         raw = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
         self.send_response(status)
@@ -421,7 +699,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
-    # ----------------------------------------------------------- body parsing
     def _request_body_within_limit(self) -> bool:
         limit = self.server.config.max_json_body_bytes
         if limit <= 0:
@@ -446,7 +723,6 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length)
         return json.loads(raw.decode("utf-8"))
 
-    # --------------------------------------------------------- security headers
     def _add_security_headers(self) -> None:
         if not self.server.config.security_headers_enabled:
             return
@@ -462,8 +738,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
             self.send_header("Access-Control-Max-Age", "86400")
 
+    def _read_request_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length == 0:
+            return b""
+        return self.rfile.read(length)
 
-# ----------------------------------------------------------------- lifecycle
 
 def build_server(config: RuntimeConfig | None = None) -> MeshControlPlaneServer:
     resolved = config or RuntimeConfig.from_env()
@@ -481,6 +761,7 @@ def serve_forever(config: RuntimeConfig | None = None, start_sidecar: bool = Tru
     finally:
         server.coordinator.stop_watch_daemon()
         server.coordinator.sidecar.stop()
+        server.server_close()
     return server
 
 
@@ -489,8 +770,6 @@ def start_server_in_thread(
     start_sidecar: bool = True,
 ) -> tuple[MeshControlPlaneServer, threading.Thread]:
     server = build_server(config)
-    if start_sidecar:
-        server.coordinator.ensure_sidecar()
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread

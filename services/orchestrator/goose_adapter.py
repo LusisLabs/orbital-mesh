@@ -5,23 +5,17 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from services.actuators.repo_patch import RepoPatchAdapter
+from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
 
-
-@dataclass
-class GooseExecutionResult:
-    status: str
-    external_refs: dict[str, object]
-    failure: dict | None = None
-    retryable: bool = False
+GooseExecutionResult = CliExecutionResult
 
 
 class GooseAdapter:
@@ -34,12 +28,20 @@ class GooseAdapter:
 
 class NativeGooseAdapter(GooseAdapter):
     def __init__(self, config: RuntimeConfig | None = None) -> None:
+        from services.actuators.argocd import ArgoCDAdapter
         self.config = config
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
         self.kubernetes = KubernetesAdapter(config=config)
         self.audit_logs = AuditLogAdapter()
         self.repo_patch = RepoPatchAdapter()
+        cfg = config or RuntimeConfig()
+        self.argocd = ArgoCDAdapter(
+            url=cfg.argocd_url,
+            token=cfg.argocd_token,
+            ca_bundle=cfg.argocd_ca_bundle,
+            timeout_seconds=cfg.argocd_timeout_seconds,
+        )
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
         audit_result = self.audit_logs.write_record(decision, idempotency_key)
@@ -63,29 +65,29 @@ class NativeGooseAdapter(GooseAdapter):
         elif execution_plan["system"] == "incident_service":
             result = self.incidents.open_incident(execution_plan["parameters"])
         elif execution_plan["system"] == "kubernetes_service":
-            # Explicit dispatch by action keeps the routing self-documenting and
-            # gives the decision schema's action enum a single source of truth.
-            # New actions added to the enum must be wired here — the else branch
-            # returns no_action so an unrouted action fails loudly rather than
-            # silently executing the wrong thing.
-            k8s_action = execution_plan["action"]
-            if k8s_action == "rollback_deployment":
+            action = execution_plan["action"]
+            if action == "rollback_deployment":
                 result = self.kubernetes.rollback_deployment(execution_plan["parameters"])
-            elif k8s_action == "restart_deployment":
-                result = self.kubernetes.restart_deployment(execution_plan["parameters"])
-            elif k8s_action == "scale_deployment":
+            elif action == "restart_pod":
+                result = self.kubernetes.restart_pod(execution_plan["parameters"])
+            elif action == "scale_deployment":
                 result = self.kubernetes.scale_deployment(execution_plan["parameters"])
-            elif k8s_action == "patch_resources":
-                result = self.kubernetes.patch_resources(execution_plan["parameters"])
+            elif action == "cordon_node":
+                result = self.kubernetes.cordon_node(execution_plan["parameters"])
+            elif action == "drain_node":
+                result = self.kubernetes.drain_node(execution_plan["parameters"])
             else:
-                result = {
-                    "status": "failed",
-                    "failure": {
-                        "reason": "unknown_kubernetes_action",
-                        "detail": f"action {k8s_action!r} is not routed in the orchestrator",
-                    },
-                    "external_refs": {},
-                }
+                result = self.kubernetes.restart_deployment(execution_plan["parameters"])
+        elif execution_plan["system"] == "argocd_service":
+            action = execution_plan["action"]
+            if action == "sync_application":
+                result = self.argocd.sync_application(execution_plan["parameters"])
+            elif action == "rollback_application":
+                result = self.argocd.rollback_application(execution_plan["parameters"])
+            else:
+                result = {"status": "failed",
+                          "failure": {"reason": "unknown_argocd_action", "detail": action},
+                          "external_refs": {}}
         elif execution_plan["system"] == "repo_patch_service":
             result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:

@@ -119,7 +119,7 @@ class ValidatorTests(unittest.TestCase):
                     "parameters": {
                         "deployment_name": "mystery",
                         "namespace": "default",
-                        "replicas_delta": 2,
+                        "replicas": 4,
                     },
                     "confidence": 0.7,
                     "risk_level": "low",
@@ -130,7 +130,7 @@ class ValidatorTests(unittest.TestCase):
         )
         self.assertIsNotNone(result.match)
         self.assertEqual(result.match.decision_type, "scale_deployment")
-        self.assertEqual(result.match.parameters["replicas_delta"], 2)
+        self.assertEqual(result.match.parameters["replicas"], 4)
 
     def test_rejects_action_outside_allowlist(self) -> None:
         """LLM proposes something not in the table — must reject, not pass through."""
@@ -168,8 +168,8 @@ class ValidatorTests(unittest.TestCase):
         self.assertIsNone(result.match)
         self.assertIn("llm_missing_parameter", result.risk_flags)
 
-    def test_clamps_out_of_bound_replicas_delta(self) -> None:
-        """LLM proposes +50 — spec caps at +5. Must clamp and flag, not reject."""
+    def test_clamps_out_of_bound_replicas(self) -> None:
+        """LLM proposes 100 replicas — spec caps at 50. Must clamp and flag, not reject."""
         result = self._propose(
             json.dumps(
                 {
@@ -179,7 +179,7 @@ class ValidatorTests(unittest.TestCase):
                     "parameters": {
                         "deployment_name": "mystery",
                         "namespace": "default",
-                        "replicas_delta": 50,
+                        "replicas": 100,
                     },
                     "confidence": 0.9,
                     "risk_level": "medium",
@@ -188,7 +188,7 @@ class ValidatorTests(unittest.TestCase):
             )
         )
         self.assertIsNotNone(result.match)
-        self.assertEqual(result.match.parameters["replicas_delta"], 5)
+        self.assertEqual(result.match.parameters["replicas"], 50)
         self.assertIn("llm_bound_clamped", result.risk_flags)
 
     def test_drops_unknown_parameter_keys_silently(self) -> None:
@@ -202,7 +202,7 @@ class ValidatorTests(unittest.TestCase):
                     "parameters": {
                         "deployment_name": "mystery",
                         "namespace": "default",
-                        "replicas_delta": 1,
+                        "replicas": 3,
                         "some_made_up_field": "wat",
                     },
                     "confidence": 0.6,
@@ -251,7 +251,7 @@ class ValidatorTests(unittest.TestCase):
                     "parameters": {
                         "deployment_name": "mystery",
                         "namespace": "default",
-                        "replicas_delta": 1,
+                        "replicas": 3,
                     },
                     "confidence": 0.99,
                     "risk_level": "low",
@@ -309,7 +309,7 @@ class DecisionIntegrationTests(unittest.TestCase):
                 "parameters": {
                     "deployment_name": "mystery",
                     "namespace": "default",
-                    "replicas_delta": 2,
+                    "replicas": 4,
                 },
                 "confidence": 0.7,
                 "risk_level": "low",
