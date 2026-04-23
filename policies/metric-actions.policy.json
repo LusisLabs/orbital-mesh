@@ -1,0 +1,187 @@
+{
+  "$comment": "Metric-action rule registry. See shared/mesh_runtime/metric_action_rules.py for the full format spec. Rules are evaluated top-to-bottom; the first match wins. Put more specific rules before more general ones. Every rule carries its own bounds — the engine enforces those at match time, so a typo cannot produce a runaway actuation.",
+  "rules": [
+    {
+      "name": "scale on consumer lag",
+      "$doc": "Covers Kafka consumer lag, RabbitMQ queue depth, Celery backlog, and SQS approximate-messages metrics. A single rule fires across the four queue technologies because they all look like 'unread messages climbing'. Only triggers at ≥30% delta so transient bursts don't churn replicas.",
+      "match": {
+        "metric_name_pattern": "(consumer_lag|queue_depth|backlog|rabbitmq\\.queue\\.messages|sqs\\.approximate_messages)",
+        "direction": "increasing",
+        "delta_pct_min": 30,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "scale_deployment",
+        "system": "kubernetes_service",
+        "action": "scale_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "cluster": "{resource_attributes.k8s.cluster.name}",
+          "kube_context": "{resource_attributes.k8s.cluster.name}",
+          "replicas": 4
+        }
+      },
+      "bounds": {
+        "replicas_max": 8,
+        "cooldown_seconds": 300
+      },
+      "confidence": 0.78,
+      "risk_level": "low",
+      "rollback_plan": "scale deployment back to the prior replica count if the lag does not drop within 10 minutes"
+    },
+    {
+      "name": "scale on cpu saturation",
+      "$doc": "CPU utilization crossing 85% typically responds well to adding replicas, especially for stateless workloads. Note we match on the OTel semantic convention metric names (system.cpu.utilization, process.cpu.utilization) plus the common Prometheus-style node_cpu_seconds_total variants.",
+      "match": {
+        "metric_name_pattern": "(cpu\\.utilization|cpu_utilization|cpu_usage_percent|node_cpu_usage_percent)",
+        "direction": "increasing",
+        "delta_pct_min": 20,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "scale_deployment",
+        "system": "kubernetes_service",
+        "action": "scale_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "cluster": "{resource_attributes.k8s.cluster.name}",
+          "kube_context": "{resource_attributes.k8s.cluster.name}",
+          "replicas": 6
+        }
+      },
+      "bounds": {
+        "replicas_max": 12,
+        "cooldown_seconds": 300
+      },
+      "confidence": 0.72,
+      "risk_level": "low",
+      "rollback_plan": "scale back down once CPU utilization returns below 60% for 10 minutes"
+    },
+    {
+      "name": "restart on memory saturation",
+      "$doc": "When memory.usage climbs toward memory.limit, the workload is usually close to OOMKill. A rolling restart clears the pressure and buys time while the operator reviews for a real leak. (A future patch_resources rule would raise the limit instead, but the actuator isn't wired yet.)",
+      "match": {
+        "metric_name_pattern": "(memory\\.utilization|memory_utilization|memory_usage_bytes)",
+        "direction": "increasing",
+        "delta_pct_min": 25,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "restart_deployment",
+        "system": "kubernetes_service",
+        "action": "restart_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "cluster": "{resource_attributes.k8s.cluster.name}",
+          "kube_context": "{resource_attributes.k8s.cluster.name}"
+        }
+      },
+      "bounds": {
+        "cooldown_seconds": 600
+      },
+      "confidence": 0.68,
+      "risk_level": "medium",
+      "rollback_plan": "if memory pressure returns within 10 minutes, escalate for a real leak investigation"
+    },
+    {
+      "name": "scale on request rate spike",
+      "$doc": "Broad fallback for latency-adjacent metrics: request rate, concurrent connections, active sessions. Fires only at 50% delta to keep it conservative — request rate moves a lot naturally. Consumer-lag and CPU rules above will usually fire first for known workloads.",
+      "match": {
+        "metric_name_pattern": "(http\\.server\\.request_count|http\\.server\\.active_requests|active_connections|concurrent_sessions)",
+        "direction": "increasing",
+        "delta_pct_min": 50,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "scale_deployment",
+        "system": "kubernetes_service",
+        "action": "scale_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "cluster": "{resource_attributes.k8s.cluster.name}",
+          "kube_context": "{resource_attributes.k8s.cluster.name}",
+          "replicas": 3
+        }
+      },
+      "bounds": {
+        "replicas_max": 6,
+        "cooldown_seconds": 300
+      },
+      "confidence": 0.65,
+      "risk_level": "low",
+      "rollback_plan": "scale back to prior replica count once the traffic burst subsides"
+    },
+    {
+      "name": "restart on solana slot lag",
+      "$doc": "Fires when a Solana validator falls >128 slots (~50s) behind the reference cluster head. Slot lag this large usually means the process has stalled on disk I/O, GC, or a gossip partition; a rolling restart clears transient state. NOT an appropriate response if the validator is actively voting — operators should review `vote_in_progress` in related_context before approving. Risk level is medium so the approval gate fires by default.",
+      "match": {
+        "metric_name_pattern": "solana\\.slot_lag",
+        "direction": "increasing",
+        "resource_attributes": {
+          "mesh.node.kind": "solana",
+          "mesh.node.host": "*",
+          "mesh.node.service": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "restart_systemd_service",
+        "system": "systemd_service",
+        "action": "restart_systemd_service",
+        "parameters": {
+          "host": "{resource_attributes.mesh.node.host}",
+          "service": "{resource_attributes.mesh.node.service}"
+        }
+      },
+      "bounds": {
+        "cooldown_seconds": 900
+      },
+      "confidence": 0.7,
+      "risk_level": "medium",
+      "rollback_plan": "no rollback — the restart is the remediation; escalate if lag persists >5m after restart"
+    },
+    {
+      "name": "restart on geth peer starvation",
+      "$doc": "Fires when a geth/reth node is below the configured minimum peer count. Zero or very-low peers usually means the discovery service is stuck or the network interface has a routing issue; a restart re-seeds peer discovery. Also fires on reth via the shared `mesh.node.kind` attribute.",
+      "match": {
+        "metric_name_pattern": "geth\\.peer_count",
+        "direction": "decreasing",
+        "resource_attributes": {
+          "mesh.node.kind": "*",
+          "mesh.node.host": "*",
+          "mesh.node.service": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "restart_systemd_service",
+        "system": "systemd_service",
+        "action": "restart_systemd_service",
+        "parameters": {
+          "host": "{resource_attributes.mesh.node.host}",
+          "service": "{resource_attributes.mesh.node.service}"
+        }
+      },
+      "bounds": {
+        "cooldown_seconds": 600
+      },
+      "confidence": 0.72,
+      "risk_level": "medium",
+      "rollback_plan": "no rollback — if peers do not recover within 5 minutes, escalate to network team"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import TYPE_CHECKING
 
+from services.decision.llm_fallback import LlmActionProposer
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.feedback.service import FeedbackService
@@ -58,10 +59,16 @@ class MeshRuntimeEngine:
                 alert_store=alert_store,
                 context_store=context_store,
             )
+        # Layer 3: construct the LLM decision proposer only when enabled. Cheap
+        # object (no subprocess until propose() fires) so we build it lazily
+        # through the config gate and pass it into DecisionService alongside
+        # master's escalation_reasoner and hypothesis_engine.
+        llm_proposer = LlmActionProposer(self.config) if self.config.llm_decision_fallback_enabled else None
         self.decision = decision or DecisionService(
             learning_store=learning_store,
             escalation_reasoner=escalation_reasoner,
             hypothesis_engine=hypothesis_engine,
+            llm_proposer=llm_proposer,
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)

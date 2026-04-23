@@ -224,6 +224,10 @@ class RunCoordinator:
         self.state_store = state_store or build_mesh_state_store(self.config)
         self.sidecar = GitNexusSidecarManager(self.config)
         self.learning_store = LearningStore(self.config.state_directory, state_store=self.state_store)
+        # Layer 4: override-learning store. Constructed unconditionally because
+        # it's cheap; reads/writes only fire when rule_learning_enabled is set.
+        from shared.mesh_runtime.rule_suggestions import OverrideLearningStore
+        self.override_store = OverrideLearningStore(self.config.state_directory)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
         self.infra_graph = InfraGraph(self.config.state_directory)
@@ -919,7 +923,12 @@ class RunCoordinator:
                     self._update_session(run_id, stage="cancelled", status="cancelled")
                     return
                 if outcome["action"] == "override":
+                    original_decision = decision
                     decision = self._apply_override(decision, outcome["payload"])
+                    # Layer 4: record the override so future rule suggestions
+                    # can learn what operators do when Mesh defers. Best-effort;
+                    # a learning-store failure must never block remediation.
+                    self._record_override_for_learning(run_id, original_decision, decision, outcome["payload"])
                     evaluation = self._record_decision_and_evaluation(
                         run_id,
                         engine,
@@ -1160,6 +1169,13 @@ class RunCoordinator:
                 outcome=feedback.outcome,
                 world_model_updates=feedback.world_model_updates if hasattr(feedback, "world_model_updates") else {},
             )
+            # Layer 4: backfill outcome on any override records written earlier
+            # for this run, so the rule synthesizer knows which overrides worked.
+            if self.config.rule_learning_enabled:
+                try:
+                    self.override_store.update_override_outcome(run_id, feedback.outcome)
+                except Exception:  # pragma: no cover - defensive
+                    pass
             completed_session = self.state_store.get_run_session(run_id)
             if completed_session:
                 self.context_store.update_from_run(completed_session.to_dict())
@@ -1670,6 +1686,62 @@ class RunCoordinator:
                     self._update_session(run_id, stage="awaiting_operator", status="awaiting_operator")
                     return {"action": "override", "payload": {"type": command.command_type, **command.payload}}
 
+    def list_rule_suggestions(self) -> list[dict[str, Any]]:
+        """Admin surface for Layer 4 rule learning.
+
+        Returns candidate rules synthesized from override history. Empty when
+        rule_learning is disabled or thresholds have not been met. Suggestions
+        are read-only — no endpoint auto-applies them to the policy file.
+        """
+        if not self.config.rule_learning_enabled:
+            return []
+        suggestions = self.override_store.synthesize_suggestions(
+            min_observations=self.config.rule_learning_min_observations,
+            max_age_days=self.config.rule_learning_max_age_days,
+        )
+        return [s.to_dict() for s in suggestions]
+
+    def _record_override_for_learning(
+        self,
+        run_id: str,
+        original: Decision,
+        overridden: Decision,
+        payload: dict[str, Any],
+    ) -> None:
+        """Persist an operator override event for later rule synthesis.
+
+        Only records overrides on OTel-shaped signals because the Layer 4
+        suggestion engine only produces rules in that format. Feature-flag
+        and Kubernetes overrides are left for a future expansion.
+        """
+        if not self.config.rule_learning_enabled:
+            return
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return
+        signal = session.artifacts.get("input_signal") or {}
+        if signal.get("signal_type") != "otel_metric_regression":
+            return
+        try:
+            self.override_store.record_override(
+                signal=signal,
+                run_id=run_id,
+                original_decision_type=original.decision_type,
+                override_decision_type=(
+                    overridden.decision_type
+                    if overridden.decision_type != original.decision_type
+                    else None
+                ),
+                override_parameters=overridden.execution_plan.get("parameters") or {},
+                original_parameters=original.execution_plan.get("parameters") or {},
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            try:
+                from shared.mesh_runtime import log_runtime_event
+                log_runtime_event("override_learning_record_failed", run_id=run_id, error=str(exc))
+            except Exception:
+                pass
+
     def _apply_override(self, decision: Decision, payload: dict[str, Any]) -> Decision:
         data = decision.to_dict()
         if payload["type"] == "override_decision":
@@ -1876,6 +1948,9 @@ class RunCoordinator:
     def _resolve_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("signal_payload"), dict):
             return self._resolve_signal_placeholders(copy.deepcopy(payload["signal_payload"]))
+        otlp_payload = payload.get("otlp_payload")
+        if isinstance(otlp_payload, dict):
+            return self._build_signal_from_otlp(otlp_payload, payload)
         live_signal = payload.get("live_signal")
         if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
             return self._collect_live_kubernetes_signal(live_signal, payload)
@@ -1931,6 +2006,33 @@ class RunCoordinator:
             signal["signal_id"] = f"{signal['signal_id']}_{uuid4().hex[:10]}"
             return signal
         raise ValueError("scenario_key or signal_payload is required")
+
+    def _build_signal_from_otlp(self, otlp_payload: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        """Turn an inbound OTLP/HTTP metrics payload into a Mesh signal.
+
+        An optional ``alert_context`` block on the create-run payload lets the
+        sender (typically an OTel Collector with an alertmanager-style route)
+        name the specific metric that tripped. Without it, the ingester uses
+        heuristics (latency/error name matching, first data point as baseline).
+        """
+        from services.ingest.otel_signal import AlertContext, OtlpPushIngester
+
+        raw_context = payload.get("alert_context") or {}
+        context = AlertContext(
+            metric_name=raw_context.get("metric_name"),
+            service=raw_context.get("service"),
+            environment=raw_context.get("environment"),
+            baseline_value=raw_context.get("baseline_value"),
+            threshold_pct=raw_context.get("threshold_pct"),
+            region=raw_context.get("region"),
+            customer_tier=raw_context.get("customer_tier"),
+            endpoint=raw_context.get("endpoint"),
+        )
+        signal = OtlpPushIngester().build_signal(otlp_payload, alert_context=context)
+        service = signal.get("service", "unknown")
+        metric_name = signal["metric_regression"].get("metric_name", "metric")
+        payload.setdefault("scenario_key", f"otlp:{service}/{metric_name}")
+        return signal
 
     def _collect_live_kubernetes_signal(self, live_signal: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         from services.ingest.kubernetes_live_signal import collect_kubernetes_signal

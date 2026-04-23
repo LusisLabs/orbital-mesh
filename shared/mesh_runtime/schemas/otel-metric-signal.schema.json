@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/otel-metric-signal.schema.json",
+  "title": "OtelMetricRegressionSignal",
+  "description": "A metric regression detected via an OpenTelemetry stream. Produced by the OTLP receiver or Prometheus pull ingester when a monitored series crosses a regression threshold relative to its baseline.",
+  "type": "object",
+  "required": [
+    "signal_type",
+    "signal_id",
+    "observed_at",
+    "environment",
+    "service",
+    "endpoint",
+    "metric_regression",
+    "comparison_window"
+  ],
+  "properties": {
+    "signal_type": {
+      "type": "string",
+      "enum": ["otel_metric_regression"]
+    },
+    "signal_id": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "environment": { "type": "string" },
+    "service": { "type": "string" },
+    "endpoint": { "type": "string" },
+    "cluster": { "type": ["string", "null"] },
+    "namespace": { "type": ["string", "null"] },
+    "source": {
+      "type": "string",
+      "description": "Which OTel ingest path produced this signal.",
+      "enum": ["otlp_push", "prometheus_pull", "otel_collector_alert", "bare_metal_probe"]
+    },
+    "comparison_window": {
+      "type": "object",
+      "required": ["baseline", "observed"],
+      "properties": {
+        "baseline": { "type": "string" },
+        "observed": { "type": "string" }
+      }
+    },
+    "segment": {
+      "type": "object",
+      "properties": {
+        "customer_tier": { "type": "string" },
+        "region": { "type": "string" }
+      }
+    },
+    "metric_regression": {
+      "type": "object",
+      "required": ["metric_name", "baseline_value", "observed_value"],
+      "properties": {
+        "metric_name": { "type": "string" },
+        "metric_kind": { "type": "string" },
+        "unit": { "type": ["string", "null"] },
+        "baseline_value": { "type": "number" },
+        "observed_value": { "type": "number" },
+        "delta_pct": { "type": ["number", "null"] },
+        "threshold_pct": { "type": ["number", "null"] },
+        "attributes": { "type": "object" }
+      }
+    },
+    "resource_attributes": { "type": "object" },
+    "related_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["metric_name", "value"],
+        "properties": {
+          "metric_name": { "type": "string" },
+          "value": { "type": "number" },
+          "attributes": { "type": "object" }
+        }
+      }
+    },
+    "related_context": { "type": "object" },
+    "post_action_observations": { "type": "object" }
+  }
+}

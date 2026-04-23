@@ -21,27 +21,6 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Dimension | Mesh behavior |
 |-----------|----------------|
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
-| Policy / evaluation | Dedicated evaluation stage; native or Promptfoo evaluation; overrides re-enter evaluation before execution |
-| Operator control | Steering surface (approve, cancel, override decision/parameters, pause, notes) |
-| Auditability | Merkle roots and per-event proofs; vault mirroring of run memory |
-
----
-
-## Tldr
-Ingress: client starts run via POST /api/runs using signal_payload or scenario_key.
-Ingest stage: IngestService.normalize_signal(...) creates normalized event envelope.
-Trigger stage: TriggerService.detect(...) decides if signal is actionable.
-no trigger -> run ends no_trigger/completed
-Decision stage: DecisionService.decide(...) picks bounded action (no_action, reduce_rollout, disable_flag, escalate, etc.).
-Evaluation stage: EvaluationService.evaluate(...) applies policy/business/quality checks (Promptfoo when enabled).
-Operator gate: enters awaiting_operator if required by steering mode/pause points.
-Execution stage: OrchestratorService.execute(...) calls native path or Goose bridge/adapter.
-Feedback stage: FeedbackService.record(...) writes outcome signals (10m/30m observations, recurrence/guardrails).
-Persistence/streaming: each stage emits typed events, persisted + streamed over SSE, mirrored to vault, Merkle updated.
----
-
-The system now ships with two operator surfaces:
-
 - Browser-first control plane served by `run_server.py`
 - Curses TUI served by `run_tui.py` for terminal-native inspection
 
@@ -422,6 +401,132 @@ Every canonical run event is hashed as a leaf. The server recomputes the root wh
 
 This is intended for run inspection and auditability, not blockchain settlement.
 
+## OpenTelemetry Consumer
+
+Mesh accepts OpenTelemetry signals as a first-class input. Two paths:
+
+**Push (OTLP/HTTP receiver)** — `POST /v1/metrics` accepts OTLP/HTTP JSON metric payloads; each creates a run with signal type `otel_metric_regression`.
+
+```bash
+export MESH_OTEL_RECEIVER_ENABLED=1
+export MESH_OTEL_RECEIVER_TOKEN=a-strong-bearer-token  # optional
+```
+
+Senders can attach an optional `x-mesh-alert-context` JSON header naming the metric that tripped; without it the ingester falls back to heuristics.
+
+**Pull (Prometheus queries)** — Point Mesh at any PromQL endpoint for feedback-stage verification with real metrics instead of stub observations.
+
+```bash
+export MESH_PROMETHEUS_URL=http://prometheus:9090
+export MESH_FEEDBACK_PROMETHEUS_ENABLED=1
+```
+
+## Decision Layers
+
+The decision stage handles OTel metric-regression signals through four composable layers:
+
+| Layer | Coverage | Determinism | Enable |
+|-------|----------|-------------|--------|
+| 1. Curated action catalog | ~8 actions | Full | Always on |
+| 2. Declarative rule matcher | ~70% of signals | Full | `policies/metric-actions.policy.json` |
+| 3. LLM fallback (Goose) | +15% long-tail | Non-deterministic | `MESH_LLM_DECISION_FALLBACK_ENABLED=1` |
+| 4. Rule learning from overrides | Grows over time | Human-reviewed | `MESH_RULE_LEARNING_ENABLED=1` |
+
+**Layer 2 rules** match on metric-name patterns + OTel attributes and propose bounded actions. See `shared/mesh_runtime/metric_action_rules.py` for the format and `policies/metric-actions.policy.json` for starter rules (queue lag, CPU saturation, memory pressure, traffic spikes).
+
+**Layer 3 LLM fallback** — when no rule matches, Goose proposes an action from a hardcoded allowlist. Outputs are schema-validated and numeric parameters clamped to bounds; LLM timeouts or invalid responses fall through to escalate with a named risk flag.
+
+**Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
+
+## Bare-Metal Nodes (Solana, geth/reth, etc.)
+
+Mesh runs the full closed-loop — ingest → trigger → decision → execution → feedback — against bare-metal blockchain nodes, not just Kubernetes workloads. This is how Solana/Agave validators, geth archival nodes, reth, lighthouse, and similar long-running services are typically operated.
+
+### Architecture
+
+```
+Solana / geth / reth node (bare metal, systemd-managed)
+          │                                       ▲
+          │ JSON-RPC (getSlot, eth_syncing, ...)  │
+          │ Prometheus scrape                     │ ssh sudo systemctl ...
+          ▼                                       │
+  ┌────────────────────────┐          ┌──────────────────────┐
+  │ BareMetalNodeIngester  │─signal─▶ │ SystemdSshAdapter    │
+  │ (SolanaNodeIngester,   │          │  (mock/live gated by │
+  │  EthereumNodeIngester) │          │   safety envelope)   │
+  └────────────┬───────────┘          └──────────┬───────────┘
+               │                                 ▲
+               ▼                                 │
+         Mesh pipeline: Ingest → Trigger → Decision (4-layer engine)
+                                                 │
+                                                 └── policies/metric-actions.policy.json
+```
+
+### Safety envelope (non-negotiable)
+
+Bare-metal actuation has no Kubernetes safety net. The SSH adapter enforces four overlapping constraints — every real SSH command must pass all four:
+
+1. **Enable flag** — `MESH_SSH_EXECUTION_ENABLED=1`. Mock-by-default. Tests and CI run in mock mode.
+2. **Host allowlist** — `MESH_SSH_ALLOWED_HOSTS=vault-prod-07,vault-prod-08`. Empty allowlist rejects every SSH.
+3. **Service allowlist** — `MESH_SSH_ALLOWED_SERVICES=solana-validator.service,geth.service`. Prevents restarting `sshd` or `systemd-journald` by mistake.
+4. **Command allowlist** — hardcoded in `services/actuators/systemd_ssh.py`. Only `systemctl restart|start|stop|status` + diagnostic reads (`df`, `free`, `uptime`). No arbitrary commands, ever.
+
+### What the adapter does not do
+
+- **No arbitrary shell.** `ssh host bash -c ...` is not available. The remote command is assembled from the command allowlist only.
+- **No validator-specific operations.** Identity rotation, vote account changes, snapshot creation are out of scope — they carry data-loss risk and belong in a dedicated follow-up with stronger policy gates.
+- **No config file patching.** `systemctl daemon-reload` is not in the allowlist. Configuration changes go through your existing config-management tool.
+- **No credential handling.** SSH keys are managed by the host's SSH client; the adapter passes `-i` when `MESH_SSH_IDENTITY_FILE` is set but never reads or logs key material.
+
+### Signal ingest
+
+`services/ingest/bare_metal_node.py` builds Mesh signals from JSON-RPC:
+
+| Node type | Primary metric | Related metrics |
+|-----------|----------------|-----------------|
+| Solana (Agave) | `solana.slot_lag` — slots behind reference cluster head | `solana.delinquent` (vote account status) |
+| geth / reth | `geth.peer_count` (when < min) or `geth.block_lag` | `geth.syncing`, `geth.peer_count`, `geth.block_lag` |
+
+Each signal carries `mesh.node.host` and `mesh.node.service` in `resource_attributes` so the metric-action rule engine can route to the correct SSH target.
+
+### Starter rules
+
+Two bare-metal rules ship in `policies/metric-actions.policy.json`:
+
+| Rule | Fires on | Action | Risk |
+|------|----------|--------|------|
+| `restart on solana slot lag` | Validator > 128 slots behind | `restart_systemd_service` | medium (approval gate on) |
+| `restart on geth peer starvation` | geth/reth peer count below min | `restart_systemd_service` | medium |
+
+Both default to the approval gate — a validator restart during active voting can cost SOL, so a human signs off unless you've explicitly flipped the run to `interruptible_auto` and the operator has reviewed the context.
+
+### Setup
+
+```bash
+# 1. Add the operator's SSH key to each bare-metal host's authorized_keys
+#    The key must be able to `sudo systemctl restart <service>` without a password prompt
+#    (configure via /etc/sudoers.d with NOPASSWD for exactly these commands).
+
+# 2. Populate known_hosts on the Mesh host
+ssh-keyscan vault-prod-07 vault-prod-08 >> ~/.ssh/known_hosts
+
+# 3. Configure the safety envelope
+export MESH_SSH_EXECUTION_ENABLED=1
+export MESH_SSH_IDENTITY_FILE=/etc/mesh/id_ed25519
+export MESH_SSH_ALLOWED_HOSTS=vault-prod-07,vault-prod-08
+export MESH_SSH_ALLOWED_SERVICES=solana-validator.service,geth.service
+
+# 4. (Optional) Register node targets for the ingester
+export MESH_BARE_METAL_NODE_TARGETS='[
+  {"name":"vault-prod-07","kind":"solana","rpc_url":"http://127.0.0.1:8899","host":"vault-prod-07","service":"solana-validator.service"},
+  {"name":"eth-archival-02","kind":"geth","rpc_url":"http://127.0.0.1:8545","host":"eth-archival-02","service":"geth.service"}
+]'
+```
+
+### Path to an agent-based alternative
+
+SSH is the right first step because it reuses existing keypair infrastructure. An agent-based adapter (`SystemdAgentAdapter`) could land later without changing the decision or orchestrator layers — the adapter pattern keeps this swap contained.
+
 ## TUI
 
 The TUI remains available as a local terminal companion:
@@ -722,6 +827,72 @@ The image currently runs as root because the bundled Goose profile path and kube
 2. Set `MESH_WEB_ASSET_PATH` to the absolute path of `web/dist` if it is not adjacent to the Python tree.
 3. Bind `MESH_SERVER_HOST` to `0.0.0.0` only on trusted networks; otherwise keep the default loopback binding and front with a reverse proxy on the same host.
 4. Enable access logs in production if desired: `MESH_ACCESS_LOG=1` (Python logging; ensure your process supervisor captures stdout/stderr).
+
+## Chaos Engineering
+
+Mesh ships with a continuous chaos-engineering harness that implements the [Principles of Chaos](https://principlesofchaos.org/):
+
+1. **Build a hypothesis around steady-state behavior** — detection rate, correct-decision rate, P95 latency, pipeline availability, probe pass rate.
+2. **Vary real-world events** — 8-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures.
+3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn weighted-at-random with per-primitive cooldowns.
+4. **Automate** — one driver script, no manual scenario selection.
+5. **Minimize blast radius** — circuit breaker halts the session on two consecutive steady-state probe failures or if Mesh pipeline latency blows past a ceiling.
+
+### Run a session
+
+```bash
+# Default 60-minute session on a fresh kind cluster
+scripts/run_chaos_session.sh
+
+# 10-minute session for quick iteration
+scripts/run_chaos_session.sh --duration 600
+
+# Deterministic replay of a previous run's sequence
+scripts/run_chaos_session.sh --duration 600 --seed 42
+
+# Keep the cluster after the session ends for post-hoc debugging
+scripts/run_chaos_session.sh --keep-cluster
+```
+
+### The portfolio
+
+| Primitive | Severity | Weight | Expected Mesh response |
+|-----------|---------:|-------:|------------------------|
+| `crash_loop` | high | 3.0 | `restart_deployment` or `rollback_deployment` |
+| `bad_image` | high | 2.0 | `rollback_deployment` |
+| `readiness_failure` | medium | 1.0 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `pod_kill_one` | low | 4.0 | **No trigger** (false-positive probe) |
+| `pod_kill_all` | high | 1.5 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `memory_pressure` | high | 1.0 | `restart_deployment` / `rollback_deployment` |
+| `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
+| `config_drift` | medium | 0.5 | `escalate` / `no_action` |
+
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+
+### Hypothesis thresholds
+
+Defaults set in `scripts/run_chaos_session.sh`:
+
+| Metric | Threshold |
+|--------|-----------|
+| Detection rate | ≥ 90% |
+| Correct-decision rate | ≥ 85% |
+| False-positive rate | ≤ 10% |
+| Steady-state probe pass rate | ≥ 90% |
+| Decision latency P95 | ≤ 10s |
+| Pipeline availability | 100% |
+
+Tune them per session by editing the `Hypothesis(...)` call in the driver.
+
+### Session report
+
+Each session writes two artifacts to `e2e-reports/`:
+
+- `chaos_session_<timestamp>.md` — verdict, hypothesis pass/fail table, aggregate metrics, per-experiment table, probe timeline, breaches detail
+- `chaos_session_<timestamp>.json` — machine-readable source of truth
+- `chaos_session_<timestamp>.server.log` — Mesh's per-stage INFO logs for the entire session
+
+Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
 
 ## Development Commands
 

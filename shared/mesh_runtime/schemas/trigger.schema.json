@@ -25,7 +25,8 @@
       "type": "string",
       "enum": [
         "feature_flag_performance_regression",
-        "kubernetes_deployment_unhealthy"
+        "kubernetes_deployment_unhealthy",
+        "otel_metric_regression"
       ]
     },
     "triggered_at": {

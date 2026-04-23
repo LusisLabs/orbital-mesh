@@ -31,7 +31,10 @@
         "escalate",
         "investigate_and_patch",
         "rollback_deployment",
-        "restart_deployment"
+        "restart_deployment",
+        "scale_deployment",
+        "patch_resources",
+        "restart_systemd_service"
       ]
     },
     "autonomy_tier": {
@@ -151,7 +154,8 @@
             "incident_service",
             "audit_log_sink",
             "repo_patch_service",
-            "kubernetes_service"
+            "kubernetes_service",
+            "systemd_service"
           ]
         },
         "action": {
@@ -162,7 +166,12 @@
             "record_no_action",
             "investigate_and_patch",
             "rollback_deployment",
-            "restart_deployment"
+            "restart_deployment",
+            "scale_deployment",
+            "patch_resources",
+            "restart_systemd_service",
+            "start_systemd_service",
+            "stop_systemd_service"
           ]
         },
         "parameters": {

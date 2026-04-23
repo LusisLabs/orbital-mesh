@@ -2,17 +2,56 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from shared.mesh_runtime import EventEnvelope, Trigger
 
 
+_LOG = logging.getLogger("mesh.trigger")
+
+
+# Container states the kubelet considers unambiguously broken. A pod in
+# any of these is actively failing — not starting, not transitioning,
+# not recovering. These are the states that should fire a trigger
+# regardless of restart count.
+_ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
+    "CrashLoopBackOff",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "OOMKilled",
+    "Error",
+    "ContainerCannotRun",
+    "CreateContainerConfigError",
+    "CreateContainerError",
+})
+
+
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
-        if payload.get("signal_type") == "kubernetes_deployment_issue":
-            return self._detect_kubernetes_trigger(envelope)
-        return self._detect_feature_flag_trigger(envelope)
+        signal_type = payload.get("signal_type", "feature_flag")
+        _LOG.info("trigger: detect signal_type=%s object_id=%s", signal_type, envelope.object_id)
+        if signal_type == "kubernetes_deployment_issue":
+            trigger = self._detect_kubernetes_trigger(envelope)
+        elif signal_type == "otel_metric_regression":
+            trigger = self._detect_otel_metric_trigger(envelope)
+        else:
+            trigger = self._detect_feature_flag_trigger(envelope)
+        # Log the outcome in a single place so readers don't have to hunt
+        # across three branch methods to see whether a trigger fired.
+        if trigger is None:
+            _LOG.info("trigger: no_trigger (signal did not satisfy thresholds or was suppressed)")
+        else:
+            _LOG.info(
+                "trigger: fired type=%s service=%s endpoint=%s signals=%s",
+                trigger.trigger_type,
+                trigger.service,
+                trigger.endpoint,
+                trigger.related_context.get("trigger_signals")
+                or trigger.related_context.get("error_signatures"),
+            )
+        return trigger
 
     def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
@@ -106,7 +145,29 @@ class TriggerService:
             or related_context.get("known_upstream_outage", False)
         )
         rollout_unhealthy = deployment["rollout_status"] in {"degraded", "failed"}
-        failing_pods = [pod for pod in pods if not pod.get("ready", False) or int(pod.get("restarts", 0)) > 0]
+        # Tightened "failing pod" definition. The original check
+        # (not ready OR restarts > 0) was too permissive: a pod 3
+        # seconds into its startup is "not ready" but not "failing",
+        # and chaos primitives like pod_kill_one produce exactly that
+        # transient state. Without tightening, every pod kill fires
+        # a trigger and Mesh proposes a remediation for cluster
+        # self-healing that would have worked in 5 more seconds.
+        #
+        # A pod counts as "actively failing" when either:
+        # * It has restarted at least once (hard evidence of a real
+        #   crash, not a startup delay), OR
+        # * Its container is in one of the unambiguously broken states
+        #   (kubelet has already diagnosed the problem and given up).
+        #
+        # Pending/ContainerCreating/Starting are deliberately excluded —
+        # those are transient states. A pod truly stuck in Pending
+        # will eventually make the deployment's rollout_status go
+        # degraded, and we catch it via that path.
+        failing_pods = [
+            pod for pod in pods
+            if int(pod.get("restarts", 0)) > 0
+            or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
+        ]
         if suppressed or (not rollout_unhealthy and not failing_pods):
             return None
 
@@ -154,6 +215,109 @@ class TriggerService:
         )
         trigger.validate()
         return trigger
+
+
+    def _detect_otel_metric_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        """Emit a trigger for an OTel metric regression signal.
+
+        OTel signals don't fit the feature-flag or Kubernetes shapes. The trigger
+        we produce here is intentionally thin — the real decision lives in the
+        metric-action rule engine, which reads the full ``metric_regression``
+        block out of ``related_context``. We still run the basic suppression
+        checks (incident owned by human, upstream outage) so a runaway alert
+        stream doesn't flood the system during a known incident.
+        """
+        payload = envelope.payload
+        metric_regression = payload.get("metric_regression") or {}
+        related_context = payload.get("related_context") or {}
+
+        suppressed = (
+            related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        )
+        if suppressed:
+            return None
+
+        # A regression with no numeric delta and no threshold crossing is a
+        # metrics pipeline artifact, not something worth running the full
+        # pipeline for. Emit nothing so the run ends at no_trigger.
+        delta_pct = metric_regression.get("delta_pct")
+        observed = metric_regression.get("observed_value")
+        baseline = metric_regression.get("baseline_value")
+        if delta_pct is None and observed == baseline:
+            return None
+
+        trigger_signals = [f"metric_regression:{metric_regression.get('metric_name')}"]
+
+        trigger_context = {
+            "release_id": related_context.get("release_id"),
+            "active_incidents": int(related_context.get("active_incidents", 0)),
+            "similar_prior_cases": int(related_context.get("similar_prior_cases", 0)),
+            "rollbacks_last_24h": int(related_context.get("rollbacks_last_24h", 0)),
+            "regressions_last_7d": int(related_context.get("regressions_last_7d", 0)),
+            "metric_regression": metric_regression,
+            "resource_attributes": payload.get("resource_attributes", {}),
+            "related_metrics": payload.get("related_metrics", []),
+            "otel_source": payload.get("source"),
+            "trigger_signals": trigger_signals,
+            "cluster": payload.get("cluster"),
+            "namespace": payload.get("namespace"),
+            **{k: v for k, v in related_context.items() if k not in {
+                "release_id",
+                "active_incidents",
+                "similar_prior_cases",
+                "rollbacks_last_24h",
+                "regressions_last_7d",
+            }},
+        }
+
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="otel_metric_regression",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=payload["endpoint"],
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=payload.get("comparison_window"),
+            segment=payload.get("segment", {"customer_tier": "system", "region": "unknown"}),
+            # Metrics block: we always provide the canonical four latency/error
+            # fields so downstream schema validation passes, but they're only
+            # meaningful when the signal itself carried a latency or error
+            # projection. Rule-based decisions read metric_regression directly.
+            metrics={
+                "baseline_p95_latency_ms": _metric_projection(payload, "p95_latency_ms", "baseline"),
+                "observed_p95_latency_ms": _metric_projection(payload, "p95_latency_ms", "observed"),
+                "baseline_error_rate": _metric_projection(payload, "error_rate", "baseline"),
+                "observed_error_rate": _metric_projection(payload, "error_rate", "observed"),
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": payload.get("request_telemetry", {}).get("sample_size", 1),
+            },
+            related_context=trigger_context,
+        )
+        trigger.validate()
+        return trigger
+
+
+def _metric_projection(payload: dict, field: str, window: str) -> float | None:
+    """Pull a latency or error projection from the payload when present.
+
+    When the OTel signal was a latency metric, ``IngestService`` projects it
+    into ``request_telemetry`` so the decision engine's existing thresholds
+    still work. For non-projected signals (``kafka.consumer.lag``,
+    ``memory.usage``, etc.), we return ``None`` — the trigger schema allows
+    nulls for these fields and the rule engine reads ``metric_regression``
+    directly.
+    """
+    telemetry = payload.get("request_telemetry")
+    if not telemetry:
+        return None
+    bucket = telemetry.get(window) or {}
+    value = bucket.get(field)
+    return float(value) if value is not None else None
 
 
 def _parse_timestamp(timestamp: str) -> datetime:

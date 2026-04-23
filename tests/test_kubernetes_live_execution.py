@@ -227,6 +227,15 @@ def _write_fake_kubectl(temp_path: Path) -> tuple[Path, str]:
 
 
 def _fake_state() -> dict:
+    # Stamp the fake event with a wall-clock-fresh timestamp. The live
+    # signal collector's freshness filter drops events older than 5
+    # minutes, so a hard-coded historical date would make the event
+    # invisible and the decision engine would fall through to
+    # ``escalate`` in this test. Real Kubernetes always populates
+    # ``lastTimestamp`` on events; using ``now()`` here keeps the
+    # fixture realistic regardless of when the test runs.
+    from datetime import datetime, timezone
+    fresh_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     return {
         "context": "k3d-mesh-e2e",
         "actions": [],
@@ -356,6 +365,7 @@ def _fake_state() -> dict:
                     "message": "Back-off restarting failed container",
                     "count": 7,
                     "type": "Warning",
+                    "lastTimestamp": fresh_ts,
                 }
             ]
         },

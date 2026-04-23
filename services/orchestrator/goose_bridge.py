@@ -60,6 +60,11 @@ def main() -> None:
     kubernetes = KubernetesAdapter()
     audit_logs = AuditLogAdapter()
     repo_patch = RepoPatchAdapter()
+    # Bare-metal SSH adapter. Mock-by-default; real SSH requires the full
+    # four-part safety envelope (ssh_execution_enabled + host/service/
+    # command allowlists). See services/actuators/systemd_ssh.py.
+    from services.actuators.systemd_ssh import SystemdSshAdapter
+    systemd_ssh = SystemdSshAdapter()
 
     if mode == "incident":
         review = _review(
@@ -146,10 +151,41 @@ def main() -> None:
     elif execution_plan["system"] == "incident_service":
         result = incidents.open_incident(execution_plan["parameters"])
     elif execution_plan["system"] == "kubernetes_service":
-        if execution_plan["action"] == "rollback_deployment":
+        k8s_action = execution_plan["action"]
+        if k8s_action == "rollback_deployment":
             result = kubernetes.rollback_deployment(execution_plan["parameters"])
-        else:
+        elif k8s_action == "restart_deployment":
             result = kubernetes.restart_deployment(execution_plan["parameters"])
+        elif k8s_action == "scale_deployment":
+            result = kubernetes.scale_deployment(execution_plan["parameters"])
+        elif k8s_action == "patch_resources":
+            result = kubernetes.patch_resources(execution_plan["parameters"])
+        else:
+            result = {
+                "status": "failed",
+                "failure": {
+                    "reason": "unknown_kubernetes_action",
+                    "detail": f"action {k8s_action!r} is not routed by the goose bridge",
+                },
+                "external_refs": {},
+            }
+    elif execution_plan["system"] == "systemd_service":
+        systemd_action = execution_plan["action"]
+        if systemd_action == "restart_systemd_service":
+            result = systemd_ssh.restart_service(execution_plan["parameters"])
+        elif systemd_action == "start_systemd_service":
+            result = systemd_ssh.start_service(execution_plan["parameters"])
+        elif systemd_action == "stop_systemd_service":
+            result = systemd_ssh.stop_service(execution_plan["parameters"])
+        else:
+            result = {
+                "status": "failed",
+                "failure": {
+                    "reason": "unknown_systemd_action",
+                    "detail": f"action {systemd_action!r} is not routed by the goose bridge",
+                },
+                "external_refs": {},
+            }
     elif execution_plan["system"] == "repo_patch_service":
         patch_parameters = _resolved_patch_parameters(decision, review)
         result = repo_patch.execute_patch(patch_parameters, idempotency_key)

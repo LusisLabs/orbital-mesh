@@ -31,3 +31,7 @@ __pycache__/
 *.swp
 .idea/
 .vscode/
+
+# E2E harness output — scenario reports and server logs are per-run artifacts,
+# not source. Keep them local to the operator who ran the scenario.
+e2e-reports/
