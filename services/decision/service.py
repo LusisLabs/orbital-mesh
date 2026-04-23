@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
 from shared.mesh_runtime.review_blockers import classify_review_reasons
+
+
+_LOG = logging.getLogger("mesh.decision")
 
 if TYPE_CHECKING:
     from services.decision.hypothesis_engine import HypothesisEngine
@@ -46,10 +50,35 @@ class DecisionService:
         self._llm_proposer = llm_proposer
 
     def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+        # Log the branch up front. Readers scanning a server log for
+        # "why did Mesh propose X" need to know which decision path ran
+        # before they look at the rule registry, the LLM fallback, or
+        # the feature-flag heuristics. One line here saves a lot of
+        # guessing later.
+        _LOG.info(
+            "decide: branch trigger_type=%s service=%s trigger_id=%s",
+            trigger.trigger_type, trigger.service, trigger.trigger_id,
+        )
         if trigger.trigger_type == "otel_metric_regression":
-            return self._decide_otel_metric(trigger)
+            decision = self._decide_otel_metric(trigger)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -208,17 +237,29 @@ class DecisionService:
         signal_view = _build_signal_view_from_trigger(trigger)
         rule_match = self._metric_action_matcher.match(signal_view)
         if rule_match is not None:
+            _LOG.info(
+                "decide(otel): layer2 rule_match rule=%s action=%s",
+                rule_match.rule_name, rule_match.action,
+            )
             return self._decision_from_rule_match(trigger, rule_match)
 
+        _LOG.info("decide(otel): layer2 no rule matched")
         llm_risk_flags: list[str] = []
         if self._llm_proposer is not None:
+            _LOG.info("decide(otel): layer3 consulting LLM proposer")
             llm_result = self._llm_proposer.propose(signal_view)
             if llm_result.match is not None:
+                _LOG.info(
+                    "decide(otel): layer3 llm proposal accepted action=%s risk_flags=%s",
+                    llm_result.match.action, llm_result.risk_flags,
+                )
                 return self._decision_from_rule_match(
                     trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags
                 )
             llm_risk_flags = llm_result.risk_flags
+            _LOG.info("decide(otel): layer3 llm did not produce a usable proposal flags=%s", llm_risk_flags)
 
+        _LOG.info("decide(otel): layer4 falling through to escalate (llm_risk_flags=%s)", llm_risk_flags)
         return self._escalate_for_unmatched_metric(trigger, llm_risk_flags=llm_risk_flags)
 
     def _decision_from_rule_match(

@@ -2,19 +2,40 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from shared.mesh_runtime import EventEnvelope, Trigger
 
 
+_LOG = logging.getLogger("mesh.trigger")
+
+
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
-        if payload.get("signal_type") == "kubernetes_deployment_issue":
-            return self._detect_kubernetes_trigger(envelope)
-        if payload.get("signal_type") == "otel_metric_regression":
-            return self._detect_otel_metric_trigger(envelope)
-        return self._detect_feature_flag_trigger(envelope)
+        signal_type = payload.get("signal_type", "feature_flag")
+        _LOG.info("trigger: detect signal_type=%s object_id=%s", signal_type, envelope.object_id)
+        if signal_type == "kubernetes_deployment_issue":
+            trigger = self._detect_kubernetes_trigger(envelope)
+        elif signal_type == "otel_metric_regression":
+            trigger = self._detect_otel_metric_trigger(envelope)
+        else:
+            trigger = self._detect_feature_flag_trigger(envelope)
+        # Log the outcome in a single place so readers don't have to hunt
+        # across three branch methods to see whether a trigger fired.
+        if trigger is None:
+            _LOG.info("trigger: no_trigger (signal did not satisfy thresholds or was suppressed)")
+        else:
+            _LOG.info(
+                "trigger: fired type=%s service=%s endpoint=%s signals=%s",
+                trigger.trigger_type,
+                trigger.service,
+                trigger.endpoint,
+                trigger.related_context.get("trigger_signals")
+                or trigger.related_context.get("error_signatures"),
+            )
+        return trigger
 
     def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload

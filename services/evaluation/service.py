@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from shared.mesh_runtime import (
@@ -19,6 +20,9 @@ from shared.mesh_runtime import (
 from shared.mesh_runtime.review_blockers import classify_blocking_reasons
 
 from .promptfoo_adapter import NativePromptfooAdapter, PromptfooAdapter, PromptfooCliAdapter
+
+
+_LOG = logging.getLogger("mesh.evaluation")
 
 
 class EvaluationService:
@@ -213,6 +217,16 @@ class EvaluationService:
             review_route="human_review" if not passed and not reject else None,
         )
         evaluation.validate()
+        # One-line summary at the end so readers can see the evaluation
+        # outcome without reading the whole stage_results tree. The tree
+        # is still in the JSON/markdown report for detail.
+        _LOG.info(
+            "evaluate: decision=%s recommendation=%s passed=%s blocking_reasons=%s",
+            decision.decision_type,
+            evaluation.final_recommendation,
+            evaluation.passed,
+            evaluation.blocking_reasons,
+        )
         return evaluation
 
     def _credentials_available(self, trigger: Trigger, system: str) -> bool:

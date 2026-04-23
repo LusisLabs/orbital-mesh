@@ -108,11 +108,15 @@ beats cleverness for an audit-sensitive system.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+
+_LOG = logging.getLogger("mesh.decision.rules")
 
 
 # Parameters that are purely structural (names, namespaces) — safe to interpolate
@@ -214,11 +218,21 @@ class MetricActionMatcher:
         ``resource_attributes``, and ``metric_regression.attributes`` — those are
         the only fields a rule can match against.
         """
+        # Log how many rules we're evaluating, at DEBUG so the normal
+        # log stays focused on decisions rather than the path to them.
+        # A DEBUG-level operator enabling it gets rule-by-rule visibility.
+        metric_name = (signal.get("metric_regression") or {}).get("metric_name", "?")
+        _LOG.debug("rules: evaluating %d rules against metric=%s", len(self.rules), metric_name)
         for rule in self.rules:
             matched_on = self._try_match(rule, signal)
             if matched_on is None:
+                _LOG.debug("rules: skip %r", rule.name)
                 continue
             rendered = self._render_parameters(rule, signal)
+            _LOG.info(
+                "rules: match rule=%r metric=%s action=%s",
+                rule.name, metric_name, rule.propose["action"],
+            )
             return RuleMatch(
                 rule_name=rule.name,
                 decision_type=rule.propose["decision_type"],
@@ -231,6 +245,7 @@ class MetricActionMatcher:
                 bounds=dict(rule.bounds),
                 matched_on=matched_on,
             )
+        _LOG.info("rules: no match for metric=%s after evaluating %d rules", metric_name, len(self.rules))
         return None
 
     # --- match evaluation -----------------------------------------------------
