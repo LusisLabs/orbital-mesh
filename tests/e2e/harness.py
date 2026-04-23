@@ -153,13 +153,17 @@ class Harness:
         self._log_handler: logging.Handler | None = None
         if log_file:
             self._install_log_capture(log_file)
-        # Print the state directory once, prominently, so the operator
-        # can inspect it after a run. Without this line the path is
-        # buried in an ``asdict(run)`` deep in the JSON report — useful
-        # but hard to find when triaging a live failure.
-        print(f"[harness] state directory: {self.state_directory}", file=sys.stderr)
+        # Print the state directory + log path only when we're running
+        # as a standalone scenario (``log_file`` set by the scenario
+        # driver). The session runner creates a fresh harness per
+        # experiment — printing this 40 times in a 60-minute session
+        # drowns out the real signal. Operators debugging one scenario
+        # still get the info; session operators get a clean log.
         if log_file:
+            print(f"[harness] state directory: {self.state_directory}", file=sys.stderr)
             print(f"[harness] server log:      {log_file}", file=sys.stderr)
+        else:
+            _LOG.debug("harness state directory: %s", self.state_directory)
 
     # ---------------------------------------------------------------- logging
 

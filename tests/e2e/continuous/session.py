@@ -47,6 +47,7 @@ cluster on entry and leaves the chaos reverted on exit.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -202,12 +203,36 @@ class ContinuousChaosSession:
                     completed_at=time.monotonic() - mono_start,
                 )
             )
+            # Terminal heartbeat — one line per experiment so the
+            # operator watching the session sees progress without
+            # having to tail the log file. The log file still has full
+            # per-stage detail; this is the "am I still alive" signal.
+            elapsed = time.monotonic() - mono_start
+            remaining = max(0.0, self.duration_seconds - elapsed)
+            passed_count = sum(1 for e in experiments if e.pass_)
+            print(
+                f"[chaos] #{len(experiments):02d} {result.experiment_name:<18} "
+                f"on {result.target_deployment:<12} "
+                f"{'PASS' if result.pass_ else 'FAIL'}  "
+                f"decision={result.decision_type or '—':<22} "
+                f"({passed_count}/{len(experiments)} passed, "
+                f"{int(remaining // 60)}m{int(remaining % 60):02d}s left)",
+                file=sys.stderr,
+                flush=True,
+            )
 
             # Probe at the configured cadence.
             if len(experiments) % self.probe_every_n == 0:
                 probe = self._probe.sample(f"after_{len(experiments)}", mono_start)
                 probes.append(probe)
                 self._breaker.record_result(probe)
+                print(
+                    f"[chaos] probe: cluster={_ok(probe.cluster_reachable)} "
+                    f"baseline={_ok(probe.baseline_ready)} mesh={_ok(probe.mesh_pipeline_ok)} "
+                    f"latency={probe.mesh_pipeline_latency_seconds or 0:.2f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 if self._breaker.should_halt():
                     return self._finalize(
                         wall_start, mono_start,
@@ -405,6 +430,11 @@ def _make_scenario_fn(experiment: ChaosExperiment, target: str):
         }
 
     return scenario
+
+
+def _ok(flag: bool) -> str:
+    """Compact status pill for the terminal heartbeat."""
+    return "ok" if flag else "FAIL"
 
 
 __all__ = ["ContinuousChaosSession", "SessionResult"]
