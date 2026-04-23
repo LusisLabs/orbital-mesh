@@ -392,42 +392,69 @@ def _make_scenario_fn(experiment: ChaosExperiment, target: str):
     """
 
     def scenario(harness: Harness) -> dict:
-        # Baseline snapshot so the harness report shows before/after.
+        """Run one chaos experiment and return what Mesh produced.
+
+        The dict is assembled incrementally so a late failure
+        (e.g. recovery timeout) doesn't erase the pipeline result we
+        already captured. The previous shape — build the dict at the
+        end of the function and raise on recovery failure — meant an
+        experiment where Mesh decided correctly but the cluster didn't
+        recover within 120s showed up in the report with
+        ``decision=None``, which is exactly the wrong place to hide
+        that information.
+
+        Recovery timeouts are a session-level concern (the circuit
+        breaker watches for chronic ones). Per-experiment, a recovery
+        timeout gets recorded as a step + note on the scenario run,
+        but it does not void the captured Mesh decision.
+        """
+        # Start with a fully-populated dict of Nones so every merge
+        # path (success, recovery timeout, injection failure) returns
+        # the same shape.
+        captured: dict = {
+            "signal": None,
+            "trigger": None,
+            "decision": None,
+            "evaluation": None,
+            "execution": None,
+            "feedback": None,
+            "cluster_snapshots": {},
+        }
+
         before = harness.snapshot_cluster(target, label="before_chaos")
+        captured["cluster_snapshots"]["before_chaos"] = before
 
         harness.inject(experiment.name, target)
 
         pipeline_result = harness.run_mesh_pipeline(target)
+        # Stamp pipeline artifacts as soon as we have them. Anything
+        # failing later still has these recorded on the scenario run.
+        captured["signal"] = pipeline_result.get("normalized_event")
+        captured["trigger"] = pipeline_result.get("trigger")
+        captured["decision"] = pipeline_result.get("decision")
+        captured["evaluation"] = pipeline_result.get("evaluation")
+        captured["execution"] = pipeline_result.get("execution")
+        captured["feedback"] = pipeline_result.get("feedback")
 
-        # Always revert — the harness would do it in finally, but
-        # explicit here ensures recovery wait runs against the
-        # reverted state rather than racing cleanup.
+        # Revert and attempt recovery. A timeout here is logged but
+        # doesn't raise — the session runner knows the Mesh decision
+        # regardless of whether the cluster self-healed, and chronic
+        # recovery failures trip the session circuit breaker via the
+        # steady-state probe.
         harness.injector.revert(target, harness.namespace)
         harness.record_step("chaos:reverted")
-
-        # Wait for recovery, but don't fail the scenario on a
-        # timeout — the session's circuit breaker handles chronic
-        # recovery failures at the session level.
         try:
             harness.wait_for_deployment_ready(target, timeout_seconds=120)
+            captured["cluster_snapshots"]["after_recovery"] = harness.snapshot_cluster(
+                target, label="after_recovery",
+            )
+            harness.record_step("recovery:verified")
         except AssertionError as exc:
+            # Log it as a step so the report surfaces the timeout, but
+            # don't raise — the decision was already captured.
             harness.record_step("recovery:timed_out", status="failed", reason=str(exc))
-            raise
-        after = harness.snapshot_cluster(target, label="after_recovery")
-        harness.record_step("recovery:verified")
 
-        return {
-            "signal": pipeline_result.get("normalized_event"),
-            "trigger": pipeline_result.get("trigger"),
-            "decision": pipeline_result.get("decision"),
-            "evaluation": pipeline_result.get("evaluation"),
-            "execution": pipeline_result.get("execution"),
-            "feedback": pipeline_result.get("feedback"),
-            "cluster_snapshots": {
-                "before_chaos": before,
-                "after_recovery": after,
-            },
-        }
+        return captured
 
     return scenario
 

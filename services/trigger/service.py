@@ -11,6 +11,22 @@ from shared.mesh_runtime import EventEnvelope, Trigger
 _LOG = logging.getLogger("mesh.trigger")
 
 
+# Container states the kubelet considers unambiguously broken. A pod in
+# any of these is actively failing — not starting, not transitioning,
+# not recovering. These are the states that should fire a trigger
+# regardless of restart count.
+_ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
+    "CrashLoopBackOff",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "OOMKilled",
+    "Error",
+    "ContainerCannotRun",
+    "CreateContainerConfigError",
+    "CreateContainerError",
+})
+
+
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
@@ -129,7 +145,29 @@ class TriggerService:
             or related_context.get("known_upstream_outage", False)
         )
         rollout_unhealthy = deployment["rollout_status"] in {"degraded", "failed"}
-        failing_pods = [pod for pod in pods if not pod.get("ready", False) or int(pod.get("restarts", 0)) > 0]
+        # Tightened "failing pod" definition. The original check
+        # (not ready OR restarts > 0) was too permissive: a pod 3
+        # seconds into its startup is "not ready" but not "failing",
+        # and chaos primitives like pod_kill_one produce exactly that
+        # transient state. Without tightening, every pod kill fires
+        # a trigger and Mesh proposes a remediation for cluster
+        # self-healing that would have worked in 5 more seconds.
+        #
+        # A pod counts as "actively failing" when either:
+        # * It has restarted at least once (hard evidence of a real
+        #   crash, not a startup delay), OR
+        # * Its container is in one of the unambiguously broken states
+        #   (kubelet has already diagnosed the problem and given up).
+        #
+        # Pending/ContainerCreating/Starting are deliberately excluded —
+        # those are transient states. A pod truly stuck in Pending
+        # will eventually make the deployment's rollout_status go
+        # degraded, and we catch it via that path.
+        failing_pods = [
+            pod for pod in pods
+            if int(pod.get("restarts", 0)) > 0
+            or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
+        ]
         if suppressed or (not rollout_unhealthy and not failing_pods):
             return None
 

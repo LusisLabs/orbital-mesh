@@ -47,6 +47,21 @@ def collect_kubernetes_signal(
 
     pod_items = pods_payload.get("items", [])
     pod_names = {pod.get("metadata", {}).get("name") for pod in pod_items}
+    # Event freshness cutoff. Kubernetes keeps events for ~1 hour by default
+    # (``--event-ttl=1h``), which is way too broad for Mesh's purposes:
+    # we want to know what's happening *now*, not whatever happened 45
+    # minutes ago. Without a cutoff, an ImagePullBackOff event from
+    # earlier in the session contaminates every subsequent signal —
+    # ``summarize_kubernetes_logs`` picks up the stale reason and the
+    # decision engine treats every unrelated trigger as an image-pull
+    # problem.
+    #
+    # 5 minutes is enough to capture what the decision engine considers
+    # "recent" (most Kubernetes events fire within seconds of the
+    # underlying state change) while ignoring everything from prior
+    # chaos experiments. Operators running long incident investigations
+    # outside the chaos harness can override via ``MESH_K8S_EVENT_WINDOW_SECONDS``.
+    event_window_cutoff = _event_window_cutoff()
     events = [
         {
             "reason": item.get("reason"),
@@ -56,6 +71,7 @@ def collect_kubernetes_signal(
         }
         for item in events_payload.get("items", [])
         if _event_matches(item, deployment_name, pod_names)
+        and _event_is_fresh(item, event_window_cutoff)
     ]
 
     pods = [_summarize_pod(item) for item in pod_items]
@@ -190,6 +206,74 @@ def _event_matches(item: dict[str, Any], deployment_name: str, pod_names: set[st
     if name in pod_names and kind == "Pod":
         return True
     return bool(name and name.startswith(f"{deployment_name}-") and kind in {"ReplicaSet", "Pod"})
+
+
+def _event_window_cutoff() -> datetime:
+    """Cutoff time for event freshness. Events older than this are dropped.
+
+    Configurable via ``MESH_K8S_EVENT_WINDOW_SECONDS``. Default 300s (5
+    minutes), chosen to comfortably cover the time from an event
+    firing to Mesh collecting a signal while being tight enough to
+    exclude events from previous chaos experiments or older incidents.
+    """
+    import os
+    window_seconds = int(os.getenv("MESH_K8S_EVENT_WINDOW_SECONDS", "300"))
+    return datetime.now(timezone.utc).replace(microsecond=0) - _timedelta_seconds(window_seconds)
+
+
+def _timedelta_seconds(seconds: int):
+    # Small wrapper to avoid importing timedelta at module level — it's
+    # only used in one narrow path and the import is cheap.
+    from datetime import timedelta
+    return timedelta(seconds=seconds)
+
+
+def _event_is_fresh(item: dict[str, Any], cutoff: datetime) -> bool:
+    """True if any of the event's timestamps is newer than ``cutoff``.
+
+    Kubernetes events carry up to three timestamps, and which one is
+    populated depends on the event source and version:
+
+    * ``lastTimestamp`` — most reliable for aggregated events (the
+      kubelet updates it every time the underlying condition re-fires).
+    * ``eventTime`` — used by the newer events API (``events.k8s.io/v1``).
+    * ``metadata.creationTimestamp`` — always present, but represents
+      when the event record was first created; for an aggregated event
+      that's older than the latest occurrence.
+
+    We treat the event as fresh if *any* of these is within the window,
+    which errs on the side of inclusion. A pathological event missing
+    all three would be dropped — that's fine because we've never seen
+    one in practice and a missing-timestamp event isn't a useful signal.
+    """
+    candidates = [
+        item.get("lastTimestamp"),
+        item.get("eventTime"),
+        (item.get("metadata") or {}).get("creationTimestamp"),
+    ]
+    for raw in candidates:
+        parsed = _parse_k8s_timestamp(raw)
+        if parsed is not None and parsed >= cutoff:
+            return True
+    return False
+
+
+def _parse_k8s_timestamp(raw: Any) -> datetime | None:
+    """Parse a Kubernetes RFC3339 timestamp. Returns None on anything we
+    can't make sense of, so the caller treats it as not-fresh.
+
+    ``None`` inputs happen for events where a given timestamp field
+    wasn't populated by the source. Malformed strings happen
+    occasionally from custom controllers. Both map to "skip this
+    timestamp" without raising."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        # Python's fromisoformat accepts the "Z" suffix only in 3.11+;
+        # the replace handles older runtimes and is a no-op in 3.11+.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _summarize_pod(item: dict[str, Any]) -> dict[str, Any]:
