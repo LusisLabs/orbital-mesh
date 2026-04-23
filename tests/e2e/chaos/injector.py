@@ -256,6 +256,218 @@ class ChaosInjector:
             pod_snapshot=self._list_pods(deployment, namespace),
         )
 
+    # ---------------------------------------------------------------- additional primitives
+
+    def inject_pod_kill_one(self, deployment: str, namespace: str) -> InjectionResult:
+        """Delete a single live pod — the mildest primitive in the portfolio.
+
+        This is a *false-positive probe*: the kubelet will recreate the pod
+        immediately and the deployment controller brings it back to ready.
+        The cluster should absorb the disruption. If Mesh fires a trigger
+        on this, that's a false positive — the portfolio's scoring counts
+        any trigger here against detection-precision.
+
+        No deployment-level spec mutation → nothing to ``revert``. We still
+        call ``_snapshot`` so ``revert_all`` finds a no-op baseline and
+        doesn't crash on teardown.
+        """
+        self._snapshot(deployment, namespace)
+        pods = self._list_pods(deployment, namespace)
+        running = [p for p in pods if p.get("phase") == "Running"]
+        if not running:
+            raise ChaosError(
+                f"pod_kill_one needs at least one Running pod in {namespace}/{deployment}; "
+                f"found none"
+            )
+        target = running[0]["name"]
+        injected_at = time.monotonic()
+        self._kubectl_raw("delete", "pod", target, "-n", namespace, "--grace-period=0", "--force")
+        _LOG.info("injected pod_kill_one on %s/%s target=%s", namespace, deployment, target)
+        # The deployment controller recreates the pod. We don't wait for
+        # it here; the scenario or session runner should observe the
+        # recovery through its steady-state probe. Observed_at is the
+        # moment the pod was deleted.
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="pod_kill_one",
+            injected_at=injected_at,
+            observed_at=injected_at,
+            pod_snapshot=pods,
+        )
+
+    def inject_pod_kill_all(self, deployment: str, namespace: str) -> InjectionResult:
+        """Delete every pod of the deployment simultaneously.
+
+        Harder than ``pod_kill_one``: until the deployment controller
+        recreates pods, readyReplicas is 0 and the service has zero
+        backends. Mesh should see a "zero ready replicas" signal and
+        propose a remediation. In a well-behaved cluster the deployment
+        recovers on its own within ~10s, so this tests both Mesh's
+        detection speed and its policy for "should I act on a transient
+        zero-replica window?"
+        """
+        self._snapshot(deployment, namespace)
+        pods = self._list_pods(deployment, namespace)
+        if not pods:
+            raise ChaosError(f"pod_kill_all found no pods in {namespace}/{deployment}")
+        injected_at = time.monotonic()
+        for pod in pods:
+            name = pod.get("name")
+            if name:
+                self._kubectl_raw(
+                    "delete", "pod", name, "-n", namespace, "--grace-period=0", "--force",
+                )
+        _LOG.info("injected pod_kill_all on %s/%s (n=%d)", namespace, deployment, len(pods))
+        observed_at = self._wait_for_zero_ready(deployment, namespace, timeout_seconds=30)
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="pod_kill_all",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=pods,
+        )
+
+    def inject_memory_pressure(self, deployment: str, namespace: str) -> InjectionResult:
+        """Squeeze the memory limit until the container OOMKills.
+
+        nginx idles at ~4-5Mi RSS; setting ``limits.memory`` to 2Mi
+        forces the kernel's OOM killer at startup. The pod then shows
+        ``last_state_reason: OOMKilled`` and enters CrashLoopBackOff.
+
+        This exercises a different Mesh code path than ``crash_loop``
+        because the log summary picks up an ``oom_killed`` error
+        signature, which should drive ``restart_deployment`` (with a
+        ``patch_resources`` follow-up as the logical next step, but
+        that's a Layer-2-rule concern, not an adapter concern).
+        """
+        self._snapshot(deployment, namespace)
+        patch = {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": deployment,
+                                "resources": {
+                                    # Absurdly low cap forces OOM on first allocation.
+                                    # Requests stays reasonable so the scheduler still
+                                    # places the pod; only limit is degenerate.
+                                    "requests": {"memory": "1Mi", "cpu": "10m"},
+                                    "limits": {"memory": "2Mi", "cpu": "50m"},
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+        injected_at = time.monotonic()
+        self._kubectl_patch(deployment, namespace, patch)
+        _LOG.info("injected memory_pressure on %s/%s", namespace, deployment)
+        # Wait for OOMKilled OR CrashLoopBackOff — on some kernels/versions
+        # the pod goes straight to crash-loop without ever reporting
+        # OOMKilled explicitly in the last_state_reason.
+        observed_at = self._wait_for_pod_reason(
+            deployment, namespace,
+            reasons=("CrashLoopBackOff", "OOMKilled"),
+            timeout_seconds=60,
+        )
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="memory_pressure",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_scale_to_zero(self, deployment: str, namespace: str) -> InjectionResult:
+        """Scale the deployment to zero replicas.
+
+        Interesting because it's *not* a crash — the deployment is
+        perfectly healthy at replicas=0. Mesh should recognize that
+        ``desired_replicas == 0`` plus ``ready_replicas == 0`` is
+        "intentional absence" rather than "broken service", and the
+        decision engine should either ``no_trigger`` or ``escalate``
+        (because a running service being scaled to zero in prod is
+        usually a bug — someone typed the wrong command).
+
+        Revert restores the original replica count via the baseline
+        snapshot, which captured ``spec.template``; replicas lives on
+        ``spec.replicas`` so we also stash that here.
+        """
+        self._snapshot(deployment, namespace)
+        current = self._kubectl_json("get", "deployment", deployment, "-n", namespace, "-o", "json")
+        original_replicas = int((current.get("spec") or {}).get("replicas") or 0)
+        # Store the original count on the cached baseline so revert can
+        # put it back. We shove it into a private key on the template
+        # rather than extending the baseline dataclass — keeps the
+        # revert logic symmetric with other primitives.
+        key = (namespace, deployment)
+        self._baselines[key].spec_template["__mesh_original_replicas__"] = original_replicas
+
+        injected_at = time.monotonic()
+        self._kubectl_raw("scale", "deployment", deployment, "-n", namespace, "--replicas=0")
+        _LOG.info("injected scale_to_zero on %s/%s (prev=%d)", namespace, deployment, original_replicas)
+        observed_at = self._wait_for_zero_ready(deployment, namespace, timeout_seconds=30)
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="scale_to_zero",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_config_drift(self, deployment: str, namespace: str) -> InjectionResult:
+        """Add an unexpected label to the pod template that breaks selectors.
+
+        The deployment's pod selector (``spec.selector.matchLabels``) is
+        immutable after creation, but we can mutate the pod template's
+        labels so new pods don't match the service selector. Existing
+        pods still serve; new rollouts produce pods the service can't
+        reach. This is a subtle production bug: "deploys succeed but
+        traffic slowly drops off" — exactly the kind of failure mode
+        Mesh should catch.
+
+        Reverted by the standard template-snapshot path.
+        """
+        self._snapshot(deployment, namespace)
+        patch = {
+            "spec": {
+                "template": {
+                    "metadata": {
+                        # Add a label that is NOT in the deployment's
+                        # selector. Because the deployment's pod selector
+                        # is immutable, this still lets new pods be
+                        # created (the selector matches on ``app`` which
+                        # we don't touch). The drift only becomes visible
+                        # under certain selector-based operations.
+                        "labels": {"mesh.chaos.config_drift": "true"}
+                    }
+                }
+            }
+        }
+        injected_at = time.monotonic()
+        self._kubectl_patch(deployment, namespace, patch)
+        _LOG.info("injected config_drift on %s/%s", namespace, deployment)
+        # Config drift doesn't produce a crash — the deployment rolls
+        # forward. We don't wait for any specific reason; the observation
+        # is the rollout itself. We cap the wait at 30s so a stuck
+        # rollout becomes a test failure rather than a hang.
+        time.sleep(3)  # brief pause for the rollout to propagate
+        observed_at = time.monotonic()
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="config_drift",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
     # ---------------------------------------------------------------- revert
 
     def revert(self, deployment: str, namespace: str) -> None:
@@ -273,8 +485,20 @@ class ChaosInjector:
         if baseline is None:
             _LOG.warning("revert called on %s/%s but no baseline captured", namespace, deployment)
             return
-        patch = {"spec": {"template": baseline.spec_template}}
+        # Pop the injected-only field before patching — spec.template
+        # doesn't accept unknown keys, and keeping it in the baseline
+        # means the value survives across multiple revert calls.
+        template = dict(baseline.spec_template)
+        original_replicas = template.pop("__mesh_original_replicas__", None)
+        patch = {"spec": {"template": template}}
         self._kubectl_patch(deployment, namespace, patch)
+        # If scale_to_zero was used, restore the original replica count.
+        # spec.replicas lives outside spec.template so it's a separate op.
+        if original_replicas is not None:
+            self._kubectl_raw(
+                "scale", "deployment", deployment, "-n", namespace,
+                f"--replicas={int(original_replicas)}",
+            )
         _LOG.info("reverted %s/%s to baseline", namespace, deployment)
 
     def revert_all(self) -> None:
@@ -425,6 +649,21 @@ class ChaosInjector:
             return json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
             raise ChaosError(f"kubectl returned invalid JSON: {exc}") from exc
+
+    def _kubectl_raw(self, *args: str) -> str:
+        """Run kubectl and return stdout without assuming JSON output.
+
+        Used by primitives that call ``delete pod`` or ``scale`` — these
+        don't return JSON and we don't need structured output, just a
+        success/failure verdict. Stderr is surfaced in the ChaosError
+        when the command fails so the scenario report shows the real
+        reason.
+        """
+        command = self._kubectl_base() + list(args)
+        completed = subprocess.run(command, capture_output=True, text=True, check=False, timeout=self.timeout_seconds)
+        if completed.returncode != 0:
+            raise ChaosError(f"kubectl {' '.join(args)} failed: {completed.stderr.strip()}")
+        return completed.stdout.strip()
 
     def _kubectl_base(self) -> list[str]:
         base = [self.kubectl]

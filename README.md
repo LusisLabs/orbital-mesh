@@ -828,6 +828,72 @@ The image currently runs as root because the bundled Goose profile path and kube
 3. Bind `MESH_SERVER_HOST` to `0.0.0.0` only on trusted networks; otherwise keep the default loopback binding and front with a reverse proxy on the same host.
 4. Enable access logs in production if desired: `MESH_ACCESS_LOG=1` (Python logging; ensure your process supervisor captures stdout/stderr).
 
+## Chaos Engineering
+
+Mesh ships with a continuous chaos-engineering harness that implements the [Principles of Chaos](https://principlesofchaos.org/):
+
+1. **Build a hypothesis around steady-state behavior** — detection rate, correct-decision rate, P95 latency, pipeline availability, probe pass rate.
+2. **Vary real-world events** — 8-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures.
+3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn weighted-at-random with per-primitive cooldowns.
+4. **Automate** — one driver script, no manual scenario selection.
+5. **Minimize blast radius** — circuit breaker halts the session on two consecutive steady-state probe failures or if Mesh pipeline latency blows past a ceiling.
+
+### Run a session
+
+```bash
+# Default 60-minute session on a fresh kind cluster
+scripts/run_chaos_session.sh
+
+# 10-minute session for quick iteration
+scripts/run_chaos_session.sh --duration 600
+
+# Deterministic replay of a previous run's sequence
+scripts/run_chaos_session.sh --duration 600 --seed 42
+
+# Keep the cluster after the session ends for post-hoc debugging
+scripts/run_chaos_session.sh --keep-cluster
+```
+
+### The portfolio
+
+| Primitive | Severity | Weight | Expected Mesh response |
+|-----------|---------:|-------:|------------------------|
+| `crash_loop` | high | 3.0 | `restart_deployment` or `rollback_deployment` |
+| `bad_image` | high | 2.0 | `rollback_deployment` |
+| `readiness_failure` | medium | 1.0 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `pod_kill_one` | low | 4.0 | **No trigger** (false-positive probe) |
+| `pod_kill_all` | high | 1.5 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `memory_pressure` | high | 1.0 | `restart_deployment` / `rollback_deployment` |
+| `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
+| `config_drift` | medium | 0.5 | `escalate` / `no_action` |
+
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+
+### Hypothesis thresholds
+
+Defaults set in `scripts/run_chaos_session.sh`:
+
+| Metric | Threshold |
+|--------|-----------|
+| Detection rate | ≥ 90% |
+| Correct-decision rate | ≥ 85% |
+| False-positive rate | ≤ 10% |
+| Steady-state probe pass rate | ≥ 90% |
+| Decision latency P95 | ≤ 10s |
+| Pipeline availability | 100% |
+
+Tune them per session by editing the `Hypothesis(...)` call in the driver.
+
+### Session report
+
+Each session writes two artifacts to `e2e-reports/`:
+
+- `chaos_session_<timestamp>.md` — verdict, hypothesis pass/fail table, aggregate metrics, per-experiment table, probe timeline, breaches detail
+- `chaos_session_<timestamp>.json` — machine-readable source of truth
+- `chaos_session_<timestamp>.server.log` — Mesh's per-stage INFO logs for the entire session
+
+Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
+
 ## Development Commands
 
 ### Python
