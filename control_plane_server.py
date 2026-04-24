@@ -92,6 +92,38 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/scenarios":
             self._send_json({"scenarios": self.server.coordinator.list_scenarios()})
             return
+        if path == "/api/simulations":
+            self._send_json({"simulations": self.server.coordinator.list_simulations()})
+            return
+        if path == "/api/benchmarks":
+            limit = _safe_int(parse_qs(parsed.query).get("limit", ["100"])[0], default=100)
+            self._send_json({"benchmarks": self.server.coordinator.list_benchmarks(limit=limit)})
+            return
+        if path.startswith("/api/benchmarks/"):
+            benchmark_id = _safe_segment(path, 2)
+            if benchmark_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            benchmark = self.server.coordinator.get_benchmark(benchmark_id)
+            if benchmark is None:
+                self._send_json({"error": "benchmark not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(benchmark)
+            return
+        if path == "/api/service-agents":
+            self._send_json({"service_agents": self.server.coordinator.list_service_agents()})
+            return
+        if path.startswith("/api/reconciliation/"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            reconciliation = self.server.coordinator.get_reconciliation(run_id)
+            if reconciliation is None:
+                self._send_json({"error": "reconciliation not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(reconciliation)
+            return
         if path == "/api/goals":
             self._send_json({"goals": self.server.coordinator.list_goals()})
             return
@@ -462,6 +494,24 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     {"error": "run creation failed", "detail": str(exc)},
                     status=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path.startswith("/api/simulations/") and parsed.path.endswith("/run"):
+            scenario_id = _safe_segment(parsed.path, 2)
+            if scenario_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                run = self.server.coordinator.run_simulation(scenario_id, payload)
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except KeyError:
+                self._send_json({"error": "simulation not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
