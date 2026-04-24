@@ -65,6 +65,22 @@ class SimulationService:
     def _builtins(self) -> list[SimulationScenario]:
         k8s = load_fixture("signals", "kubernetes_crashloop_patch.json")
         latency = load_fixture("signals", "search_latency_regression.json")
+        no_action_latency = deepcopy(latency)
+        no_action_latency["signal_id"] = "sig_search_latency_control_001"
+        no_action_latency["request_telemetry"]["observed"]["p95_latency_ms"] = 450
+        no_action_latency["request_telemetry"]["observed"]["error_rate"] = 0.013
+        no_action_latency["request_telemetry"]["observed"]["timeout_rate"] = 0.009
+        no_action_latency["related_context"]["flag_causality_confidence"] = 0.25
+        no_action_latency["related_context"]["trigger_signals"] = ["weak_latency_signal"]
+
+        missing_flag_credentials = deepcopy(latency)
+        missing_flag_credentials["signal_id"] = "sig_search_latency_missing_creds_001"
+        missing_flag_credentials["related_context"]["feature_flag_credentials_available"] = False
+
+        high_impact_latency = deepcopy(latency)
+        high_impact_latency["signal_id"] = "sig_search_latency_high_impact_001"
+        high_impact_latency["related_context"]["high_business_impact"] = True
+        high_impact_latency["related_context"]["multi_service_impact"] = True
         image_pull = deepcopy(k8s)
         image_pull["signal_id"] = "sig_k8s_imagepull_001"
         image_pull["deployment"]["rollout_status"] = "failed"
@@ -125,6 +141,8 @@ class SimulationService:
 
         cpu = _otel_metric_signal("sig_otel_cpu_001", "system.cpu.utilization", 0.61, 0.91, "semantic-search")
         queue_lag = _otel_metric_signal("sig_otel_queue_001", "consumer_lag", 800.0, 1400.0, "semantic-search")
+        memory = _otel_metric_signal("sig_otel_memory_001", "memory.utilization", 0.68, 0.92, "semantic-search")
+        request_spike = _otel_metric_signal("sig_otel_request_spike_001", "http.server.active_requests", 120.0, 220.0, "api-gateway")
         dependency_latency = _otel_metric_signal(
             "sig_otel_dependency_latency_001",
             "rpc.client.duration",
@@ -163,6 +181,39 @@ class SimulationService:
                 sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
                 tags=["otel", "feature_flag", "latency"],
                 standards_refs=["otel-semconv-1.40.0", "nist-ai-600-1"],
+            ),
+            SimulationScenario(
+                scenario_id="feature_flag_low_confidence_no_action",
+                title="Feature flag weak signal no-action control",
+                signal_payload=no_action_latency,
+                expected_decision_type="no_action",
+                expected_outcome="no_action_needed",
+                fault_type="no_trigger_control",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
+                tags=["feature_flag", "control", "false_positive"],
+                standards_refs=["otel-semconv-1.40.0", "nist-ai-rmf"],
+            ),
+            SimulationScenario(
+                scenario_id="feature_flag_missing_credentials_escalate",
+                title="Feature flag remediation missing credentials",
+                signal_payload=missing_flag_credentials,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="credential_gap",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "api-gateway"},
+                tags=["feature_flag", "policy", "credentials"],
+                standards_refs=["nist-ai-rmf", "owasp-llm-top-10-2025"],
+            ),
+            SimulationScenario(
+                scenario_id="feature_flag_high_impact_escalate",
+                title="Feature flag high-impact escalation",
+                signal_payload=high_impact_latency,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="high_business_impact",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "api-gateway"},
+                tags=["feature_flag", "policy", "blast_radius"],
+                standards_refs=["nist-ai-rmf", "nist-ai-600-1"],
             ),
             SimulationScenario(
                 scenario_id="k8s_image_pull_rollback",
@@ -217,6 +268,28 @@ class SimulationService:
                 fault_type="queue_lag",
                 sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
                 tags=["otel", "queue", "scale"],
+                standards_refs=["otel-semconv-1.40.0"],
+            ),
+            SimulationScenario(
+                scenario_id="otel_memory_pressure_restart",
+                title="OTel memory pressure restart",
+                signal_payload=memory,
+                expected_decision_type="restart_deployment",
+                expected_outcome="successful",
+                fault_type="memory_pressure",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
+                tags=["otel", "memory", "restart"],
+                standards_refs=["otel-semconv-1.40.0", "kubernetes-skew-policy"],
+            ),
+            SimulationScenario(
+                scenario_id="otel_request_spike_scale",
+                title="OTel request spike scale-out",
+                signal_payload=request_spike,
+                expected_decision_type="scale_deployment",
+                expected_outcome="successful",
+                fault_type="request_spike",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "api-gateway"},
+                tags=["otel", "traffic", "scale"],
                 standards_refs=["otel-semconv-1.40.0"],
             ),
             SimulationScenario(

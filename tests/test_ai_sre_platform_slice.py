@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from scripts.run_simulation_matrix import _randomize_signal, _write_override_replay
 from services.orchestrator.reconciliation import reconcile_agent_tasks
 from services.orchestrator.service_agents import ServiceAgentRegistry
 from services.simulation import SimulationService
@@ -142,6 +143,83 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             record = score_run(scenario=scenario, session=session, events=[{"event_type": "trigger_ready"}])
             self.assertFalse(record.passed)
             self.assertIn("decision_mismatch", record.dimensions["hard_failures"])
+
+    def test_benchmark_no_trigger_satisfies_no_action_control(self) -> None:
+        scenario = SimulationService(
+            RuntimeConfig(
+                simulation_enabled=True,
+                simulation_context_allowlist=("mesh-compose",),
+            )
+        ).get_scenario("feature_flag_low_confidence_no_action")
+        assert scenario is not None
+        session = {
+            "run_id": "run_3",
+            "stage": "no_trigger",
+            "status": "completed",
+            "artifacts": {"agent_tasks": []},
+        }
+        record = score_run(scenario=scenario, session=session, events=[{"event_type": "no_trigger"}])
+        self.assertTrue(record.passed)
+        self.assertTrue(record.dimensions["decision_match"])
+        self.assertTrue(record.dimensions["outcome_match"])
+
+    def test_benchmark_approval_pause_counts_as_correct_pause(self) -> None:
+        scenario = SimulationService(
+            RuntimeConfig(
+                simulation_enabled=True,
+                simulation_context_allowlist=("mesh-compose",),
+            )
+        ).get_scenario("feature_flag_missing_credentials_escalate")
+        assert scenario is not None
+        session = {
+            "run_id": "run_4",
+            "stage": "awaiting_operator",
+            "status": "awaiting_operator",
+            "artifacts": {
+                "decision": {"decision_type": "escalate"},
+                "evaluation": {
+                    "final_recommendation": "needs_human",
+                    "blocking_reasons": ["decision routes to human review", "risk level is high"],
+                },
+                "agent_tasks": [{"task_id": "task_1"}],
+                "reconciliation": {"disagreement": False},
+            },
+        }
+        record = score_run(scenario=scenario, session=session, events=[{"event_type": "trigger_ready"}])
+        self.assertTrue(record.passed)
+        self.assertTrue(record.dimensions["correct_pause_pass"])
+        self.assertEqual(record.dimensions["blocker_classes"], ["human_review", "risk"])
+
+    def test_randomized_signal_is_seed_deterministic(self) -> None:
+        signal_a = {
+            "signal_type": "otel_metric_regression",
+            "metric_regression": {"baseline_value": 10.0, "observed_value": 20.0},
+            "resource_attributes": {},
+        }
+        signal_b = json.loads(json.dumps(signal_a))
+        _randomize_signal(signal_a, seed=7)
+        _randomize_signal(signal_b, seed=7)
+        self.assertEqual(signal_a, signal_b)
+        self.assertNotEqual(signal_a["metric_regression"]["observed_value"], 20.0)
+
+    def test_override_replay_written_for_blocked_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            _write_override_replay(
+                out,
+                [
+                    {
+                        "run_id": "run_5",
+                        "scenario_id": "scenario",
+                        "decision_type": "escalate",
+                        "stage": "awaiting_operator",
+                        "benchmark": {"dimensions": {"blocker_classes": ["risk"]}},
+                    }
+                ],
+            )
+            lines = out.joinpath("override-replay.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            self.assertEqual(json.loads(lines[0])["operator_action"], "reject_or_escalate")
 
 
 if __name__ == "__main__":

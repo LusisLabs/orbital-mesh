@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import shutil
 import sys
 import tempfile
@@ -34,7 +35,7 @@ def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _scenario_payload(config: RuntimeConfig, scenario_id: str, index: int) -> dict[str, Any]:
+def _scenario_payload(config: RuntimeConfig, scenario_id: str, index: int, *, randomize: bool, seed: int) -> dict[str, Any]:
     scenario, payload = SimulationService(config).build_run_payload(
         scenario_id,
         {
@@ -48,9 +49,49 @@ def _scenario_payload(config: RuntimeConfig, scenario_id: str, index: int) -> di
     signal["signal_id"] = f"{signal.get('signal_id', scenario.scenario_id)}_stress_{index:04d}"
     if isinstance(signal.get("related_context"), dict):
         signal["related_context"]["stress_run_index"] = index
+    if randomize:
+        _randomize_signal(signal, seed=seed + index)
     payload["signal_payload"] = signal
     payload["simulation_context"]["stress_run_index"] = index
+    payload["simulation_context"]["variant"] = {
+        "randomized": randomize,
+        "seed": seed + index if randomize else None,
+    }
+    payload["simulation_context"]["model_profile"] = {
+        "agent_fabric_mode": config.agent_fabric_mode,
+        "deepagents_model": config.mesh_deepagents_model,
+        "llm_escalation_model": config.llm_escalation_model,
+    }
     return payload
+
+
+def _randomize_signal(signal: dict[str, Any], *, seed: int) -> None:
+    rng = random.Random(seed)
+    service_suffix = rng.choice(["a", "b", "canary", "blue", "green"])
+    if isinstance(signal.get("service"), str) and signal["service"] not in {"semantic-search", "api-gateway"}:
+        signal["service"] = f"{signal['service']}-{service_suffix}"
+    if signal.get("signal_type") == "otel_metric_regression":
+        regression = signal.get("metric_regression") if isinstance(signal.get("metric_regression"), dict) else {}
+        baseline = float(regression.get("baseline_value", 1.0) or 1.0)
+        multiplier = rng.uniform(1.2, 2.4)
+        observed = round(baseline * multiplier, 4)
+        regression["observed_value"] = observed
+        regression["delta_pct"] = round((observed - baseline) / baseline * 100.0, 2)
+        attrs = signal.get("resource_attributes") if isinstance(signal.get("resource_attributes"), dict) else {}
+        attrs["mesh.simulation.variant"] = service_suffix
+        signal["resource_attributes"] = attrs
+        return
+    telemetry = signal.get("request_telemetry") if isinstance(signal.get("request_telemetry"), dict) else {}
+    observed = telemetry.get("observed") if isinstance(telemetry.get("observed"), dict) else {}
+    if observed:
+        observed["p95_latency_ms"] = int(float(observed.get("p95_latency_ms", 500)) * rng.uniform(0.92, 1.18))
+        observed["error_rate"] = round(float(observed.get("error_rate", 0.02)) * rng.uniform(0.8, 1.35), 4)
+        observed["timeout_rate"] = round(float(observed.get("timeout_rate", 0.02)) * rng.uniform(0.8, 1.35), 4)
+    context = signal.get("related_context") if isinstance(signal.get("related_context"), dict) else {}
+    if context:
+        context["variant_seed"] = seed
+        context["similar_prior_cases"] = rng.randint(0, 5)
+        context["rollbacks_last_24h"] = rng.choice([0, 0, 1])
 
 
 def _wait_for_run(coordinator: RunCoordinator, run_id: str, timeout_seconds: float) -> dict[str, Any]:
@@ -75,6 +116,8 @@ def _run_one(
     scenario_id: str,
     index: int,
     timeout_seconds: float,
+    randomize: bool,
+    seed: int,
 ) -> dict[str, Any]:
     state_dir = base_state_dir / f"worker-{index:04d}"
     agents_path = state_dir / "service-agents.json"
@@ -112,7 +155,7 @@ def _run_one(
         service_agents_config_path=str(agents_path),
     )
     coordinator = RunCoordinator(config=config)
-    payload = _scenario_payload(config, scenario_id, index)
+    payload = _scenario_payload(config, scenario_id, index, randomize=randomize, seed=seed)
     started = time.perf_counter()
     created = coordinator.create_run(payload)
     run = _wait_for_run(coordinator, created["run_id"], timeout_seconds)
@@ -146,6 +189,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     elapsed = [float(row.get("elapsed_ms", 0.0) or 0.0) for row in rows]
     by_decision: dict[str, int] = {}
     blockers: dict[str, int] = {}
+    blocker_classes: dict[str, int] = {}
     disagreements = 0
     for row in rows:
         by_decision[str(row.get("decision_type") or "none")] = by_decision.get(str(row.get("decision_type") or "none"), 0) + 1
@@ -153,6 +197,8 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             disagreements += 1
         for blocker in row.get("blocking_reasons") or []:
             blockers[str(blocker)] = blockers.get(str(blocker), 0) + 1
+        for blocker_class in row.get("benchmark", {}).get("dimensions", {}).get("blocker_classes", []) or []:
+            blocker_classes[str(blocker_class)] = blocker_classes.get(str(blocker_class), 0) + 1
     return {
         "generated_at": _timestamp(),
         "total_runs": total,
@@ -164,8 +210,28 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "max_elapsed_ms": max(elapsed) if elapsed else 0.0,
         "decision_counts": by_decision,
         "blocking_reason_counts": blockers,
+        "blocker_class_counts": blocker_classes,
         "reconciliation_disagreements": disagreements,
     }
+
+
+def _write_override_replay(out_dir: Path, rows: list[dict[str, Any]]) -> None:
+    replay_path = out_dir / "override-replay.jsonl"
+    with replay_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            dimensions = row.get("benchmark", {}).get("dimensions", {})
+            blocker_classes = set(dimensions.get("blocker_classes", []) or [])
+            if row.get("stage") != "awaiting_operator" and not blocker_classes:
+                continue
+            replay = {
+                "run_id": row.get("run_id"),
+                "scenario_id": row.get("scenario_id"),
+                "decision_type": row.get("decision_type"),
+                "operator_action": "approve" if blocker_classes <= {"confidence", "evaluator_quality"} else "reject_or_escalate",
+                "blocker_classes": sorted(blocker_classes),
+                "reason": "synthetic operator replay fixture for rule-learning calibration",
+            }
+            handle.write(json.dumps(replay, sort_keys=True) + "\n")
 
 
 def _write_markdown(out_dir: Path, summary: dict[str, Any], rows: list[dict[str, Any]]) -> None:
@@ -224,6 +290,8 @@ def main() -> int:
     parser.add_argument("--timeout-seconds", type=float, default=20.0)
     parser.add_argument("--output", type=Path, default=Path(".mesh-runtime-state/simulation-stress/latest"))
     parser.add_argument("--keep-state", action="store_true")
+    parser.add_argument("--randomize", action="store_true")
+    parser.add_argument("--seed", type=int, default=20260424)
     args = parser.parse_args()
 
     out_dir = args.output.resolve()
@@ -251,6 +319,8 @@ def main() -> int:
                         scenario_id=scenarios[index % len(scenarios)],
                         index=index,
                         timeout_seconds=args.timeout_seconds,
+                        randomize=args.randomize,
+                        seed=args.seed,
                     )
                 )
             for future in as_completed(futures):
@@ -269,6 +339,7 @@ def main() -> int:
     summary["dataset_path"] = str(export_path)
     out_dir.joinpath("summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     out_dir.joinpath("runs.json").write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
+    _write_override_replay(out_dir, rows)
     _write_markdown(out_dir, summary, rows)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 1 if failures else 0

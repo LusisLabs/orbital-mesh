@@ -44,9 +44,11 @@ The harness:
 - enables simulation and benchmark export;
 - installs a scoped service-agent config for the built-in search and API scenarios;
 - waits for terminal or operator-awaiting state plus benchmark export before cleanup;
-- writes `summary.json`, `runs.json`, `dataset.jsonl`, and `stress-report.md`.
+- writes `summary.json`, `runs.json`, `dataset.jsonl`, `override-replay.jsonl`, and `stress-report.md`.
 
-The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, queue lag, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
+The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, queue lag, memory pressure, request spikes, weak-signal no-action controls, missing credentials, high-impact escalation, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
+
+Pass/fail dimensions are split into `safe_autonomy_pass` and `correct_pause_pass`. A scenario that correctly pauses for high risk, missing authority, or human review can pass as a bounded SRE outcome even when it does not execute autonomously. Benchmark rows also include normalized blocker classes so evaluator quality, confidence, approval, risk, and human-review failures can be tracked independently.
 
 ## Nightly Benchmark Trends
 
@@ -59,6 +61,16 @@ python3 scripts/run_nightly_benchmarks.py --iterations 32 --workers 8
 The wrapper creates a dated output directory under `.mesh-runtime-state/simulation-stress/nightly/`, runs the matrix, compares pass rate, average score, average elapsed time, and reconciliation disagreements against the previous run, then writes `trend.json` and `trend-report.md`. Use `--allow-regression` for exploratory local runs that should record the trend without failing the command.
 
 The first stress runs exposed two lifecycle issues: run stage `completed` can precede post-completion memory and benchmark artifacts, and approval-gated simulations can pause before completion. The harness now waits for `benchmark_score`, and the coordinator records benchmark artifacts for simulation runs that pause or spawn recovery children. This preserves benchmark reproducibility under parallel execution.
+
+## Continuous Simulation Loop
+
+Use the continuous loop for repeated benchmark cycles with rollup artifacts:
+
+```bash
+python3 scripts/run_continuous_simulations.py --cycles 3 --iterations 32 --workers 8 --sleep-seconds 60
+```
+
+The loop writes each cycle under `.mesh-runtime-state/simulation-stress/continuous/` and maintains `rollup.json` plus `rollup-report.md` across cycles. It enables seeded scenario randomization by default, perturbing telemetry values and context while keeping the expected decision contract stable. Use `--no-randomize` for deterministic catalog sweeps. `--cycles 0` runs until interrupted and should be used only under a supervisor that owns stop policy, artifact retention, and resource limits. The loop remains sandbox-only because it delegates to the same simulation matrix harness and allowlisted scenario catalog.
 
 ## Service Agents
 
