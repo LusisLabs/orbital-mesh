@@ -53,6 +53,9 @@ import type {
   AgentTask,
   EvoLaunchRecord,
   ScenarioRecord,
+  BenchmarkRecord,
+  ServiceAgentRecord,
+  SimulationScenarioRecord,
   VaultTreeEntry,
 } from "./types";
 
@@ -189,6 +192,10 @@ export default function App() {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
+  const [simulations, setSimulations] = useState<SimulationScenarioRecord[]>([]);
+  const [benchmarks, setBenchmarks] = useState<BenchmarkRecord[]>([]);
+  const [activeBenchmark, setActiveBenchmark] = useState<BenchmarkRecord | null>(null);
+  const [serviceAgents, setServiceAgents] = useState<ServiceAgentRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
   const [researchSessions, setResearchSessions] = useState<ResearchSessionRecord[]>([]);
@@ -365,10 +372,24 @@ export default function App() {
 
   async function refreshBootstrap() {
     try {
-      const [healthRes, readinessRes, scenariosRes, goalsRes, runsRes, researchRes, researchCorpusRes] = await Promise.all([
+      const [
+        healthRes,
+        readinessRes,
+        scenariosRes,
+        simulationsRes,
+        benchmarksRes,
+        serviceAgentsRes,
+        goalsRes,
+        runsRes,
+        researchRes,
+        researchCorpusRes,
+      ] = await Promise.all([
         api.getHealth(baseUrl),
         api.getReadiness(baseUrl),
         api.getScenarios(baseUrl),
+        api.getSimulations(baseUrl),
+        api.getBenchmarks(baseUrl),
+        api.getServiceAgents(baseUrl),
         api.getGoals(baseUrl),
         api.getRuns(baseUrl),
         api.getResearchSessions(baseUrl),
@@ -377,6 +398,9 @@ export default function App() {
       setHealth(healthRes);
       setReadiness(readinessRes);
       setScenarios(scenariosRes.scenarios);
+      setSimulations(simulationsRes.simulations);
+      setBenchmarks(benchmarksRes.benchmarks);
+      setServiceAgents(serviceAgentsRes.service_agents);
       setGoals(goalsRes.goals);
       setRuns(runsRes.runs);
       setResearchSessions(researchRes.sessions);
@@ -504,6 +528,36 @@ export default function App() {
       addToast({ variant: "error", title: "Failed to launch run", description: error instanceof Error ? error.message : "Unknown error" });
     } finally {
       setLaunching(false);
+    }
+  }
+
+  async function handleRunSimulation(scenarioId: string) {
+    setLaunching(true);
+    try {
+      const run = await api.runSimulation(baseUrl, scenarioId, {
+        goal_id: selectedGoalId || goals[0]?.goal_id,
+        evaluation_mode: launchDraft.evaluationMode,
+        orchestration_mode: launchDraft.orchestrationMode,
+        steering_mode: "interruptible_auto",
+        pause_points: [],
+      });
+      setActiveRunId(run.run_id);
+      addToast({ variant: "success", title: "Simulation launched", description: scenarioId });
+      await refreshBootstrap();
+    } catch (error) {
+      addToast({ variant: "error", title: "Simulation blocked", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  async function handleSelectBenchmark(benchmark: BenchmarkRecord) {
+    setActiveRunId(benchmark.run_id);
+    setActiveBenchmark(benchmark);
+    try {
+      setActiveBenchmark(await api.getBenchmark(baseUrl, benchmark.benchmark_id));
+    } catch {
+      setActiveBenchmark(benchmark);
     }
   }
 
@@ -1016,6 +1070,78 @@ export default function App() {
               {launching ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
               {launching ? "Launching…" : "Launch Run"}
             </button>
+          </div>
+
+          <SectionTitle icon={<Activity size={15} />} title="Simulations" />
+          <div className="stack">
+            {simulations.slice(0, 4).map((simulation) => (
+              <div key={simulation.scenario_id} className="list-card">
+                <strong>{simulation.title}</strong>
+                <span className="list-card-sub">
+                  {humanize(simulation.fault_type)} · expect {humanize(simulation.expected_decision_type ?? "any")}
+                </span>
+                <span className="list-card-sub">
+                  {String(simulation.sandbox.namespace ?? "sandbox")} / {String(simulation.sandbox.deployment ?? "target")}
+                </span>
+                <button
+                  className="action-button compact"
+                  type="button"
+                  onClick={() => void handleRunSimulation(simulation.scenario_id)}
+                  disabled={launching}
+                >
+                  <Play size={13} />
+                  Run
+                </button>
+              </div>
+            ))}
+            {simulations.length === 0 && <EmptyState text="No simulations registered" />}
+          </div>
+
+          <SectionTitle icon={<ShieldCheck size={15} />} title="AI SRE Benchmarks" />
+          <div className="stack">
+            {benchmarks.slice(0, 3).map((benchmark) => (
+              <button
+                key={benchmark.benchmark_id}
+                className={`list-card ${activeRunId === benchmark.run_id ? "selected" : ""}`}
+                type="button"
+                onClick={() => void handleSelectBenchmark(benchmark)}
+              >
+                <strong>{benchmark.scenario_id}</strong>
+                <span className="list-card-sub">
+                  Score {Math.round(benchmark.score * 100)}% · {benchmark.passed ? "passed" : "review"}
+                </span>
+                <span className="list-card-sub">{relativeTime(benchmark.recorded_at)}</span>
+              </button>
+            ))}
+            {benchmarks.length === 0 && <EmptyState text="No benchmark runs yet" />}
+            {activeBenchmark && (
+              <div className="timeline-summary">
+                <strong>{activeBenchmark.scenario_id}</strong>
+                <span>Dataset: {activeBenchmark.dataset_ref ?? "not exported"}</span>
+                <span>Decision match: {String(activeBenchmark.dimensions.decision_match ?? "unknown")}</span>
+                <span>Outcome match: {String(activeBenchmark.dimensions.outcome_match ?? "unknown")}</span>
+                <span>Reconciliation: {String(activeBenchmark.dimensions.reconciliation_recorded ?? "unknown")}</span>
+                {Array.isArray(activeBenchmark.dimensions.hard_failures) && activeBenchmark.dimensions.hard_failures.length > 0 && (
+                  <span>Failed: {activeBenchmark.dimensions.hard_failures.join(", ")}</span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <SectionTitle icon={<Bot size={15} />} title="Service Agents" />
+          <div className="stack">
+            {serviceAgents.slice(0, 4).map((agent) => (
+              <div key={agent.service} className="list-card">
+                <strong>{agent.service}</strong>
+                <span className="list-card-sub">
+                  {agent.preferred_lanes.length ? agent.preferred_lanes.join(", ") : "default lanes"}
+                </span>
+                <span className="list-card-sub">
+                  {Object.keys(agent.scope).length} scope groups
+                </span>
+              </div>
+            ))}
+            {serviceAgents.length === 0 && <EmptyState text="Default global agent routing" />}
           </div>
 
           <SectionTitle icon={<GitBranch size={15} />} title="Run Sessions" />

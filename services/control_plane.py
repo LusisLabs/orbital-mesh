@@ -20,6 +20,9 @@ from services.ingest.webhook_service import (
 )
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.evo_launcher import EvoLaunchService
+from services.orchestrator.reconciliation import reconcile_agent_tasks
+from services.orchestrator.service_agents import ServiceAgentRegistry
+from services.simulation import SimulationService
 from services.scenario_analysis import ScenarioAnalysisService
 from shared.mesh_runtime import (
     AGENT_TASK_RECORDED,
@@ -72,6 +75,7 @@ from shared.mesh_runtime.research import (
 )
 from shared.mesh_runtime.webhook_templates import AlertEvent
 from services.orchestrator.hermes_adapter import HermesCliAdapter, NativeHermesAdapter
+from shared.mesh_runtime.benchmarking import SimulationScenario, dataset_row, score_run
 
 
 PAUSEABLE_STAGES = {"trigger_ready", "decision_ready", "evaluation_ready", "feedback_ready"}
@@ -246,6 +250,8 @@ class RunCoordinator:
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.evo_launcher = EvoLaunchService(self.config)
+        self.simulation_service = SimulationService(self.config)
+        self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
         # Typed watcher registry (replaces the single-threaded WatchDaemon).
@@ -599,6 +605,29 @@ class RunCoordinator:
             "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
         }
 
+    def list_simulations(self) -> list[dict[str, Any]]:
+        return self.simulation_service.list_scenarios()
+
+    def run_simulation(self, scenario_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        _scenario, run_payload = self.simulation_service.build_run_payload(scenario_id, payload)
+        return self.create_run(run_payload)
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.state_store.list_benchmarks(limit=limit)
+
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any] | None:
+        return self.state_store.get_benchmark(benchmark_id)
+
+    def list_service_agents(self) -> list[dict[str, Any]]:
+        return self.service_agents.list_agents()
+
+    def get_reconciliation(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        artifact = session.artifacts.get("reconciliation")
+        return artifact if isinstance(artifact, dict) else None
+
     def get_scenario_analysis(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -696,7 +725,15 @@ class RunCoordinator:
             pause_points=pause_points,
             evaluation_mode=run_config.evaluation_mode,
             orchestration_mode=run_config.orchestration_mode,
-            artifacts={"input_signal": signal_payload, "integration_readiness": readiness_snapshot},
+            artifacts={
+                "input_signal": signal_payload,
+                "integration_readiness": readiness_snapshot,
+                **(
+                    {"simulation_context": payload["simulation_context"]}
+                    if isinstance(payload.get("simulation_context"), dict)
+                    else {}
+                ),
+            },
         )
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
@@ -834,6 +871,7 @@ class RunCoordinator:
                     status="completed",
                 )
                 self._update_session(run_id, stage="no_trigger", status="completed")
+                self._record_benchmark_if_simulation(run_id)
                 return
 
             self._set_artifact(run_id, "trigger", trigger.to_dict())
@@ -895,6 +933,21 @@ class RunCoordinator:
                 )
                 _LOG.exception("Scenario analysis failed for run %s", run_id)
 
+            service_agent = self.service_agents.route(trigger.to_dict())
+            self._set_artifact(run_id, "service_agent", service_agent)
+            self.state_store.append_run_event(
+                run_id,
+                stage="trigger_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=service_agent,
+                summary={
+                    "service": service_agent.get("agent", {}).get("service"),
+                    "matched": service_agent.get("matched"),
+                },
+                artifact_key="service_agent",
+                integration_name="service_agents",
+                status="recorded",
+            )
             decision = engine.decision.decide(trigger, scenario_analysis=scenario_analysis)
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
             if self._maybe_launch_recovery_run(
@@ -1025,6 +1078,7 @@ class RunCoordinator:
             self._update_session(run_id, stage="completed", status="completed")
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
+            self._record_benchmark_if_simulation(run_id)
         except Exception as exc:
             self.state_store.append_run_event(
                 run_id,
@@ -1333,19 +1387,29 @@ class RunCoordinator:
                 integration_name="promptfoo",
                 status="recorded",
             )
+        session = self.state_store.get_run_session(run_id)
+        service_agent = session.artifacts.get("service_agent") if session is not None else None
         tasks = self.agent_mesh.build_tasks(
             run_id=run_id,
             trigger=trigger,
             decision=decision,
             evaluation=evaluation,
+            service_agent=service_agent if isinstance(service_agent, dict) else None,
         )
         task_payload = [task.to_dict() for task in tasks]
+        lane_routing = {
+            "signal_source": _signal_source_for_routing(trigger),
+            "decision_type": decision.decision_type,
+            "service_agent": service_agent,
+            "agents": task_payload[0].get("agents", []) if task_payload else [],
+        }
+        self._set_artifact(run_id, "lane_routing", lane_routing)
         self._set_artifact(run_id, "agent_tasks", task_payload)
         self.state_store.append_run_event(
             run_id,
             stage="evaluation_ready",
             event_type=AGENT_TASK_RECORDED,
-            payload={"tasks": task_payload},
+            payload={"tasks": task_payload, "lane_routing": lane_routing},
             summary={
                 "tasks": len(task_payload),
                 "agents": sum(len(task.get("attempts", [])) for task in task_payload),
@@ -1354,6 +1418,23 @@ class RunCoordinator:
             integration_name="agent_mesh",
             status="recorded",
         )
+        if self.config.agent_reconciliation_enabled:
+            reconciliation = reconcile_agent_tasks(tasks)
+            self._set_artifact(run_id, "reconciliation", reconciliation)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=reconciliation,
+                summary={
+                    "selected_action": reconciliation.get("selected_action"),
+                    "confidence": reconciliation.get("confidence"),
+                    "disagreement": reconciliation.get("disagreement"),
+                },
+                artifact_key="reconciliation",
+                integration_name="agent_mesh",
+                status="recorded",
+            )
         return evaluation
 
     def _maybe_launch_recovery_run(
@@ -1433,6 +1514,7 @@ class RunCoordinator:
             status="launched",
         )
         self._update_session(run_id, stage="recovery_spawned", status="recovery_spawned", pending_pause_stage=None)
+        self._record_benchmark_if_simulation(run_id)
         return True
 
     def _build_recovery_child_payload(
@@ -1634,6 +1716,7 @@ class RunCoordinator:
             return {"action": "continue"}
 
         self._update_session(run_id, stage="awaiting_operator", status="awaiting_operator", pending_pause_stage=stage)
+        self._record_benchmark_if_simulation(run_id)
         with control.condition:
             while True:
                 while not control.commands:
@@ -1933,6 +2016,59 @@ class RunCoordinator:
         session.updated_at = _timestamp()
         self.state_store.save_run_session(session)
 
+    def _record_benchmark_if_simulation(self, run_id: str) -> None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return
+        context = session.artifacts.get("simulation_context")
+        if not isinstance(context, dict):
+            return
+        if isinstance(session.artifacts.get("benchmark_score"), dict):
+            return
+        scenario_id = str(context.get("scenario_id") or "").strip()
+        scenario = self.simulation_service.get_scenario(scenario_id)
+        if scenario is None:
+            scenario = SimulationScenario(
+                scenario_id=scenario_id or "unknown",
+                title=str(context.get("title") or scenario_id or "unknown"),
+                signal_payload=session.artifacts.get("input_signal", {}),
+                expected_decision_type=context.get("expected_decision_type"),
+                expected_outcome=context.get("expected_outcome"),
+                fault_type=str(context.get("fault_type") or "synthetic_signal"),
+                sandbox=dict(context.get("sandbox") or {}),
+                standards_refs=[str(item) for item in context.get("standards_refs", [])]
+                if isinstance(context.get("standards_refs"), list)
+                else [],
+            )
+        events = [event.to_dict() for event in self.state_store.list_run_events(run_id)]
+        merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
+        record = score_run(scenario=scenario, session=session.to_dict(), events=events)
+        export_path = Path(self.config.benchmark_export_path)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        record.dataset_ref = str(export_path)
+        row = dataset_row(
+            scenario=scenario,
+            session=session.to_dict(),
+            events=events,
+            merkle=merkle,
+            record=record,
+        )
+        with export_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
+        self.state_store.record_benchmark(record.to_dict())
+        self._set_artifact(run_id, "benchmark_score", record.to_dict())
+        self._set_artifact(run_id, "dataset_export_ref", {"path": str(export_path), "format": "jsonl"})
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=record.to_dict(),
+            summary={"score": record.score, "passed": record.passed},
+            artifact_key="benchmark_score",
+            integration_name="benchmark",
+            status="recorded",
+        )
+
     def _update_session(self, run_id: str, **updates: Any) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -2076,3 +2212,14 @@ class RunCoordinator:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _signal_source_for_routing(trigger: Trigger) -> str:
+    context = trigger.related_context if isinstance(trigger.related_context, dict) else {}
+    if trigger.trigger_type.startswith("kubernetes_"):
+        return "kubernetes"
+    if trigger.trigger_type.startswith("otel_"):
+        return "otel"
+    if "flag" in trigger.trigger_type:
+        return "feature_flag"
+    return str(context.get("signal_source") or context.get("source") or "default")

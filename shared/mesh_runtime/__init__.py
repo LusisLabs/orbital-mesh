@@ -21,6 +21,7 @@ from .control_plane_state import ControlPlaneStateStore, FileStateStore
 from .mesh_state_store import MeshStateStore, RunFilters
 from .postgres_state import PostgresStateStore
 from .state_store_factory import build_mesh_state_store
+from .benchmarking import BenchmarkRecord, BenchmarkStore, SimulationScenario
 from .contracts import (
     ClaimRecord,
     Decision,

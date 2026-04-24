@@ -45,9 +45,11 @@ class AgentMeshService:
         trigger: Trigger,
         decision: Decision,
         evaluation: EvaluationResult,
+        service_agent: dict[str, Any] | None = None,
     ) -> list[AgentTask]:
         memory_scope = self._memory_scope(run_id, trigger)
         memory_packet = self._memory_packet(memory_scope, trigger)
+        agents = self._agents(trigger=trigger, decision=decision, service_agent=service_agent)
         task = build_agent_task(
             run_id=run_id,
             kind=self._task_kind(decision),
@@ -58,7 +60,7 @@ class AgentMeshService:
             memory_packet=memory_packet,
             memory_write_policy=self._memory_write_policy(),
             open_questions=self._open_questions(memory_packet),
-            agents=self._agents(),
+            agents=agents,
         )
         attempts = self._collect_attempts(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
         successful = [attempt for attempt in attempts if attempt.status == "completed" and not attempt.risk_flags]
@@ -180,8 +182,9 @@ class AgentMeshService:
                     ),
                 }
             )
+        routed_agents = list(task.agents)
         if self.config.agent_fabric_mode == "deepagents":
-            for agent in ("goose", "hermes", "codex", "claudecode", "openclaw", "evo"):
+            for agent in routed_agents:
                 specs.append(
                     {
                         "agent": agent,
@@ -205,7 +208,8 @@ class AgentMeshService:
             ("evo", "native_contract", lambda: self._evo_attempt(task, trigger, decision, evaluation)),
         )
         for agent, adapter, builder in native_specs:
-            specs.append({"agent": agent, "adapter": adapter, "builder": builder})
+            if agent in routed_agents:
+                specs.append({"agent": agent, "adapter": adapter, "builder": builder})
         return specs
 
     def _goose_attempt(
@@ -486,10 +490,33 @@ class AgentMeshService:
             "cluster": parameters.get("cluster") or related.get("cluster"),
         }
 
-    def _agents(self) -> list[str]:
-        agents = ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"]
-        if self.config.latentmas_enabled:
-            return ["latentmas", *agents]
+    def _agents(
+        self,
+        *,
+        trigger: Trigger,
+        decision: Decision,
+        service_agent: dict[str, Any] | None = None,
+    ) -> list[str]:
+        legacy_agents = ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"]
+        matched_agent = bool((service_agent or {}).get("matched")) if isinstance(service_agent, dict) else False
+        if not matched_agent:
+            return legacy_agents
+        source = _signal_source(trigger)
+        routing = {
+            "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
+            "otel": ["hermes", "goose", "evo"],
+            "feature_flag": ["hermes", "goose", "evo"],
+            "argocd": ["goose", "hermes", "openclaw"],
+            "log": ["hermes", "codex", "claudecode"],
+        }
+        agents = list(routing.get(source, legacy_agents))
+        agent_payload = (service_agent or {}).get("agent") if isinstance(service_agent, dict) else None
+        preferred = agent_payload.get("preferred_lanes", []) if isinstance(agent_payload, dict) else []
+        if preferred:
+            preferred_set = {str(item) for item in preferred}
+            agents = [agent for agent in agents if agent in preferred_set] or agents
+        if decision.decision_type not in {"investigate_and_patch", "repo_patch_service"}:
+            agents = [agent for agent in agents if agent != "codex" or self._allowed_paths(trigger)]
         return agents
 
     def _memory_scope(self, run_id: str, trigger: Trigger) -> dict[str, Any]:
@@ -559,3 +586,17 @@ def _proposal_observation(agent: str, service: str, content: str) -> dict[str, A
         "author": agent,
         "content": content,
     }
+
+
+def _signal_source(trigger: Trigger) -> str:
+    context = trigger.related_context if isinstance(trigger.related_context, dict) else {}
+    source = str(context.get("signal_source") or context.get("source") or "").lower()
+    if trigger.trigger_type.startswith("kubernetes_"):
+        return "kubernetes"
+    if trigger.trigger_type.startswith("otel_"):
+        return "otel"
+    if "flag" in trigger.trigger_type:
+        return "feature_flag"
+    if source:
+        return source
+    return "default"

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/simulation-scenario.schema.json",
+  "title": "SimulationScenario",
+  "type": "object",
+  "required": ["scenario_id", "title", "signal_payload", "fault_type", "sandbox"],
+  "properties": {
+    "scenario_id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "signal_payload": {"type": "object"},
+    "expected_decision_type": {"type": ["string", "null"]},
+    "expected_outcome": {"type": ["string", "null"]},
+    "fault_type": {"type": "string", "minLength": 1},
+    "sandbox": {
+      "type": "object",
+      "properties": {
+        "kube_context": {"type": "string"},
+        "namespace": {"type": "string"},
+        "deployment": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "standards_refs": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

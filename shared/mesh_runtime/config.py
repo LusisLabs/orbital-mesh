@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -13,6 +13,7 @@ DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
+DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
@@ -144,6 +145,11 @@ class RuntimeConfig:
     rule_learning_enabled: bool = False
     rule_learning_min_observations: int = 5
     rule_learning_max_age_days: int = 30
+    simulation_enabled: bool = False
+    simulation_context_allowlist: tuple[str, ...] = ()
+    benchmark_export_path: str = str(DEFAULT_BENCHMARK_EXPORT_PATH)
+    service_agents_config_path: str | None = None
+    agent_reconciliation_enabled: bool = True
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -278,6 +284,19 @@ class RuntimeConfig:
             rule_learning_enabled=os.getenv("MESH_RULE_LEARNING_ENABLED", "").lower() in ("1", "true", "yes"),
             rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
             rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
+            simulation_enabled=os.getenv("MESH_SIMULATION_ENABLED", "").lower() in ("1", "true", "yes"),
+            simulation_context_allowlist=_csv_env("MESH_SIMULATION_CONTEXT_ALLOWLIST"),
+            benchmark_export_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_BENCHMARK_EXPORT_PATH"),
+                default=str(DEFAULT_BENCHMARK_EXPORT_PATH),
+            ),
+            service_agents_config_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH"), default="")
+                if os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH")
+                else None
+            ),
+            agent_reconciliation_enabled=os.getenv("MESH_AGENT_RECONCILIATION_ENABLED", "true").lower()
+            not in ("0", "false", "no"),
         )
 
 

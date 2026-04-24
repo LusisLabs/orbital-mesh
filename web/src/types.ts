@@ -196,6 +196,37 @@ export interface ScenarioRecord {
   };
 }
 
+export interface SimulationScenarioRecord {
+  scenario_id: string;
+  title: string;
+  signal_payload: Record<string, any>;
+  expected_decision_type?: string | null;
+  expected_outcome?: string | null;
+  fault_type: string;
+  sandbox: Record<string, any>;
+  tags: string[];
+  standards_refs: string[];
+}
+
+export interface BenchmarkRecord {
+  benchmark_id: string;
+  run_id: string;
+  scenario_id: string;
+  recorded_at: string;
+  score: number;
+  passed: boolean;
+  dimensions: Record<string, any>;
+  dataset_ref?: string | null;
+}
+
+export interface ServiceAgentRecord {
+  service: string;
+  scope: Record<string, string[]>;
+  runbook_path?: string | null;
+  preferred_lanes: string[];
+  autonomy_overrides: Record<string, string>;
+}
+
 export interface EvoLaunchRecord {
   launch_id: string;
   action: string;

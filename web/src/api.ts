@@ -10,6 +10,9 @@ import type {
   RunDetail,
   RunSessionRecord,
   ScenarioRecord,
+  BenchmarkRecord,
+  ServiceAgentRecord,
+  SimulationScenarioRecord,
   SystemSnapshot,
   VaultTreeEntry,
 } from "./types";
@@ -57,6 +60,29 @@ export const api = {
 
   getScenarios(baseUrl: string) {
     return request<{ scenarios: ScenarioRecord[] }>(baseUrl, "/api/scenarios");
+  },
+
+  getSimulations(baseUrl: string) {
+    return request<{ simulations: SimulationScenarioRecord[] }>(baseUrl, "/api/simulations");
+  },
+
+  runSimulation(baseUrl: string, scenarioId: string, payload: Record<string, unknown>) {
+    return request<RunDetail>(baseUrl, `/api/simulations/${encodeURIComponent(scenarioId)}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getBenchmarks(baseUrl: string) {
+    return request<{ benchmarks: BenchmarkRecord[] }>(baseUrl, "/api/benchmarks");
+  },
+
+  getBenchmark(baseUrl: string, benchmarkId: string) {
+    return request<BenchmarkRecord>(baseUrl, `/api/benchmarks/${encodeURIComponent(benchmarkId)}`);
+  },
+
+  getServiceAgents(baseUrl: string) {
+    return request<{ service_agents: ServiceAgentRecord[] }>(baseUrl, "/api/service-agents");
   },
 
   getGoals(baseUrl: string) {
