@@ -27,6 +27,26 @@ _ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
 })
 
 
+# Error signatures the aggregated log summary treats as "hard" evidence
+# of a real fault (as opposed to startup-probe noise). Used as the
+# corroborating signal when rollout_status is merely ``degraded``:
+# a degraded rollout with no hard signature is treated as self-healing
+# churn and skipped; a degraded rollout with one of these signatures
+# is treated as a genuine fault and fires the trigger.
+#
+# ``probe_failure`` is deliberately *excluded* from this set because the
+# kubelet emits "Readiness probe failed" and "Unhealthy" events during
+# every normal pod startup — including successful ones. Treating those
+# as a hard signature gave us false positives on every pod_kill_one in
+# the first real chaos session.
+_HARD_ERROR_SIGNATURES: frozenset[str] = frozenset({
+    "crash_loop",
+    "image_pull_failure",
+    "oom_killed",
+    "application_error",
+})
+
+
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
@@ -144,7 +164,8 @@ class TriggerService:
             or related_context.get("incident_owned_by_human", False)
             or related_context.get("known_upstream_outage", False)
         )
-        rollout_unhealthy = deployment["rollout_status"] in {"degraded", "failed"}
+        rollout_failed = deployment["rollout_status"] == "failed"
+        rollout_degraded = deployment["rollout_status"] == "degraded"
         # Tightened "failing pod" definition. The original check
         # (not ready OR restarts > 0) was too permissive: a pod 3
         # seconds into its startup is "not ready" but not "failing",
@@ -152,23 +173,35 @@ class TriggerService:
         # transient state. Without tightening, every pod kill fires
         # a trigger and Mesh proposes a remediation for cluster
         # self-healing that would have worked in 5 more seconds.
-        #
-        # A pod counts as "actively failing" when either:
-        # * It has restarted at least once (hard evidence of a real
-        #   crash, not a startup delay), OR
-        # * Its container is in one of the unambiguously broken states
-        #   (kubelet has already diagnosed the problem and given up).
-        #
-        # Pending/ContainerCreating/Starting are deliberately excluded —
-        # those are transient states. A pod truly stuck in Pending
-        # will eventually make the deployment's rollout_status go
-        # degraded, and we catch it via that path.
         failing_pods = [
             pod for pod in pods
             if int(pod.get("restarts", 0)) > 0
             or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
         ]
-        if suppressed or (not rollout_unhealthy and not failing_pods):
+        # ``rollout_status == "degraded"`` is too broad on its own. The
+        # k8s deployment controller marks a rollout degraded during
+        # normal pod recreation — e.g. ``pod_kill_one`` deletes one
+        # pod, readyReplicas drops to 1/2 for a couple of seconds, and
+        # kubectl reports ``degraded`` for that window even though
+        # nothing is actually broken. Firing on this alone generates
+        # false positives on every transient churn.
+        #
+        # ``rollout_status == "failed"`` is definitive (the deployment
+        # controller has given up on this revision) — worth firing
+        # alone.
+        #
+        # For the intermediate ``degraded`` state, require corroboration:
+        # either actually-failing pods (``failing_pods`` non-empty) or
+        # hard error signatures in the aggregated log summary. Pure
+        # transient degradation with no hard signal gets treated as
+        # self-healing and skipped.
+        hard_signatures = _HARD_ERROR_SIGNATURES & set(log_summary.get("error_signatures", []))
+        actionable = (
+            rollout_failed
+            or bool(failing_pods)
+            or (rollout_degraded and bool(hard_signatures))
+        )
+        if suppressed or not actionable:
             return None
 
         trigger_signals = list(log_summary.get("error_signatures", []))
