@@ -38,11 +38,14 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
     passed = sum(int(summary.get("benchmark_passed", 0) or 0) for summary in summaries)
     weighted_score = sum(float(summary.get("avg_score", 0.0) or 0.0) * int(summary.get("total_runs", 0) or 0) for summary in summaries)
     blockers: dict[str, int] = {}
+    blocker_classes: dict[str, int] = {}
     decisions: dict[str, int] = {}
     failures: list[Any] = []
     for summary in summaries:
         for key, value in (summary.get("blocking_reason_counts") or {}).items():
             blockers[str(key)] = blockers.get(str(key), 0) + int(value)
+        for key, value in (summary.get("blocker_class_counts") or {}).items():
+            blocker_classes[str(key)] = blocker_classes.get(str(key), 0) + int(value)
         for key, value in (summary.get("decision_counts") or {}).items():
             decisions[str(key)] = decisions.get(str(key), 0) + int(value)
         failures.extend(summary.get("failures") or [])
@@ -54,6 +57,7 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
         "pass_rate": round(passed / total_runs, 4) if total_runs else 0.0,
         "avg_score": round(weighted_score / total_runs, 4) if total_runs else 0.0,
         "blocking_reason_counts": blockers,
+        "blocker_class_counts": blocker_classes,
         "decision_counts": decisions,
         "failures": failures,
     }
@@ -78,6 +82,9 @@ def _write_rollup(root: Path, cycle_dirs: list[Path]) -> None:
     ]
     blockers = sorted(rollup["blocking_reason_counts"].items(), key=lambda item: (-item[1], item[0]))
     lines.extend([f"- {key}: {value}" for key, value in blockers[:10]] or ["- none"])
+    lines.extend(["", "## Blocker Classes", ""])
+    blocker_class_rows = sorted(rollup["blocker_class_counts"].items(), key=lambda item: (-item[1], item[0]))
+    lines.extend([f"- {key}: {value}" for key, value in blocker_class_rows] or ["- none"])
     lines.extend(["", "## Decision mix", ""])
     decisions = sorted(rollup["decision_counts"].items(), key=lambda item: (-item[1], item[0]))
     lines.extend([f"- {key}: {value}" for key, value in decisions] or ["- none"])
@@ -93,6 +100,8 @@ def main() -> int:
     parser.add_argument("--sleep-seconds", type=float, default=60.0)
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--stop-on-failure", action="store_true")
+    parser.add_argument("--no-randomize", action="store_true")
+    parser.add_argument("--seed", type=int, default=20260424)
     args = parser.parse_args()
 
     root = args.root.resolve()
@@ -117,6 +126,8 @@ def main() -> int:
                 "--output",
                 str(output),
             ]
+            if not args.no_randomize:
+                command.extend(["--randomize", "--seed", str(args.seed + cycle)])
             result = subprocess.run(command, cwd=REPO_ROOT, check=False)
             cycle_dirs.append(output)
             _write_rollup(root, cycle_dirs)
