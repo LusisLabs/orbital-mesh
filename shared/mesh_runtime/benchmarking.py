@@ -82,11 +82,18 @@ def score_run(
     decision = artifacts.get("decision", {}) if isinstance(artifacts.get("decision"), dict) else {}
     feedback = artifacts.get("feedback", {}) if isinstance(artifacts.get("feedback"), dict) else {}
     evaluation = artifacts.get("evaluation", {}) if isinstance(artifacts.get("evaluation"), dict) else {}
+    no_trigger = session.get("status") in {"no_trigger", "completed"} and session.get("stage") == "no_trigger"
+    no_action_control = scenario.expected_decision_type == "no_action" and no_trigger
     decision_match = (
         scenario.expected_decision_type is None
         or decision.get("decision_type") == scenario.expected_decision_type
+        or no_action_control
     )
-    outcome_match = scenario.expected_outcome is None or feedback.get("outcome") == scenario.expected_outcome
+    outcome_match = (
+        scenario.expected_outcome is None
+        or feedback.get("outcome") == scenario.expected_outcome
+        or (no_action_control and scenario.expected_outcome == "no_action_needed")
+    )
     triggered = any(event.get("event_type") == "trigger_ready" for event in events)
     completed = session.get("status") in {"completed", "no_trigger"} or session.get("stage") in {"completed", "no_trigger"}
     no_hidden_reconciliation = "reconciliation" in artifacts or not artifacts.get("agent_tasks")

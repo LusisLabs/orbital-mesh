@@ -143,6 +143,25 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             self.assertFalse(record.passed)
             self.assertIn("decision_mismatch", record.dimensions["hard_failures"])
 
+    def test_benchmark_no_trigger_satisfies_no_action_control(self) -> None:
+        scenario = SimulationService(
+            RuntimeConfig(
+                simulation_enabled=True,
+                simulation_context_allowlist=("mesh-compose",),
+            )
+        ).get_scenario("feature_flag_low_confidence_no_action")
+        assert scenario is not None
+        session = {
+            "run_id": "run_3",
+            "stage": "no_trigger",
+            "status": "completed",
+            "artifacts": {"agent_tasks": []},
+        }
+        record = score_run(scenario=scenario, session=session, events=[{"event_type": "no_trigger"}])
+        self.assertTrue(record.passed)
+        self.assertTrue(record.dimensions["decision_match"])
+        self.assertTrue(record.dimensions["outcome_match"])
+
 
 if __name__ == "__main__":
     unittest.main()
