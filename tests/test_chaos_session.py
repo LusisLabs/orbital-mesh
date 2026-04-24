@@ -247,6 +247,34 @@ class ExperimentScorerTests(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("expected a trigger", reason or "")
 
+    def test_no_trigger_passes_when_no_action_is_in_expected_set(self) -> None:
+        """config_drift and scale_to_zero both have `no_action` in
+        their expected_decisions. Not firing a trigger at all is
+        semantically equivalent to firing and deciding no_action —
+        both mean 'Mesh correctly concluded nothing to remediate'.
+        Before this rule, session #2's two config_drift experiments
+        both failed with 'expected a trigger but Mesh did not fire
+        one' even though no-trigger is a valid response for a
+        subtle-fault injection."""
+        r = self._row(
+            trigger_fired=False, decision_type=None,
+            expected_decisions=frozenset({"escalate", "no_action"}),
+        )
+        passed, reason = score_experiment(r, trigger_fired=False)
+        self.assertTrue(passed, reason)
+
+    def test_no_trigger_still_fails_when_no_action_not_in_expected_set(self) -> None:
+        """Negative case — if no_action isn't in the expected set,
+        no-trigger remains a failure. Prevents over-widening the
+        pass condition."""
+        r = self._row(
+            trigger_fired=False, decision_type=None,
+            expected_decisions=frozenset({"restart_deployment"}),
+        )
+        passed, reason = score_experiment(r, trigger_fired=False)
+        self.assertFalse(passed)
+        self.assertIn("expected a trigger", reason or "")
+
     def test_false_positive_probe_no_trigger_passes(self) -> None:
         r = self._row(
             tags=("false_positive_probe",),
