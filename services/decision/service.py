@@ -63,6 +63,7 @@ class DecisionService:
         protected_tiers = set(load_policy("protected-scope.policy.json")["approval_required_customer_tiers"])
         protected_tier = trigger.segment["customer_tier"] in protected_tiers
         repeated_rollback = trigger.related_context.get("rollbacks_last_24h", 0) > 0
+        flag_rollback_conflict = bool(trigger.related_context.get("flag_rollback_conflict", False))
         high_business_impact = bool(trigger.related_context.get("high_business_impact", False))
         flag_causality_confidence = trigger.related_context.get("flag_causality_confidence")
         active_incidents = int(trigger.related_context.get("active_incidents", 0))
@@ -93,7 +94,7 @@ class DecisionService:
             decision_type = "investigate_and_patch"
             confidence = 0.78
             risk_level = "medium"
-        elif high_business_impact:
+        elif high_business_impact or flag_rollback_conflict:
             decision_type = "escalate"
             confidence = 0.64
             risk_level = "high"

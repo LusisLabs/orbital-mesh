@@ -2,6 +2,38 @@
   "$comment": "Metric-action rule registry. See shared/mesh_runtime/metric_action_rules.py for the full format spec. Rules are evaluated top-to-bottom; the first match wins. Put more specific rules before more general ones. Every rule carries its own bounds — the engine enforces those at match time, so a typo cannot produce a runaway actuation.",
   "rules": [
     {
+      "name": "scale on node pressure",
+      "$doc": "Node memory or disk pressure can starve pods even when the deployment is otherwise healthy. Scaling the affected deployment within bounded replica limits gives the scheduler room to place new pods while preserving human review for storage-specific pressure rules.",
+      "match": {
+        "metric_name_pattern": "(k8s\\.node\\.(memory|disk)\\.pressure|node_(memory|disk)_pressure)",
+        "direction": "increasing",
+        "delta_pct_min": 50,
+        "resource_attributes": {
+          "k8s.deployment.name": "*",
+          "k8s.namespace.name": "*"
+        }
+      },
+      "propose": {
+        "decision_type": "scale_deployment",
+        "system": "kubernetes_service",
+        "action": "scale_deployment",
+        "parameters": {
+          "deployment_name": "{resource_attributes.k8s.deployment.name}",
+          "namespace": "{resource_attributes.k8s.namespace.name}",
+          "cluster": "{resource_attributes.k8s.cluster.name}",
+          "kube_context": "{resource_attributes.k8s.cluster.name}",
+          "replicas": 4
+        }
+      },
+      "bounds": {
+        "replicas_max": 8,
+        "cooldown_seconds": 300
+      },
+      "confidence": 0.76,
+      "risk_level": "low",
+      "rollback_plan": "scale deployment back to the prior replica count if node pressure does not clear within 10 minutes"
+    },
+    {
       "name": "scale on consumer lag",
       "$doc": "Covers Kafka consumer lag, RabbitMQ queue depth, Celery backlog, and SQS approximate-messages metrics. A single rule fires across the four queue technologies because they all look like 'unread messages climbing'. Only triggers at ≥30% delta so transient bursts don't churn replicas.",
       "match": {

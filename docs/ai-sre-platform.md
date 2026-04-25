@@ -122,6 +122,8 @@ Evaluator scoring is tuned by blocker class. `evaluator_quality` and `confidence
 
 CI runs a small seeded randomized matrix so scenario export, blocker classification, rule fixture ingestion, and reporting stay reproducible.
 
+The evaluator-calibration pass identified hard mismatches rather than score-floor issues: node-pressure signals lacked a scaling rule, request-spike randomization could weaken signals below the rule threshold, and feature-flag rollback conflicts still selected flag disablement. The remediation keeps protected blockers intact while adding a bounded node-pressure scale rule, preserving threshold-crossing randomization, and forcing rollback-conflict feature flags to escalation.
+
 ## Next Work
 
 1. Use the new family reports to split evaluator thresholds by scenario family.

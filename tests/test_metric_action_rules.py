@@ -340,6 +340,25 @@ class EndToEndPipelineTests(unittest.TestCase):
         self.assertEqual(result["status"], "succeeded")
         self.assertEqual(result["external_refs"]["rollout_action"], "scale_deployment")
 
+    def test_node_pressure_rule_produces_scale_decision(self) -> None:
+        signal = _signal(
+            metric_name="k8s.node.memory.pressure",
+            baseline=0.4,
+            observed=0.86,
+            deployment="semantic-search",
+            namespace="search",
+            cluster="mesh-compose",
+            service="semantic-search",
+        )
+        envelope = self._ingest_signal(signal)
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+
+        load_metric_action_rules.cache_clear()
+        decision = DecisionService().decide(trigger)
+        self.assertEqual(decision.decision_type, "scale_deployment")
+        self.assertEqual(decision.execution_plan["parameters"]["deployment_name"], "semantic-search")
+
     def test_unmatched_metric_escalates(self) -> None:
         """A metric with no matching rule must escalate — silently absorbing
         into no_action would make Mesh ingest alerts and do nothing."""
