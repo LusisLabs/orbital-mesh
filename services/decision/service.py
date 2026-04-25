@@ -50,6 +50,8 @@ class DecisionService:
             return self._decide_otel_metric(trigger)
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+        if trigger.trigger_type == "webhook_alert_firing":
+            return self._decide_webhook_alert(trigger)
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -189,6 +191,67 @@ class DecisionService:
             execution_plan=execution_plan,
         )
         decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
+        decision.validate()
+        return decision
+
+    def _decide_webhook_alert(self, trigger: Trigger) -> Decision:
+        severity = str(trigger.related_context.get("severity") or "warning").lower()
+        high_severity = severity in {"critical", "high", "p1", "sev1", "sev2"}
+        confidence = 0.84 if high_severity else 0.76
+        autonomy_tier = "autonomous" if high_severity else "approval_required"
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            summary=(
+                f"Open an incident for webhook alert "
+                f"{trigger.related_context.get('webhook_alert_id', 'unknown')} on {trigger.service}."
+            ),
+            decision_type="escalate",
+            autonomy_tier=autonomy_tier,
+            reasoning={
+                "primary_hypothesis": "A verified external alert fired and should be routed into the bounded incident lane.",
+                "evidence": [
+                    f"severity={severity}",
+                    f"source={trigger.related_context.get('webhook_source_id', 'unknown')}",
+                    f"title={trigger.related_context.get('title', 'unknown')}",
+                ],
+                "evidence_pack": {
+                    "labels": trigger.related_context.get("labels", {}),
+                    "annotations": trigger.related_context.get("annotations", {}),
+                },
+                "alternatives_considered": ["record_no_action"],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "n/a",
+                    "error_rate": "n/a",
+                },
+                "time_to_effect": "immediate",
+            },
+            risk={
+                "level": "low" if high_severity else "medium",
+                "blast_radius": "single_service",
+                "customer_impact_if_wrong": "limited to creating an unnecessary human-review incident",
+            },
+            confidence=confidence,
+            execution_plan={
+                "system": "incident_service",
+                "action": "open_incident",
+                "parameters": {
+                    "service": trigger.service,
+                    "endpoint": trigger.endpoint,
+                    "environment": trigger.environment,
+                    "severity": "high" if high_severity else "medium",
+                    "source": "webhook_alert",
+                    "source_id": trigger.related_context.get("webhook_source_id"),
+                    "alert_id": trigger.related_context.get("webhook_alert_id"),
+                    "summary": trigger.related_context.get("title") or "webhook alert fired",
+                    "reason": trigger.related_context.get("description") or "external alert fired",
+                    "labels": trigger.related_context.get("labels", {}),
+                },
+                "rollback_plan": "close or downgrade the incident once an operator confirms the alert is resolved or non-actionable",
+            },
+        )
         decision.validate()
         return decision
 

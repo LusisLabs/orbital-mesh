@@ -19,6 +19,8 @@ class IngestService:
     def normalize_signal(self, raw_signal: dict) -> EventEnvelope:
         if raw_signal.get("signal_type") == "otel_metric_regression":
             return self._normalize_otel_signal(raw_signal)
+        if raw_signal.get("signal_type") == "webhook_alert":
+            return self._normalize_webhook_signal(raw_signal)
         if raw_signal.get("signal_type") == "kubernetes_deployment_issue":
             validate_payload("kubernetes-signal.schema.json", raw_signal)
             related_context = {
@@ -124,6 +126,71 @@ class IngestService:
                 "service": raw_signal["service"],
                 "endpoint": raw_signal["endpoint"],
                 "flag_key": feature_flag["flag_key"],
+            },
+        )
+
+    def _normalize_webhook_signal(self, raw_signal: dict) -> EventEnvelope:
+        alert_event = raw_signal.get("alert_event", {})
+        labels = alert_event.get("labels", {}) if isinstance(alert_event, dict) else {}
+        related_context = {
+            "active_suppression": False,
+            "incident_owned_by_human": False,
+            "known_upstream_outage": False,
+            "active_incidents": 0,
+            "similar_prior_cases": 0,
+            "incident_credentials_available": True,
+            "audit_logging_available": True,
+            "webhook_source_id": alert_event.get("source_id"),
+            "webhook_alert_id": alert_event.get("alert_id"),
+            "webhook_action": alert_event.get("action", "fire"),
+            "webhook_source_type": alert_event.get("template_source_type"),
+            "severity": raw_signal.get("severity") or alert_event.get("severity"),
+            "labels": labels,
+            "annotations": {},
+        }
+        related_context.update(raw_signal.get("related_context", {}))
+        self._enrich_from_learning(
+            related_context,
+            raw_signal.get("service", ""),
+            raw_signal.get("endpoint"),
+        )
+        return EventEnvelope(
+            event_type="normalized_signal",
+            object_id=raw_signal["signal_id"],
+            schema_version="v1",
+            emitted_at=raw_signal["observed_at"],
+            payload={
+                "signal_type": "webhook_alert",
+                "environment": raw_signal["environment"],
+                "service": raw_signal["service"],
+                "endpoint": raw_signal["endpoint"],
+                "segment": raw_signal.get(
+                    "segment",
+                    {
+                        "customer_tier": labels.get("customer_tier", "system"),
+                        "region": labels.get("region") or labels.get("cluster") or "unknown",
+                    },
+                ),
+                "comparison_window": None,
+                "webhook": {
+                    "source_id": alert_event.get("source_id"),
+                    "alert_id": alert_event.get("alert_id"),
+                    "action": alert_event.get("action", "fire"),
+                    "severity": raw_signal.get("severity") or alert_event.get("severity"),
+                    "title": raw_signal.get("title") or alert_event.get("title"),
+                    "description": raw_signal.get("description") or alert_event.get("description"),
+                    "labels": labels,
+                    "annotations": {},
+                    "raw_event": alert_event,
+                },
+                "related_context": related_context,
+                "post_action_observations": raw_signal.get("post_action_observations", {}),
+            },
+            summary={
+                "service": raw_signal["service"],
+                "endpoint": raw_signal["endpoint"],
+                "alert_id": alert_event.get("alert_id"),
+                "source_id": alert_event.get("source_id"),
             },
         )
 

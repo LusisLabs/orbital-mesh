@@ -26,7 +26,8 @@
       "enum": [
         "feature_flag_performance_regression",
         "kubernetes_deployment_unhealthy",
-        "otel_metric_regression"
+        "otel_metric_regression",
+        "webhook_alert_firing"
       ]
     },
     "triggered_at": {

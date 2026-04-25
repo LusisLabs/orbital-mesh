@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shared.mesh_runtime.watch_protocol import RunCoordinatorLike, SignalCorrelatorLike
+from services.trigger.service import kubernetes_signal_is_actionable
 
 
 _LOG = logging.getLogger("mesh.kubernetes_watcher")
@@ -200,16 +201,7 @@ class KubernetesWatcher:
 
     @staticmethod
     def _is_actionable(signal: dict[str, Any]) -> bool:
-        deployment = signal.get("deployment", {})
-        if deployment.get("rollout_status") in ("degraded", "failed"):
-            return True
-        pods = signal.get("pods", [])
-        for pod in pods:
-            if not pod.get("ready", True):
-                return True
-            if int(pod.get("restarts", 0)) > 0:
-                return True
-        return False
+        return kubernetes_signal_is_actionable(signal)
 
     @staticmethod
     def _extract_error_signature(signal: dict[str, Any]) -> str:

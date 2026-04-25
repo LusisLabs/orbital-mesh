@@ -487,7 +487,7 @@ class RunCoordinator:
             {
                 "goal_id": goal_id,
                 "signal_payload": signal_payload,
-                "steering_mode": record.get("steering_mode") or self.config.default_steering_mode,
+                "steering_mode": record.get("steering_mode") or "interruptible_auto",
                 "evaluation_mode": self.config.evaluation_mode,
                 "orchestration_mode": self.config.orchestration_mode,
             }
@@ -780,8 +780,10 @@ class RunCoordinator:
         session = self.state_store.get_run_session(run_id)
         with self._lock:
             control = self.controls.get(run_id)
-        if session is None or control is None:
+        if session is None:
             raise KeyError(run_id)
+        if control is None:
+            raise ValueError(f"run {run_id!r} is already terminal and cannot accept steering")
         command_payload = {key: value for key, value in payload.items() if key != "command"}
         _validate_steering_command(session, command_type, command_payload)
         command = SteeringCommand(

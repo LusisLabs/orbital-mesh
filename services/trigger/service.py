@@ -2,18 +2,64 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 
 from shared.mesh_runtime import EventEnvelope, Trigger
+
+_LOG = logging.getLogger("mesh.trigger")
+
+_ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
+    "CrashLoopBackOff",
+    "ImagePullBackOff",
+    "ErrImagePull",
+    "OOMKilled",
+    "Error",
+    "ContainerCannotRun",
+    "CreateContainerConfigError",
+    "CreateContainerError",
+})
+
+_HARD_ERROR_SIGNATURES: frozenset[str] = frozenset({
+    "crash_loop",
+    "image_pull_failure",
+    "oom_killed",
+    "application_error",
+})
+
+
+def kubernetes_signal_is_actionable(signal: dict[str, object]) -> bool:
+    deployment = signal.get("deployment", {})
+    pods = signal.get("pods", [])
+    log_summary = signal.get("log_summary", {})
+    if not isinstance(deployment, dict) or not isinstance(pods, list):
+        return False
+    rollout_failed = deployment.get("rollout_status") == "failed"
+    rollout_degraded = deployment.get("rollout_status") == "degraded"
+    failing_pods = [
+        pod for pod in pods
+        if isinstance(pod, dict) and (
+            int(pod.get("restarts", 0)) > 0
+            or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
+        )
+    ]
+    hard_signatures = set()
+    if isinstance(log_summary, dict):
+        hard_signatures = _HARD_ERROR_SIGNATURES & set(log_summary.get("error_signatures", []))
+    return rollout_failed or bool(failing_pods) or (rollout_degraded and bool(hard_signatures))
 
 
 class TriggerService:
     def detect(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
-        if payload.get("signal_type") == "kubernetes_deployment_issue":
+        signal_type = payload.get("signal_type", "feature_flag")
+        _LOG.info("trigger: detect signal_type=%s object_id=%s", signal_type, envelope.object_id)
+        if signal_type == "kubernetes_deployment_issue":
             return self._detect_kubernetes_trigger(envelope)
-        if payload.get("signal_type") == "otel_metric_regression":
+        if signal_type == "otel_metric_regression":
             return self._detect_otel_metric_trigger(envelope)
+        if signal_type == "webhook_alert":
+            return self._detect_webhook_trigger(envelope)
         return self._detect_feature_flag_trigger(envelope)
 
     def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
@@ -107,9 +153,11 @@ class TriggerService:
             or related_context.get("incident_owned_by_human", False)
             or related_context.get("known_upstream_outage", False)
         )
-        rollout_unhealthy = deployment["rollout_status"] in {"degraded", "failed"}
-        failing_pods = [pod for pod in pods if not pod.get("ready", False) or int(pod.get("restarts", 0)) > 0]
-        if suppressed or (not rollout_unhealthy and not failing_pods):
+        if suppressed or not kubernetes_signal_is_actionable({
+            "deployment": deployment,
+            "pods": pods,
+            "log_summary": log_summary,
+        }):
             return None
 
         trigger_signals = list(log_summary.get("error_signatures", []))
@@ -151,6 +199,59 @@ class TriggerService:
                 "event_reasons": log_summary.get("event_reasons", []),
                 "primary_symptom": log_summary.get("primary_symptom"),
                 "log_summary": log_summary,
+                **related_context,
+            },
+        )
+        trigger.validate()
+        return trigger
+
+    def _detect_webhook_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
+        webhook = payload["webhook"]
+        related_context = payload["related_context"]
+        if (
+            webhook.get("action") != "fire"
+            or related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        ):
+            return None
+        severity = str(webhook.get("severity") or "unknown").lower()
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="webhook_alert_firing",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=payload["endpoint"],
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=None,
+            segment=payload["segment"],
+            metrics={
+                "baseline_p95_latency_ms": None,
+                "observed_p95_latency_ms": None,
+                "baseline_error_rate": None,
+                "observed_error_rate": None,
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": None,
+            },
+            related_context={
+                "release_id": None,
+                "active_incidents": int(related_context.get("active_incidents", 0)),
+                "similar_prior_cases": int(related_context.get("similar_prior_cases", 0)),
+                "alert_count": 1,
+                "severity_rank": {"critical": 4, "high": 3, "warning": 2, "info": 1}.get(severity, 0),
+                "webhook_source_id": related_context.get("webhook_source_id"),
+                "webhook_alert_id": related_context.get("webhook_alert_id"),
+                "webhook_source_type": related_context.get("webhook_source_type"),
+                "webhook_action": webhook.get("action"),
+                "severity": severity,
+                "title": webhook.get("title"),
+                "description": webhook.get("description"),
+                "labels": webhook.get("labels", {}),
+                "annotations": webhook.get("annotations", {}),
                 **related_context,
             },
         )

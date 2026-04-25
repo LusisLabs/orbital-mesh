@@ -157,6 +157,11 @@ def _grounded_regression(trigger: Trigger) -> bool:
         rollout_status = trigger.related_context.get("rollout_status")
         restarts = trigger.metrics.get("restart_count_total") or 0
         return rollout_status in {"degraded", "failed"} or bool(error_signatures) or restarts > 0
+    if trigger.trigger_type == "webhook_alert_firing":
+        return bool(
+            trigger.related_context.get("webhook_alert_id")
+            and trigger.related_context.get("webhook_source_id")
+        )
     baseline = trigger.metrics["baseline_p95_latency_ms"]
     observed = trigger.metrics["observed_p95_latency_ms"]
     if baseline is None or observed is None:
