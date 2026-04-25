@@ -130,7 +130,7 @@ The simulation matrix now emits three report layers per run:
 
 Override replay remains a fixture path. It converts blocked benchmark rows into candidate learning observations, then synthesizes human-reviewed rule suggestions. Replay rows preserve the original signal metric name or endpoint, direction, service, namespace, scenario family, and CROPS domain so learned rules are grounded in useful signal patterns instead of scenario IDs. Suggestions are never applied to policy automatically.
 
-Evaluator scoring is tuned by blocker class. `evaluator_quality` and `confidence` are calibration blockers with a lower replay floor; `risk`, `human_review`, and `approval_gate` remain protected blockers and require escalation or explicit review.
+Evaluator scoring is tuned by blocker class, scenario family, and CROPS domain. `evaluator_quality` and `confidence` are calibration blockers with family/domain threshold metadata; `risk`, `human_review`, and `approval_gate` remain protected blockers and require escalation or explicit review regardless of family or domain.
 
 CI runs a small seeded randomized matrix so scenario export, blocker classification, rule fixture ingestion, and reporting stay reproducible.
 
@@ -138,10 +138,9 @@ The evaluator-calibration pass identified hard mismatches rather than score-floo
 
 ## Next Work
 
-1. Split evaluator thresholds by scenario family and CROPS domain, not global score floors.
-2. Re-run the 192-run randomized calibration after Platform-domain scenario coverage.
-3. Add profile rows for non-native model routes once credentials are present in a sandbox.
-4. Add reviewed policy rules only after Platform-domain replay rows show repeated, successful operator decisions.
+1. Re-run the 192-run randomized calibration after family/domain evaluator threshold metadata.
+2. Add profile rows for non-native model routes once credentials are present in a sandbox.
+3. Add reviewed policy rules only after Platform-domain replay rows show repeated, successful operator decisions.
 
 ## Service Agents
 
