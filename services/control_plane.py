@@ -1026,18 +1026,54 @@ class RunCoordinator:
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
         except Exception as exc:
-            self.state_store.append_run_event(
-                run_id,
-                stage="failed",
-                event_type=RUN_FAILED,
-                payload={"error": str(exc)},
-                summary={"status": "failed"},
-                status="failed",
-            )
-            self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+            # The recovery path is itself fragile — if the state store is
+            # broken (disk full, db locked) the failure-recording calls
+            # below can themselves raise. We MUST still reach the finally
+            # block and pop the thread/control entries; otherwise the run
+            # is invisibly stuck in whatever stage it last reached and the
+            # in-memory dicts grow forever.
+            try:
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="failed",
+                    event_type=RUN_FAILED,
+                    payload={"error": str(exc)},
+                    summary={"status": "failed"},
+                    status="failed",
+                )
+            except Exception:
+                _LOG.exception(
+                    "control_plane: failed to record terminal RUN_FAILED event for run %s "
+                    "(state store unhealthy); proceeding to clean up in-memory state",
+                    run_id,
+                )
+            try:
+                self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+            except Exception:
+                _LOG.exception(
+                    "control_plane: failed to persist terminal failed-session for run %s "
+                    "(state store unhealthy); in-memory state will still be cleaned up",
+                    run_id,
+                )
         finally:
-            with self._lock:
-                self._threads.pop(run_id, None)
+            # Always reach this block — it owns the in-memory leak fix.
+            self._finalize_run(run_id)
+
+    def _finalize_run(self, run_id: str) -> None:
+        """Drop the in-memory tracking state for a run that has reached
+        a terminal stage (completed / failed / cancelled).
+
+        Pops both ``_threads`` and ``controls`` under a single lock so
+        any concurrent ``steer_run`` / ``_wait_if_needed`` observer
+        sees a consistent "run is gone" state. ``self.controls`` was
+        previously never cleared, growing without bound on long-lived
+        coordinators — that's the leak this method fixes.
+
+        Idempotent: pop-with-default makes repeated calls safe.
+        """
+        with self._lock:
+            self._threads.pop(run_id, None)
+            self.controls.pop(run_id, None)
 
     def _execution_review_artifact(self, execution: ExecutionRecord) -> tuple[str, str, dict[str, Any]] | None:
         if not isinstance(execution.external_refs, dict):
