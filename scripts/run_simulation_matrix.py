@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -168,10 +168,12 @@ def _run_one(
     reconciliation = artifacts.get("reconciliation", {}) if isinstance(artifacts.get("reconciliation"), dict) else {}
     evaluation = artifacts.get("evaluation", {}) if isinstance(artifacts.get("evaluation"), dict) else {}
     decision = artifacts.get("decision", {}) if isinstance(artifacts.get("decision"), dict) else {}
+    dimensions = benchmark.get("dimensions", {}) if isinstance(benchmark.get("dimensions"), dict) else {}
     return {
         "index": index,
         "scenario_id": scenario_id,
-        "scenario_family": benchmark.get("dimensions", {}).get("scenario_family"),
+        "scenario_family": dimensions.get("scenario_family"),
+        "crops_domain": dimensions.get("crops_domain"),
         "run_id": run["run_id"],
         "stage": run.get("stage"),
         "status": run.get("status"),
@@ -181,6 +183,7 @@ def _run_one(
         "evaluation_recommendation": evaluation.get("final_recommendation"),
         "blocking_reasons": evaluation.get("blocking_reasons", []),
         "benchmark": benchmark,
+        "signal": artifacts.get("input_signal"),
         "reconciliation": reconciliation,
     }
 
@@ -195,6 +198,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     blockers: dict[str, int] = {}
     blocker_classes: dict[str, int] = {}
     scenario_families: dict[str, dict[str, Any]] = {}
+    crops_domains: dict[str, dict[str, Any]] = {}
     model_profiles: dict[str, dict[str, Any]] = {}
     disagreements = 0
     for row in rows:
@@ -210,6 +214,11 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         family_stats["runs"] += 1
         family_stats["passed"] += 1 if row.get("benchmark", {}).get("passed") else 0
         family_stats["score_total"] += float(row.get("benchmark", {}).get("score", 0.0) or 0.0)
+        domain = str(row.get("crops_domain") or row.get("benchmark", {}).get("dimensions", {}).get("crops_domain") or "reliability")
+        domain_stats = crops_domains.setdefault(domain, {"runs": 0, "passed": 0, "score_total": 0.0})
+        domain_stats["runs"] += 1
+        domain_stats["passed"] += 1 if row.get("benchmark", {}).get("passed") else 0
+        domain_stats["score_total"] += float(row.get("benchmark", {}).get("score", 0.0) or 0.0)
         profile = row.get("benchmark", {}).get("dimensions", {}).get("model_profile")
         if not isinstance(profile, dict):
             profile = {}
@@ -230,6 +239,10 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         runs = int(stats["runs"])
         stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
         stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
+    for stats in crops_domains.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
     for stats in model_profiles.values():
         runs = int(stats["runs"])
         stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
@@ -247,8 +260,51 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "blocking_reason_counts": blockers,
         "blocker_class_counts": blocker_classes,
         "scenario_family_report": scenario_families,
+        "crops_domain_report": crops_domains,
         "model_profile_matrix": model_profiles,
         "reconciliation_disagreements": disagreements,
+    }
+
+
+def _replay_signal_metadata(signal: Any) -> dict[str, Any]:
+    if not isinstance(signal, dict):
+        return {}
+    if "metric_name" in signal and "metric_regression" not in signal:
+        return {
+            "metric_name": str(signal.get("metric_name") or "unknown"),
+            "direction": str(signal.get("direction") or "unknown"),
+            "service": str(signal.get("service") or "unknown"),
+            "namespace": str(signal.get("namespace") or "default"),
+            "threshold_pct": signal.get("threshold_pct"),
+            "delta_pct": signal.get("delta_pct"),
+        }
+    raw_metric_regression = signal.get("metric_regression")
+    metric_regression = cast(dict[str, Any], raw_metric_regression) if isinstance(raw_metric_regression, dict) else {}
+    raw_resource_attributes = signal.get("resource_attributes")
+    resource_attributes = cast(dict[str, Any], raw_resource_attributes) if isinstance(raw_resource_attributes, dict) else {}
+    raw_request_telemetry = signal.get("request_telemetry")
+    request_telemetry = cast(dict[str, Any], raw_request_telemetry) if isinstance(raw_request_telemetry, dict) else {}
+    observed = metric_regression.get("observed_value")
+    baseline = metric_regression.get("baseline_value")
+    request_observed = request_telemetry.get("observed")
+    request_baseline = request_telemetry.get("baseline")
+    if observed is None and isinstance(request_observed, dict):
+        observed = request_observed.get("p95_latency_ms")
+    if baseline is None and isinstance(request_baseline, dict):
+        baseline = request_baseline.get("p95_latency_ms")
+    direction = "unknown"
+    if observed is not None and baseline is not None:
+        try:
+            direction = "increasing" if float(observed) > float(baseline) else "decreasing"
+        except (TypeError, ValueError):
+            direction = "unknown"
+    return {
+        "metric_name": str(metric_regression.get("metric_name") or signal.get("endpoint") or signal.get("signal_type") or "unknown"),
+        "direction": direction,
+        "service": str(signal.get("service") or resource_attributes.get("service.name") or "unknown"),
+        "namespace": str(signal.get("namespace") or resource_attributes.get("k8s.namespace.name") or "default"),
+        "threshold_pct": metric_regression.get("threshold_pct"),
+        "delta_pct": metric_regression.get("delta_pct"),
     }
 
 
@@ -264,6 +320,8 @@ def _write_override_replay(out_dir: Path, rows: list[dict[str, Any]]) -> None:
                 "run_id": row.get("run_id"),
                 "scenario_id": row.get("scenario_id"),
                 "scenario_family": row.get("scenario_family"),
+                "crops_domain": row.get("crops_domain"),
+                "signal": _replay_signal_metadata(row.get("signal")),
                 "decision_type": row.get("decision_type"),
                 "operator_action": dimensions.get("blocker_gate_tuning", {}).get(
                     "operator_replay",
@@ -280,7 +338,11 @@ def _ingest_override_replay(out_dir: Path, state_dir: Path) -> dict[str, Any]:
     replay_path = out_dir / "override-replay.jsonl"
     store = OverrideLearningStore(state_dir)
     imported = store.ingest_override_replay(replay_path)
-    suggestions = [item.to_dict() for item in store.synthesize_suggestions(min_observations=2, max_age_days=None)]
+    suggestions = [
+        item.to_dict()
+        for item in store.synthesize_suggestions(min_observations=2, max_age_days=None)
+        if item.success_rate == 1.0
+    ]
     payload = {
         "replay_path": str(replay_path),
         "imported_overrides": imported,
@@ -340,6 +402,9 @@ def _write_markdown(out_dir: Path, summary: dict[str, Any], rows: list[dict[str,
     lines.extend(["", "## Scenario Families", ""])
     for family, stats in sorted(summary.get("scenario_family_report", {}).items()):
         lines.append(f"- {family}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
+    lines.extend(["", "## CROPS Domains", ""])
+    for domain, stats in sorted(summary.get("crops_domain_report", {}).items()):
+        lines.append(f"- {domain}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
     lines.extend(["", "## Model/Profile Matrix", ""])
     for profile_key, stats in sorted(summary.get("model_profile_matrix", {}).items()):
         lines.append(f"- {profile_key}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")

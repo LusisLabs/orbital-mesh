@@ -40,6 +40,7 @@ class SimulationService:
             "simulation_context": {
                 "scenario_id": scenario.scenario_id,
                 "scenario_family": scenario.scenario_family,
+                "crops_domain": scenario.crops_domain,
                 "fault_type": scenario.fault_type,
                 "sandbox": scenario.sandbox,
                 "expected_decision_type": scenario.expected_decision_type,
@@ -150,6 +151,11 @@ class SimulationService:
         db_latency = _otel_metric_signal("sig_otel_db_latency_001", "db.client.duration", 80.0, 420.0, "checkout-api")
         queue_poison = _otel_metric_signal("sig_otel_queue_poison_001", "queue.poison_message.rate", 0.0, 7.0, "semantic-search")
         argocd_drift = _otel_metric_signal("sig_otel_argocd_drift_001", "argocd.app.out_of_sync", 0.0, 1.0, "semantic-search")
+        ownership_gap = _otel_metric_signal("sig_platform_ownership_gap_001", "platform.service.owner.missing", 1.0, 2.0, "semantic-search")
+        paved_road_drift = _otel_metric_signal("sig_platform_paved_road_drift_001", "platform.paved_road.policy_drift", 1.0, 5.0, "semantic-search")
+        template_drift = _otel_metric_signal("sig_platform_template_drift_001", "platform.deployment_template.drift", 1.0, 4.0, "checkout-api")
+        stale_runbook = _otel_metric_signal("sig_platform_runbook_stale_001", "platform.runbook.staleness_days", 7.0, 64.0, "api-gateway")
+        unsafe_promotion = _otel_metric_signal("sig_platform_unsafe_promotion_001", "platform.delivery.unsafe_environment_metadata", 1.0, 2.0, "api-gateway")
         flag_conflict = deepcopy(latency)
         flag_conflict["signal_id"] = "sig_feature_flag_rollback_conflict_001"
         flag_conflict["related_context"]["rollbacks_last_24h"] = 1
@@ -402,6 +408,66 @@ class SimulationService:
                 sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
                 tags=["argocd", "drift", "human_review"],
                 standards_refs=["nist-ai-rmf", "kubernetes-skew-policy"],
+            ),
+            SimulationScenario(
+                scenario_id="platform_service_ownership_missing_escalate",
+                title="Service ownership missing escalation",
+                signal_payload=ownership_gap,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="service_ownership_missing",
+                scenario_family="service_ownership",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
+                tags=["platform", "service_ownership", "human_review"],
+                standards_refs=["nist-ai-rmf", "slsa-provenance"],
+            ),
+            SimulationScenario(
+                scenario_id="platform_paved_road_policy_drift_escalate",
+                title="Paved-road policy drift escalation",
+                signal_payload=paved_road_drift,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="paved_road_policy_drift",
+                scenario_family="developer_platform",
+                sandbox={"kube_context": "mesh-compose", "namespace": "search", "deployment": "semantic-search"},
+                tags=["platform", "paved_road", "policy_drift"],
+                standards_refs=["nist-ai-rmf", "slsa-provenance"],
+            ),
+            SimulationScenario(
+                scenario_id="platform_deployment_template_drift_escalate",
+                title="Deployment template drift escalation",
+                signal_payload=template_drift,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="deployment_template_drift",
+                scenario_family="developer_platform",
+                sandbox={"kube_context": "mesh-compose", "namespace": "sandbox-payments", "deployment": "checkout-api"},
+                tags=["platform", "deployment_template", "drift"],
+                standards_refs=["slsa-provenance", "kubernetes-skew-policy"],
+            ),
+            SimulationScenario(
+                scenario_id="platform_runbook_stale_escalate",
+                title="Runbook and service-agent config stale escalation",
+                signal_payload=stale_runbook,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="runbook_or_agent_config_stale",
+                scenario_family="service_ownership",
+                sandbox={"kube_context": "mesh-compose", "namespace": "sandbox-payments", "deployment": "api-gateway"},
+                tags=["platform", "runbook", "service_agent", "human_review"],
+                standards_refs=["nist-ai-rmf"],
+            ),
+            SimulationScenario(
+                scenario_id="platform_unsafe_promotion_metadata_escalate",
+                title="Unsafe promotion metadata escalation",
+                signal_payload=unsafe_promotion,
+                expected_decision_type="escalate",
+                expected_outcome="successful",
+                fault_type="unsafe_environment_metadata",
+                scenario_family="developer_platform",
+                sandbox={"kube_context": "mesh-compose", "namespace": "sandbox-payments", "deployment": "api-gateway"},
+                tags=["platform", "delivery", "promotion_gate"],
+                standards_refs=["slsa-provenance", "nist-ai-rmf"],
             ),
             SimulationScenario(
                 scenario_id="feature_flag_rollback_conflict_escalate",

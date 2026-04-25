@@ -459,11 +459,11 @@ The decision stage handles OTel metric-regression signals through four composabl
 
 **Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
 
-## AI SRE simulation and benchmarks
+## AI CROPS simulation and benchmarks
 
-Mesh includes a sandbox-first AI SRE spine for simulation catalogs, benchmark records, service-agent routing, and agent-lane reconciliation. The public surfaces are `GET /api/simulations`, `POST /api/simulations/{scenario_id}/run`, `GET /api/benchmarks`, `GET /api/service-agents`, and `GET /api/reconciliation/{run_id}`. Simulation runs are disabled by default and require explicit sandbox context allowlists.
+Mesh includes a sandbox-first AI CROPS spine for Cloud, Reliability, Ops, Platform, and Security work: simulation catalogs, benchmark records, service-agent routing, and agent-lane reconciliation. The public surfaces are `GET /api/simulations`, `POST /api/simulations/{scenario_id}/run`, `GET /api/benchmarks`, `GET /api/service-agents`, and `GET /api/reconciliation/{run_id}`. Simulation runs are disabled by default and require explicit sandbox context allowlists.
 
-Runbook: [`docs/ai-sre-platform.md`](./docs/ai-sre-platform.md).
+Runbook: [`docs/ai-sre-platform.md`](./docs/ai-sre-platform.md). The filename remains stable for existing links; the operating model is now AI CROPS, not AI SRE alone.
 
 Parallel local stress harness:
 
