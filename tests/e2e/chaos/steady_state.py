@@ -268,25 +268,61 @@ class CircuitBreaker:
     def record_result(self, probe: ProbeResult) -> None:
         """Consume a probe result and update breaker state.
 
-        A passed probe resets the counter. A failed probe increments
-        it and, if we've crossed the threshold, records a halt reason.
+        Three ways to trip:
+
+        1. **Baseline deployment unhealthy** — trips immediately. If
+           the baseline ``deployment`` isn't at ready-replicas ==
+           desired, every subsequent experiment is running against a
+           corrupted cluster (usually caused by a failed revert
+           leaking chaos into the baseline). The results are
+           meaningless; halt and surface the diagnostic.
+
+        2. **Pipeline latency exceeded** — trips immediately. A
+           chronically slow Mesh is worse than no Mesh for chaos
+           engineering; we want the operator to notice.
+
+        3. **N consecutive probe failures** — the generic safety net
+           for cluster- or kubectl-level issues that don't fit the
+           above. Kept as a higher bar (default 2) because transient
+           kubectl hiccups shouldn't halt a long session.
+
+        A passed probe resets the consecutive-failure counter but
+        does not reset a previously-set halt_reason — once we've
+        decided to halt, we don't un-decide on a later green probe.
         """
         if probe.passed:
             self._consecutive_failures = 0
             return
+
+        # Specific check: baseline unhealthy means the cluster is
+        # chronically broken (almost always from a prior experiment
+        # leaking state). One such probe is enough — there's no
+        # reason to wait for two before halting.
+        if not probe.baseline_ready:
+            self._halt_reason = (
+                "baseline deployment is unhealthy — cluster is corrupted, "
+                "likely by a failed chaos revert from a prior experiment "
+                f"(probe notes: {'; '.join(probe.notes) if probe.notes else 'baseline not ready'})"
+            )
+            return
+
+        # Specific check: latency explosion.
+        if probe.mesh_pipeline_latency_seconds is not None and (
+            probe.mesh_pipeline_latency_seconds > self.max_pipeline_latency_seconds
+        ):
+            self._halt_reason = (
+                f"mesh pipeline latency {probe.mesh_pipeline_latency_seconds:.2f}s "
+                f"exceeded threshold {self.max_pipeline_latency_seconds:.2f}s"
+            )
+            return
+
+        # Generic: N consecutive unclassified failures.
         self._consecutive_failures += 1
         if self._consecutive_failures >= self.max_consecutive_failures:
             notes = "; ".join(probe.notes) if probe.notes else "probe failed"
             self._halt_reason = (
                 f"{self._consecutive_failures} consecutive probe failures "
                 f"(last probe notes: {notes})"
-            )
-        elif probe.mesh_pipeline_latency_seconds is not None and (
-            probe.mesh_pipeline_latency_seconds > self.max_pipeline_latency_seconds
-        ):
-            self._halt_reason = (
-                f"mesh pipeline latency {probe.mesh_pipeline_latency_seconds:.2f}s "
-                f"exceeded threshold {self.max_pipeline_latency_seconds:.2f}s"
             )
 
     def should_halt(self) -> bool:

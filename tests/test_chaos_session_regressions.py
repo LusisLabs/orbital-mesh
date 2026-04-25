@@ -260,6 +260,166 @@ class TriggerFailingPodsTests(unittest.TestCase):
         self.assertIsNotNone(trigger)
 
 
+# --------------------------------------------------------- Bug 8: symmetric revert
+
+
+class ProbeHandlerRevertTests(unittest.TestCase):
+    """readiness_failure injects a ``tcpSocket`` probe handler
+    alongside the baseline's ``httpGet``. The injection nulls out
+    ``httpGet`` so the result is valid. But the revert, until this
+    fix, applied the baseline template without nulling out
+    ``tcpSocket`` — strategic merge kept both, and k8s rejected the
+    patch with "may not specify more than 1 handler type". The
+    cluster then stayed in the bad state for the rest of the
+    session. The fix normalizes the revert so all non-baseline
+    handler types are explicitly nulled."""
+
+    def test_revert_nulls_out_non_baseline_probe_handlers(self) -> None:
+        from tests.e2e.chaos.injector import _normalize_probe_handlers_for_revert
+        template = {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "c",
+                        "readinessProbe": {
+                            "httpGet": {"path": "/", "port": 80},
+                            "initialDelaySeconds": 1,
+                        },
+                    }
+                ]
+            }
+        }
+        normalized = _normalize_probe_handlers_for_revert(template)
+        probe = normalized["spec"]["containers"][0]["readinessProbe"]
+        self.assertEqual(probe["httpGet"], {"path": "/", "port": 80})
+        # The three non-baseline handlers are explicitly nulled so
+        # strategic-merge deletes whatever is in the current state.
+        self.assertIsNone(probe["tcpSocket"])
+        self.assertIsNone(probe["exec"])
+        self.assertIsNone(probe["grpc"])
+        # Non-handler probe fields are preserved.
+        self.assertEqual(probe["initialDelaySeconds"], 1)
+
+    def test_revert_is_noop_when_no_probes_present(self) -> None:
+        """A deployment with no probes should pass through untouched."""
+        from tests.e2e.chaos.injector import _normalize_probe_handlers_for_revert
+        template = {"spec": {"containers": [{"name": "c", "image": "nginx"}]}}
+        normalized = _normalize_probe_handlers_for_revert(template)
+        self.assertEqual(normalized, template)
+
+
+# --------------------------------------------------------- Bug 10: baseline-failure fast-trip
+
+
+class CircuitBreakerBaselineTests(unittest.TestCase):
+    """Before this fix, the breaker only tripped on 2 consecutive
+    failures. A single baseline-deployment failure should halt
+    immediately because the baseline being broken means every
+    subsequent experiment runs against corrupted state — the session
+    would keep producing meaningless data until the second probe
+    finally caught up."""
+
+    def test_first_baseline_failure_halts_immediately(self) -> None:
+        from tests.e2e.chaos.steady_state import CircuitBreaker, ProbeResult
+        breaker = CircuitBreaker(max_consecutive_failures=2)
+        probe = ProbeResult(
+            taken_at=0.0,
+            label="after_5",
+            cluster_reachable=True,
+            baseline_ready=False,
+            mesh_pipeline_ok=True,
+            mesh_pipeline_latency_seconds=0.1,
+            notes=["baseline[search-api]: 2/3 ready"],
+        )
+        breaker.record_result(probe)
+        self.assertTrue(breaker.should_halt())
+        self.assertIn("baseline deployment is unhealthy", breaker.halt_reason() or "")
+
+    def test_generic_failure_still_requires_two_in_a_row(self) -> None:
+        """Non-baseline failures (kubectl hiccup, cluster momentarily
+        unreachable) still need the two-in-a-row threshold to avoid
+        halting on transients."""
+        from tests.e2e.chaos.steady_state import CircuitBreaker, ProbeResult
+        breaker = CircuitBreaker(max_consecutive_failures=2)
+        probe = ProbeResult(
+            taken_at=0.0,
+            label="after_5",
+            cluster_reachable=False,  # not baseline-specific
+            baseline_ready=True,
+            mesh_pipeline_ok=True,
+            mesh_pipeline_latency_seconds=0.1,
+            notes=["cluster: kubectl timed out"],
+        )
+        breaker.record_result(probe)
+        self.assertFalse(breaker.should_halt())
+
+
+# --------------------------------------------------------- Bug 9: stabilization helper
+
+
+class StableStateHelperTests(unittest.TestCase):
+    """Unit tests for the pure-logic piece of ``wait_for_stable_state``.
+    The kubectl-polling part can't be unit-tested without a live
+    cluster, but the ``_is_stable`` check that decides whether a
+    single poll is stable is pure logic and worth pinning down."""
+
+    def _deployment(self, *, desired=2, ready=2, available=2, updated=2) -> dict:
+        return {
+            "spec": {"replicas": desired},
+            "status": {
+                "readyReplicas": ready,
+                "availableReplicas": available,
+                "updatedReplicas": updated,
+            },
+        }
+
+    def _pod(self, *, phase="Running", container_state="running",
+             deletion=None) -> dict:
+        pod = {
+            "metadata": {"name": "p1"},
+            "status": {
+                "phase": phase,
+                "containerStatuses": [{"state": {container_state: {}}}],
+            },
+        }
+        if deletion is not None:
+            pod["metadata"]["deletionTimestamp"] = deletion
+        return pod
+
+    def test_stable_when_replica_counts_match_and_pods_running(self) -> None:
+        from tests.e2e.harness import Harness
+        deployment = self._deployment()
+        pods = {"items": [self._pod(), self._pod()]}
+        self.assertTrue(Harness._is_stable(deployment, pods))
+
+    def test_unstable_when_ready_lags_desired(self) -> None:
+        from tests.e2e.harness import Harness
+        deployment = self._deployment(ready=1)
+        pods = {"items": [self._pod(), self._pod()]}
+        self.assertFalse(Harness._is_stable(deployment, pods))
+
+    def test_unstable_when_pod_pending(self) -> None:
+        from tests.e2e.harness import Harness
+        deployment = self._deployment()
+        pods = {"items": [self._pod(phase="Pending")]}
+        self.assertFalse(Harness._is_stable(deployment, pods))
+
+    def test_unstable_when_pod_terminating(self) -> None:
+        """A pod with deletionTimestamp is still being torn down —
+        its events remain active in kubectl's event log, which means
+        the next experiment would see them. Not stable."""
+        from tests.e2e.harness import Harness
+        deployment = self._deployment()
+        pods = {"items": [self._pod(deletion="2026-01-01T00:00:00Z")]}
+        self.assertFalse(Harness._is_stable(deployment, pods))
+
+    def test_unstable_when_container_waiting(self) -> None:
+        from tests.e2e.harness import Harness
+        deployment = self._deployment()
+        pods = {"items": [self._pod(container_state="waiting")]}
+        self.assertFalse(Harness._is_stable(deployment, pods))
+
+
 # --------------------------------------------------------- Bug 3: decision capture on recovery timeout
 
 

@@ -286,6 +286,13 @@ class Harness:
         spec and are ready") and its exit code is clean. We don't hand-
         roll a pod-polling loop because ``rollout status`` already does
         it server-side with the right event filtering.
+
+        ``rollout status`` alone is NOT enough to guarantee isolation
+        between chaos experiments — it returns as soon as the new
+        replicaset has the right pod count, but old replicasets can
+        still be terminating and their events are still live in the
+        event log. Use :meth:`wait_for_stable_state` after this if
+        you need full cluster quiescence.
         """
         namespace = namespace or self.namespace
         command = [self.kubectl, "--context", self.kube_context, "rollout", "status",
@@ -297,6 +304,116 @@ class Harness:
                 f"deployment {namespace}/{deployment} did not become ready within {timeout_seconds}s: "
                 f"{completed.stderr.strip()}"
             )
+
+    def wait_for_stable_state(
+        self,
+        deployment: str,
+        namespace: str | None = None,
+        *,
+        settle_seconds: float = 20.0,
+        timeout_seconds: float = 90.0,
+        poll_interval_seconds: float = 2.0,
+    ) -> None:
+        """Wait for a deployment to reach quiescence — safe for the NEXT experiment.
+
+        The chaos harness runs experiments back-to-back. Between each
+        one we revert the chaos and call ``wait_for_deployment_ready``,
+        which returns as soon as ``kubectl rollout status`` succeeds.
+        That check is too weak: a deployment can be "ready" per the
+        rollout status while old replicasets are still being torn
+        down, their pods are still Terminating, and their events are
+        still present in the event log. Those old events then
+        contaminate the next experiment's signal — the root cause of
+        the cascading failure observed in chaos session #3.
+
+        Quiescence here means five conditions, all concurrently true
+        for at least ``settle_seconds``:
+
+        1. ``status.readyReplicas == spec.replicas``
+        2. ``status.availableReplicas == spec.replicas``
+        3. ``status.updatedReplicas == spec.replicas``
+        4. No pods with phase in {``Pending``, ``Succeeded``, ``Failed``}
+           — we require every live pod to be ``Running``
+        5. No containers in ``terminated`` or ``waiting`` states; all
+           must be in ``running``
+
+        Once all five are true, the settle timer starts. Any single
+        poll that breaks a condition resets the timer. The method
+        returns only after the timer completes. This is strict but
+        correct — the whole point is to let the cluster fully cool
+        down before the next chaos fires.
+
+        Timeout is generous (90s default) because this runs AFTER
+        revert and the operator has already accepted the experiment
+        failed; we'd rather burn 90 seconds than contaminate the next
+        experiment.
+        """
+        namespace = namespace or self.namespace
+        deadline = time.monotonic() + timeout_seconds
+        stable_since: float | None = None
+
+        while time.monotonic() < deadline:
+            try:
+                dep = self._kubectl_json("get", "deployment", deployment, "-n", namespace, "-o", "json")
+                pods = self._kubectl_json("get", "pods", "-n", namespace, "-l", f"app={deployment}", "-o", "json")
+            except AssertionError:
+                # kubectl hiccup — don't penalize stability accounting.
+                # Reset the timer; next poll will re-evaluate.
+                stable_since = None
+                time.sleep(poll_interval_seconds)
+                continue
+
+            if self._is_stable(dep, pods):
+                if stable_since is None:
+                    stable_since = time.monotonic()
+                elif time.monotonic() - stable_since >= settle_seconds:
+                    return
+            else:
+                # Any instability resets the settle timer — we need
+                # continuous quiescence, not cumulative.
+                stable_since = None
+
+            time.sleep(poll_interval_seconds)
+
+        # Didn't stabilize in time. Don't raise — the session-level
+        # circuit breaker owns "cluster is chronically broken" logic,
+        # and raising here would mask that with a per-experiment
+        # AssertionError. Log and return; the probe will catch it.
+        _LOG.warning(
+            "deployment %s/%s did not reach stable state within %ss",
+            namespace, deployment, timeout_seconds,
+        )
+
+    @staticmethod
+    def _is_stable(deployment: dict[str, Any], pods: dict[str, Any]) -> bool:
+        """Check the five quiescence conditions documented on ``wait_for_stable_state``."""
+        spec = deployment.get("spec") or {}
+        status = deployment.get("status") or {}
+        desired = int(spec.get("replicas") or 0)
+
+        # Conditions 1-3: replica counters all match desired.
+        ready = int(status.get("readyReplicas") or 0)
+        available = int(status.get("availableReplicas") or 0)
+        updated = int(status.get("updatedReplicas") or 0)
+        if not (ready == desired and available == desired and updated == desired):
+            return False
+
+        # Condition 4 + 5: every live pod is Running with only
+        # running containers. A pod in Pending or Terminating
+        # (phase still Running with a deletionTimestamp set) blocks.
+        for pod in pods.get("items", []):
+            pod_status = pod.get("status") or {}
+            phase = pod_status.get("phase")
+            if phase != "Running":
+                return False
+            metadata = pod.get("metadata") or {}
+            if metadata.get("deletionTimestamp"):
+                return False
+            for container_status in pod_status.get("containerStatuses") or []:
+                state = container_status.get("state") or {}
+                if "running" not in state:
+                    return False
+        return True
 
     def snapshot_cluster(self, deployment: str, namespace: str | None = None, label: str = "snapshot") -> dict[str, Any]:
         """Capture a deployment-level state snapshot for the report.
