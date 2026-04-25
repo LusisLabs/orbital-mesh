@@ -28,6 +28,8 @@ _CROPS_DOMAIN_BY_FAMILY = {
     "traffic": "reliability",
     "feature_flag": "ops",
     "gitops": "ops",
+    "developer_platform": "platform",
+    "service_ownership": "platform",
     "security": "security",
 }
 

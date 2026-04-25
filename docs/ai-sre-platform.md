@@ -11,7 +11,7 @@ The filename remains `ai-sre-platform.md` for link stability. New planning, repo
 | Cloud | Infrastructure, hosting, environments, deployment substrates, capacity primitives. | Kubernetes sandbox contexts, namespace guards, deployment scaling, storage and node pressure. |
 | Reliability | SLO-oriented detection, incident response, safe remediation, pause/escalation logic. | CrashLoop, ImagePullBackOff, OOMKilled, probes, queue lag, DB latency, dependency latency, request spikes. |
 | Ops | DevOps workflows, rollout control, GitOps drift, operator approval, run artifacts. | ArgoCD drift, rollback conflicts, approval gates, audit events, override replay, continuous simulation loops. |
-| Platform | Internal developer platform controls, service ownership, paved roads, service-agent routing. | Service-agent registry, lane routing, reconciliation artifacts, benchmark exports, CI randomized matrix. |
+| Platform | Internal developer platform controls, service ownership, paved roads, service-agent routing. | Service-agent registry, lane routing, reconciliation artifacts, benchmark exports, CI randomized matrix, ownership and paved-road drift simulations. |
 | Security | OpSec, adversarial telemetry, authority boundaries, provenance, human-reviewed learning. | Prompt-injection scenario, high-risk escalation, allowlists, protected blockers, Merkle/audit artifacts. |
 
 ## Interfaces
@@ -58,7 +58,7 @@ The harness:
 - waits for terminal or operator-awaiting state plus benchmark export before cleanup;
 - writes `summary.json`, `runs.json`, `dataset.jsonl`, `override-replay.jsonl`, and `stress-report.md`.
 
-The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, node pressure, storage pressure, queue lag, memory pressure, DNS failures, ingress/TLS failures, request spikes, DB latency, poison messages, ArgoCD drift, feature-flag rollback conflicts, weak-signal no-action controls, missing credentials, high-impact escalation, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
+The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, node pressure, storage pressure, queue lag, memory pressure, DNS failures, ingress/TLS failures, request spikes, DB latency, poison messages, ArgoCD drift, feature-flag rollback conflicts, service ownership gaps, paved-road policy drift, deployment template drift, stale runbook or service-agent config, unsafe promotion metadata, weak-signal no-action controls, missing credentials, high-impact escalation, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
 
 Pass/fail dimensions are split into `safe_autonomy_pass` and `correct_pause_pass`. A scenario that correctly pauses for high risk, missing authority, or human review can pass as a bounded CROPS outcome even when it does not execute autonomously. Benchmark rows also include normalized blocker classes so evaluator quality, confidence, approval, risk, and human-review failures can be tracked independently.
 
@@ -139,9 +139,9 @@ The evaluator-calibration pass identified hard mismatches rather than score-floo
 ## Next Work
 
 1. Split evaluator thresholds by scenario family and CROPS domain, not global score floors.
-2. Add Platform-domain scenarios for internal developer platform workflows, service ownership gaps, and paved-road policy drift.
-3. Re-run the 192-run randomized calibration after the CROPS taxonomy and replay enrichment changes.
-4. Add profile rows for non-native model routes once credentials are present in a sandbox.
+2. Re-run the 192-run randomized calibration after Platform-domain scenario coverage.
+3. Add profile rows for non-native model routes once credentials are present in a sandbox.
+4. Add reviewed policy rules only after Platform-domain replay rows show repeated, successful operator decisions.
 
 ## Service Agents
 

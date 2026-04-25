@@ -34,12 +34,17 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             self.assertIn("kubernetes", families)
             self.assertIn("networking", families)
             self.assertIn("database", families)
+            self.assertIn("developer_platform", families)
+            self.assertIn("service_ownership", families)
             domains = {scenario["crops_domain"] for scenario in scenarios}
             self.assertIn("cloud", domains)
             self.assertIn("reliability", domains)
             self.assertIn("ops", domains)
+            self.assertIn("platform", domains)
             self.assertIn("security", domains)
             self.assertEqual(payload["simulation_context"]["crops_domain"], "reliability")
+            _platform_scenario, platform_payload = svc.build_run_payload("platform_service_ownership_missing_escalate", {})
+            self.assertEqual(platform_payload["simulation_context"]["crops_domain"], "platform")
 
     def test_simulation_run_rejects_missing_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -309,12 +314,53 @@ class AiSrePlatformSliceTests(unittest.TestCase):
                         },
                     },
                     "reconciliation": {},
-                }
+                },
+                {
+                    "scenario_id": "k8s_node_pressure_scale",
+                    "scenario_family": "capacity",
+                    "crops_domain": "cloud",
+                    "stage": "completed",
+                    "decision_type": "scale_deployment",
+                    "elapsed_ms": 10,
+                    "benchmark": {"passed": True, "score": 0.8, "dimensions": {"blocker_classes": []}},
+                    "reconciliation": {},
+                },
+                {
+                    "scenario_id": "feature_flag_latency_reduce_rollout",
+                    "scenario_family": "feature_flag",
+                    "crops_domain": "ops",
+                    "stage": "completed",
+                    "decision_type": "disable_flag",
+                    "elapsed_ms": 10,
+                    "benchmark": {"passed": True, "score": 0.8, "dimensions": {"blocker_classes": []}},
+                    "reconciliation": {},
+                },
+                {
+                    "scenario_id": "platform_service_ownership_missing_escalate",
+                    "scenario_family": "service_ownership",
+                    "crops_domain": "platform",
+                    "stage": "awaiting_operator",
+                    "decision_type": "escalate",
+                    "elapsed_ms": 10,
+                    "benchmark": {"passed": True, "score": 0.75, "dimensions": {"blocker_classes": ["human_review"]}},
+                    "reconciliation": {},
+                },
+                {
+                    "scenario_id": "otel_adversarial_no_rule_escalate",
+                    "scenario_family": "security",
+                    "crops_domain": "security",
+                    "stage": "awaiting_operator",
+                    "decision_type": "escalate",
+                    "elapsed_ms": 10,
+                    "benchmark": {"passed": True, "score": 0.75, "dimensions": {"blocker_classes": ["risk"]}},
+                    "reconciliation": {},
+                },
             ]
         )
         self.assertEqual(summary["scenario_family_report"]["queue"]["pass_rate"], 1.0)
-        self.assertEqual(summary["crops_domain_report"]["reliability"]["pass_rate"], 1.0)
-        self.assertEqual(next(iter(summary["model_profile_matrix"].values()))["avg_score"], 0.9)
+        self.assertEqual(set(summary["crops_domain_report"]), {"cloud", "reliability", "ops", "platform", "security"})
+        self.assertEqual(summary["crops_domain_report"]["platform"]["pass_rate"], 1.0)
+        self.assertEqual(next(iter(summary["model_profile_matrix"].values()))["pass_rate"], 1.0)
 
 
 if __name__ == "__main__":
