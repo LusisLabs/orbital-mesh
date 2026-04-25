@@ -35,6 +35,8 @@ class IngestService:
         )
         if signal_type == "otel_metric_regression":
             return self._normalize_otel_signal(raw_signal)
+        if signal_type == "reth_node":
+            return self._normalize_reth_node_signal(raw_signal)
         if signal_type == "kubernetes_deployment_issue":
             validate_payload("kubernetes-signal.schema.json", raw_signal)
             related_context = {
@@ -148,6 +150,74 @@ class IngestService:
                 "service": raw_signal["service"],
                 "endpoint": raw_signal["endpoint"],
                 "flag_key": feature_flag["flag_key"],
+            },
+        )
+
+    def _normalize_reth_node_signal(self, raw_signal: dict) -> EventEnvelope:
+        validate_payload("reth-node-signal.schema.json", raw_signal)
+
+        node = raw_signal["node"]
+        execution = raw_signal["execution"]
+        consensus = raw_signal["consensus"]
+        storage = raw_signal["storage"]
+        rpc = raw_signal["rpc"]
+        related_context = {
+            "release_id": node.get("client_version"),
+            "active_suppression": False,
+            "incident_owned_by_human": False,
+            "known_upstream_outage": False,
+            "active_incidents": 0,
+            "similar_prior_cases": 0,
+            "rollbacks_last_24h": 0,
+            "regressions_last_7d": 0,
+        }
+        related_context.update(raw_signal.get("related_context", {}))
+        related_context.update({
+            "node": node,
+            "execution": execution,
+            "consensus": consensus,
+            "storage": storage,
+            "rpc": rpc,
+            "logs": raw_signal["logs"],
+            "resource_attributes": raw_signal["resource_attributes"],
+        })
+        self._enrich_from_learning(related_context, raw_signal["service"], "reth.node")
+
+        _LOG.info(
+            "ingest: reth node=%s peers=%s block_lag=%s syncing=%s signatures=%s",
+            node["name"],
+            execution["peer_count"],
+            execution["block_lag"],
+            execution["syncing"],
+            raw_signal["logs"].get("error_signatures", []),
+        )
+        return EventEnvelope(
+            event_type="normalized_signal",
+            object_id=raw_signal["signal_id"],
+            schema_version="v1",
+            emitted_at=raw_signal["observed_at"],
+            payload={
+                "signal_type": "reth_node",
+                "environment": raw_signal["environment"],
+                "service": raw_signal["service"],
+                "endpoint": "reth.node",
+                "comparison_window": raw_signal.get("comparison_window"),
+                "segment": raw_signal.get("segment", {"customer_tier": "system", "region": "unknown"}),
+                "node": node,
+                "execution": execution,
+                "consensus": consensus,
+                "storage": storage,
+                "rpc": rpc,
+                "logs": raw_signal["logs"],
+                "resource_attributes": raw_signal["resource_attributes"],
+                "related_context": related_context,
+                "post_action_observations": raw_signal.get("post_action_observations", {}),
+            },
+            summary={
+                "service": raw_signal["service"],
+                "endpoint": "reth.node",
+                "peer_count": execution["peer_count"],
+                "block_lag": execution["block_lag"],
             },
         )
 

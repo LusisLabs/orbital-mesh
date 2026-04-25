@@ -87,10 +87,13 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                 "likely_layer": "application",
                 "cluster": "test",
                 "deployment_image": "search:latest",
+                # Deploy correlation: SRE policy treats this as the
+                # deploy's fault and routes to rollback_deployment.
+                "seconds_since_deploy": 120,
             },
         )
         decision = decision_svc._decide_kubernetes(trigger)
-        self.assertEqual(decision.decision_type, "restart_deployment")
+        self.assertEqual(decision.decision_type, "rollback_deployment")
 
     def test_context_store_tracks_service_across_runs(self):
         self.context_store.update_from_run({
@@ -176,15 +179,16 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                 "likely_layer": "application",
                 "cluster": "test",
                 "deployment_image": "api:latest",
+                "seconds_since_deploy": 120,
             },
         )
 
         decision_without = svc_no_learning._decide_kubernetes(trigger)
         decision_with = svc_with_learning._decide_kubernetes(trigger)
 
-        # Both should be restart_deployment
-        self.assertEqual(decision_without.decision_type, "restart_deployment")
-        self.assertEqual(decision_with.decision_type, "restart_deployment")
+        # SRE-grade policy: crash_loop + recent deploy → rollback_deployment.
+        self.assertEqual(decision_without.decision_type, "rollback_deployment")
+        self.assertEqual(decision_with.decision_type, "rollback_deployment")
 
         # With learning: historical rate=1.0 (>=0.8) → +0.02 confidence boost
         # The k8s path doesn't call _adjust_confidence directly, but the

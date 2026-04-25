@@ -113,6 +113,15 @@ class TestDecisionCorrelationAwareness(unittest.TestCase):
 
     def _make_k8s_trigger(self, correlation_type=None):
         from shared.mesh_runtime import Trigger
+        # ``seconds_since_deploy`` makes the crash deploy-correlated
+        # (within the 30-minute SRE rollback window). Without it, the
+        # SRE-grade decision policy routes crash_loop without deploy
+        # correlation to ``escalate`` — correctly, because that case
+        # needs log investigation rather than auto-remediation. The
+        # tests in this class are about cross-service correlation
+        # forcing approval, so we want the underlying decision to
+        # actually produce a remediation that approval_required can
+        # gate.
         related_context = {
             "error_signatures": ["crash_loop"],
             "deployment_name": "search-api",
@@ -122,6 +131,7 @@ class TestDecisionCorrelationAwareness(unittest.TestCase):
             "likely_layer": "unknown",
             "cluster": "test",
             "deployment_image": "search:latest",
+            "seconds_since_deploy": 120,
         }
         if correlation_type:
             related_context["correlation"] = {
@@ -168,7 +178,9 @@ class TestDecisionCorrelationAwareness(unittest.TestCase):
         svc = DecisionService()
         trigger = self._make_k8s_trigger(correlation_type=None)
         decision = svc._decide_kubernetes(trigger)
-        # crash_loop → restart_deployment → autonomous (no repeated rollback)
+        # crash_loop + recent deploy → rollback_deployment, autonomous
+        # (no repeated rollback, no cross-service correlation forcing
+        # approval).
         self.assertEqual(decision.autonomy_tier, "autonomous")
 
 

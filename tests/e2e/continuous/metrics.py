@@ -181,17 +181,23 @@ def score_experiment(result: ExperimentResult, trigger_fired: bool) -> tuple[boo
        * A fired trigger is a failure ("Mesh reacted to a transient
          blip") unless the decision is ``no_action``.
        * No trigger is a pass.
-    2. Otherwise, a fired trigger with ``decision_type`` in
+    2. If ``no_action`` is in ``expected_decisions``, a no-trigger
+       outcome is semantically equivalent to "fired and decided
+       no_action". Both mean "Mesh correctly concluded nothing is
+       wrong." ``config_drift`` and ``scale_to_zero`` fall into this
+       category — subtle faults where declining to act is a valid
+       response.
+    3. Otherwise, a fired trigger with ``decision_type`` in
        ``expected_decisions`` is a pass.
-    3. No trigger on a non-probe experiment is a failure ("Mesh
-       missed the fault"), unless the expected set is explicitly
-       empty (which only happens for probes, handled in rule 1).
-    4. A trigger with a decision outside the expected set is a
+    4. No trigger on a non-probe experiment that doesn't expect
+       ``no_action`` is a failure ("Mesh missed the fault"), unless
+       the expected set is explicitly empty.
+    5. A trigger with a decision outside the expected set is a
        failure ("wrong remediation").
-    5. A pipeline crash (``mesh_pipeline_completed_at is None`` and
+    6. A pipeline crash (``mesh_pipeline_completed_at is None`` and
        ``mesh_pipeline_started_at is not None``) is always a failure.
     """
-    # Rule 5 first — a crash masks everything else.
+    # Rule 6 first — a crash masks everything else.
     if result.mesh_pipeline_started_at is not None and result.mesh_pipeline_completed_at is None:
         return False, "mesh pipeline crashed"
 
@@ -206,7 +212,16 @@ def score_experiment(result: ExperimentResult, trigger_fired: bool) -> tuple[boo
             f"false-positive probe triggered with decision_type={result.decision_type!r}"
         )
 
+    # Rule 2: ``no_action`` in the expected set treats no-trigger as
+    # equivalent to firing and deciding no_action. The motivating case
+    # is ``config_drift`` — the drift often produces no visible
+    # symptom, so both outcomes ("Mesh didn't see anything" and "Mesh
+    # saw it and decided it's benign") are valid operator intent.
+    no_action_acceptable = "no_action" in result.expected_decisions
+
     if not trigger_fired:
+        if no_action_acceptable:
+            return True, None
         return False, "expected a trigger but Mesh did not fire one"
 
     if not result.expected_decisions:

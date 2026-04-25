@@ -223,6 +223,13 @@ class ChaosInjector:
         kubelet restarts).
         """
         self._snapshot(deployment, namespace)
+        # The baseline workload ships with an ``httpGet`` readiness probe.
+        # Kubernetes rejects a probe that has more than one handler type,
+        # so naively adding ``tcpSocket`` through strategic merge would fail
+        # with "may not specify more than 1 handler type". We explicitly
+        # null out ``httpGet`` so the merged probe has only the bad
+        # ``tcpSocket`` handler. Null-in-patch is the strategic-merge way
+        # to delete a field.
         patch = {
             "spec": {
                 "template": {
@@ -231,6 +238,7 @@ class ChaosInjector:
                             {
                                 "name": deployment,
                                 "readinessProbe": {
+                                    "httpGet": None,
                                     "tcpSocket": {"port": 9999},
                                     "initialDelaySeconds": 1,
                                     "periodSeconds": 2,

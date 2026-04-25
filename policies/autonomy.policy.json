@@ -12,7 +12,8 @@
     "cordon_node",
     "drain_node",
     "argocd_sync",
-    "argocd_rollback"
+    "argocd_rollback",
+    "restart_systemd_service"
   ],
   "allowed_execution_systems": [
     "feature_flag_service",
@@ -20,7 +21,8 @@
     "audit_log_sink",
     "repo_patch_service",
     "kubernetes_service",
-    "argocd_service"
+    "argocd_service",
+    "systemd_service"
   ],
   "allowed_execution_actions": {
     "feature_flag_service": [
@@ -46,6 +48,11 @@
     "argocd_service": [
       "sync_application",
       "rollback_application"
+    ],
+    "systemd_service": [
+      "restart_systemd_service",
+      "start_systemd_service",
+      "stop_systemd_service"
     ]
   },
   "idempotent_actions": [
@@ -59,6 +66,7 @@
     "scale_deployment",
     "cordon_node",
     "sync_application",
-    "rollback_application"
+    "rollback_application",
+    "restart_systemd_service"
   ]
 }

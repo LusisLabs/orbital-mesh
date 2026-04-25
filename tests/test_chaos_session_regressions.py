@@ -90,8 +90,22 @@ class TriggerFailingPodsTests(unittest.TestCase):
     Mesh does NOT fire on transient churn — every pod_kill_one signal
     flagged a trigger under the old logic."""
 
-    def _envelope(self, pods: list[dict]) -> object:
-        """Build a minimal k8s signal envelope with the given pod list."""
+    def _envelope(
+        self,
+        pods: list[dict],
+        *,
+        rollout_status: str = "healthy",
+        error_signatures: list[str] | None = None,
+    ) -> object:
+        """Build a minimal k8s signal envelope with the given pod list.
+
+        ``rollout_status`` and ``error_signatures`` are explicit because
+        the trigger's firing logic depends on both the deployment-level
+        status and the aggregated signatures. A test that wants to
+        exercise the "degraded rollout + no hard signatures" path (the
+        motivating case for the new trigger tightening) sets
+        rollout_status="degraded" and leaves signatures empty.
+        """
         from shared.mesh_runtime import EventEnvelope
         return EventEnvelope(
             event_type="normalized_signal",
@@ -112,7 +126,7 @@ class TriggerFailingPodsTests(unittest.TestCase):
                     "revision": "1",
                     "image": "nginx:1.25-alpine",
                     "rollout_started_at": "2026-04-23T09:59:00Z",
-                    "rollout_status": "healthy",
+                    "rollout_status": rollout_status,
                     "desired_replicas": 2,
                     "available_replicas": 2,
                     "updated_replicas": 2,
@@ -121,8 +135,8 @@ class TriggerFailingPodsTests(unittest.TestCase):
                 "events": [],
                 "logs": [],
                 "log_summary": {
-                    "primary_symptom": "unknown",
-                    "error_signatures": [],
+                    "primary_symptom": (error_signatures or ["unknown"])[0] if error_signatures else "unknown",
+                    "error_signatures": list(error_signatures or []),
                     "categories": [],
                     "likely_layer": "unknown",
                     "sample_lines": [],
@@ -175,6 +189,75 @@ class TriggerFailingPodsTests(unittest.TestCase):
         ])
         trigger = TriggerService().detect(envelope)
         self.assertIsNotNone(trigger, "restarts > 0 is enough on its own")
+
+    def test_degraded_rollout_without_hard_signature_does_not_fire(self) -> None:
+        """Second-generation fix for pod_kill_one: during a pod recreate,
+        rollout_status briefly reads 'degraded' even though nothing is
+        truly broken. With no corroborating hard signature, this must
+        not fire. Before the fix, the bare rollout_unhealthy path
+        produced a trigger that Mesh then decided on — every
+        pod_kill_one in the live session flunked."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": True, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+                {"name": "p2", "ready": False, "restarts": 0, "container_status": "ContainerCreating",
+                 "phase": "Pending", "last_state_reason": None},
+            ],
+            rollout_status="degraded",
+            error_signatures=[],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNone(trigger, "transient degraded rollout should not fire without hard signature")
+
+    def test_degraded_rollout_with_probe_failure_alone_does_not_fire(self) -> None:
+        """``probe_failure`` is deliberately excluded from hard signatures.
+        The workload's readiness probe fires 'Readiness probe failed'
+        events during normal startup that the summarizer stamps as
+        probe_failure. Treating that as a hard signature would reopen
+        the pod_kill_one false-positive loophole."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": True, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+                {"name": "p2", "ready": False, "restarts": 0, "container_status": "ContainerCreating",
+                 "phase": "Pending", "last_state_reason": None},
+            ],
+            rollout_status="degraded",
+            error_signatures=["probe_failure"],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNone(trigger)
+
+    def test_degraded_rollout_with_crash_loop_fires(self) -> None:
+        """Hard signature corroborates the degraded rollout — trigger fires."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": True, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+                {"name": "p2", "ready": False, "restarts": 0, "container_status": "ContainerCreating",
+                 "phase": "Pending", "last_state_reason": None},
+            ],
+            rollout_status="degraded",
+            error_signatures=["crash_loop"],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+
+    def test_failed_rollout_fires_even_without_hard_signature(self) -> None:
+        """``rollout_status=failed`` is definitive — the deployment
+        controller has given up. Fire alone."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [],  # no pods needed; rollout_failed alone is enough
+            rollout_status="failed",
+            error_signatures=[],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
 
 
 # --------------------------------------------------------- Bug 3: decision capture on recovery timeout
