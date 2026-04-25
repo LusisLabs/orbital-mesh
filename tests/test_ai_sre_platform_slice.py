@@ -210,6 +210,70 @@ class AiSrePlatformSliceTests(unittest.TestCase):
         self.assertTrue(record.dimensions["correct_pause_pass"])
         self.assertEqual(record.dimensions["blocker_classes"], ["human_review", "risk"])
 
+    def test_calibration_gate_records_family_and_crops_threshold_scope(self) -> None:
+        scenario = SimulationService(
+            RuntimeConfig(
+                simulation_enabled=True,
+                simulation_context_allowlist=("mesh-compose",),
+            )
+        ).get_scenario("k8s_node_pressure_scale")
+        assert scenario is not None
+        session = {
+            "run_id": "run_calibration_scope",
+            "stage": "awaiting_operator",
+            "status": "awaiting_operator",
+            "artifacts": {
+                "decision": {"decision_type": "scale_deployment"},
+                "evaluation": {
+                    "final_recommendation": "needs_review",
+                    "blocking_reasons": ["promptfoo quality gate did not pass"],
+                },
+                "feedback": {"outcome": "successful"},
+                "agent_tasks": [],
+            },
+        }
+        record = score_run(scenario=scenario, session=session, events=[{"event_type": "trigger_ready"}])
+        tuning = record.dimensions["blocker_gate_tuning"]
+        self.assertTrue(record.passed)
+        self.assertEqual(tuning["severity"], "calibration")
+        self.assertEqual(tuning["threshold_scope"], "family_domain")
+        self.assertEqual(tuning["scenario_family"], "capacity")
+        self.assertEqual(tuning["crops_domain"], "cloud")
+        self.assertEqual(tuning["pass_floor"], 0.75)
+        self.assertEqual(record.dimensions["pass_floor"], tuning["pass_floor"])
+
+    def test_protected_gate_ignores_family_domain_threshold_scope(self) -> None:
+        scenario = SimulationService(
+            RuntimeConfig(
+                simulation_enabled=True,
+                simulation_context_allowlist=("mesh-compose",),
+            )
+        ).get_scenario("platform_service_ownership_missing_escalate")
+        assert scenario is not None
+        session = {
+            "run_id": "run_protected_scope",
+            "stage": "awaiting_operator",
+            "status": "awaiting_operator",
+            "artifacts": {
+                "decision": {"decision_type": "escalate"},
+                "evaluation": {
+                    "final_recommendation": "needs_human",
+                    "blocking_reasons": ["decision routes to human review", "risk level is high"],
+                },
+                "agent_tasks": [],
+                "reconciliation": {"disagreement": False},
+            },
+        }
+        record = score_run(scenario=scenario, session=session, events=[{"event_type": "trigger_ready"}])
+        tuning = record.dimensions["blocker_gate_tuning"]
+        self.assertTrue(record.passed)
+        self.assertEqual(tuning["severity"], "protected")
+        self.assertEqual(tuning["threshold_scope"], "protected")
+        self.assertEqual(tuning["pass_floor"], 0.85)
+        self.assertEqual(tuning["operator_replay"], "reject_or_escalate")
+        self.assertNotIn("family_pass_floor", tuning)
+        self.assertNotIn("domain_pass_floor", tuning)
+
     def test_randomized_signal_is_seed_deterministic(self) -> None:
         signal_a = {
             "signal_type": "otel_metric_regression",
