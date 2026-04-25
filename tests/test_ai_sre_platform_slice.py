@@ -34,6 +34,12 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             self.assertIn("kubernetes", families)
             self.assertIn("networking", families)
             self.assertIn("database", families)
+            domains = {scenario["crops_domain"] for scenario in scenarios}
+            self.assertIn("cloud", domains)
+            self.assertIn("reliability", domains)
+            self.assertIn("ops", domains)
+            self.assertIn("security", domains)
+            self.assertEqual(payload["simulation_context"]["crops_domain"], "reliability")
 
     def test_simulation_run_rejects_missing_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -124,6 +130,8 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             self.assertTrue(record.passed)
             self.assertEqual(row["decision"]["decision_type"], "investigate_and_patch")
             self.assertEqual(record.dimensions["scenario_family"], "kubernetes")
+            self.assertEqual(record.dimensions["crops_domain"], "reliability")
+            self.assertEqual(row["crops_domain"], "reliability")
             self.assertIn("model_profile", record.dimensions)
 
     def test_benchmark_wrong_expected_decision_is_hard_failure(self) -> None:
@@ -220,6 +228,12 @@ class AiSrePlatformSliceTests(unittest.TestCase):
                         "run_id": "run_5",
                         "scenario_id": "scenario",
                         "decision_type": "escalate",
+                        "crops_domain": "security",
+                        "signal": {
+                            "metric_regression": {"metric_name": "untrusted.prompt.directive"},
+                            "service": "semantic-search",
+                            "namespace": "search",
+                        },
                         "stage": "awaiting_operator",
                         "benchmark": {"dimensions": {"blocker_classes": ["risk"]}},
                     }
@@ -227,7 +241,10 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             )
             lines = out.joinpath("override-replay.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 1)
-            self.assertEqual(json.loads(lines[0])["operator_action"], "reject_or_escalate")
+            replay = json.loads(lines[0])
+            self.assertEqual(replay["operator_action"], "reject_or_escalate")
+            self.assertEqual(replay["crops_domain"], "security")
+            self.assertEqual(replay["signal"]["metric_name"], "untrusted.prompt.directive")
 
     def test_override_replay_ingests_rule_learning_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -237,6 +254,15 @@ class AiSrePlatformSliceTests(unittest.TestCase):
                     "run_id": f"run_{idx}",
                     "scenario_id": "otel_queue_lag_scale",
                     "scenario_family": "queue",
+                    "crops_domain": "reliability",
+                    "signal": {
+                        "metric_name": "consumer_lag",
+                        "direction": "increasing",
+                        "service": "semantic-search",
+                        "namespace": "search",
+                        "threshold_pct": 30.0,
+                        "delta_pct": 75.0,
+                    },
                     "decision_type": "scale_deployment",
                     "stage": "awaiting_operator",
                     "benchmark": {
@@ -254,6 +280,11 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             self.assertEqual(payload["imported_overrides"], 2)
             self.assertEqual(len(store.list_overrides(max_age_days=None)), 2)
             self.assertGreaterEqual(payload["suggestion_count"], 1)
+            suggestion = payload["suggestions"][0]
+            self.assertEqual(suggestion["success_rate"], 1.0)
+            self.assertEqual(suggestion["rule"]["match"]["metric_name_pattern"], "(consumer_lag)")
+            self.assertNotIn("(scale)", suggestion["rule"]["match"]["metric_name_pattern"])
+            self.assertEqual(suggestion["rule"]["propose"]["parameters"]["crops_domain"], "reliability")
 
     def test_summary_reports_scenario_family_and_model_profile(self) -> None:
         summary = _summarize(
@@ -261,6 +292,7 @@ class AiSrePlatformSliceTests(unittest.TestCase):
                 {
                     "scenario_id": "otel_queue_lag_scale",
                     "scenario_family": "queue",
+                    "crops_domain": "reliability",
                     "stage": "completed",
                     "decision_type": "scale_deployment",
                     "elapsed_ms": 10,
@@ -281,6 +313,7 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             ]
         )
         self.assertEqual(summary["scenario_family_report"]["queue"]["pass_rate"], 1.0)
+        self.assertEqual(summary["crops_domain_report"]["reliability"]["pass_rate"], 1.0)
         self.assertEqual(next(iter(summary["model_profile_matrix"].values()))["avg_score"], 0.9)
 
 

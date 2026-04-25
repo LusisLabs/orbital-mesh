@@ -17,6 +17,20 @@ _BLOCKER_CLASSES = {
     "risk level is high": "risk",
 }
 
+_CROPS_DOMAIN_BY_FAMILY = {
+    "capacity": "cloud",
+    "storage": "cloud",
+    "networking": "cloud",
+    "database": "reliability",
+    "dependency": "reliability",
+    "kubernetes": "reliability",
+    "queue": "reliability",
+    "traffic": "reliability",
+    "feature_flag": "ops",
+    "gitops": "ops",
+    "security": "security",
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -31,9 +45,14 @@ class SimulationScenario:
     expected_outcome: str | None = None
     fault_type: str = "synthetic_signal"
     scenario_family: str = "general"
+    crops_domain: str = "reliability"
     sandbox: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     standards_refs: list[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.crops_domain == "reliability" and self.scenario_family in _CROPS_DOMAIN_BY_FAMILY:
+            self.crops_domain = _CROPS_DOMAIN_BY_FAMILY[self.scenario_family]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +67,10 @@ class SimulationScenario:
             expected_outcome=payload.get("expected_outcome"),
             fault_type=str(payload.get("fault_type") or "synthetic_signal"),
             scenario_family=str(payload.get("scenario_family") or "general"),
+            crops_domain=str(
+                payload.get("crops_domain")
+                or _CROPS_DOMAIN_BY_FAMILY.get(str(payload.get("scenario_family") or "general"), "reliability")
+            ),
             sandbox=dict(payload.get("sandbox") or {}),
             tags=[str(item) for item in payload.get("tags", [])],
             standards_refs=[str(item) for item in payload.get("standards_refs", [])],
@@ -132,6 +155,7 @@ def score_run(
         "blocker_classes": blocker_classes,
         "blocker_gate_tuning": gate_tuning,
         "scenario_family": scenario.scenario_family,
+        "crops_domain": scenario.crops_domain,
         "model_profile": _model_profile(session),
         "reconciliation_recorded": "reconciliation" in artifacts,
         "safe_autonomy_pass": safe_autonomy_pass,
@@ -254,6 +278,7 @@ def dataset_row(
         },
         "model_profile": _model_profile(session),
         "scenario_family": scenario.scenario_family,
+        "crops_domain": scenario.crops_domain,
         "scenario": scenario.to_dict(),
         "signal": artifacts.get("input_signal"),
         "decision": artifacts.get("decision"),
