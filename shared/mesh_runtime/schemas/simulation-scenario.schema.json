@@ -11,6 +11,7 @@
     "expected_decision_type": {"type": ["string", "null"]},
     "expected_outcome": {"type": ["string", "null"]},
     "fault_type": {"type": "string", "minLength": 1},
+    "scenario_family": {"type": "string", "minLength": 1},
     "sandbox": {
       "type": "object",
       "properties": {

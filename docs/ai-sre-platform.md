@@ -108,14 +108,25 @@ Decision mix from the randomized run:
 | `rollback_deployment` | 12 |
 | `no_action` | 2 |
 
+## Simulation Learning Fixtures
+
+The simulation matrix now emits three report layers per run:
+
+- `stress-report.md`: run table with scenario family and model/profile sections.
+- `summary.json`: machine-readable `scenario_family_report` and `model_profile_matrix`.
+- `rule-learning-fixtures.json`: override replay rows ingested through `OverrideLearningStore`.
+
+Override replay remains a fixture path. It converts blocked benchmark rows into candidate learning observations, then synthesizes human-reviewed rule suggestions. Suggestions are never applied to policy automatically.
+
+Evaluator scoring is tuned by blocker class. `evaluator_quality` and `confidence` are calibration blockers with a lower replay floor; `risk`, `human_review`, and `approval_gate` remain protected blockers and require escalation or explicit review.
+
+CI runs a small seeded randomized matrix so scenario export, blocker classification, rule fixture ingestion, and reporting stay reproducible.
+
 ## Next Work
 
-1. Convert `override-replay.jsonl` rows into rule-learning fixtures so blocked runs can be replayed as operator approvals, rejections, or escalations.
-2. Add scenario-family reports for Kubernetes, OTel, feature flags, adversarial telemetry, and no-action controls.
-3. Tune evaluator gates by blocker class. `evaluator_quality` and `confidence` should be calibrated first because they dominate the current benchmark loss.
-4. Add model/profile comparison over the same matrix, capturing `evaluation_mode`, `orchestration_mode`, agent fabric, model IDs, latency, schema validity, disagreement rate, and correct-pause rate.
-5. Add PR-blocking CI for focused Python tests, `ruff`, web lint, and a small randomized matrix.
-6. Expand remediation coverage to node pressure, PVC/storage pressure, DNS failures, ingress/TLS failures, database latency, queue poison messages, ArgoCD drift, and feature-flag rollback conflicts.
+1. Use the new family reports to split evaluator thresholds by scenario family.
+2. Promote high-support override suggestions into reviewed rule-policy changes only after operator approval.
+3. Add profile rows for non-native model routes once credentials are present in a sandbox.
 
 ## Service Agents
 

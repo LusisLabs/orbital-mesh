@@ -5,13 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scripts.run_simulation_matrix import _randomize_signal, _write_override_replay
+from scripts.run_simulation_matrix import _ingest_override_replay, _randomize_signal, _summarize, _write_override_replay
 from services.orchestrator.reconciliation import reconcile_agent_tasks
 from services.orchestrator.service_agents import ServiceAgentRegistry
 from services.simulation import SimulationService
 from shared.mesh_runtime import RuntimeConfig, validate_payload
 from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
 from shared.mesh_runtime.benchmarking import dataset_row, score_run
+from shared.mesh_runtime.rule_suggestions import OverrideLearningStore
 
 
 class AiSrePlatformSliceTests(unittest.TestCase):
@@ -29,6 +30,10 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             _scenario, payload = svc.build_run_payload("k8s_crashloop_restart", {})
             self.assertEqual(payload["scenario_key"], "simulation:k8s_crashloop_restart")
             self.assertEqual(payload["simulation_context"]["sandbox"]["kube_context"], "mesh-compose")
+            families = {scenario["scenario_family"] for scenario in scenarios}
+            self.assertIn("kubernetes", families)
+            self.assertIn("networking", families)
+            self.assertIn("database", families)
 
     def test_simulation_run_rejects_missing_allowlist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -118,6 +123,8 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             row = dataset_row(scenario=scenario, session=session, events=events, merkle={}, record=record)
             self.assertTrue(record.passed)
             self.assertEqual(row["decision"]["decision_type"], "investigate_and_patch")
+            self.assertEqual(record.dimensions["scenario_family"], "kubernetes")
+            self.assertIn("model_profile", record.dimensions)
 
     def test_benchmark_wrong_expected_decision_is_hard_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,6 +227,60 @@ class AiSrePlatformSliceTests(unittest.TestCase):
             lines = out.joinpath("override-replay.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 1)
             self.assertEqual(json.loads(lines[0])["operator_action"], "reject_or_escalate")
+
+    def test_override_replay_ingests_rule_learning_fixture(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            rows = [
+                {
+                    "run_id": f"run_{idx}",
+                    "scenario_id": "otel_queue_lag_scale",
+                    "scenario_family": "queue",
+                    "decision_type": "scale_deployment",
+                    "stage": "awaiting_operator",
+                    "benchmark": {
+                        "dimensions": {
+                            "blocker_classes": ["confidence"],
+                            "blocker_gate_tuning": {"operator_replay": "approve_with_evidence"},
+                        }
+                    },
+                }
+                for idx in range(2)
+            ]
+            _write_override_replay(out, rows)
+            payload = _ingest_override_replay(out, out / "learning-state")
+            store = OverrideLearningStore(out / "learning-state")
+            self.assertEqual(payload["imported_overrides"], 2)
+            self.assertEqual(len(store.list_overrides(max_age_days=None)), 2)
+            self.assertGreaterEqual(payload["suggestion_count"], 1)
+
+    def test_summary_reports_scenario_family_and_model_profile(self) -> None:
+        summary = _summarize(
+            [
+                {
+                    "scenario_id": "otel_queue_lag_scale",
+                    "scenario_family": "queue",
+                    "stage": "completed",
+                    "decision_type": "scale_deployment",
+                    "elapsed_ms": 10,
+                    "benchmark": {
+                        "passed": True,
+                        "score": 0.9,
+                        "dimensions": {
+                            "blocker_classes": [],
+                            "model_profile": {
+                                "evaluation_mode": "native",
+                                "orchestration_mode": "native",
+                                "agent_fabric_mode": "native",
+                            },
+                        },
+                    },
+                    "reconciliation": {},
+                }
+            ]
+        )
+        self.assertEqual(summary["scenario_family_report"]["queue"]["pass_rate"], 1.0)
+        self.assertEqual(next(iter(summary["model_profile_matrix"].values()))["avg_score"], 0.9)
 
 
 if __name__ == "__main__":

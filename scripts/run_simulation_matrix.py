@@ -29,6 +29,7 @@ if str(REPO_ROOT) not in sys.path:
 from services.control_plane import TERMINAL_STAGES, RunCoordinator  # noqa: E402
 from services.simulation import SimulationService  # noqa: E402
 from shared.mesh_runtime import RuntimeConfig  # noqa: E402
+from shared.mesh_runtime.rule_suggestions import OverrideLearningStore  # noqa: E402
 
 
 def _timestamp() -> str:
@@ -168,6 +169,7 @@ def _run_one(
     return {
         "index": index,
         "scenario_id": scenario_id,
+        "scenario_family": benchmark.get("dimensions", {}).get("scenario_family"),
         "run_id": run["run_id"],
         "stage": run.get("stage"),
         "status": run.get("status"),
@@ -190,6 +192,8 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     by_decision: dict[str, int] = {}
     blockers: dict[str, int] = {}
     blocker_classes: dict[str, int] = {}
+    scenario_families: dict[str, dict[str, Any]] = {}
+    model_profiles: dict[str, dict[str, Any]] = {}
     disagreements = 0
     for row in rows:
         by_decision[str(row.get("decision_type") or "none")] = by_decision.get(str(row.get("decision_type") or "none"), 0) + 1
@@ -199,6 +203,35 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             blockers[str(blocker)] = blockers.get(str(blocker), 0) + 1
         for blocker_class in row.get("benchmark", {}).get("dimensions", {}).get("blocker_classes", []) or []:
             blocker_classes[str(blocker_class)] = blocker_classes.get(str(blocker_class), 0) + 1
+        family = str(row.get("scenario_family") or str(row.get("scenario_id") or "unknown").split("_")[0])
+        family_stats = scenario_families.setdefault(family, {"runs": 0, "passed": 0, "score_total": 0.0})
+        family_stats["runs"] += 1
+        family_stats["passed"] += 1 if row.get("benchmark", {}).get("passed") else 0
+        family_stats["score_total"] += float(row.get("benchmark", {}).get("score", 0.0) or 0.0)
+        profile = row.get("benchmark", {}).get("dimensions", {}).get("model_profile")
+        if not isinstance(profile, dict):
+            profile = {}
+        profile_key = "|".join(
+            [
+                str(profile.get("evaluation_mode") or "native"),
+                str(profile.get("orchestration_mode") or "native"),
+                str(profile.get("agent_fabric_mode") or "native"),
+                str(profile.get("deepagents_model") or "none"),
+                str(profile.get("llm_escalation_model") or "none"),
+            ]
+        )
+        profile_stats = model_profiles.setdefault(profile_key, {"runs": 0, "passed": 0, "score_total": 0.0, "profile": profile})
+        profile_stats["runs"] += 1
+        profile_stats["passed"] += 1 if row.get("benchmark", {}).get("passed") else 0
+        profile_stats["score_total"] += float(row.get("benchmark", {}).get("score", 0.0) or 0.0)
+    for stats in scenario_families.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
+    for stats in model_profiles.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
     return {
         "generated_at": _timestamp(),
         "total_runs": total,
@@ -211,6 +244,8 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "decision_counts": by_decision,
         "blocking_reason_counts": blockers,
         "blocker_class_counts": blocker_classes,
+        "scenario_family_report": scenario_families,
+        "model_profile_matrix": model_profiles,
         "reconciliation_disagreements": disagreements,
     }
 
@@ -226,12 +261,32 @@ def _write_override_replay(out_dir: Path, rows: list[dict[str, Any]]) -> None:
             replay = {
                 "run_id": row.get("run_id"),
                 "scenario_id": row.get("scenario_id"),
+                "scenario_family": row.get("scenario_family"),
                 "decision_type": row.get("decision_type"),
-                "operator_action": "approve" if blocker_classes <= {"confidence", "evaluator_quality"} else "reject_or_escalate",
+                "operator_action": dimensions.get("blocker_gate_tuning", {}).get(
+                    "operator_replay",
+                    "approve" if blocker_classes <= {"confidence", "evaluator_quality"} else "reject_or_escalate",
+                ),
                 "blocker_classes": sorted(blocker_classes),
+                "outcome": "successful" if blocker_classes <= {"confidence", "evaluator_quality"} else "escalated",
                 "reason": "synthetic operator replay fixture for rule-learning calibration",
             }
             handle.write(json.dumps(replay, sort_keys=True) + "\n")
+
+
+def _ingest_override_replay(out_dir: Path, state_dir: Path) -> dict[str, Any]:
+    replay_path = out_dir / "override-replay.jsonl"
+    store = OverrideLearningStore(state_dir)
+    imported = store.ingest_override_replay(replay_path)
+    suggestions = [item.to_dict() for item in store.synthesize_suggestions(min_observations=2, max_age_days=None)]
+    payload = {
+        "replay_path": str(replay_path),
+        "imported_overrides": imported,
+        "suggestion_count": len(suggestions),
+        "suggestions": suggestions,
+    }
+    out_dir.joinpath("rule-learning-fixtures.json").write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return payload
 
 
 def _write_markdown(out_dir: Path, summary: dict[str, Any], rows: list[dict[str, Any]]) -> None:
@@ -270,16 +325,22 @@ def _write_markdown(out_dir: Path, summary: dict[str, Any], rows: list[dict[str,
             "",
             "## Runs",
             "",
-            "| # | Scenario | Run | Stage | Decision | Eval | Score | ms |",
-            "|---|----------|-----|-------|----------|------|-------|----|",
+            "| # | Family | Scenario | Run | Stage | Decision | Eval | Score | ms |",
+            "|---|--------|----------|-----|-------|----------|------|-------|----|",
         ]
     )
     for row in rows:
         score = row.get("benchmark", {}).get("score", 0)
         lines.append(
-            f"| {row['index']} | {row['scenario_id']} | `{row['run_id']}` | {row['stage']} | "
+            f"| {row['index']} | {row.get('scenario_family') or '-'} | {row['scenario_id']} | `{row['run_id']}` | {row['stage']} | "
             f"{row.get('decision_type') or '-'} | {row.get('evaluation_recommendation') or '-'} | {score} | {row['elapsed_ms']} |"
         )
+    lines.extend(["", "## Scenario Families", ""])
+    for family, stats in sorted(summary.get("scenario_family_report", {}).items()):
+        lines.append(f"- {family}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
+    lines.extend(["", "## Model/Profile Matrix", ""])
+    for profile_key, stats in sorted(summary.get("model_profile_matrix", {}).items()):
+        lines.append(f"- {profile_key}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
     out_dir.joinpath("stress-report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -340,6 +401,8 @@ def main() -> int:
     out_dir.joinpath("summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     out_dir.joinpath("runs.json").write_text(json.dumps(rows, indent=2, sort_keys=True), encoding="utf-8")
     _write_override_replay(out_dir, rows)
+    summary["rule_learning"] = _ingest_override_replay(out_dir, out_dir / ".rule-learning")
+    out_dir.joinpath("summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
     _write_markdown(out_dir, summary, rows)
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 1 if failures else 0

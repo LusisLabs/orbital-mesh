@@ -38,6 +38,17 @@ jobs:
       - name: Smoke-import RuntimeConfig
         run: python -c "from shared.mesh_runtime import RuntimeConfig; print('RuntimeConfig OK on', RuntimeConfig.from_env().environment)"
 
+  simulation-matrix:
+    runs-on: ubuntu-latest
+    needs: [python-lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run small randomized simulation matrix
+        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 20 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
+
   web:
     runs-on: ubuntu-latest
     defaults:
