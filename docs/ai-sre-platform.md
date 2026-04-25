@@ -72,6 +72,51 @@ python3 scripts/run_continuous_simulations.py --cycles 3 --iterations 32 --worke
 
 The loop writes each cycle under `.mesh-runtime-state/simulation-stress/continuous/` and maintains `rollup.json` plus `rollup-report.md` across cycles. It enables seeded scenario randomization by default, perturbing telemetry values and context while keeping the expected decision contract stable. Use `--no-randomize` for deterministic catalog sweeps. `--cycles 0` runs until interrupted and should be used only under a supervisor that owns stop policy, artifact retention, and resource limits. The loop remains sandbox-only because it delegates to the same simulation matrix harness and allowlisted scenario catalog.
 
+## Learning Results
+
+Recent benchmark runs established the current baseline:
+
+| Run | Scope | Runs | Failures | Pass rate | Avg score | Main signal |
+|-----|-------|------|----------|-----------|-----------|-------------|
+| `continuous-hour` | deterministic one-hour loop | 1808 | 0 | 0.4375 | 0.775 | The runtime and export loop are stable; old scoring treated correct pauses as generic failures. |
+| `post-merge-randomized` | 3 randomized cycles, 64 runs each | 192 | 0 | 0.8125 | 0.8167 | Pause-aware scoring and seeded variants produce a more accurate bounded-autonomy benchmark. |
+
+The deterministic one-hour run produced 113 cycles and no harness failures. That proves the coordinator, benchmark export, reconciliation artifacts, and dataset writes are stable under repeated sandbox load. It also showed that repetition alone does not create new learning once the catalog order is deterministic.
+
+The randomized post-merge run produced 133 override replay rows and no harness failures. The pass-rate increase from 0.4375 to 0.8125 came from scoring correctness: high-risk or missing-authority cases now pass when Mesh pauses or escalates correctly. That is the intended product posture. Bounded SRE assistance should be rewarded for refusing unsafe autonomy.
+
+Current blocker classes from the randomized run:
+
+| Blocker class | Count | Interpretation |
+|---------------|-------|----------------|
+| `evaluator_quality` | 133 | The evaluator/promptfoo gate is the largest calibration target. |
+| `confidence` | 122 | Confidence thresholds are conservative; tune per scenario family, not globally. |
+| `human_review` | 68 | Human review routes are expected for escalation scenarios and should feed override replay. |
+| `approval_gate` | 61 | Approval gates are functioning as safety controls. |
+| `risk` | 53 | High-risk routes are correctly resisting autonomous execution. |
+
+Decision mix from the randomized run:
+
+| Decision | Count |
+|----------|-------|
+| `escalate` | 68 |
+| `restart_deployment` | 36 |
+| `scale_deployment` | 31 |
+| `disable_flag` | 15 |
+| `investigate_and_patch` | 15 |
+| `none` | 13 |
+| `rollback_deployment` | 12 |
+| `no_action` | 2 |
+
+## Next Work
+
+1. Convert `override-replay.jsonl` rows into rule-learning fixtures so blocked runs can be replayed as operator approvals, rejections, or escalations.
+2. Add scenario-family reports for Kubernetes, OTel, feature flags, adversarial telemetry, and no-action controls.
+3. Tune evaluator gates by blocker class. `evaluator_quality` and `confidence` should be calibrated first because they dominate the current benchmark loss.
+4. Add model/profile comparison over the same matrix, capturing `evaluation_mode`, `orchestration_mode`, agent fabric, model IDs, latency, schema validity, disagreement rate, and correct-pause rate.
+5. Add PR-blocking CI for focused Python tests, `ruff`, web lint, and a small randomized matrix.
+6. Expand remediation coverage to node pressure, PVC/storage pressure, DNS failures, ingress/TLS failures, database latency, queue poison messages, ArgoCD drift, and feature-flag rollback conflicts.
+
 ## Service Agents
 
 Set `MESH_SERVICE_AGENTS_CONFIG_PATH` to a JSON file:
