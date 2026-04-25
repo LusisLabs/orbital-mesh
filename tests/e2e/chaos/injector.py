@@ -498,6 +498,15 @@ class ChaosInjector:
         # means the value survives across multiple revert calls.
         template = dict(baseline.spec_template)
         original_replicas = template.pop("__mesh_original_replicas__", None)
+        # Strategic merge patch preserves keys the baseline doesn't
+        # mention. That's a problem for probe handler types: if
+        # ``readiness_failure`` injected a ``tcpSocket`` probe, the
+        # revert patch's ``httpGet`` doesn't delete it — both end up
+        # present, and k8s rejects "more than 1 handler type". We
+        # preprocess the baseline template to explicitly null out
+        # every probe handler type the baseline doesn't use, so the
+        # merged result has exactly the baseline's one handler.
+        template = _normalize_probe_handlers_for_revert(template)
         patch = {"spec": {"template": template}}
         self._kubectl_patch(deployment, namespace, patch)
         # If scale_to_zero was used, restore the original replica count.
@@ -678,6 +687,51 @@ class ChaosInjector:
         if self.kube_context:
             base.extend(["--context", self.kube_context])
         return base
+
+
+# The four handler types a pod probe can have. Strategic merge patches
+# don't delete existing keys, so when we revert a deployment that had
+# an injected handler (like ``tcpSocket`` from ``readiness_failure``),
+# the baseline's handler gets merged in but the injected one stays —
+# and k8s rejects the result with "may not specify more than 1 handler
+# type". We null out the three non-baseline handlers in the revert
+# patch to force strategic merge to delete them.
+_PROBE_HANDLER_TYPES: tuple[str, ...] = ("httpGet", "tcpSocket", "exec", "grpc")
+
+
+def _normalize_probe_handlers_for_revert(template: dict[str, Any]) -> dict[str, Any]:
+    """Rewrite a baseline pod template so revert cleanly deletes injected probe handlers.
+
+    For each container's ``livenessProbe`` / ``readinessProbe`` /
+    ``startupProbe``, if the baseline probe has (say) ``httpGet``, we
+    add ``tcpSocket: None``, ``exec: None``, ``grpc: None`` to the
+    patch. Strategic merge interprets null-in-patch as "delete this
+    key", so the merged result on the server side ends up with only
+    the baseline's single handler — matching the original spec.
+
+    This is chaos-harness-only because the injection/revert asymmetry
+    it fixes is only created by our chaos primitives. Normal
+    operators editing probes don't produce this problem.
+    """
+    import copy
+    result = copy.deepcopy(template)
+    spec = result.get("spec") or {}
+    containers = spec.get("containers") or []
+    for container in containers:
+        for probe_key in ("livenessProbe", "readinessProbe", "startupProbe"):
+            probe = container.get(probe_key)
+            if not isinstance(probe, dict):
+                continue
+            present_handlers = {key for key in _PROBE_HANDLER_TYPES if key in probe}
+            if not present_handlers:
+                continue
+            # Null out every handler type that's NOT in the baseline —
+            # whichever one(s) the baseline uses stay as-is, so the
+            # final merged state is exactly the baseline's probe.
+            for handler in _PROBE_HANDLER_TYPES:
+                if handler not in present_handlers:
+                    probe[handler] = None
+    return result
 
 
 __all__ = ["ChaosError", "ChaosInjector", "DeploymentBaseline", "InjectionResult"]

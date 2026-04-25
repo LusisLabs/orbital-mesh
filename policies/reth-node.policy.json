@@ -1,0 +1,39 @@
+{
+  "$comment": "Reth-specific safety policy. Detection may observe many node conditions, but only a narrow subset can recommend bounded systemd restart; stateful, credential, storage, and exposure risks escalate.",
+  "restartable_signatures": [
+    "peer_starvation",
+    "sync_stalled",
+    "rpc_degraded"
+  ],
+  "escalation_signatures": [
+    "authrpc_exposed",
+    "consensus_disconnected",
+    "db_corruption_suspected",
+    "disk_pressure",
+    "jwt_missing",
+    "jwt_secret_insecure_permissions",
+    "restart_frequency_exceeded",
+    "rpc_exposed"
+  ],
+  "require_approval_for_restart": true,
+  "restart_window_seconds": 3600,
+  "max_restarts_per_window": 1,
+  "disk_pressure_pct": 90,
+  "rpc_error_rate": 0.05,
+  "allowed_consensus_clients": [
+    "lighthouse",
+    "prysm",
+    "teku",
+    "nimbus",
+    "lodestar",
+    "unknown"
+  ],
+  "forbidden_automated_actions": [
+    "delete_datadir",
+    "restore_snapshot",
+    "rewrite_jwt_secret",
+    "change_pruning_mode",
+    "downgrade_client",
+    "upgrade_client"
+  ]
+}

@@ -445,6 +445,20 @@ def _make_scenario_fn(experiment: ChaosExperiment, target: str):
         harness.record_step("chaos:reverted")
         try:
             harness.wait_for_deployment_ready(target, timeout_seconds=120)
+            # Then wait for full cluster quiescence before handing
+            # control back to the session runner. ``rollout status``
+            # succeeds when the new replicaset is ready, but old
+            # replicasets + their events can still be live —
+            # contaminating the NEXT experiment's signal with noise
+            # from this one. The stabilization wait ensures old pods
+            # are gone, their events are aging out, and the cluster
+            # is in a fresh state before the next inject() fires.
+            #
+            # This is the fix for chaos session #3's cascading
+            # failure mode, where pod_kill_one running 4 seconds
+            # after bad_image inherited bad_image's error signatures
+            # and Mesh responded to the wrong fault.
+            harness.wait_for_stable_state(target)
             captured["cluster_snapshots"]["after_recovery"] = harness.snapshot_cluster(
                 target, label="after_recovery",
             )

@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 from services.actuators.systemd_ssh import SystemdSshAdapter
 from services.decision.service import DecisionService
+from services.evaluation.service import EvaluationService
 from services.ingest.bare_metal_node import (
     BareMetalNodeTarget,
     EthereumNodeIngester,
@@ -31,7 +32,7 @@ from services.ingest.bare_metal_node import (
 )
 from services.ingest.service import IngestService
 from services.trigger.service import TriggerService
-from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime import RuntimeConfig, load_policy
 from shared.mesh_runtime.metric_action_rules import load_metric_action_rules
 
 
@@ -328,8 +329,54 @@ class RethNodeIngesterTests(unittest.TestCase):
         self.assertEqual(signal["node"]["network"], "mainnet")
         self.assertEqual(signal["execution"]["peer_count"], 1)
         self.assertIn("peer_starvation", signal["logs"]["error_signatures"])
+        self.assertIsNone(signal["consensus"]["engine_api_reachable"])
+        self.assertIsNone(signal["consensus"]["jwt_configured"])
         self.assertEqual(signal["resource_attributes"]["mesh.node.host"], "reth-mainnet-01")
         self.assertEqual(signal["resource_attributes"]["mesh.node.service"], "reth.service")
+
+    def test_reth_metrics_and_logs_drive_consensus_health(self) -> None:
+        target = _reth_target()
+        target.metrics_url = "http://127.0.0.1:9001"
+        target.recent_log_lines = (
+            "INFO Engine API forkchoiceUpdated received from Lighthouse",
+            "INFO lighthouse beacon node healthy",
+        )
+        ingester = RethNodeIngester(
+            target,
+            metrics_fetcher=lambda url: "reth_engine_forkchoice_updated_total 42\n",
+            jwt_metadata_provider=lambda _target: {"exists": True, "mode": "0600"},
+        )
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0xa", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+
+        self.assertTrue(signal["consensus"]["engine_api_reachable"])
+        self.assertTrue(signal["consensus"]["forkchoice_updates_recent"])
+        self.assertTrue(signal["consensus"]["jwt_configured"])
+        self.assertEqual(signal["consensus"]["jwt_secret_mode"], "0600")
+
+    def test_reth_diagnostics_surface_disk_and_jwt_risks(self) -> None:
+        ingester = RethNodeIngester(
+            _reth_target(),
+            disk_diagnostics_provider=lambda _target: {
+                "disk_used_pct": 95,
+                "data_dir_free_bytes": 123,
+                "diagnostic_source": "ssh_df",
+            },
+            jwt_metadata_provider=lambda _target: {"exists": True, "mode": "0644"},
+        )
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0xa", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+
+        self.assertEqual(signal["storage"]["disk_used_pct"], 95.0)
+        self.assertEqual(signal["storage"]["diagnostic_source"], "ssh_df")
+        self.assertIn("disk_pressure", signal["logs"]["error_signatures"])
+        self.assertIn("jwt_secret_insecure_permissions", signal["logs"]["error_signatures"])
 
     def test_rpc_failure_returns_none(self) -> None:
         ingester = RethNodeIngester(_reth_target())
@@ -427,6 +474,80 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
 
         self.assertEqual(decision.decision_type, "escalate")
         self.assertEqual(decision.execution_plan["system"], "incident_service")
+
+    def test_reth_rpc_exposure_escalates_instead_of_restart(self) -> None:
+        target = _reth_target()
+        target.rpc_publicly_exposed = True
+        target.authrpc_publicly_exposed = True
+        ingester = RethNodeIngester(target)
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0xa", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        self.assertIn("rpc_exposed", trigger.related_context["error_signatures"])
+        self.assertIn("authrpc_exposed", trigger.related_context["error_signatures"])
+        decision = DecisionService().decide(trigger)
+        self.assertEqual(decision.decision_type, "escalate")
+
+    def test_reth_restart_frequency_cap_escalates(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        signal["related_context"]["systemd_restarts_last_1h"] = 1
+
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        decision = DecisionService().decide(trigger)
+
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertIn("restart_frequency_exceeded", decision.reasoning["evidence_pack"]["error_signatures"])
+
+    def test_systemd_policy_only_allows_restart_for_reth_slice(self) -> None:
+        policy = load_policy("autonomy.policy.json")
+        self.assertEqual(policy["allowed_execution_actions"]["systemd_service"], ["restart_systemd_service"])
+
+    def test_systemd_readiness_requires_allowlisted_target(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        decision = DecisionService().decide(trigger)
+
+        service = EvaluationService(config=RuntimeConfig())
+        ready, notes = service._systemd_service_ready(decision)
+
+        self.assertFalse(ready)
+        self.assertIn("systemd host allowlist is empty", notes)
+        self.assertIn("systemd service allowlist is empty", notes)
+
+    def test_systemd_readiness_accepts_allowlisted_reth_target(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        decision = DecisionService().decide(trigger)
+
+        config = replace(
+            RuntimeConfig(),
+            ssh_allowed_hosts=("reth-mainnet-01",),
+            ssh_allowed_services=("reth.service",),
+        )
+        service = EvaluationService(config=config)
+        ready, notes = service._systemd_service_ready(decision)
+
+        self.assertTrue(ready)
+        self.assertEqual(notes, [])
 
 
 if __name__ == "__main__":

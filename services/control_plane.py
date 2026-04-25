@@ -741,8 +741,7 @@ class RunCoordinator:
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
         session = self.state_store.get_run_session(run_id)
-        with self._lock:
-            control = self.controls.get(run_id)
+        control = self._get_control(run_id)
         if session is None or control is None:
             raise KeyError(run_id)
         command_payload = {key: value for key, value in payload.items() if key != "command"}
@@ -1026,18 +1025,72 @@ class RunCoordinator:
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
         except Exception as exc:
-            self.state_store.append_run_event(
-                run_id,
-                stage="failed",
-                event_type=RUN_FAILED,
-                payload={"error": str(exc)},
-                summary={"status": "failed"},
-                status="failed",
-            )
-            self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+            # The recovery path is itself fragile — if the state store is
+            # broken (disk full, db locked) the failure-recording calls
+            # below can themselves raise. We MUST still reach the finally
+            # block and pop the thread/control entries; otherwise the run
+            # is invisibly stuck in whatever stage it last reached and the
+            # in-memory dicts grow forever.
+            try:
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="failed",
+                    event_type=RUN_FAILED,
+                    payload={"error": str(exc)},
+                    summary={"status": "failed"},
+                    status="failed",
+                )
+            except Exception:
+                _LOG.exception(
+                    "control_plane: failed to record terminal RUN_FAILED event for run %s "
+                    "(state store unhealthy); proceeding to clean up in-memory state",
+                    run_id,
+                )
+            try:
+                self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+            except Exception:
+                _LOG.exception(
+                    "control_plane: failed to persist terminal failed-session for run %s "
+                    "(state store unhealthy); in-memory state will still be cleaned up",
+                    run_id,
+                )
         finally:
-            with self._lock:
-                self._threads.pop(run_id, None)
+            # Always reach this block — it owns the in-memory leak fix.
+            self._finalize_run(run_id)
+
+    def _finalize_run(self, run_id: str) -> None:
+        """Drop the in-memory tracking state for a run that has reached
+        a terminal stage (completed / failed / cancelled).
+
+        Pops both ``_threads`` and ``controls`` under a single lock so
+        any concurrent ``steer_run`` / ``_wait_if_needed`` observer
+        sees a consistent "run is gone" state. ``self.controls`` was
+        previously never cleared, growing without bound on long-lived
+        coordinators — that's the leak this method fixes.
+
+        Idempotent: pop-with-default makes repeated calls safe.
+        """
+        with self._lock:
+            self._threads.pop(run_id, None)
+            self.controls.pop(run_id, None)
+
+    def _get_control(self, run_id: str) -> RunControl | None:
+        """Locked read of ``self.controls[run_id]``.
+
+        Every read of the controls dict must go through this accessor.
+        Direct subscripting (``self.controls[run_id]``) is unsafe now
+        that ``_finalize_run`` actively pops entries on terminal
+        transitions: a late re-entry into ``_wait_if_needed`` (e.g.,
+        from a callback path that fires after the finally block has
+        already cleaned up) would otherwise raise ``KeyError`` and
+        crash the worker thread.
+
+        Returns ``None`` if the run is no longer tracked. Callers
+        treat that as "the run has terminated" and bail out — exactly
+        the same semantics as a cancelled session.
+        """
+        with self._lock:
+            return self.controls.get(run_id)
 
     def _execution_review_artifact(self, execution: ExecutionRecord) -> tuple[str, str, dict[str, Any]] | None:
         if not isinstance(execution.external_refs, dict):
@@ -1366,8 +1419,7 @@ class RunCoordinator:
         decision: Decision,
         evaluation: EvaluationResult,
     ) -> bool:
-        with self._lock:
-            control = self.controls.get(run_id)
+        control = self._get_control(run_id)
         if control is None or not control.auto_mode:
             return False
         if evaluation.passed and evaluation.final_recommendation == "execute":
@@ -1614,8 +1666,14 @@ class RunCoordinator:
         evaluation: EvaluationResult | None,
     ) -> dict[str, Any]:
         session = self.state_store.get_run_session(run_id)
-        control = self.controls[run_id]
-        if session is None:
+        control = self._get_control(run_id)
+        # If either the session or the control entry has been cleared
+        # (terminal-state cleanup ran while we were waiting), bail
+        # out cleanly rather than KeyError. This is the bug-fix path
+        # added with C1: ``_finalize_run`` actively pops controls on
+        # completion, so a late re-entry from a callback can land
+        # here with the run already gone.
+        if session is None or control is None:
             return {"action": "cancel"}
 
         requires_pause = stage in control.pause_points or (stage == "evaluation_ready" and not control.auto_mode)

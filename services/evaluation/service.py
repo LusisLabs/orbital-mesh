@@ -128,6 +128,7 @@ class EvaluationService:
         rollback_present = bool(decision.execution_plan.get("rollback_plan"))
         credentials_available = self._credentials_available(trigger, system)
         repo_patch_ready, repo_patch_notes = self._repo_patch_ready(decision)
+        systemd_ready, systemd_notes = self._systemd_service_ready(decision)
         readiness_notes: list[str] = []
         if decision.confidence < rollback_policy["minimum_confidence"]:
             readiness_notes.append("confidence below minimum threshold")
@@ -147,6 +148,9 @@ class EvaluationService:
         if not repo_patch_ready:
             readiness_notes.extend(repo_patch_notes)
             blocking_reasons.extend(repo_patch_notes)
+        if not systemd_ready:
+            readiness_notes.extend(systemd_notes)
+            blocking_reasons.extend(systemd_notes)
 
         scenario_review_reasons = _scenario_review_reasons(decision)
         blocker_analysis = classify_blocking_reasons(
@@ -196,6 +200,7 @@ class EvaluationService:
                         and decision.confidence >= rollback_policy["minimum_confidence"]
                         and decision.risk["level"] != "high"
                         and repo_patch_ready
+                        and systemd_ready
                     ),
                     "notes": readiness_notes
                     or [
@@ -272,6 +277,29 @@ class EvaluationService:
             for key in ("target_file", "find", "replace"):
                 if not isinstance(patch_template.get(key), str) or not patch_template.get(key):
                     notes.append(f"patch template field `{key}` is missing")
+        return not notes, notes
+
+    def _systemd_service_ready(self, decision: Decision) -> tuple[bool, list[str]]:
+        if decision.execution_plan["system"] != "systemd_service":
+            return True, []
+        parameters = decision.execution_plan.get("parameters", {})
+        notes: list[str] = []
+        host = parameters.get("host")
+        service = parameters.get("service")
+        if not isinstance(host, str) or not host:
+            notes.append("systemd host is missing")
+        if not isinstance(service, str) or not service:
+            notes.append("systemd service is missing")
+        if not self.config.ssh_allowed_hosts:
+            notes.append("systemd host allowlist is empty")
+        elif isinstance(host, str) and host.split("@", 1)[-1].strip() not in self.config.ssh_allowed_hosts:
+            notes.append("systemd host is not allowlisted")
+        if not self.config.ssh_allowed_services:
+            notes.append("systemd service allowlist is empty")
+        elif isinstance(service, str):
+            canonical = service if service.endswith(".service") else f"{service}.service"
+            if service not in self.config.ssh_allowed_services and canonical not in self.config.ssh_allowed_services:
+                notes.append("systemd service is not allowlisted")
         return not notes, notes
 
 

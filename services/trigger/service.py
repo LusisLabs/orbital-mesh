@@ -281,12 +281,24 @@ class TriggerService:
             error_signatures.append("peer_starvation")
         if execution["syncing"] and execution["block_lag"] > execution["max_block_lag"]:
             error_signatures.append("sync_stalled")
-        if not consensus["engine_api_reachable"] or not consensus["forkchoice_updates_recent"]:
+        if (
+            consensus.get("engine_api_reachable") is False
+            or consensus.get("forkchoice_updates_recent") is False
+            or consensus.get("client_healthy") is False
+        ):
             error_signatures.append("consensus_disconnected")
+        if consensus.get("jwt_configured") is False or consensus.get("jwt_secret_exists") is False:
+            error_signatures.append("jwt_missing")
+        if _jwt_mode_insecure(consensus.get("jwt_secret_mode")):
+            error_signatures.append("jwt_secret_insecure_permissions")
         if storage.get("disk_used_pct") is not None and float(storage["disk_used_pct"]) >= 90:
             error_signatures.append("disk_pressure")
         if not rpc["http_reachable"] or (rpc.get("error_rate") is not None and float(rpc["error_rate"]) >= 0.05):
             error_signatures.append("rpc_degraded")
+        if rpc.get("publicly_exposed") is True:
+            error_signatures.append("rpc_exposed")
+        if rpc.get("authrpc_publicly_exposed") is True:
+            error_signatures.append("authrpc_exposed")
 
         error_signatures = sorted(set(error_signatures))
         if not error_signatures:
@@ -438,6 +450,16 @@ def _metric_projection(payload: dict, field: str, window: str) -> float | None:
     bucket = telemetry.get(window) or {}
     value = bucket.get(field)
     return float(value) if value is not None else None
+
+
+def _jwt_mode_insecure(mode: object) -> bool:
+    if mode is None:
+        return False
+    try:
+        bits = int(str(mode).strip()[-3:], 8)
+    except ValueError:
+        return False
+    return bool(bits & 0o077)
 
 
 def _parse_timestamp(timestamp: str) -> datetime:

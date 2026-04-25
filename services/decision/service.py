@@ -253,14 +253,19 @@ class DecisionService:
         symptoms, and escalate for storage, JWT/Engine API, or DB-like failures.
         """
         signatures = set(trigger.related_context.get("error_signatures", []))
+        policy = load_policy("reth-node.policy.json")
         node = trigger.related_context.get("node", {})
         execution = trigger.related_context.get("execution", {})
         consensus = trigger.related_context.get("consensus", {})
         storage = trigger.related_context.get("storage", {})
         resource_attributes = trigger.related_context.get("resource_attributes", {})
 
-        restartable = signatures & {"peer_starvation", "sync_stalled", "rpc_degraded"}
-        unsafe = signatures & {"disk_pressure", "consensus_disconnected", "db_corruption_suspected"}
+        recent_restarts = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        if recent_restarts >= int(policy["max_restarts_per_window"]):
+            signatures.add("restart_frequency_exceeded")
+
+        restartable = signatures & set(policy["restartable_signatures"])
+        unsafe = signatures & set(policy["escalation_signatures"])
         if unsafe:
             decision_type = "escalate"
             confidence = 0.74
@@ -270,7 +275,7 @@ class DecisionService:
             decision_type = "restart_systemd_service"
             confidence = 0.72
             risk_level = "medium"
-            autonomy_tier = "approval_required"
+            autonomy_tier = "approval_required" if policy.get("require_approval_for_restart", True) else "autonomous"
         else:
             decision_type = "no_action"
             confidence = 0.66
@@ -302,6 +307,11 @@ class DecisionService:
                     "consensus": consensus,
                     "storage": storage,
                     "resource_attributes": resource_attributes,
+                    "reth_policy": {
+                        "max_restarts_per_window": policy["max_restarts_per_window"],
+                        "restart_window_seconds": policy["restart_window_seconds"],
+                        "require_approval_for_restart": policy["require_approval_for_restart"],
+                    },
                     "trust_boundary": (
                         "systemd restart remains approval-gated; storage, Engine API, JWT, and DB "
                         "conditions are escalation-only in the first Reth integration slice"
@@ -684,6 +694,23 @@ class DecisionService:
             # Catch-all: when we can't narrow the cause, escalate
             # rather than guess. The previous policy defaulted to
             # restart_deployment here — an SRE would never accept that.
+            #
+            # We log the input fingerprint at DEBUG so an operator
+            # reading logs can tell apart "we deliberately did not act
+            # because no actionable signature was present" from "we
+            # missed a signal we should have caught." Without this,
+            # the only evidence is an "escalate" decision with no
+            # context.
+            _LOG.debug(
+                "decide(k8s): catch-all escalate — no actionable signature matched; "
+                "error_signatures=%s rollout_status=%s seconds_since_deploy=%s "
+                "deploy_correlated=%s repeated_rollback=%s",
+                error_signatures,
+                rollout_status,
+                seconds_since_deploy,
+                deploy_correlated,
+                repeated_rollback,
+            )
             decision_type = "escalate"
             confidence = 0.6
             risk_level = "high"

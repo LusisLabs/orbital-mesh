@@ -81,7 +81,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 
 
@@ -121,6 +121,11 @@ class BareMetalNodeTarget:
     role: str = "full"
     consensus_client: str | None = None
     data_dir: str | None = None
+    jwt_secret_path: str | None = None
+    metrics_url: str | None = None
+    recent_log_lines: tuple[str, ...] = ()
+    rpc_publicly_exposed: bool | None = None
+    authrpc_publicly_exposed: bool | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "BareMetalNodeTarget":
@@ -140,6 +145,11 @@ class BareMetalNodeTarget:
             role=str(raw.get("role", "full")),
             consensus_client=raw.get("consensus_client"),
             data_dir=raw.get("data_dir"),
+            jwt_secret_path=raw.get("jwt_secret_path"),
+            metrics_url=raw.get("metrics_url"),
+            recent_log_lines=tuple(str(line) for line in raw.get("recent_log_lines", ())),
+            rpc_publicly_exposed=_optional_bool(raw.get("rpc_publicly_exposed")),
+            authrpc_publicly_exposed=_optional_bool(raw.get("authrpc_publicly_exposed")),
         )
 
 
@@ -343,9 +353,20 @@ class EthereumNodeIngester:
        count alone.
     """
 
-    def __init__(self, target: BareMetalNodeTarget, timeout_seconds: float = 5.0):
+    def __init__(
+        self,
+        target: BareMetalNodeTarget,
+        timeout_seconds: float = 5.0,
+        *,
+        disk_diagnostics_provider: Callable[[BareMetalNodeTarget], dict[str, Any] | None] | None = None,
+        jwt_metadata_provider: Callable[[BareMetalNodeTarget], dict[str, Any] | None] | None = None,
+        metrics_fetcher: Callable[[str], str | None] | None = None,
+    ):
         self.target = target
         self.timeout_seconds = timeout_seconds
+        self.disk_diagnostics_provider = disk_diagnostics_provider
+        self.jwt_metadata_provider = jwt_metadata_provider
+        self.metrics_fetcher = metrics_fetcher or _fetch_text_url
 
     def build_signal(self) -> dict[str, Any] | None:
         try:
@@ -454,9 +475,20 @@ class RethNodeIngester:
     keeping credentialed actuation in the existing, gated systemd adapter.
     """
 
-    def __init__(self, target: BareMetalNodeTarget, timeout_seconds: float = 5.0):
+    def __init__(
+        self,
+        target: BareMetalNodeTarget,
+        timeout_seconds: float = 5.0,
+        *,
+        disk_diagnostics_provider: Callable[[BareMetalNodeTarget], dict[str, Any] | None] | None = None,
+        jwt_metadata_provider: Callable[[BareMetalNodeTarget], dict[str, Any] | None] | None = None,
+        metrics_fetcher: Callable[[str], str | None] | None = None,
+    ):
         self.target = target
         self.timeout_seconds = timeout_seconds
+        self.disk_diagnostics_provider = disk_diagnostics_provider
+        self.jwt_metadata_provider = jwt_metadata_provider
+        self.metrics_fetcher = metrics_fetcher or _fetch_text_url
 
     def build_signal(self) -> dict[str, Any] | None:
         try:
@@ -472,6 +504,15 @@ class RethNodeIngester:
         head_block = _hex_or_int(head_block_hex)
         syncing = sync_status not in (False, None)
         block_lag = _eth_block_lag(sync_status)
+        metrics_text = self._metrics_text()
+        log_lines = list(self.target.recent_log_lines)
+        consensus = _reth_consensus_from_evidence(
+            target=self.target,
+            metrics_text=metrics_text,
+            log_lines=log_lines,
+            jwt_metadata=self._jwt_metadata(),
+        )
+        storage = _reth_storage_from_diagnostics(self._disk_diagnostics())
         error_signatures = _reth_error_signatures(
             syncing=syncing,
             block_lag=block_lag,
@@ -479,6 +520,7 @@ class RethNodeIngester:
             peer_count=peer_count,
             min_peer_count=self.target.min_peer_count,
         )
+        error_signatures.extend(_reth_observability_signatures(consensus=consensus, storage=storage))
 
         return {
             "signal_type": "reth_node",
@@ -498,6 +540,7 @@ class RethNodeIngester:
                 "role": self.target.role,
                 "client_version": str(client_version) if client_version is not None else None,
                 "data_dir": self.target.data_dir,
+                "jwt_secret_path": self.target.jwt_secret_path,
             },
             "execution": {
                 "syncing": syncing,
@@ -509,22 +552,14 @@ class RethNodeIngester:
                 "min_peer_count": self.target.min_peer_count,
                 "max_block_lag": self.target.max_block_lag,
             },
-            "consensus": {
-                "engine_api_reachable": True,
-                "jwt_configured": True,
-                "forkchoice_updates_recent": not syncing or block_lag <= self.target.max_block_lag,
-                "consensus_client": self.target.consensus_client,
-            },
-            "storage": {
-                "data_dir_free_bytes": None,
-                "disk_used_pct": None,
-                "db_growth_rate_bytes_per_hour": None,
-                "snapshot_mode": "unknown",
-            },
+            "consensus": consensus,
+            "storage": storage,
             "rpc": {
                 "http_reachable": True,
                 "latency_ms": None,
                 "error_rate": 0.0,
+                "publicly_exposed": self.target.rpc_publicly_exposed,
+                "authrpc_publicly_exposed": self.target.authrpc_publicly_exposed,
             },
             "logs": {
                 "error_signatures": error_signatures,
@@ -549,6 +584,33 @@ class RethNodeIngester:
             },
             "post_action_observations": {},
         }
+
+    def _metrics_text(self) -> str | None:
+        if not self.target.metrics_url:
+            return None
+        try:
+            return self.metrics_fetcher(self.target.metrics_url)
+        except RpcError as exc:
+            _LOG.warning("reth ingester: %s metrics fetch failed: %s", self.target.name, exc)
+            return None
+
+    def _disk_diagnostics(self) -> dict[str, Any] | None:
+        if self.disk_diagnostics_provider is None:
+            return None
+        try:
+            return self.disk_diagnostics_provider(self.target)
+        except Exception as exc:
+            _LOG.warning("reth ingester: %s disk diagnostics failed: %s", self.target.name, exc)
+            return None
+
+    def _jwt_metadata(self) -> dict[str, Any] | None:
+        if self.jwt_metadata_provider is None:
+            return None
+        try:
+            return self.jwt_metadata_provider(self.target)
+        except Exception as exc:
+            _LOG.warning("reth ingester: %s jwt metadata probe failed: %s", self.target.name, exc)
+            return None
 
 
 # ---------------------------------------------------------------- helpers
@@ -578,6 +640,149 @@ def _eth_block_lag(sync_status: Any) -> int:
     highest = _hex_or_int(sync_status.get("highestBlock", "0x0"))
     current = _hex_or_int(sync_status.get("currentBlock", "0x0"))
     return max(0, highest - current)
+
+
+def _fetch_text_url(url: str) -> str | None:
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=5.0) as response:
+            return response.read().decode("utf-8", errors="replace")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise RpcError(f"metrics transport error: {exc}") from exc
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes"}:
+            return True
+        if lowered in {"0", "false", "no"}:
+            return False
+    return None
+
+
+def _reth_consensus_from_evidence(
+    *,
+    target: BareMetalNodeTarget,
+    metrics_text: str | None,
+    log_lines: list[str],
+    jwt_metadata: dict[str, Any] | None,
+) -> dict[str, Any]:
+    evidence = "\n".join([metrics_text or "", *log_lines]).lower()
+    engine_api_reachable: bool | None = None
+    forkchoice_updates_recent: bool | None = None
+    client_healthy: bool | None = None
+    jwt_secret_exists = _optional_bool((jwt_metadata or {}).get("exists"))
+    jwt_secret_mode = (jwt_metadata or {}).get("mode")
+    jwt_configured = jwt_secret_exists
+
+    if any(token in evidence for token in ("authrpc", "engine api", "engine_api", "forkchoice")):
+        engine_api_reachable = not any(
+            token in evidence
+            for token in (
+                "authrpc connection refused",
+                "engine api connection refused",
+                "engine api unavailable",
+                "engine api failed",
+                "invalid jwt",
+                "jwt authentication failed",
+            )
+        )
+    if "forkchoice" in evidence:
+        forkchoice_updates_recent = not any(
+            token in evidence
+            for token in ("forkchoice failed", "forkchoice error", "no forkchoice")
+        )
+    if target.consensus_client:
+        client_kind = _consensus_client_kind(target.consensus_client)
+        if client_kind in evidence:
+            client_healthy = not any(
+                token in evidence
+                for token in (f"{client_kind} failed", f"{client_kind} error", f"{client_kind} down")
+            )
+        else:
+            client_healthy = None
+    else:
+        client_kind = "unknown"
+
+    if jwt_secret_exists is False:
+        jwt_configured = False
+    if _jwt_mode_insecure(jwt_secret_mode):
+        jwt_configured = False
+
+    return {
+        "engine_api_reachable": engine_api_reachable,
+        "jwt_configured": jwt_configured,
+        "forkchoice_updates_recent": forkchoice_updates_recent,
+        "consensus_client": target.consensus_client,
+        "client_kind": client_kind,
+        "client_healthy": client_healthy,
+        "jwt_secret_exists": jwt_secret_exists,
+        "jwt_secret_mode": str(jwt_secret_mode) if jwt_secret_mode is not None else None,
+    }
+
+
+def _consensus_client_kind(value: str | None) -> str:
+    lowered = (value or "").lower()
+    for client in ("lighthouse", "prysm", "teku", "nimbus", "lodestar"):
+        if client in lowered:
+            return client
+    return "unknown"
+
+
+def _jwt_mode_insecure(mode: Any) -> bool:
+    if mode is None:
+        return False
+    text = str(mode).strip()
+    try:
+        bits = int(text[-3:], 8)
+    except ValueError:
+        return False
+    return bool(bits & 0o077)
+
+
+def _reth_storage_from_diagnostics(diagnostics: dict[str, Any] | None) -> dict[str, Any]:
+    diagnostics = diagnostics or {}
+    return {
+        "data_dir_free_bytes": _optional_int(diagnostics.get("data_dir_free_bytes")),
+        "disk_used_pct": _optional_float(diagnostics.get("disk_used_pct")),
+        "db_growth_rate_bytes_per_hour": _optional_float(diagnostics.get("db_growth_rate_bytes_per_hour")),
+        "snapshot_mode": str(diagnostics.get("snapshot_mode", "unknown")),
+        "diagnostic_source": str(diagnostics.get("diagnostic_source", "none")),
+    }
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _reth_observability_signatures(*, consensus: dict[str, Any], storage: dict[str, Any]) -> list[str]:
+    signatures: list[str] = []
+    if consensus.get("jwt_configured") is False or consensus.get("jwt_secret_exists") is False:
+        signatures.append("jwt_missing")
+    if _jwt_mode_insecure(consensus.get("jwt_secret_mode")):
+        signatures.append("jwt_secret_insecure_permissions")
+    if storage.get("disk_used_pct") is not None and float(storage["disk_used_pct"]) >= 90:
+        signatures.append("disk_pressure")
+    return signatures
 
 
 def _reth_error_signatures(
