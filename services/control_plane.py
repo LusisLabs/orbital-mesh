@@ -741,8 +741,7 @@ class RunCoordinator:
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
         session = self.state_store.get_run_session(run_id)
-        with self._lock:
-            control = self.controls.get(run_id)
+        control = self._get_control(run_id)
         if session is None or control is None:
             raise KeyError(run_id)
         command_payload = {key: value for key, value in payload.items() if key != "command"}
@@ -1075,6 +1074,24 @@ class RunCoordinator:
             self._threads.pop(run_id, None)
             self.controls.pop(run_id, None)
 
+    def _get_control(self, run_id: str) -> RunControl | None:
+        """Locked read of ``self.controls[run_id]``.
+
+        Every read of the controls dict must go through this accessor.
+        Direct subscripting (``self.controls[run_id]``) is unsafe now
+        that ``_finalize_run`` actively pops entries on terminal
+        transitions: a late re-entry into ``_wait_if_needed`` (e.g.,
+        from a callback path that fires after the finally block has
+        already cleaned up) would otherwise raise ``KeyError`` and
+        crash the worker thread.
+
+        Returns ``None`` if the run is no longer tracked. Callers
+        treat that as "the run has terminated" and bail out — exactly
+        the same semantics as a cancelled session.
+        """
+        with self._lock:
+            return self.controls.get(run_id)
+
     def _execution_review_artifact(self, execution: ExecutionRecord) -> tuple[str, str, dict[str, Any]] | None:
         if not isinstance(execution.external_refs, dict):
             return None
@@ -1402,8 +1419,7 @@ class RunCoordinator:
         decision: Decision,
         evaluation: EvaluationResult,
     ) -> bool:
-        with self._lock:
-            control = self.controls.get(run_id)
+        control = self._get_control(run_id)
         if control is None or not control.auto_mode:
             return False
         if evaluation.passed and evaluation.final_recommendation == "execute":
@@ -1650,8 +1666,14 @@ class RunCoordinator:
         evaluation: EvaluationResult | None,
     ) -> dict[str, Any]:
         session = self.state_store.get_run_session(run_id)
-        control = self.controls[run_id]
-        if session is None:
+        control = self._get_control(run_id)
+        # If either the session or the control entry has been cleared
+        # (terminal-state cleanup ran while we were waiting), bail
+        # out cleanly rather than KeyError. This is the bug-fix path
+        # added with C1: ``_finalize_run`` actively pops controls on
+        # completion, so a late re-entry from a callback can land
+        # here with the run already gone.
+        if session is None or control is None:
             return {"action": "cancel"}
 
         requires_pause = stage in control.pause_points or (stage == "evaluation_ready" and not control.auto_mode)

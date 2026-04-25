@@ -155,5 +155,77 @@ class RecoveryPathSafetyTests(unittest.TestCase):
         self.assertNotIn(run_id, self.coord._threads)
 
 
+class GetControlAccessorTests(unittest.TestCase):
+    """C2: every read of ``self.controls`` must go through
+    ``_get_control``. The bare-subscript path that used to live in
+    ``_wait_if_needed`` would raise ``KeyError`` when the run had
+    already been finalized — a real bug now that ``_finalize_run``
+    actively pops entries on terminal transitions.
+
+    These tests pin both the accessor's contract and the
+    callsite-handling of its ``None`` return."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.coord = _make_coordinator(self.tmp.name)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_get_control_returns_none_for_unknown_run(self) -> None:
+        """The accessor must return None — never KeyError — for runs
+        that were never registered or have already been finalized.
+        Callers depend on the None branch to bail out cleanly."""
+        self.assertIsNone(self.coord._get_control("never_existed"))
+
+    def test_get_control_returns_live_entry(self) -> None:
+        """The happy path: a run that's currently being tracked
+        returns its ``RunControl``, unchanged."""
+        run_id = "run_live"
+        ctrl = RunControl(auto_mode=True, pause_points=["evaluation_ready"])
+        self.coord.controls[run_id] = ctrl
+        self.assertIs(self.coord._get_control(run_id), ctrl)
+
+    def test_get_control_returns_none_after_finalize(self) -> None:
+        """The exact scenario the C2 bug fix targets: a callback
+        path re-enters the accessor *after* the finally block has
+        already cleaned up. The accessor must return None so the
+        caller can treat the run as terminated."""
+        run_id = "run_late_reentry"
+        self.coord.controls[run_id] = RunControl(auto_mode=False, pause_points=[])
+        self.coord._threads[run_id] = threading.Thread(target=lambda: None)
+
+        # Simulate the finally-block running first.
+        self.coord._finalize_run(run_id)
+
+        # Now a late re-entry — must NOT raise KeyError.
+        self.assertIsNone(self.coord._get_control(run_id))
+
+    def test_get_control_holds_lock_during_read(self) -> None:
+        """Sanity check: the accessor reads under ``self._lock``.
+        We verify by holding the lock externally and asserting the
+        accessor blocks; this guarantees writes from
+        ``_finalize_run`` cannot interleave with a partial read."""
+        run_id = "run_lock_test"
+        self.coord.controls[run_id] = RunControl(auto_mode=True, pause_points=[])
+
+        observed: list[RunControl | None] = []
+
+        def reader() -> None:
+            observed.append(self.coord._get_control(run_id))
+
+        with self.coord._lock:
+            t = threading.Thread(target=reader)
+            t.start()
+            # The reader must be blocked on the lock right now.
+            t.join(timeout=0.05)
+            self.assertTrue(t.is_alive(), "_get_control read while lock held")
+        # Lock released — reader unblocks.
+        t.join(timeout=1.0)
+        self.assertFalse(t.is_alive())
+        self.assertEqual(len(observed), 1)
+        self.assertIsNotNone(observed[0])
+
+
 if __name__ == "__main__":
     unittest.main()
