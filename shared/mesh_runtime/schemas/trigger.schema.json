@@ -26,6 +26,7 @@
       "enum": [
         "feature_flag_performance_regression",
         "kubernetes_deployment_unhealthy",
+        "reth_node_degraded",
         "otel_metric_regression"
       ]
     },
@@ -152,6 +153,24 @@
         "available_replicas": {
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "peer_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "block_lag": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "disk_used_pct": {
+          "type": [
+            "number",
             "null"
           ]
         }

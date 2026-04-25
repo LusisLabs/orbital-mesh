@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import EventEnvelope, validate_payload
@@ -12,14 +13,31 @@ if TYPE_CHECKING:
     from shared.mesh_runtime.learning import LearningStore
 
 
+# Logger name follows the ``mesh.<component>.<area>`` pattern used elsewhere
+# in the codebase (see services/actuators/systemd_ssh.py,
+# services/control_plane.py) so the harness's root ``mesh`` FileHandler
+# captures it automatically.
+_LOG = logging.getLogger("mesh.ingest")
+
+
 class IngestService:
     def __init__(self, learning_store: LearningStore | None = None) -> None:
         self.learning_store = learning_store
 
     def normalize_signal(self, raw_signal: dict) -> EventEnvelope:
-        if raw_signal.get("signal_type") == "otel_metric_regression":
+        signal_type = raw_signal.get("signal_type") or "feature_flag"
+        # One line per stage entry gives readers a reliable cursor when
+        # scanning the server log. Keep it short — detail belongs in the
+        # stage-specific logs below, not in this header.
+        _LOG.info(
+            "ingest: signal_type=%s service=%s signal_id=%s",
+            signal_type, raw_signal.get("service"), raw_signal.get("signal_id"),
+        )
+        if signal_type == "otel_metric_regression":
             return self._normalize_otel_signal(raw_signal)
-        if raw_signal.get("signal_type") == "kubernetes_deployment_issue":
+        if signal_type == "reth_node":
+            return self._normalize_reth_node_signal(raw_signal)
+        if signal_type == "kubernetes_deployment_issue":
             validate_payload("kubernetes-signal.schema.json", raw_signal)
             related_context = {
                 "active_suppression": False,
@@ -34,6 +52,14 @@ class IngestService:
             self._enrich_from_learning(related_context, raw_signal.get("service", ""), raw_signal.get("endpoint"))
             deployment = raw_signal["deployment"]
             log_summary = summarize_kubernetes_logs(raw_signal["logs"], raw_signal["events"], raw_signal["pods"])
+            _LOG.info(
+                "ingest: kubernetes deployment=%s rollout_status=%s pods=%d events=%d error_signatures=%s",
+                deployment["name"],
+                deployment.get("rollout_status"),
+                len(raw_signal.get("pods", [])),
+                len(raw_signal.get("events", [])),
+                log_summary.get("error_signatures", []),
+            )
             return EventEnvelope(
                 event_type="normalized_signal",
                 object_id=raw_signal["signal_id"],
@@ -124,6 +150,74 @@ class IngestService:
                 "service": raw_signal["service"],
                 "endpoint": raw_signal["endpoint"],
                 "flag_key": feature_flag["flag_key"],
+            },
+        )
+
+    def _normalize_reth_node_signal(self, raw_signal: dict) -> EventEnvelope:
+        validate_payload("reth-node-signal.schema.json", raw_signal)
+
+        node = raw_signal["node"]
+        execution = raw_signal["execution"]
+        consensus = raw_signal["consensus"]
+        storage = raw_signal["storage"]
+        rpc = raw_signal["rpc"]
+        related_context = {
+            "release_id": node.get("client_version"),
+            "active_suppression": False,
+            "incident_owned_by_human": False,
+            "known_upstream_outage": False,
+            "active_incidents": 0,
+            "similar_prior_cases": 0,
+            "rollbacks_last_24h": 0,
+            "regressions_last_7d": 0,
+        }
+        related_context.update(raw_signal.get("related_context", {}))
+        related_context.update({
+            "node": node,
+            "execution": execution,
+            "consensus": consensus,
+            "storage": storage,
+            "rpc": rpc,
+            "logs": raw_signal["logs"],
+            "resource_attributes": raw_signal["resource_attributes"],
+        })
+        self._enrich_from_learning(related_context, raw_signal["service"], "reth.node")
+
+        _LOG.info(
+            "ingest: reth node=%s peers=%s block_lag=%s syncing=%s signatures=%s",
+            node["name"],
+            execution["peer_count"],
+            execution["block_lag"],
+            execution["syncing"],
+            raw_signal["logs"].get("error_signatures", []),
+        )
+        return EventEnvelope(
+            event_type="normalized_signal",
+            object_id=raw_signal["signal_id"],
+            schema_version="v1",
+            emitted_at=raw_signal["observed_at"],
+            payload={
+                "signal_type": "reth_node",
+                "environment": raw_signal["environment"],
+                "service": raw_signal["service"],
+                "endpoint": "reth.node",
+                "comparison_window": raw_signal.get("comparison_window"),
+                "segment": raw_signal.get("segment", {"customer_tier": "system", "region": "unknown"}),
+                "node": node,
+                "execution": execution,
+                "consensus": consensus,
+                "storage": storage,
+                "rpc": rpc,
+                "logs": raw_signal["logs"],
+                "resource_attributes": raw_signal["resource_attributes"],
+                "related_context": related_context,
+                "post_action_observations": raw_signal.get("post_action_observations", {}),
+            },
+            summary={
+                "service": raw_signal["service"],
+                "endpoint": "reth.node",
+                "peer_count": execution["peer_count"],
+                "block_lag": execution["block_lag"],
             },
         )
 

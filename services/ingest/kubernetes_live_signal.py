@@ -47,6 +47,21 @@ def collect_kubernetes_signal(
 
     pod_items = pods_payload.get("items", [])
     pod_names = {pod.get("metadata", {}).get("name") for pod in pod_items}
+    # Event freshness cutoff. Kubernetes keeps events for ~1 hour by default
+    # (``--event-ttl=1h``), which is way too broad for Mesh's purposes:
+    # we want to know what's happening *now*, not whatever happened 45
+    # minutes ago. Without a cutoff, an ImagePullBackOff event from
+    # earlier in the session contaminates every subsequent signal —
+    # ``summarize_kubernetes_logs`` picks up the stale reason and the
+    # decision engine treats every unrelated trigger as an image-pull
+    # problem.
+    #
+    # 5 minutes is enough to capture what the decision engine considers
+    # "recent" (most Kubernetes events fire within seconds of the
+    # underlying state change) while ignoring everything from prior
+    # chaos experiments. Operators running long incident investigations
+    # outside the chaos harness can override via ``MESH_K8S_EVENT_WINDOW_SECONDS``.
+    event_window_cutoff = _event_window_cutoff()
     events = [
         {
             "reason": item.get("reason"),
@@ -56,6 +71,7 @@ def collect_kubernetes_signal(
         }
         for item in events_payload.get("items", [])
         if _event_matches(item, deployment_name, pod_names)
+        and _event_is_fresh(item, event_window_cutoff)
     ]
 
     pods = [_summarize_pod(item) for item in pod_items]
@@ -83,6 +99,14 @@ def collect_kubernetes_signal(
     revision = deployment.get("metadata", {}).get("annotations", {}).get("deployment.kubernetes.io/revision")
     status = deployment.get("status", {})
     spec = deployment.get("spec", {})
+    rollout_started_at = _rollout_started_at(deployment)
+    # Deploy correlation is the single most-useful piece of evidence
+    # for k8s remediation decisions. The SRE escalation ladder branches
+    # right at "did this break right after a deploy?" — if yes, rollback;
+    # if no, the bug existed before and a rollback won't help. We surface
+    # both an absolute timestamp (for the audit trail) and the relative
+    # age in seconds (for the decision engine's threshold check).
+    seconds_since_deploy = _seconds_since(rollout_started_at)
     signal = {
         "signal_type": "kubernetes_deployment_issue",
         "signal_id": f"sig_k8s_{_slugify(namespace)}_{_slugify(deployment_name)}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
@@ -95,11 +119,13 @@ def collect_kubernetes_signal(
             "name": deployment_name,
             "revision": str(revision or "unknown"),
             "image": _first_container_image(deployment) or "unknown",
-            "rollout_started_at": _rollout_started_at(deployment),
+            "rollout_started_at": rollout_started_at,
             "rollout_status": _rollout_status(deployment),
             "desired_replicas": int(spec.get("replicas", 1)),
             "updated_replicas": int(status.get("updatedReplicas", 0)),
             "available_replicas": int(status.get("availableReplicas", 0)),
+            "last_deploy_timestamp": rollout_started_at,
+            "seconds_since_deploy": seconds_since_deploy,
         },
         "pods": [
             {
@@ -192,6 +218,74 @@ def _event_matches(item: dict[str, Any], deployment_name: str, pod_names: set[st
     return bool(name and name.startswith(f"{deployment_name}-") and kind in {"ReplicaSet", "Pod"})
 
 
+def _event_window_cutoff() -> datetime:
+    """Cutoff time for event freshness. Events older than this are dropped.
+
+    Configurable via ``MESH_K8S_EVENT_WINDOW_SECONDS``. Default 300s (5
+    minutes), chosen to comfortably cover the time from an event
+    firing to Mesh collecting a signal while being tight enough to
+    exclude events from previous chaos experiments or older incidents.
+    """
+    import os
+    window_seconds = int(os.getenv("MESH_K8S_EVENT_WINDOW_SECONDS", "300"))
+    return datetime.now(timezone.utc).replace(microsecond=0) - _timedelta_seconds(window_seconds)
+
+
+def _timedelta_seconds(seconds: int):
+    # Small wrapper to avoid importing timedelta at module level — it's
+    # only used in one narrow path and the import is cheap.
+    from datetime import timedelta
+    return timedelta(seconds=seconds)
+
+
+def _event_is_fresh(item: dict[str, Any], cutoff: datetime) -> bool:
+    """True if any of the event's timestamps is newer than ``cutoff``.
+
+    Kubernetes events carry up to three timestamps, and which one is
+    populated depends on the event source and version:
+
+    * ``lastTimestamp`` — most reliable for aggregated events (the
+      kubelet updates it every time the underlying condition re-fires).
+    * ``eventTime`` — used by the newer events API (``events.k8s.io/v1``).
+    * ``metadata.creationTimestamp`` — always present, but represents
+      when the event record was first created; for an aggregated event
+      that's older than the latest occurrence.
+
+    We treat the event as fresh if *any* of these is within the window,
+    which errs on the side of inclusion. A pathological event missing
+    all three would be dropped — that's fine because we've never seen
+    one in practice and a missing-timestamp event isn't a useful signal.
+    """
+    candidates = [
+        item.get("lastTimestamp"),
+        item.get("eventTime"),
+        (item.get("metadata") or {}).get("creationTimestamp"),
+    ]
+    for raw in candidates:
+        parsed = _parse_k8s_timestamp(raw)
+        if parsed is not None and parsed >= cutoff:
+            return True
+    return False
+
+
+def _parse_k8s_timestamp(raw: Any) -> datetime | None:
+    """Parse a Kubernetes RFC3339 timestamp. Returns None on anything we
+    can't make sense of, so the caller treats it as not-fresh.
+
+    ``None`` inputs happen for events where a given timestamp field
+    wasn't populated by the source. Malformed strings happen
+    occasionally from custom controllers. Both map to "skip this
+    timestamp" without raising."""
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        # Python's fromisoformat accepts the "Z" suffix only in 3.11+;
+        # the replace handles older runtimes and is a no-op in 3.11+.
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
 def _summarize_pod(item: dict[str, Any]) -> dict[str, Any]:
     status = item.get("status", {})
     container_statuses = status.get("containerStatuses", [])
@@ -215,6 +309,32 @@ def _first_container_image(payload: dict[str, Any]) -> str | None:
     if not containers:
         return None
     return containers[0].get("image")
+
+
+def _seconds_since(rfc3339_timestamp: str | None) -> int | None:
+    """How long ago was ``rfc3339_timestamp``, in seconds.
+
+    Returns None for malformed input or absent timestamps. This is
+    consumed by the decision engine to apply the SRE deploy-correlation
+    rule: if a crash starts within 30 minutes of a deploy, it's almost
+    certainly the deploy's fault and the right action is rollback. If
+    the crash starts hours later, the bug existed before the deploy
+    and a rollback won't help — that case wants escalation, not
+    remediation.
+    """
+    if not rfc3339_timestamp or not isinstance(rfc3339_timestamp, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(rfc3339_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    delta = datetime.now(timezone.utc) - ts
+    seconds = int(delta.total_seconds())
+    # Clock skew between Mesh's host and the kube API server can produce
+    # negative deltas. Clamp to 0 — "in the future" is meaningless for a
+    # rollout that already happened, and negative values would confuse
+    # downstream threshold checks.
+    return max(0, seconds)
 
 
 def _rollout_started_at(payload: dict[str, Any]) -> str:

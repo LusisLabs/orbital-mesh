@@ -150,6 +150,31 @@ class RuntimeConfig:
     benchmark_export_path: str = str(DEFAULT_BENCHMARK_EXPORT_PATH)
     service_agents_config_path: str | None = None
     agent_reconciliation_enabled: bool = True
+    # Bare-metal SSH actuator: blockchain nodes (Solana/Agave, geth, reth,
+    # lighthouse) run as systemd services on dedicated hardware, not in k8s.
+    # Actuation goes through the SSH adapter with four overlapping safety
+    # constraints: ssh_execution_enabled, the host allowlist, the service
+    # allowlist, and a hardcoded command allowlist inside the adapter.
+    # ALL FOUR must be set to meaningful values before real execution runs.
+    ssh_execution_enabled: bool = False
+    ssh_command: str = "ssh"
+    ssh_identity_file: str | None = None
+    ssh_connect_timeout_seconds: int = 10
+    ssh_command_timeout_seconds: int = 30
+    # ServerAlive tuning: send a keepalive probe every N seconds, declare
+    # the connection dead after M missed probes. Default 30s * 3 = 90s to
+    # detect a silently-dropped TCP flow — vastly better than the OS-level
+    # retransmit timeout (~15 min) that would otherwise apply. These are
+    # client-side only and don't require any change on the target node.
+    ssh_server_alive_interval_seconds: int = 30
+    ssh_server_alive_count_max: int = 3
+    ssh_allowed_hosts: tuple[str, ...] = ()
+    ssh_allowed_services: tuple[str, ...] = ()
+    # Node-health ingester targets (Solana RPC + geth/reth JSON-RPC). Each
+    # entry is a JSON blob: {"name": "mainnet-07", "kind": "solana",
+    # "rpc_url": "http://127.0.0.1:8899", "host": "vault-prod-07",
+    # "service": "solana-validator.service"}
+    bare_metal_node_targets: tuple[dict[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -297,6 +322,16 @@ class RuntimeConfig:
             ),
             agent_reconciliation_enabled=os.getenv("MESH_AGENT_RECONCILIATION_ENABLED", "true").lower()
             not in ("0", "false", "no"),
+            ssh_execution_enabled=os.getenv("MESH_SSH_EXECUTION_ENABLED", "").lower() in ("1", "true", "yes"),
+            ssh_command=os.getenv("MESH_SSH_COMMAND", "ssh"),
+            ssh_identity_file=os.getenv("MESH_SSH_IDENTITY_FILE") or None,
+            ssh_connect_timeout_seconds=int(os.getenv("MESH_SSH_CONNECT_TIMEOUT_SECONDS", "10")),
+            ssh_command_timeout_seconds=int(os.getenv("MESH_SSH_COMMAND_TIMEOUT_SECONDS", "30")),
+            ssh_server_alive_interval_seconds=int(os.getenv("MESH_SSH_SERVER_ALIVE_INTERVAL_SECONDS", "30")),
+            ssh_server_alive_count_max=int(os.getenv("MESH_SSH_SERVER_ALIVE_COUNT_MAX", "3")),
+            ssh_allowed_hosts=_csv_env("MESH_SSH_ALLOWED_HOSTS"),
+            ssh_allowed_services=_csv_env("MESH_SSH_ALLOWED_SERVICES"),
+            bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
         )
 
 
@@ -305,6 +340,30 @@ def _csv_env(name: str) -> tuple[str, ...]:
     if not raw.strip():
         return ()
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
+    """Parse MESH_BARE_METAL_NODE_TARGETS as a JSON array of node descriptors.
+
+    Each descriptor has at minimum ``name``, ``kind`` (``solana`` /
+    ``geth`` / ``reth``), ``rpc_url``, ``host``, and ``service``. We don't
+    deep-validate here — the ingester does that on first use and surfaces
+    a readable error if a field is wrong. Letting a typo surface at ingest
+    time (with full context) beats failing RuntimeConfig construction with
+    a stack trace that doesn't mention the offending entry.
+    """
+    if not raw:
+        return ()
+    try:
+        targets = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return ()
+    if not isinstance(targets, list):
+        return ()
+    return tuple(
+        target for target in targets
+        if isinstance(target, dict) and all(k in target for k in ("name", "kind", "host"))
+    )
 
 
 def _normalize_agent_fabric_mode(raw: str) -> str:

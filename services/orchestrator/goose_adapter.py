@@ -29,12 +29,18 @@ class GooseAdapter:
 class NativeGooseAdapter(GooseAdapter):
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         from services.actuators.argocd import ArgoCDAdapter
+        from services.actuators.systemd_ssh import SystemdSshAdapter
         self.config = config
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
         self.kubernetes = KubernetesAdapter(config=config)
         self.audit_logs = AuditLogAdapter()
         self.repo_patch = RepoPatchAdapter()
+        # Bare-metal SSH adapter — constructed unconditionally because it's
+        # cheap and mock-by-default. The config's ssh_execution_enabled flag
+        # gates real side effects; without it the adapter returns mock
+        # results. This keeps test environments hermetic.
+        self.systemd_ssh = SystemdSshAdapter(config=config)
         cfg = config or RuntimeConfig()
         self.argocd = ArgoCDAdapter(
             url=cfg.argocd_url,
@@ -78,6 +84,25 @@ class NativeGooseAdapter(GooseAdapter):
                 result = self.kubernetes.drain_node(execution_plan["parameters"])
             else:
                 result = self.kubernetes.restart_deployment(execution_plan["parameters"])
+        elif execution_plan["system"] == "systemd_service":
+            # Bare-metal actuation via SSH. The adapter carries its own
+            # four-part safety envelope (enable flag + host allowlist +
+            # service allowlist + command allowlist); this switch only
+            # routes allowed systemd verbs to their methods. Unknown
+            # actions fail loudly rather than get silently dropped.
+            action = execution_plan["action"]
+            if action == "restart_systemd_service":
+                result = self.systemd_ssh.restart_service(execution_plan["parameters"])
+            elif action == "start_systemd_service":
+                result = self.systemd_ssh.start_service(execution_plan["parameters"])
+            elif action == "stop_systemd_service":
+                result = self.systemd_ssh.stop_service(execution_plan["parameters"])
+            else:
+                result = {
+                    "status": "failed",
+                    "failure": {"reason": "unknown_systemd_action", "detail": str(action)},
+                    "external_refs": {},
+                }
         elif execution_plan["system"] == "argocd_service":
             action = execution_plan["action"]
             if action == "sync_application":

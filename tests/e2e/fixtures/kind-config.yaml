@@ -1,0 +1,19 @@
+# Minimal kind cluster config for Mesh e2e scenarios.
+#
+# One control-plane + two worker nodes — enough to exercise scheduling,
+# node-level signals, and eventual-consistency in kubectl responses, but
+# small enough to come up in ~30 seconds on a laptop or CI runner.
+#
+# The cluster name ``mesh-e2e`` is hardcoded in the harness allowlist
+# (MESH_KUBERNETES_ALLOWED_CONTEXTS=kind-mesh-e2e). Changing the name here
+# requires updating the allowlist in scripts/run_e2e.sh in lockstep.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: mesh-e2e
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+# Default networking is fine; we're not testing CNI. Default storage is
+# fine; we're not testing volumes. Everything we exercise runs in pods
+# with emptyDir.

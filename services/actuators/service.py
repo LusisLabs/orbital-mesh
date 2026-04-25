@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import shlex
 import subprocess
 from typing import Any, TypedDict
 
 from shared.mesh_runtime import Decision, RuntimeConfig
+
+
+_LOG = logging.getLogger("mesh.actuators")
 
 
 class ActuatorResult(TypedDict, total=False):
@@ -36,6 +40,10 @@ class KubernetesParameters(TypedDict, total=False):
 
 class FeatureFlagAdapter:
     def set_rollout(self, parameters: dict[str, Any]) -> ActuatorResult:
+        _LOG.info(
+            "actuator: feature_flag set_rollout flag=%s rollout_pct=%s env=%s",
+            parameters.get("flag_key"), parameters.get("rollout_pct"), parameters.get("environment"),
+        )
         return {
             "status": "succeeded",
             "external_refs": {"flag_change_id": f"ffchg_{parameters['flag_key']}_{parameters['rollout_pct']}"},
@@ -45,6 +53,10 @@ class FeatureFlagAdapter:
 class IncidentAdapter:
     def open_incident(self, parameters: dict[str, Any]) -> ActuatorResult:
         incident_scope = parameters.get("service") or parameters.get("decision_id") or parameters.get("flag_key") or "unknown"
+        _LOG.info(
+            "actuator: incident open_incident scope=%s severity=%s reason=%s",
+            incident_scope, parameters.get("severity"), parameters.get("reason"),
+        )
         return {
             "status": "succeeded",
             "external_refs": {"incident_id": f"inc_{incident_scope}"},
@@ -58,6 +70,14 @@ class KubernetesAdapter:
     def rollback_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
         revision = parameters.get("revision") or "previous"
+        # Mode tag in the log lets a reader skim and see whether the
+        # cluster was actually touched. "mock" means nothing ran;
+        # "live" means kubectl was invoked.
+        mode = "live" if self.config.kubernetes_live_execution_enabled else "mock"
+        _LOG.info(
+            "actuator: k8s rollback_deployment deployment=%s namespace=%s revision=%s mode=%s",
+            deployment_name, parameters.get("namespace"), revision, mode,
+        )
         if self.config.kubernetes_live_execution_enabled:
             return self._live_rollback(parameters, deployment_name, revision)
         return {
@@ -70,6 +90,11 @@ class KubernetesAdapter:
 
     def restart_deployment(self, parameters: KubernetesParameters) -> ActuatorResult:
         deployment_name = parameters["deployment_name"]
+        mode = "live" if self.config.kubernetes_live_execution_enabled else "mock"
+        _LOG.info(
+            "actuator: k8s restart_deployment deployment=%s namespace=%s mode=%s",
+            deployment_name, parameters.get("namespace"), mode,
+        )
         if self.config.kubernetes_live_execution_enabled:
             return self._live_restart(parameters, deployment_name)
         return {
