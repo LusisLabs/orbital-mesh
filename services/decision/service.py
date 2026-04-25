@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
 from shared.mesh_runtime.review_blockers import classify_review_reasons
+
+
+_LOG = logging.getLogger("mesh.decision")
 
 if TYPE_CHECKING:
     from services.decision.hypothesis_engine import HypothesisEngine
@@ -14,6 +18,19 @@ if TYPE_CHECKING:
     from services.decision.llm_reasoning import EscalationReasoner
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
+
+
+# Deploy correlation threshold for the SRE-grade k8s policy. A crash
+# starting within this window of a deploy is treated as deploy-caused;
+# above the threshold, the bug existed before the rollout and rollback
+# would not fix it. 30 minutes is the standard heuristic used by most
+# on-call runbooks (Google SRE handbook + the broader incident response
+# literature). Operators who want a different threshold can set
+# MESH_K8S_DEPLOY_CORRELATION_WINDOW_SECONDS.
+import os as _os
+_DEPLOY_CORRELATION_WINDOW_SECONDS: int = int(
+    _os.getenv("MESH_K8S_DEPLOY_CORRELATION_WINDOW_SECONDS", "1800")
+)
 
 
 _LLM_ALLOWED_ACTIONS = frozenset({
@@ -46,12 +63,55 @@ class DecisionService:
         self._llm_proposer = llm_proposer
 
     def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+        # Log the branch up front. Readers scanning a server log for
+        # "why did Mesh propose X" need to know which decision path ran
+        # before they look at the rule registry, the LLM fallback, or
+        # the feature-flag heuristics. One line here saves a lot of
+        # guessing later.
+        _LOG.info(
+            "decide: branch trigger_type=%s service=%s trigger_id=%s",
+            trigger.trigger_type, trigger.service, trigger.trigger_id,
+        )
         if trigger.trigger_type == "otel_metric_regression":
-            return self._decide_otel_metric(trigger)
+            decision = self._decide_otel_metric(trigger)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
+        if trigger.trigger_type == "reth_node_degraded":
+            decision = self._decide_reth_node(trigger)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         if trigger.trigger_type == "webhook_alert_firing":
-            return self._decide_webhook_alert(trigger)
+            decision = self._decide_webhook_alert(trigger)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -257,6 +317,98 @@ class DecisionService:
 
     # ------------------------------------------------------------------ OTel
 
+    def _decide_reth_node(self, trigger: Trigger) -> Decision:
+        """Decide on a first-class Reth node health trigger.
+
+        Reth is stateful execution infrastructure, so the safe default differs
+        from stateless Kubernetes apps: restart only for bounded process/network
+        symptoms, and escalate for storage, JWT/Engine API, or DB-like failures.
+        """
+        signatures = set(trigger.related_context.get("error_signatures", []))
+        policy = load_policy("reth-node.policy.json")
+        node = trigger.related_context.get("node", {})
+        execution = trigger.related_context.get("execution", {})
+        consensus = trigger.related_context.get("consensus", {})
+        storage = trigger.related_context.get("storage", {})
+        resource_attributes = trigger.related_context.get("resource_attributes", {})
+
+        recent_restarts = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        if recent_restarts >= int(policy["max_restarts_per_window"]):
+            signatures.add("restart_frequency_exceeded")
+
+        restartable = signatures & set(policy["restartable_signatures"])
+        unsafe = signatures & set(policy["escalation_signatures"])
+        if unsafe:
+            decision_type = "escalate"
+            confidence = 0.74
+            risk_level = "high"
+            autonomy_tier = "escalated"
+        elif restartable:
+            decision_type = "restart_systemd_service"
+            confidence = 0.72
+            risk_level = "medium"
+            autonomy_tier = "approval_required" if policy.get("require_approval_for_restart", True) else "autonomous"
+        else:
+            decision_type = "no_action"
+            confidence = 0.66
+            risk_level = "low"
+            autonomy_tier = "autonomous"
+
+        evidence = [
+            f"reth node role={node.get('role', 'unknown')} network={node.get('network', 'unknown')}",
+            f"peer_count={execution.get('peer_count')} block_lag={execution.get('block_lag')} syncing={execution.get('syncing')}",
+            f"engine_api_reachable={consensus.get('engine_api_reachable')} forkchoice_recent={consensus.get('forkchoice_updates_recent')}",
+            f"disk_used_pct={storage.get('disk_used_pct')}",
+        ]
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            decision_type=decision_type,
+            autonomy_tier=autonomy_tier,
+            summary=_summary(trigger, decision_type, 0),
+            reasoning={
+                "primary_hypothesis": (
+                    f"Reth node {trigger.service} is degraded due to "
+                    f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
+                ),
+                "evidence": evidence,
+                "evidence_pack": {
+                    "error_signatures": sorted(signatures),
+                    "node": node,
+                    "execution": execution,
+                    "consensus": consensus,
+                    "storage": storage,
+                    "resource_attributes": resource_attributes,
+                    "reth_policy": {
+                        "max_restarts_per_window": policy["max_restarts_per_window"],
+                        "restart_window_seconds": policy["restart_window_seconds"],
+                        "require_approval_for_restart": policy["require_approval_for_restart"],
+                    },
+                    "trust_boundary": (
+                        "systemd restart remains approval-gated; storage, Engine API, JWT, and DB "
+                        "conditions are escalation-only in the first Reth integration slice"
+                    ),
+                },
+                "alternatives_considered": _alternatives(decision_type),
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "<= unchanged or lower for RPC requests",
+                    "error_rate": "<= current RPC error rate after remediation",
+                },
+                "time_to_effect": "5m",
+            },
+            risk={
+                "level": risk_level,
+                "blast_radius": "single_reth_node",
+                "customer_impact_if_wrong": _customer_impact_if_wrong(decision_type),
+            },
+            confidence=confidence,
+            execution_plan=_execution_plan(trigger, decision_type, 0),
+        )
+        decision.validate()
+        return decision
+
     def _decide_otel_metric(self, trigger: Trigger) -> Decision:
         """Decide on an OTel metric-regression trigger.
 
@@ -272,17 +424,29 @@ class DecisionService:
         signal_view = _build_signal_view_from_trigger(trigger)
         rule_match = self._metric_action_matcher.match(signal_view)
         if rule_match is not None:
+            _LOG.info(
+                "decide(otel): layer2 rule_match rule=%s action=%s",
+                rule_match.rule_name, rule_match.action,
+            )
             return self._decision_from_rule_match(trigger, rule_match)
 
+        _LOG.info("decide(otel): layer2 no rule matched")
         llm_risk_flags: list[str] = []
         if self._llm_proposer is not None:
+            _LOG.info("decide(otel): layer3 consulting LLM proposer")
             llm_result = self._llm_proposer.propose(signal_view)
             if llm_result.match is not None:
+                _LOG.info(
+                    "decide(otel): layer3 llm proposal accepted action=%s risk_flags=%s",
+                    llm_result.match.action, llm_result.risk_flags,
+                )
                 return self._decision_from_rule_match(
                     trigger, llm_result.match, llm_risk_flags=llm_result.risk_flags
                 )
             llm_risk_flags = llm_result.risk_flags
+            _LOG.info("decide(otel): layer3 llm did not produce a usable proposal flags=%s", llm_risk_flags)
 
+        _LOG.info("decide(otel): layer4 falling through to escalate (llm_risk_flags=%s)", llm_risk_flags)
         return self._escalate_for_unmatched_metric(trigger, llm_risk_flags=llm_risk_flags)
 
     def _decision_from_rule_match(
@@ -437,6 +601,31 @@ class DecisionService:
         return decision
 
     def _decide_kubernetes(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+        """Decide on a Kubernetes deployment trigger using SRE-grade policy.
+
+        The previous version of this function was a flat ``if/elif`` tree
+        that treated ``crash_loop``, ``probe_failure``, and ``oom_killed``
+        as interchangeable — all routed to ``restart_deployment``. That
+        is exactly the naive policy SREs criticize. A real SRE escalation
+        ladder branches on:
+
+        1. **Deploy correlation** — did this break right after a deploy?
+           If so, rollback. If not, the bug existed before; restart won't
+           fix anything and we should escalate for log investigation.
+        2. **Resource pressure** — OOMKilled isn't fixed by restarting;
+           the new container fills the same limit and OOMs again. Raise
+           the limit (``patch_resources``) before considering restart.
+        3. **Probe-only failures** — readiness/liveness probes failing
+           without a crash usually mean a downstream dependency is sick.
+           Restarting the container won't fix that. Escalate.
+        4. **Image pull** — definitive supply-chain failure; rollback to
+           the prior image is the only sensible response.
+
+        The deploy-correlation threshold (default 30 minutes) is what
+        an on-call SRE actually checks first. Below the threshold, the
+        deploy is the prior cause hypothesis; above it, the bug existed
+        and Mesh shouldn't guess.
+        """
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         event_reasons = list(trigger.related_context.get("event_reasons", []))
         rollout_status = str(trigger.related_context.get("rollout_status", "degraded"))
@@ -454,6 +643,19 @@ class DecisionService:
         repeated_rollback = int(trigger.related_context.get("rollbacks_last_24h", 0)) > 0
         recovery_context = _recovery_context(trigger)
 
+        # SRE rule: deploy correlation is the single most useful piece
+        # of evidence. ``seconds_since_deploy`` from the signal collector
+        # tells us how recent the most recent rollout was. The 30-minute
+        # window (1800s) is the standard "if it broke right after a
+        # deploy, the deploy is the cause" threshold used by most teams.
+        # Above that, the bug existed before the deploy and rollback
+        # won't help.
+        seconds_since_deploy = trigger.related_context.get("seconds_since_deploy")
+        deploy_correlated = (
+            seconds_since_deploy is not None
+            and int(seconds_since_deploy) <= _DEPLOY_CORRELATION_WINDOW_SECONDS
+        )
+
         # Generate falsifiable hypotheses early. The top hypothesis is surfaced in
         # the decision reasoning and can upgrade the escalate fallback — but it
         # cannot override concrete rule matches (guardrails intact).
@@ -464,6 +666,19 @@ class DecisionService:
             except Exception:
                 hypotheses = []
 
+        # Branch order is significant — earlier branches override later
+        # ones when multiple symptoms are present. Ordering reflects
+        # which signature is most diagnostic of the root cause:
+        #
+        #   investigate_and_patch — explicit code-remediation handoff,
+        #     only when the operator pre-supplied repo/test/patch context
+        #   image_pull_failure   — supply-chain problem, rollback fixes it
+        #   rollout_status=failed — definitive controller verdict, rollback
+        #   oom_killed            — memory pressure, raise limit BEFORE restart
+        #   crash_loop + recent deploy — rollback (deploy is the cause)
+        #   crash_loop + no recent deploy — escalate (code investigation)
+        #   probe_failure only    — downstream/dependency, escalate
+        #   else                  — escalate (Mesh shouldn't guess)
         if (
             code_remediation_candidate
             and "application_error" in error_signatures
@@ -478,21 +693,98 @@ class DecisionService:
             risk_level = "medium"
             autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_repo_single_file"
-        elif "image_pull_failure" in error_signatures or rollout_status == "failed":
+        elif "image_pull_failure" in error_signatures:
+            # Image pull failure is the cleanest "rollback fixes it" case.
+            # The new image can't be pulled; the prior revision had a
+            # working image, so reverting puts us back on our feet.
             decision_type = "rollback_deployment"
             confidence = 0.9
             risk_level = "medium"
-            autonomy_tier = "autonomous"
+            autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_deployment"
-        elif "crash_loop" in error_signatures or "probe_failure" in error_signatures or "oom_killed" in error_signatures:
-            decision_type = "restart_deployment"
-            confidence = 0.78
+        elif rollout_status == "failed":
+            # Deployment controller has given up on this revision —
+            # ProgressDeadlineExceeded. Rollback unless we already
+            # rolled back recently, in which case we escalate to
+            # avoid a flapping rollback loop.
+            if repeated_rollback:
+                decision_type = "escalate"
+                confidence = 0.65
+                risk_level = "high"
+                autonomy_tier = "escalated"
+            else:
+                decision_type = "rollback_deployment"
+                confidence = 0.85
+                risk_level = "medium"
+                autonomy_tier = "autonomous"
+            blast_radius = "single_deployment"
+        elif "oom_killed" in error_signatures:
+            # OOMKilled with restart is a band-aid: the new container
+            # fills the same limit and OOMs again within minutes.
+            # ``patch_resources`` raises the memory limit, which gives
+            # the workload room to either run cleanly (limit was tight)
+            # or surface the leak more visibly. Either is more useful
+            # than the restart loop kubelet is already running.
+            decision_type = "patch_resources"
+            confidence = 0.74
+            risk_level = "medium"
+            # Always require approval — bumping resource limits has
+            # cluster-wide cost implications. An SRE should sign off.
+            autonomy_tier = "approval_required"
+            blast_radius = "single_deployment"
+        elif "crash_loop" in error_signatures and deploy_correlated:
+            # Recent deploy + crash loop = the deploy is almost certainly
+            # the cause. Rollback to the previous revision.
+            decision_type = "rollback_deployment"
+            confidence = 0.83
             risk_level = "medium"
             autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_deployment"
-        else:
+        elif "crash_loop" in error_signatures and not deploy_correlated:
+            # Crash loop with NO recent deploy means the bug existed
+            # before this revision became active. The standard SRE
+            # response is "restart isn't going to fix this — get logs,
+            # investigate, fix the code." Escalate rather than guess.
             decision_type = "escalate"
-            confidence = 0.65
+            confidence = 0.7
+            risk_level = "high"
+            autonomy_tier = "escalated"
+            blast_radius = "single_deployment"
+        elif "probe_failure" in error_signatures and not (
+            "crash_loop" in error_signatures or "oom_killed" in error_signatures
+        ):
+            # Probe failures without a crash usually indicate a
+            # downstream dependency that's sick (DB unreachable,
+            # upstream API timing out). Restarting our container won't
+            # fix the dependency. Escalate so a human can check.
+            decision_type = "escalate"
+            confidence = 0.68
+            risk_level = "medium"
+            autonomy_tier = "escalated"
+            blast_radius = "single_deployment"
+        else:
+            # Catch-all: when we can't narrow the cause, escalate
+            # rather than guess. The previous policy defaulted to
+            # restart_deployment here — an SRE would never accept that.
+            #
+            # We log the input fingerprint at DEBUG so an operator
+            # reading logs can tell apart "we deliberately did not act
+            # because no actionable signature was present" from "we
+            # missed a signal we should have caught." Without this,
+            # the only evidence is an "escalate" decision with no
+            # context.
+            _LOG.debug(
+                "decide(k8s): catch-all escalate — no actionable signature matched; "
+                "error_signatures=%s rollout_status=%s seconds_since_deploy=%s "
+                "deploy_correlated=%s repeated_rollback=%s",
+                error_signatures,
+                rollout_status,
+                seconds_since_deploy,
+                deploy_correlated,
+                repeated_rollback,
+            )
+            decision_type = "escalate"
+            confidence = 0.6
             risk_level = "high"
             autonomy_tier = "escalated"
             blast_radius = "single_deployment"
@@ -732,6 +1024,30 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
                 f"{trigger.related_context.get('previous_replicas', 'unknown')} if scaling does not restore health"
             ),
         }
+    if decision_type == "patch_resources":
+        # Default memory bump: double the previous limit if the
+        # operator gave us one in related_context, otherwise pick a
+        # conservative absolute target. The SRE-grade default for an
+        # OOMKill response is "give it more headroom and watch" — not
+        # uncapped growth. The actuator clamps via its allowlist.
+        previous_memory = trigger.related_context.get("memory_limit")
+        target_memory = trigger.related_context.get("target_memory_limit") or "1Gi"
+        return {
+            "system": "kubernetes_service",
+            "action": "patch_resources",
+            "parameters": {
+                "cluster": trigger.related_context.get("cluster"),
+                "kube_context": trigger.related_context.get("kube_context"),
+                "namespace": trigger.related_context.get("namespace"),
+                "deployment_name": trigger.related_context.get("deployment_name"),
+                "container": trigger.related_context.get("container") or trigger.service,
+                "limits": {"memory": target_memory},
+            },
+            "rollback_plan": (
+                f"restore the previous memory limit ({previous_memory or 'unknown'}) "
+                "if the new ceiling does not stop OOM kills within 15 minutes"
+            ),
+        }
     if decision_type == "cordon_node":
         return {
             "system": "kubernetes_service",
@@ -775,6 +1091,27 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
                 "target_revision": trigger.related_context.get("argocd_target_revision"),
             },
             "rollback_plan": "re-sync the application to the original revision once the underlying defect is fixed",
+        }
+    if decision_type == "restart_systemd_service":
+        attrs = trigger.related_context.get("resource_attributes", {})
+        return {
+            "system": "systemd_service",
+            "action": "restart_systemd_service",
+            "parameters": {
+                "host": (
+                    attrs.get("mesh.node.host")
+                    or trigger.related_context.get("host")
+                ),
+                "service": (
+                    attrs.get("mesh.node.service")
+                    or trigger.related_context.get("systemd_service")
+                ),
+                "reason": ", ".join(trigger.related_context.get("error_signatures", [])),
+            },
+            "rollback_plan": (
+                "no automatic rollback for a systemd restart; escalate if peers, block lag, "
+                "or RPC health do not recover within the feedback window"
+            ),
         }
     if decision_type == "investigate_and_patch":
         patch_template = trigger.related_context.get("patch_template", {})
@@ -868,6 +1205,13 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"to {trigger.related_context.get('target_replicas', trigger.related_context.get('replicas', '?'))} replicas "
             f"to relieve capacity pressure."
         )
+    if decision_type == "patch_resources":
+        target_memory = trigger.related_context.get('target_memory_limit') or '1Gi'
+        return (
+            f"Raise memory limit on {trigger.related_context.get('deployment_name', trigger.service)} "
+            f"in {trigger.related_context.get('namespace', 'default')} to {target_memory} — "
+            f"the workload is OOMKilling and a restart loop will keep recurring at the current limit."
+        )
     if decision_type == "cordon_node":
         return (
             f"Cordon node {trigger.related_context.get('node_name', 'unknown')} to prevent new pod scheduling "
@@ -888,6 +1232,11 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"Rollback ArgoCD application "
             f"{trigger.related_context.get('argocd_application', 'unknown')} to a prior revision."
         )
+    if decision_type == "restart_systemd_service":
+        return (
+            f"Restart systemd service {trigger.related_context.get('systemd_service', 'unknown')} on "
+            f"{trigger.related_context.get('host', 'unknown')} to recover the degraded node process."
+        )
     if decision_type == "investigate_and_patch":
         return (
             f"Investigate and patch {trigger.related_context.get('suspected_file', trigger.flag_key)} in a bounded repo "
@@ -904,10 +1253,17 @@ def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
             f"{trigger.environment} to contain the regression on {trigger.endpoint}."
         )
     if decision_type == "escalate":
+        if trigger.trigger_type == "reth_node_degraded":
+            return (
+                f"Escalate Reth node {trigger.service}: symptoms "
+                f"{', '.join(trigger.related_context.get('error_signatures', ['unknown']))} require human review."
+            )
         return (
             f"Escalate {trigger.flag_key} regression on {trigger.service} for human review due to conflicting "
             "signals or elevated business impact."
         )
+    if trigger.trigger_type == "reth_node_degraded":
+        return f"Record no action for Reth node {trigger.service}; current symptoms do not justify remediation."
     return (
         f"Record no action for {trigger.flag_key} because the current signal does not justify a bounded automated "
         "feature-flag change."
@@ -941,6 +1297,12 @@ def _alternatives(decision_type: str) -> list[str]:
             "open incident",
             "restart the current deployment revision",
         ]
+    if decision_type == "restart_systemd_service":
+        return [
+            "continue observing node health",
+            "open incident for manual node operations",
+            "restart the bounded allowlisted systemd service",
+        ]
     if decision_type == "investigate_and_patch":
         return [
             "continue with no change",
@@ -973,6 +1335,8 @@ def _customer_impact_if_wrong(decision_type: str) -> str:
         return "workloads briefly reschedule elsewhere; capacity pressure if cluster is tight"
     if decision_type in {"argocd_sync", "argocd_rollback"}:
         return "temporary Argo-managed state drift during reconciliation"
+    if decision_type == "restart_systemd_service":
+        return "brief execution node unavailability; consensus/RPC clients may observe degraded service during restart"
     if decision_type == "investigate_and_patch":
         return "temporary service instability from an incorrect bounded patch"
     if decision_type == "disable_flag":

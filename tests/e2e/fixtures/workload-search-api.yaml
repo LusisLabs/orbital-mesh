@@ -1,0 +1,84 @@
+# Test workload: a stand-in "search API" that runs until we break it.
+#
+# Design notes:
+# - Image is ``nginx:1.25-alpine`` — small, predictable, ubiquitous.
+#   Nothing search-specific; the name is only so signals look realistic
+#   against a service called "search-api".
+# - We use ``command: [nginx, -g, "daemon off;"]`` explicitly so the
+#   chaos injector can swap it with a command that exits non-zero to
+#   force CrashLoopBackOff. The default entrypoint works too, but
+#   explicit command makes the chaos injection a clean 1-field patch.
+# - Liveness + readiness probes on port 80 so the scheduler can reason
+#   about health. A failed liveness probe is one of the chaos modes we
+#   want to exercise.
+# - Resources are bounded so OOM injection is possible. 32Mi request /
+#   64Mi limit is plenty for nginx at idle but small enough that a
+#   memory-stress container would blow it up.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mesh-e2e
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: search-api
+  namespace: mesh-e2e
+  labels:
+    app: search-api
+    mesh.e2e/baseline: "true"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: search-api
+  template:
+    metadata:
+      labels:
+        app: search-api
+    spec:
+      # Pull policy IfNotPresent so we don't hit the registry on every
+      # retry during chaos — keeps tests hermetic and fast.
+      containers:
+        - name: search-api
+          image: nginx:1.25-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["nginx"]
+          args: ["-g", "daemon off;"]
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "50m"
+            limits:
+              memory: "64Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 1
+            periodSeconds: 3
+            failureThreshold: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: search-api
+  namespace: mesh-e2e
+spec:
+  selector:
+    app: search-api
+  ports:
+    - port: 80
+      targetPort: http
+      name: http

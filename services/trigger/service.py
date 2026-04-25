@@ -55,12 +55,29 @@ class TriggerService:
         signal_type = payload.get("signal_type", "feature_flag")
         _LOG.info("trigger: detect signal_type=%s object_id=%s", signal_type, envelope.object_id)
         if signal_type == "kubernetes_deployment_issue":
-            return self._detect_kubernetes_trigger(envelope)
-        if signal_type == "otel_metric_regression":
-            return self._detect_otel_metric_trigger(envelope)
-        if signal_type == "webhook_alert":
-            return self._detect_webhook_trigger(envelope)
-        return self._detect_feature_flag_trigger(envelope)
+            trigger = self._detect_kubernetes_trigger(envelope)
+        elif signal_type == "reth_node":
+            trigger = self._detect_reth_node_trigger(envelope)
+        elif signal_type == "otel_metric_regression":
+            trigger = self._detect_otel_metric_trigger(envelope)
+        elif signal_type == "webhook_alert":
+            trigger = self._detect_webhook_trigger(envelope)
+        else:
+            trigger = self._detect_feature_flag_trigger(envelope)
+        # Log the outcome in a single place so readers don't have to hunt
+        # across three branch methods to see whether a trigger fired.
+        if trigger is None:
+            _LOG.info("trigger: no_trigger (signal did not satisfy thresholds or was suppressed)")
+        else:
+            _LOG.info(
+                "trigger: fired type=%s service=%s endpoint=%s signals=%s",
+                trigger.trigger_type,
+                trigger.service,
+                trigger.endpoint,
+                trigger.related_context.get("trigger_signals")
+                or trigger.related_context.get("error_signatures"),
+            )
+        return trigger
 
     def _detect_feature_flag_trigger(self, envelope: EventEnvelope) -> Trigger | None:
         payload = envelope.payload
@@ -199,8 +216,105 @@ class TriggerService:
                 "event_reasons": log_summary.get("event_reasons", []),
                 "primary_symptom": log_summary.get("primary_symptom"),
                 "log_summary": log_summary,
+                # Deploy correlation evidence — surfaced into trigger
+                # context so the decision engine can apply the SRE rule
+                # "if a crash starts within ~30 minutes of a deploy,
+                # it's almost certainly the deploy's fault." The signal
+                # collector populates these from the deployment's
+                # Progressing condition; we forward them verbatim.
+                "last_deploy_timestamp": deployment.get("last_deploy_timestamp"),
+                "seconds_since_deploy": deployment.get("seconds_since_deploy"),
                 **related_context,
             },
+        )
+        trigger.validate()
+        return trigger
+
+    def _detect_reth_node_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
+        related_context = payload.get("related_context") or {}
+        execution = payload["execution"]
+        consensus = payload["consensus"]
+        storage = payload["storage"]
+        rpc = payload["rpc"]
+        logs = payload["logs"]
+
+        suppressed = (
+            related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        )
+        if suppressed:
+            return None
+
+        error_signatures = list(logs.get("error_signatures", []))
+        if execution["peer_count"] < execution["min_peer_count"]:
+            error_signatures.append("peer_starvation")
+        if execution["syncing"] and execution["block_lag"] > execution["max_block_lag"]:
+            error_signatures.append("sync_stalled")
+        if (
+            consensus.get("engine_api_reachable") is False
+            or consensus.get("forkchoice_updates_recent") is False
+            or consensus.get("client_healthy") is False
+        ):
+            error_signatures.append("consensus_disconnected")
+        if consensus.get("jwt_configured") is False or consensus.get("jwt_secret_exists") is False:
+            error_signatures.append("jwt_missing")
+        if _jwt_mode_insecure(consensus.get("jwt_secret_mode")):
+            error_signatures.append("jwt_secret_insecure_permissions")
+        if storage.get("disk_used_pct") is not None and float(storage["disk_used_pct"]) >= 90:
+            error_signatures.append("disk_pressure")
+        if not rpc["http_reachable"] or (rpc.get("error_rate") is not None and float(rpc["error_rate"]) >= 0.05):
+            error_signatures.append("rpc_degraded")
+        if rpc.get("publicly_exposed") is True:
+            error_signatures.append("rpc_exposed")
+        if rpc.get("authrpc_publicly_exposed") is True:
+            error_signatures.append("authrpc_exposed")
+
+        error_signatures = sorted(set(error_signatures))
+        if not error_signatures:
+            return None
+
+        trigger_context = {
+            "release_id": related_context.get("release_id"),
+            "active_incidents": int(related_context.get("active_incidents", 0)),
+            "similar_prior_cases": int(related_context.get("similar_prior_cases", 0)),
+            "rollbacks_last_24h": int(related_context.get("rollbacks_last_24h", 0)),
+            "regressions_last_7d": int(related_context.get("regressions_last_7d", 0)),
+            "trigger_signals": error_signatures,
+            "error_signatures": error_signatures,
+            **{k: v for k, v in related_context.items() if k not in {
+                "release_id",
+                "active_incidents",
+                "similar_prior_cases",
+                "rollbacks_last_24h",
+                "regressions_last_7d",
+            }},
+        }
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="reth_node_degraded",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=payload["endpoint"],
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=payload.get("comparison_window"),
+            segment=payload.get("segment", {"customer_tier": "system", "region": "unknown"}),
+            metrics={
+                "baseline_p95_latency_ms": None,
+                "observed_p95_latency_ms": rpc.get("latency_ms"),
+                "baseline_error_rate": None,
+                "observed_error_rate": rpc.get("error_rate"),
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": 1,
+                "peer_count": execution["peer_count"],
+                "block_lag": execution["block_lag"],
+                "disk_used_pct": storage.get("disk_used_pct"),
+            },
+            related_context=trigger_context,
         )
         trigger.validate()
         return trigger
@@ -360,6 +474,16 @@ def _metric_projection(payload: dict, field: str, window: str) -> float | None:
     bucket = telemetry.get(window) or {}
     value = bucket.get(field)
     return float(value) if value is not None else None
+
+
+def _jwt_mode_insecure(mode: object) -> bool:
+    if mode is None:
+        return False
+    try:
+        bits = int(str(mode).strip()[-3:], 8)
+    except ValueError:
+        return False
+    return bool(bits & 0o077)
 
 
 def _parse_timestamp(timestamp: str) -> datetime:

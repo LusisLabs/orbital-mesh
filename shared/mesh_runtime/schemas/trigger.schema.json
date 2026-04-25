@@ -27,6 +27,7 @@
         "feature_flag_performance_regression",
         "kubernetes_deployment_unhealthy",
         "otel_metric_regression",
+        "reth_node_degraded",
         "webhook_alert_firing"
       ]
     },
@@ -153,6 +154,24 @@
         "available_replicas": {
           "type": [
             "integer",
+            "null"
+          ]
+        },
+        "peer_count": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "block_lag": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "disk_used_pct": {
+          "type": [
+            "number",
             "null"
           ]
         }

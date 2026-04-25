@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/reth-node-signal.schema.json",
+  "title": "RethNodeSignal",
+  "description": "First-class health signal for a Reth execution node and its consensus/storage/RPC dependencies.",
+  "type": "object",
+  "required": [
+    "signal_type",
+    "signal_id",
+    "observed_at",
+    "environment",
+    "service",
+    "node",
+    "execution",
+    "consensus",
+    "storage",
+    "rpc",
+    "logs",
+    "resource_attributes"
+  ],
+  "properties": {
+    "signal_type": {
+      "type": "string",
+      "enum": ["reth_node"]
+    },
+    "signal_id": { "type": "string" },
+    "observed_at": { "type": "string", "format": "date-time" },
+    "environment": { "type": "string" },
+    "service": { "type": "string" },
+    "comparison_window": {
+      "type": "object",
+      "required": ["baseline", "observed"],
+      "properties": {
+        "baseline": { "type": "string" },
+        "observed": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "segment": {
+      "type": "object",
+      "properties": {
+        "customer_tier": { "type": "string" },
+        "region": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["name", "deployment_mode", "network", "role"],
+      "properties": {
+        "name": { "type": "string" },
+        "deployment_mode": {
+          "type": "string",
+          "enum": ["systemd", "kubernetes", "docker", "unknown"]
+        },
+        "network": { "type": "string" },
+        "role": {
+          "type": "string",
+          "enum": ["full", "archive", "rpc", "mev", "indexer", "unknown"]
+        },
+        "client_version": { "type": ["string", "null"] },
+        "data_dir": { "type": ["string", "null"] },
+        "jwt_secret_path": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "required": ["syncing", "head_block", "block_lag", "peer_count", "min_peer_count", "max_block_lag"],
+      "properties": {
+        "syncing": { "type": "boolean" },
+        "head_block": { "type": "integer" },
+        "block_lag": { "type": "integer" },
+        "peer_count": { "type": "integer" },
+        "min_peer_count": { "type": "integer" },
+        "max_block_lag": { "type": "integer" },
+        "safe_block": { "type": ["integer", "null"] },
+        "finalized_block": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "consensus": {
+      "type": "object",
+      "required": [
+        "engine_api_reachable",
+        "jwt_configured",
+        "forkchoice_updates_recent",
+        "consensus_client"
+      ],
+      "properties": {
+        "engine_api_reachable": { "type": ["boolean", "null"] },
+        "jwt_configured": { "type": ["boolean", "null"] },
+        "forkchoice_updates_recent": { "type": ["boolean", "null"] },
+        "consensus_client": { "type": ["string", "null"] },
+        "client_kind": {
+          "type": "string",
+          "enum": ["lighthouse", "prysm", "teku", "nimbus", "lodestar", "unknown"]
+        },
+        "client_healthy": { "type": ["boolean", "null"] },
+        "jwt_secret_exists": { "type": ["boolean", "null"] },
+        "jwt_secret_mode": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "storage": {
+      "type": "object",
+      "required": ["disk_used_pct"],
+      "properties": {
+        "data_dir_free_bytes": { "type": ["integer", "null"] },
+        "disk_used_pct": { "type": ["number", "null"] },
+        "db_growth_rate_bytes_per_hour": { "type": ["number", "null"] },
+        "snapshot_mode": {
+          "type": "string",
+          "enum": ["none", "restoring", "active", "unknown"]
+        },
+        "diagnostic_source": {
+          "type": "string",
+          "enum": ["none", "ssh_df", "prometheus", "configured", "unknown"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "rpc": {
+      "type": "object",
+      "required": ["http_reachable"],
+      "properties": {
+        "http_reachable": { "type": "boolean" },
+        "latency_ms": { "type": ["number", "null"] },
+        "error_rate": { "type": ["number", "null"] },
+        "publicly_exposed": { "type": ["boolean", "null"] },
+        "authrpc_publicly_exposed": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "logs": {
+      "type": "object",
+      "required": ["error_signatures"],
+      "properties": {
+        "error_signatures": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recent_errors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "resource_attributes": { "type": "object" },
+    "related_context": { "type": "object" },
+    "post_action_observations": { "type": "object" }
+  },
+  "additionalProperties": false
+}

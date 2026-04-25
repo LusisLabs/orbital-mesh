@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from shared.mesh_runtime import Decision, EventEnvelope, ExecutionRecord, FeedbackRecord, Trigger
 from .otel_observer import PrometheusFeedbackObserver, augment_observations
+
+
+_LOG = logging.getLogger("mesh.feedback")
 
 
 class FeedbackService:
@@ -19,10 +23,24 @@ class FeedbackService:
         execution: ExecutionRecord,
         normalized_event: EventEnvelope,
     ) -> FeedbackRecord:
+        _LOG.info(
+            "feedback: record decision=%s execution_status=%s",
+            decision.decision_type, execution.status,
+        )
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            return self._record_kubernetes_feedback(trigger, decision, execution, normalized_event)
+            feedback = self._record_kubernetes_feedback(trigger, decision, execution, normalized_event)
+            _LOG.info(
+                "feedback: outcome=%s recommended_follow_up=%s",
+                feedback.outcome, feedback.recommended_follow_up,
+            )
+            return feedback
         if trigger.trigger_type == "webhook_alert_firing":
-            return self._record_webhook_feedback(trigger, decision, execution, normalized_event)
+            feedback = self._record_webhook_feedback(trigger, decision, execution, normalized_event)
+            _LOG.info(
+                "feedback: outcome=%s recommended_follow_up=%s",
+                feedback.outcome, feedback.recommended_follow_up,
+            )
+            return feedback
         observations = self._observations(trigger.service, normalized_event)
         check_10m = observations.get("10m", {})
         check_30m = observations.get("30m", {})
@@ -93,6 +111,10 @@ class FeedbackService:
             },
         )
         feedback.validate()
+        _LOG.info(
+            "feedback: outcome=%s recommended_follow_up=%s",
+            feedback.outcome, feedback.recommended_follow_up,
+        )
         return feedback
 
     def _record_kubernetes_feedback(
