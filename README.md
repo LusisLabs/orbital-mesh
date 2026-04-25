@@ -471,6 +471,19 @@ Parallel local stress harness:
 python3 scripts/run_simulation_matrix.py --iterations 32 --workers 8 --output .mesh-runtime-state/simulation-stress/run-32x8
 ```
 
+Continuous randomized benchmark loop:
+
+```bash
+python3 scripts/run_continuous_simulations.py --cycles 3 --iterations 64 --workers 8 --sleep-seconds 2 --root .mesh-runtime-state/simulation-stress/post-merge-randomized
+```
+
+Current measured baseline:
+
+- deterministic one-hour run: 1808 runs, 0 harness failures, pass rate 0.4375, average score 0.775;
+- post-merge randomized run: 192 runs, 0 harness failures, pass rate 0.8125, average score 0.8167, 133 override replay rows.
+
+The randomized run is the stronger current benchmark because it includes seeded telemetry variation and pause-aware scoring. High-risk or missing-authority cases count as valid bounded outcomes when Mesh pauses or escalates instead of executing autonomously.
+
 ## TUI
 
 The TUI remains available as a local terminal companion:
