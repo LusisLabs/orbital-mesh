@@ -50,9 +50,7 @@
       "rollback_application"
     ],
     "systemd_service": [
-      "restart_systemd_service",
-      "start_systemd_service",
-      "stop_systemd_service"
+      "restart_systemd_service"
     ]
   },
   "idempotent_actions": [

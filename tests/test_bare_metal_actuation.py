@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 from services.actuators.systemd_ssh import SystemdSshAdapter
 from services.decision.service import DecisionService
+from services.evaluation.service import EvaluationService
 from services.ingest.bare_metal_node import (
     BareMetalNodeTarget,
     EthereumNodeIngester,
@@ -31,7 +32,7 @@ from services.ingest.bare_metal_node import (
 )
 from services.ingest.service import IngestService
 from services.trigger.service import TriggerService
-from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime import RuntimeConfig, load_policy
 from shared.mesh_runtime.metric_action_rules import load_metric_action_rules
 
 
@@ -427,6 +428,48 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
 
         self.assertEqual(decision.decision_type, "escalate")
         self.assertEqual(decision.execution_plan["system"], "incident_service")
+
+    def test_systemd_policy_only_allows_restart_for_reth_slice(self) -> None:
+        policy = load_policy("autonomy.policy.json")
+        self.assertEqual(policy["allowed_execution_actions"]["systemd_service"], ["restart_systemd_service"])
+
+    def test_systemd_readiness_requires_allowlisted_target(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        decision = DecisionService().decide(trigger)
+
+        service = EvaluationService(config=RuntimeConfig())
+        ready, notes = service._systemd_service_ready(decision)
+
+        self.assertFalse(ready)
+        self.assertIn("systemd host allowlist is empty", notes)
+        self.assertIn("systemd service allowlist is empty", notes)
+
+    def test_systemd_readiness_accepts_allowlisted_reth_target(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        trigger = TriggerService().detect(IngestService().normalize_signal(signal))
+        decision = DecisionService().decide(trigger)
+
+        config = replace(
+            RuntimeConfig(),
+            ssh_allowed_hosts=("reth-mainnet-01",),
+            ssh_allowed_services=("reth.service",),
+        )
+        service = EvaluationService(config=config)
+        ready, notes = service._systemd_service_ready(decision)
+
+        self.assertTrue(ready)
+        self.assertEqual(notes, [])
 
 
 if __name__ == "__main__":
