@@ -208,6 +208,7 @@ class AiSrePlatformSliceTests(unittest.TestCase):
         _randomize_signal(signal_b, seed=7)
         self.assertEqual(signal_a, signal_b)
         self.assertNotEqual(signal_a["metric_regression"]["observed_value"], 20.0)
+        self.assertGreaterEqual(signal_a["metric_regression"]["delta_pct"], 25.0)
 
     def test_override_replay_written_for_blocked_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

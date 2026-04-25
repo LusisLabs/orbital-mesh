@@ -74,7 +74,9 @@ def _randomize_signal(signal: dict[str, Any], *, seed: int) -> None:
     if signal.get("signal_type") == "otel_metric_regression":
         regression = signal.get("metric_regression") if isinstance(signal.get("metric_regression"), dict) else {}
         baseline = float(regression.get("baseline_value", 1.0) or 1.0)
-        multiplier = rng.uniform(1.2, 2.4)
+        threshold = float(regression.get("threshold_pct", 20.0) or 20.0)
+        min_multiplier = 1.0 + max(threshold + 5.0, 20.0) / 100.0
+        multiplier = rng.uniform(min_multiplier, max(min_multiplier, 2.4))
         observed = round(baseline * multiplier, 4)
         regression["observed_value"] = observed
         regression["delta_pct"] = round((observed - baseline) / baseline * 100.0, 2)

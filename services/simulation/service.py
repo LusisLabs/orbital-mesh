@@ -155,6 +155,9 @@ class SimulationService:
         flag_conflict["related_context"]["rollbacks_last_24h"] = 1
         flag_conflict["related_context"]["flag_rollback_conflict"] = True
         request_spike = _otel_metric_signal("sig_otel_request_spike_001", "http.server.active_requests", 120.0, 220.0, "api-gateway")
+        queue_lag["metric_regression"]["threshold_pct"] = 30.0
+        node_pressure["metric_regression"]["threshold_pct"] = 50.0
+        request_spike["metric_regression"]["threshold_pct"] = 50.0
         dependency_latency = _otel_metric_signal(
             "sig_otel_dependency_latency_001",
             "rpc.client.duration",

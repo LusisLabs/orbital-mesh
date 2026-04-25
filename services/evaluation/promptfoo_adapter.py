@@ -134,6 +134,7 @@ def evaluate_decision_contract(trigger: Trigger, decision: Decision, mode: str) 
             "investigate_and_patch",
             "rollback_deployment",
             "restart_deployment",
+            "scale_deployment",
         },
         "action matches allowed contract",
         "action falls outside the allowed contract",
