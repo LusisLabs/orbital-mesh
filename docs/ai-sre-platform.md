@@ -1,6 +1,18 @@
-# AI SRE Platform Spine
+# AI CROPS Platform Spine
 
-Mesh now has an implementation spine for the AI SRE roadmap: sandboxed simulation catalog, benchmark records, service-agent routing, lane-routing artifacts, and agent reconciliation.
+Mesh now has an implementation spine for AI CROPS: Cloud, Reliability, Ops, Platform, and Security. The current simulation and benchmark layer started from SRE-shaped incidents, but the product boundary is broader: bounded infrastructure autonomy across hosting, reliability response, operational workflows, platform engineering, and security controls.
+
+The filename remains `ai-sre-platform.md` for link stability. New planning, reports, and scenario taxonomy should use AI CROPS as the product frame.
+
+## Domain Frame
+
+| Domain | Scope | Current coverage |
+|--------|-------|------------------|
+| Cloud | Infrastructure, hosting, environments, deployment substrates, capacity primitives. | Kubernetes sandbox contexts, namespace guards, deployment scaling, storage and node pressure. |
+| Reliability | SLO-oriented detection, incident response, safe remediation, pause/escalation logic. | CrashLoop, ImagePullBackOff, OOMKilled, probes, queue lag, DB latency, dependency latency, request spikes. |
+| Ops | DevOps workflows, rollout control, GitOps drift, operator approval, run artifacts. | ArgoCD drift, rollback conflicts, approval gates, audit events, override replay, continuous simulation loops. |
+| Platform | Internal developer platform controls, service ownership, paved roads, service-agent routing. | Service-agent registry, lane routing, reconciliation artifacts, benchmark exports, CI randomized matrix. |
+| Security | OpSec, adversarial telemetry, authority boundaries, provenance, human-reviewed learning. | Prompt-injection scenario, high-risk escalation, allowlists, protected blockers, Merkle/audit artifacts. |
 
 ## Interfaces
 
@@ -46,9 +58,9 @@ The harness:
 - waits for terminal or operator-awaiting state plus benchmark export before cleanup;
 - writes `summary.json`, `runs.json`, `dataset.jsonl`, `override-replay.jsonl`, and `stress-report.md`.
 
-The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, queue lag, memory pressure, request spikes, weak-signal no-action controls, missing credentials, high-impact escalation, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
+The expanded catalog covers CrashLoop, ImagePullBackOff, OOMKilled, probe failure, CPU saturation, node pressure, storage pressure, queue lag, memory pressure, DNS failures, ingress/TLS failures, request spikes, DB latency, poison messages, ArgoCD drift, feature-flag rollback conflicts, weak-signal no-action controls, missing credentials, high-impact escalation, dependency latency, cascading namespace impact, and adversarial OTel no-rule escalation. Operator-awaiting simulation runs are benchmarked as learning outcomes instead of being hidden as harness timeouts.
 
-Pass/fail dimensions are split into `safe_autonomy_pass` and `correct_pause_pass`. A scenario that correctly pauses for high risk, missing authority, or human review can pass as a bounded SRE outcome even when it does not execute autonomously. Benchmark rows also include normalized blocker classes so evaluator quality, confidence, approval, risk, and human-review failures can be tracked independently.
+Pass/fail dimensions are split into `safe_autonomy_pass` and `correct_pause_pass`. A scenario that correctly pauses for high risk, missing authority, or human review can pass as a bounded CROPS outcome even when it does not execute autonomously. Benchmark rows also include normalized blocker classes so evaluator quality, confidence, approval, risk, and human-review failures can be tracked independently.
 
 ## Nightly Benchmark Trends
 
@@ -83,7 +95,7 @@ Recent benchmark runs established the current baseline:
 
 The deterministic one-hour run produced 113 cycles and no harness failures. That proves the coordinator, benchmark export, reconciliation artifacts, and dataset writes are stable under repeated sandbox load. It also showed that repetition alone does not create new learning once the catalog order is deterministic.
 
-The randomized post-merge run produced 133 override replay rows and no harness failures. The pass-rate increase from 0.4375 to 0.8125 came from scoring correctness: high-risk or missing-authority cases now pass when Mesh pauses or escalates correctly. That is the intended product posture. Bounded SRE assistance should be rewarded for refusing unsafe autonomy.
+The randomized post-merge run produced 133 override replay rows and no harness failures. The pass-rate increase from 0.4375 to 0.8125 came from scoring correctness: high-risk or missing-authority cases now pass when Mesh pauses or escalates correctly. That is the intended product posture. Bounded CROPS assistance should be rewarded for refusing unsafe autonomy.
 
 Current blocker classes from the randomized run:
 
@@ -113,10 +125,10 @@ Decision mix from the randomized run:
 The simulation matrix now emits three report layers per run:
 
 - `stress-report.md`: run table with scenario family and model/profile sections.
-- `summary.json`: machine-readable `scenario_family_report` and `model_profile_matrix`.
+- `summary.json`: machine-readable `scenario_family_report`, `crops_domain_report`, and `model_profile_matrix`.
 - `rule-learning-fixtures.json`: override replay rows ingested through `OverrideLearningStore`.
 
-Override replay remains a fixture path. It converts blocked benchmark rows into candidate learning observations, then synthesizes human-reviewed rule suggestions. Suggestions are never applied to policy automatically.
+Override replay remains a fixture path. It converts blocked benchmark rows into candidate learning observations, then synthesizes human-reviewed rule suggestions. Replay rows preserve the original signal metric name or endpoint, direction, service, namespace, scenario family, and CROPS domain so learned rules are grounded in useful signal patterns instead of scenario IDs. Suggestions are never applied to policy automatically.
 
 Evaluator scoring is tuned by blocker class. `evaluator_quality` and `confidence` are calibration blockers with a lower replay floor; `risk`, `human_review`, and `approval_gate` remain protected blockers and require escalation or explicit review.
 
@@ -126,9 +138,10 @@ The evaluator-calibration pass identified hard mismatches rather than score-floo
 
 ## Next Work
 
-1. Use the new family reports to split evaluator thresholds by scenario family.
-2. Promote high-support override suggestions into reviewed rule-policy changes only after operator approval.
-3. Add profile rows for non-native model routes once credentials are present in a sandbox.
+1. Split evaluator thresholds by scenario family and CROPS domain, not global score floors.
+2. Add Platform-domain scenarios for internal developer platform workflows, service ownership gaps, and paved-road policy drift.
+3. Re-run the 192-run randomized calibration after the CROPS taxonomy and replay enrichment changes.
+4. Add profile rows for non-native model routes once credentials are present in a sandbox.
 
 ## Service Agents
 

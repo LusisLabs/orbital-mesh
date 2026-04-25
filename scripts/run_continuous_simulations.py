@@ -41,6 +41,7 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
     blocker_classes: dict[str, int] = {}
     decisions: dict[str, int] = {}
     scenario_families: dict[str, dict[str, Any]] = {}
+    crops_domains: dict[str, dict[str, Any]] = {}
     model_profiles: dict[str, dict[str, Any]] = {}
     failures: list[Any] = []
     for summary in summaries:
@@ -58,6 +59,14 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
             target["runs"] += runs
             target["passed"] += int(value.get("passed", 0) or 0)
             target["score_total"] += float(value.get("avg_score", 0.0) or 0.0) * runs
+        for key, value in (summary.get("crops_domain_report") or {}).items():
+            if not isinstance(value, dict):
+                continue
+            target = crops_domains.setdefault(str(key), {"runs": 0, "passed": 0, "score_total": 0.0})
+            runs = int(value.get("runs", 0) or 0)
+            target["runs"] += runs
+            target["passed"] += int(value.get("passed", 0) or 0)
+            target["score_total"] += float(value.get("avg_score", 0.0) or 0.0) * runs
         for key, value in (summary.get("model_profile_matrix") or {}).items():
             if not isinstance(value, dict):
                 continue
@@ -68,6 +77,10 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
             target["score_total"] += float(value.get("avg_score", 0.0) or 0.0) * runs
         failures.extend(summary.get("failures") or [])
     for stats in scenario_families.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
+    for stats in crops_domains.values():
         runs = int(stats["runs"])
         stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
         stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
@@ -86,6 +99,7 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
         "blocker_class_counts": blocker_classes,
         "decision_counts": decisions,
         "scenario_family_report": scenario_families,
+        "crops_domain_report": crops_domains,
         "model_profile_matrix": model_profiles,
         "failures": failures,
     }
@@ -119,6 +133,9 @@ def _write_rollup(root: Path, cycle_dirs: list[Path]) -> None:
     lines.extend(["", "## Scenario Families", ""])
     for family, stats in sorted(rollup["scenario_family_report"].items()):
         lines.append(f"- {family}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
+    lines.extend(["", "## CROPS Domains", ""])
+    for domain, stats in sorted(rollup["crops_domain_report"].items()):
+        lines.append(f"- {domain}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
     lines.extend(["", "## Model/Profile Matrix", ""])
     for profile_key, stats in sorted(rollup["model_profile_matrix"].items()):
         lines.append(f"- {profile_key}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")

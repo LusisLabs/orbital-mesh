@@ -12,6 +12,10 @@
     "expected_outcome": {"type": ["string", "null"]},
     "fault_type": {"type": "string", "minLength": 1},
     "scenario_family": {"type": "string", "minLength": 1},
+    "crops_domain": {
+      "type": "string",
+      "enum": ["cloud", "reliability", "ops", "platform", "security"]
+    },
     "sandbox": {
       "type": "object",
       "properties": {

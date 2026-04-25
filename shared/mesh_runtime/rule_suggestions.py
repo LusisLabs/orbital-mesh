@@ -297,14 +297,18 @@ class OverrideLearningStore:
         with _locked_json(self._overrides_path) as payload:
             records = payload.setdefault("overrides", [])
             existing_keys = {
-                (str(record.get("run_id")), str(record.get("fingerprint")), str(record.get("override_decision_type")))
-                for record in records
-                if isinstance(record, dict)
+                (str(raw_record.get("run_id")), str(raw_record.get("fingerprint")), str(raw_record.get("override_decision_type")))
+                for raw_record in records
+                if isinstance(raw_record, dict)
             }
-            for record in imported:
-                key = (str(record.get("run_id")), str(record.get("fingerprint")), str(record.get("override_decision_type")))
+            for imported_record in imported:
+                key = (
+                    str(imported_record.get("run_id")),
+                    str(imported_record.get("fingerprint")),
+                    str(imported_record.get("override_decision_type")),
+                )
                 if key not in existing_keys:
-                    records.append(record)
+                    records.append(imported_record)
                     existing_keys.add(key)
             if len(records) > _MAX_OVERRIDES:
                 payload["overrides"] = records[-_MAX_OVERRIDES:]
@@ -316,13 +320,29 @@ class OverrideLearningStore:
             return None
         scenario_id = str(row.get("scenario_id") or "unknown")
         family = str(row.get("scenario_family") or scenario_id.split("_")[0] or "simulation")
+        crops_domain = str(row.get("crops_domain") or "reliability")
         decision_type = str(row.get("decision_type") or "escalate")
         operator_action = str(row.get("operator_action") or "")
         blocker_classes = row.get("blocker_classes") if isinstance(row.get("blocker_classes"), list) else []
         override_decision = decision_type
         if operator_action in {"reject_or_escalate", "repair_then_replay"}:
             override_decision = "escalate"
-        fingerprint = f"{family}:{scenario_id}:{','.join(str(item) for item in blocker_classes) or 'unblocked'}"
+        raw_replay_signal = row.get("signal")
+        replay_signal: dict[str, Any] = raw_replay_signal if isinstance(raw_replay_signal, dict) else {}
+        metric_name = str(replay_signal.get("metric_name") or scenario_id)
+        service = str(replay_signal.get("service") or family)
+        namespace = str(replay_signal.get("namespace") or "default")
+        direction = str(replay_signal.get("direction") or "unknown")
+        signal_for_fingerprint = _signal_from_replay_metadata(
+            metric_name=metric_name,
+            service=service,
+            namespace=namespace,
+            direction=direction,
+        )
+        if metric_name != scenario_id:
+            fingerprint = fingerprint_signal(signal_for_fingerprint)
+        else:
+            fingerprint = f"{family}:{scenario_id}:{','.join(str(item) for item in blocker_classes) or 'unblocked'}"
         return OverrideRecord(
             fingerprint=fingerprint,
             recorded_at=_timestamp(),
@@ -331,12 +351,21 @@ class OverrideLearningStore:
             override_decision_type=override_decision,
             override_parameters={
                 "scenario_id": scenario_id,
+                "scenario_family": family,
+                "crops_domain": crops_domain,
                 "operator_action": operator_action,
                 "blocker_classes": [str(item) for item in blocker_classes],
             },
-            original_parameters={},
-            service=family,
-            metric_name=scenario_id,
+            original_parameters={
+                "metric_name": metric_name,
+                "direction": direction,
+                "service": service,
+                "namespace": namespace,
+                "threshold_pct": replay_signal.get("threshold_pct"),
+                "delta_pct": replay_signal.get("delta_pct"),
+            },
+            service=service,
+            metric_name=metric_name,
             outcome=str(row.get("outcome") or "successful"),
         )
 
@@ -444,7 +473,7 @@ class OverrideLearningStore:
         # Derive a reasonable pattern: the metric name literal plus an
         # anchor-relaxed wildcard so close variants match. Operators can
         # edit this before approving.
-        metric_pattern = re.escape(_normalize_metric_name(sample.metric_name))
+        metric_pattern = re.escape(sample.metric_name if sample.metric_name != "unknown" else _normalize_metric_name(sample.metric_name))
 
         rule = {
             "name": f"learned: {winning_action} on {fingerprint}",
@@ -483,6 +512,20 @@ class OverrideLearningStore:
                 "sample_run_ids": [r.run_id for r in records[:5]],
             },
         )
+
+
+def _signal_from_replay_metadata(*, metric_name: str, service: str, namespace: str, direction: str) -> dict[str, Any]:
+    observed = 2.0 if direction == "increasing" else 0.5
+    baseline = 1.0
+    return {
+        "service": service,
+        "namespace": namespace,
+        "metric_regression": {
+            "metric_name": metric_name,
+            "baseline_value": baseline,
+            "observed_value": observed,
+        },
+    }
 
 
 def _merge_parameters_by_median(records: list[OverrideRecord]) -> dict[str, Any]:

@@ -40,6 +40,7 @@ class SimulationService:
             "simulation_context": {
                 "scenario_id": scenario.scenario_id,
                 "scenario_family": scenario.scenario_family,
+                "crops_domain": scenario.crops_domain,
                 "fault_type": scenario.fault_type,
                 "sandbox": scenario.sandbox,
                 "expected_decision_type": scenario.expected_decision_type,
