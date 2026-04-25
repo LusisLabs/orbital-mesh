@@ -59,7 +59,8 @@
           "enum": ["full", "archive", "rpc", "mev", "indexer", "unknown"]
         },
         "client_version": { "type": ["string", "null"] },
-        "data_dir": { "type": ["string", "null"] }
+        "data_dir": { "type": ["string", "null"] },
+        "jwt_secret_path": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },
@@ -80,12 +81,24 @@
     },
     "consensus": {
       "type": "object",
-      "required": ["engine_api_reachable", "jwt_configured", "forkchoice_updates_recent", "consensus_client"],
+      "required": [
+        "engine_api_reachable",
+        "jwt_configured",
+        "forkchoice_updates_recent",
+        "consensus_client"
+      ],
       "properties": {
-        "engine_api_reachable": { "type": "boolean" },
-        "jwt_configured": { "type": "boolean" },
-        "forkchoice_updates_recent": { "type": "boolean" },
-        "consensus_client": { "type": ["string", "null"] }
+        "engine_api_reachable": { "type": ["boolean", "null"] },
+        "jwt_configured": { "type": ["boolean", "null"] },
+        "forkchoice_updates_recent": { "type": ["boolean", "null"] },
+        "consensus_client": { "type": ["string", "null"] },
+        "client_kind": {
+          "type": "string",
+          "enum": ["lighthouse", "prysm", "teku", "nimbus", "lodestar", "unknown"]
+        },
+        "client_healthy": { "type": ["boolean", "null"] },
+        "jwt_secret_exists": { "type": ["boolean", "null"] },
+        "jwt_secret_mode": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },
@@ -99,6 +112,10 @@
         "snapshot_mode": {
           "type": "string",
           "enum": ["none", "restoring", "active", "unknown"]
+        },
+        "diagnostic_source": {
+          "type": "string",
+          "enum": ["none", "ssh_df", "prometheus", "configured", "unknown"]
         }
       },
       "additionalProperties": false
@@ -109,7 +126,9 @@
       "properties": {
         "http_reachable": { "type": "boolean" },
         "latency_ms": { "type": ["number", "null"] },
-        "error_rate": { "type": ["number", "null"] }
+        "error_rate": { "type": ["number", "null"] },
+        "publicly_exposed": { "type": ["boolean", "null"] },
+        "authrpc_publicly_exposed": { "type": ["boolean", "null"] }
       },
       "additionalProperties": false
     },
