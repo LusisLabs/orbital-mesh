@@ -40,6 +40,8 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
     blockers: dict[str, int] = {}
     blocker_classes: dict[str, int] = {}
     decisions: dict[str, int] = {}
+    scenario_families: dict[str, dict[str, Any]] = {}
+    model_profiles: dict[str, dict[str, Any]] = {}
     failures: list[Any] = []
     for summary in summaries:
         for key, value in (summary.get("blocking_reason_counts") or {}).items():
@@ -48,7 +50,31 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
             blocker_classes[str(key)] = blocker_classes.get(str(key), 0) + int(value)
         for key, value in (summary.get("decision_counts") or {}).items():
             decisions[str(key)] = decisions.get(str(key), 0) + int(value)
+        for key, value in (summary.get("scenario_family_report") or {}).items():
+            if not isinstance(value, dict):
+                continue
+            target = scenario_families.setdefault(str(key), {"runs": 0, "passed": 0, "score_total": 0.0})
+            runs = int(value.get("runs", 0) or 0)
+            target["runs"] += runs
+            target["passed"] += int(value.get("passed", 0) or 0)
+            target["score_total"] += float(value.get("avg_score", 0.0) or 0.0) * runs
+        for key, value in (summary.get("model_profile_matrix") or {}).items():
+            if not isinstance(value, dict):
+                continue
+            target = model_profiles.setdefault(str(key), {"runs": 0, "passed": 0, "score_total": 0.0, "profile": value.get("profile", {})})
+            runs = int(value.get("runs", 0) or 0)
+            target["runs"] += runs
+            target["passed"] += int(value.get("passed", 0) or 0)
+            target["score_total"] += float(value.get("avg_score", 0.0) or 0.0) * runs
         failures.extend(summary.get("failures") or [])
+    for stats in scenario_families.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
+    for stats in model_profiles.values():
+        runs = int(stats["runs"])
+        stats["pass_rate"] = round(int(stats["passed"]) / runs, 4) if runs else 0.0
+        stats["avg_score"] = round(float(stats.pop("score_total")) / runs, 4) if runs else 0.0
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cycle_count": len(summaries),
@@ -59,6 +85,8 @@ def _rollup(cycle_dirs: list[Path]) -> dict[str, Any]:
         "blocking_reason_counts": blockers,
         "blocker_class_counts": blocker_classes,
         "decision_counts": decisions,
+        "scenario_family_report": scenario_families,
+        "model_profile_matrix": model_profiles,
         "failures": failures,
     }
 
@@ -88,6 +116,12 @@ def _write_rollup(root: Path, cycle_dirs: list[Path]) -> None:
     lines.extend(["", "## Decision mix", ""])
     decisions = sorted(rollup["decision_counts"].items(), key=lambda item: (-item[1], item[0]))
     lines.extend([f"- {key}: {value}" for key, value in decisions] or ["- none"])
+    lines.extend(["", "## Scenario Families", ""])
+    for family, stats in sorted(rollup["scenario_family_report"].items()):
+        lines.append(f"- {family}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
+    lines.extend(["", "## Model/Profile Matrix", ""])
+    for profile_key, stats in sorted(rollup["model_profile_matrix"].items()):
+        lines.append(f"- {profile_key}: {stats['passed']}/{stats['runs']} passed, avg score {stats['avg_score']}")
     root.joinpath("rollup-report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

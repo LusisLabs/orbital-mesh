@@ -270,6 +270,76 @@ class OverrideLearningStore:
                 if record.get("run_id") == run_id and record.get("outcome") is None:
                     record["outcome"] = outcome
 
+    def ingest_override_replay(self, replay_path: str | Path) -> int:
+        """Load synthetic override replay rows into the human-reviewed learning log.
+
+        Matrix runs emit replay fixtures for blocked benchmark rows. Ingesting
+        them through the same store as live operator overrides lets rule
+        suggestion tests exercise the production synthesis path without making
+        simulation results auto-apply anything.
+        """
+        path = Path(replay_path)
+        if not path.exists():
+            return 0
+        imported: list[dict[str, Any]] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            record = self._record_from_replay_row(row)
+            if record is not None:
+                imported.append(record.to_dict())
+        if not imported:
+            return 0
+        with _locked_json(self._overrides_path) as payload:
+            records = payload.setdefault("overrides", [])
+            existing_keys = {
+                (str(record.get("run_id")), str(record.get("fingerprint")), str(record.get("override_decision_type")))
+                for record in records
+                if isinstance(record, dict)
+            }
+            for record in imported:
+                key = (str(record.get("run_id")), str(record.get("fingerprint")), str(record.get("override_decision_type")))
+                if key not in existing_keys:
+                    records.append(record)
+                    existing_keys.add(key)
+            if len(records) > _MAX_OVERRIDES:
+                payload["overrides"] = records[-_MAX_OVERRIDES:]
+        return len(imported)
+
+    def _record_from_replay_row(self, row: dict[str, Any]) -> OverrideRecord | None:
+        run_id = str(row.get("run_id") or "")
+        if not run_id:
+            return None
+        scenario_id = str(row.get("scenario_id") or "unknown")
+        family = str(row.get("scenario_family") or scenario_id.split("_")[0] or "simulation")
+        decision_type = str(row.get("decision_type") or "escalate")
+        operator_action = str(row.get("operator_action") or "")
+        blocker_classes = row.get("blocker_classes") if isinstance(row.get("blocker_classes"), list) else []
+        override_decision = decision_type
+        if operator_action in {"reject_or_escalate", "repair_then_replay"}:
+            override_decision = "escalate"
+        fingerprint = f"{family}:{scenario_id}:{','.join(str(item) for item in blocker_classes) or 'unblocked'}"
+        return OverrideRecord(
+            fingerprint=fingerprint,
+            recorded_at=_timestamp(),
+            run_id=run_id,
+            original_decision_type=decision_type,
+            override_decision_type=override_decision,
+            override_parameters={
+                "scenario_id": scenario_id,
+                "operator_action": operator_action,
+                "blocker_classes": [str(item) for item in blocker_classes],
+            },
+            original_parameters={},
+            service=family,
+            metric_name=scenario_id,
+            outcome=str(row.get("outcome") or "successful"),
+        )
+
     def list_overrides(self, max_age_days: int | None = None) -> list[OverrideRecord]:
         """Return all override records, optionally filtered by age.
 
@@ -442,8 +512,10 @@ def _merge_parameters_by_median(records: list[OverrideRecord]) -> dict[str, Any]
             # Mode for non-numeric values. If ties, statistics.mode picks the
             # first — deterministic enough for a suggestion pipeline.
             try:
-                merged[key] = statistics.mode(values)
-            except statistics.StatisticsError:
+                hashable_values = [json.dumps(value, sort_keys=True, default=str) for value in values]
+                selected = statistics.mode(hashable_values)
+                merged[key] = json.loads(selected)
+            except (statistics.StatisticsError, TypeError, json.JSONDecodeError):
                 merged[key] = values[0]
     return merged
 
