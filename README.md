@@ -438,6 +438,44 @@ The decision stage handles OTel metric-regression signals through four composabl
 
 **Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
 
+## Kubernetes Remediation Policy (SRE-grade)
+
+Mesh's k8s decision policy follows the standard SRE escalation ladder rather than the naive "any failure → restart" pattern that most automation tools default to. The core principle: **gather evidence first, take the minimum action**, escalate when evidence is ambiguous.
+
+### Decision table
+
+| Signal | Mesh response | Why |
+|--------|---------------|-----|
+| `image_pull_failure` | `rollback_deployment` | Definitive supply-chain problem; the prior revision had a working image |
+| `rollout_status == "failed"` | `rollback_deployment` | `ProgressDeadlineExceeded` — deployment controller has given up |
+| `oom_killed` | `patch_resources` (raise memory limit) | Restart is a band-aid: new container fills the same limit and OOMs again |
+| `crash_loop` + recent deploy (≤30 min) | `rollback_deployment` | Deploy is the prior-cause hypothesis |
+| `crash_loop` + no recent deploy | **`escalate`** | Bug existed before the rollout; restart can't fix it; needs log investigation |
+| `probe_failure` only (no crash, no OOM) | **`escalate`** | Usually means a downstream dependency is sick; restarting our container won't fix that |
+| Any other signature, or no clear cause | **`escalate`** | Mesh refuses to guess. Better to wake an SRE than auto-remediate the wrong thing |
+
+### Where the previous policy was wrong
+
+The old `if/elif` tree treated `crash_loop`, `probe_failure`, and `oom_killed` as interchangeable — all routed to `restart_deployment`. That's the naive remediation SREs criticize as "buying time without fixing anything." Specific examples:
+
+- **OOMKilled → restart**: the new container fills the same memory limit and gets OOMKilled again within minutes. Real fix: raise the limit (`patch_resources`).
+- **Crash loop with no recent deploy → restart**: the bug existed before this revision became active. Restarting loads the same broken code. Real fix: get logs, investigate.
+- **Probe failure → restart**: the kubelet has already been restarting the container in response to the failing probe. If kubelet's restart-and-pray hasn't fixed it, Mesh issuing another rolling restart won't either.
+
+### Deploy correlation
+
+The single most-useful piece of evidence for "is this a deploy-caused break?" is the age of the most recent rollout. The signal collector emits `seconds_since_deploy` (computed from the deployment's `Progressing` condition `lastUpdateTime`). The decision engine's threshold for "deploy correlated" is 30 minutes by default, configurable via `MESH_K8S_DEPLOY_CORRELATION_WINDOW_SECONDS`.
+
+A crash within the window → the deploy is the cause → rollback. Above the window → bug existed before → escalate (don't guess).
+
+### Approval-required signals
+
+Three flips force `approval_required` even on otherwise-autonomous decisions:
+
+1. `repeated_rollback` (rollback in last 24h) → flapping-rollback antipattern
+2. `oom_killed` → resource-limit changes have cluster-wide cost implications
+3. `cross_service_correlation` (blast wave / cascading) → broader investigation needed
+
 ## Bare-Metal Nodes (Solana, geth/reth, etc.)
 
 Mesh runs the full closed-loop — ingest → trigger → decision → execution → feedback — against bare-metal blockchain nodes, not just Kubernetes workloads. This is how Solana/Agave validators, geth archival nodes, reth, lighthouse, and similar long-running services are typically operated.

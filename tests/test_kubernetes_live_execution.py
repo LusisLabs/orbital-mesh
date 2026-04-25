@@ -141,11 +141,16 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
 
             result = FirstSlicePipeline(config=config).run(_raw_kubernetes_signal(), scenario_name="live-k8s")
 
-            self.assertEqual(result["decision"]["decision_type"], "restart_deployment")
+            # SRE-grade policy: crash_loop with recent deploy → rollback
+            # (deploy is the prior cause hypothesis). The previous
+            # policy returned restart_deployment, which is what an
+            # SRE would call "buying time without fixing anything."
+            self.assertEqual(result["decision"]["decision_type"], "rollback_deployment")
             self.assertEqual(result["execution"]["status"], "succeeded")
             self.assertTrue(result["execution"]["external_refs"]["live_execution"])
             state = json.loads(Path(temp_dir, "fake-kubectl-state.json").read_text())
-            self.assertEqual(state["actions"][0]["action"], "restart")
+            # ``rollout undo`` is the kubectl op behind ``rollback_deployment``.
+            self.assertEqual(state["actions"][0]["action"], "undo")
             self.assertEqual(state["actions"][1]["action"], "status")
             self.assertEqual(result["feedback"]["outcome"], "successful")
             self.assertEqual(result["feedback"]["recommended_follow_up"], "record_rollout_recovery")
@@ -234,8 +239,17 @@ def _fake_state() -> dict:
     # ``escalate`` in this test. Real Kubernetes always populates
     # ``lastTimestamp`` on events; using ``now()`` here keeps the
     # fixture realistic regardless of when the test runs.
-    from datetime import datetime, timezone
-    fresh_ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    #
+    # Same reasoning for the deployment's ``Progressing`` condition
+    # ``lastUpdateTime`` — the SRE-grade decision policy uses the age
+    # of that timestamp to decide whether a crash is deploy-correlated
+    # (within the 30-minute window). A historical date would make
+    # every fake-kubectl test trigger ``escalate`` instead of
+    # ``rollback_deployment``.
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    fresh_ts = now.isoformat().replace("+00:00", "Z")
+    deploy_ts = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
     return {
         "context": "k3d-mesh-e2e",
         "actions": [],
@@ -262,7 +276,7 @@ def _fake_state() -> dict:
                         "type": "Progressing",
                         "status": "True",
                         "reason": "ReplicaSetUpdated",
-                        "lastUpdateTime": "2026-04-08T12:01:00Z",
+                        "lastUpdateTime": deploy_ts,
                     }
                 ],
             },
@@ -290,7 +304,7 @@ def _fake_state() -> dict:
                         "type": "Progressing",
                         "status": "True",
                         "reason": "NewReplicaSetAvailable",
-                        "lastUpdateTime": "2026-04-08T12:03:00Z",
+                        "lastUpdateTime": deploy_ts,
                     }
                 ],
             },
@@ -318,7 +332,7 @@ def _fake_state() -> dict:
                         "type": "Progressing",
                         "status": "True",
                         "reason": "NewReplicaSetAvailable",
-                        "lastUpdateTime": "2026-04-08T12:04:00Z",
+                        "lastUpdateTime": deploy_ts,
                     }
                 ],
             },
@@ -376,10 +390,18 @@ def _fake_state() -> dict:
 
 
 def _raw_kubernetes_signal() -> dict:
+    # Use a fresh deploy timestamp so the SRE-grade decision policy
+    # treats this as deploy-correlated. Without it, the policy
+    # correctly routes crash_loop signals to ``escalate`` (a sustained
+    # crash loop with no recent deploy needs human investigation, not
+    # a blind restart).
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    deploy_ts = (now - timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
     return {
         "signal_type": "kubernetes_deployment_issue",
         "signal_id": "sig_k8s_live_001",
-        "observed_at": "2026-04-08T12:00:00Z",
+        "observed_at": now.isoformat().replace("+00:00", "Z"),
         "environment": "staging",
         "cluster": "k3d-mesh-e2e",
         "namespace": "search",
@@ -388,11 +410,13 @@ def _raw_kubernetes_signal() -> dict:
             "name": "semantic-search",
             "revision": "2",
             "image": "busybox:1.36",
-            "rollout_started_at": "2026-04-08T11:54:00Z",
+            "rollout_started_at": deploy_ts,
             "rollout_status": "degraded",
             "desired_replicas": 3,
             "updated_replicas": 3,
             "available_replicas": 0,
+            "last_deploy_timestamp": deploy_ts,
+            "seconds_since_deploy": 120,
         },
         "pods": [
             {

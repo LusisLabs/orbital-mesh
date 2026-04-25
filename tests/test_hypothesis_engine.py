@@ -256,7 +256,15 @@ class DecisionServiceIntegrationTests(unittest.TestCase):
         )
 
     def test_hypothesis_does_not_override_concrete_rule(self):
-        """Crash loop signature → rule says restart → hypothesis cannot override."""
+        """Crash loop + recent deploy → rule says rollback → hypothesis cannot override.
+
+        The SRE-grade policy routes crash_loop with deploy correlation
+        to ``rollback_deployment``. The invariant being exercised is
+        that the rule engine's concrete decision is not overridden by
+        the hypothesis engine. We use a hypothesis that proposes
+        ``restart_pod`` (different from the rule's rollback) so a buggy
+        override would be detectable.
+        """
         from services.decision.service import DecisionService
 
         mock_engine = MagicMock()
@@ -265,16 +273,18 @@ class DecisionServiceIntegrationTests(unittest.TestCase):
                 hypothesis_id="h",
                 description="",
                 candidate_cause="config_change",
-                recommended_action="rollback_deployment",  # would override
+                recommended_action="restart_pod",  # would override rollback if allowed
                 prior_confidence=0.85,
                 posterior_confidence=0.90,
             ),
         ]
         svc = DecisionService(hypothesis_engine=mock_engine)
-        trigger = _make_trigger(error_signatures=["crash_loop"])
+        trigger = _make_trigger(
+            error_signatures=["crash_loop"],
+            related_context_extras={"seconds_since_deploy": 120},
+        )
         decision = svc._decide_kubernetes(trigger)
-        # Rule engine says restart_deployment for crash_loop; hypothesis cannot override
-        self.assertEqual(decision.decision_type, "restart_deployment")
+        self.assertEqual(decision.decision_type, "rollback_deployment")
         self.assertFalse(
             decision.reasoning["evidence_pack"]["hypothesis_upgrade_applied"]
         )

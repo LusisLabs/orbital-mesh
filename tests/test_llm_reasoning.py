@@ -229,8 +229,26 @@ class TestEscalationReasoner(unittest.TestCase):
 class TestDecisionServiceLLMIntegration(unittest.TestCase):
     """Verify the LLM hook in DecisionService respects guardrails."""
 
-    def _make_k8s_trigger(self, error_signatures=None):
+    def _make_k8s_trigger(self, error_signatures=None, deploy_correlated=True):
+        # ``deploy_correlated`` defaults to True so triggers built by
+        # this fixture match the SRE-grade policy's "recent deploy"
+        # branch — that's the case the existing tests exercise (the
+        # rule engine produces a concrete decision; the LLM cannot
+        # override it). Tests that want to exercise the
+        # not-deploy-correlated path can pass ``deploy_correlated=False``.
         from shared.mesh_runtime import Trigger
+        related_context = {
+            "error_signatures": error_signatures or [],
+            "deployment_name": "search-api",
+            "namespace": "search",
+            "rollout_status": "degraded",
+            "event_reasons": [],
+            "likely_layer": "unknown",
+            "cluster": "test",
+            "deployment_image": "search:latest",
+        }
+        if deploy_correlated:
+            related_context["seconds_since_deploy"] = 120
         return Trigger(
             trigger_id="trig_test",
             trigger_type="kubernetes_deployment_unhealthy",
@@ -248,16 +266,7 @@ class TestDecisionServiceLLMIntegration(unittest.TestCase):
                 "baseline_error_rate": 0.01,
                 "observed_error_rate": 0.01,
             },
-            related_context={
-                "error_signatures": error_signatures or [],
-                "deployment_name": "search-api",
-                "namespace": "search",
-                "rollout_status": "degraded",
-                "event_reasons": [],
-                "likely_layer": "unknown",
-                "cluster": "test",
-                "deployment_image": "search:latest",
-            },
+            related_context=related_context,
         )
 
     def test_llm_upgrades_escalate_to_concrete_action(self):
@@ -287,10 +296,13 @@ class TestDecisionServiceLLMIntegration(unittest.TestCase):
             risk_assessment="none",
         )
         svc = DecisionService(escalation_reasoner=mock_reasoner)
+        # SRE-grade policy: crash_loop + recent deploy → rollback_deployment.
+        # The invariant being exercised is unchanged: when the rule
+        # engine produces a concrete high-confidence decision, the
+        # LLM reasoner cannot override it.
         trigger = self._make_k8s_trigger(error_signatures=["crash_loop"])
         decision = svc._decide_kubernetes(trigger)
-        # Rule engine says restart_deployment with confidence 0.78 — LLM should NOT be called
-        self.assertEqual(decision.decision_type, "restart_deployment")
+        self.assertEqual(decision.decision_type, "rollback_deployment")
         mock_reasoner.reason.assert_not_called()
 
     def test_llm_capped_at_085(self):

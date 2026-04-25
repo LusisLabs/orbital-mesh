@@ -85,6 +85,14 @@
         },
         "available_replicas": {
           "type": "integer"
+        },
+        "last_deploy_timestamp": {
+          "type": ["string", "null"],
+          "description": "RFC3339 timestamp of the deployment's most recent rollout (mirrors rollout_started_at)."
+        },
+        "seconds_since_deploy": {
+          "type": ["integer", "null"],
+          "description": "Wall-clock age of the most recent deploy. Used by the decision engine for SRE-grade deploy correlation: a crash within ~30min of a deploy strongly suggests the deploy is the cause."
         }
       },
       "additionalProperties": false

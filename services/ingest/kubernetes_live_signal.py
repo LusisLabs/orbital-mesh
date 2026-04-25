@@ -99,6 +99,14 @@ def collect_kubernetes_signal(
     revision = deployment.get("metadata", {}).get("annotations", {}).get("deployment.kubernetes.io/revision")
     status = deployment.get("status", {})
     spec = deployment.get("spec", {})
+    rollout_started_at = _rollout_started_at(deployment)
+    # Deploy correlation is the single most-useful piece of evidence
+    # for k8s remediation decisions. The SRE escalation ladder branches
+    # right at "did this break right after a deploy?" — if yes, rollback;
+    # if no, the bug existed before and a rollback won't help. We surface
+    # both an absolute timestamp (for the audit trail) and the relative
+    # age in seconds (for the decision engine's threshold check).
+    seconds_since_deploy = _seconds_since(rollout_started_at)
     signal = {
         "signal_type": "kubernetes_deployment_issue",
         "signal_id": f"sig_k8s_{_slugify(namespace)}_{_slugify(deployment_name)}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
@@ -111,11 +119,13 @@ def collect_kubernetes_signal(
             "name": deployment_name,
             "revision": str(revision or "unknown"),
             "image": _first_container_image(deployment) or "unknown",
-            "rollout_started_at": _rollout_started_at(deployment),
+            "rollout_started_at": rollout_started_at,
             "rollout_status": _rollout_status(deployment),
             "desired_replicas": int(spec.get("replicas", 1)),
             "updated_replicas": int(status.get("updatedReplicas", 0)),
             "available_replicas": int(status.get("availableReplicas", 0)),
+            "last_deploy_timestamp": rollout_started_at,
+            "seconds_since_deploy": seconds_since_deploy,
         },
         "pods": [
             {
@@ -299,6 +309,32 @@ def _first_container_image(payload: dict[str, Any]) -> str | None:
     if not containers:
         return None
     return containers[0].get("image")
+
+
+def _seconds_since(rfc3339_timestamp: str | None) -> int | None:
+    """How long ago was ``rfc3339_timestamp``, in seconds.
+
+    Returns None for malformed input or absent timestamps. This is
+    consumed by the decision engine to apply the SRE deploy-correlation
+    rule: if a crash starts within 30 minutes of a deploy, it's almost
+    certainly the deploy's fault and the right action is rollback. If
+    the crash starts hours later, the bug existed before the deploy
+    and a rollback won't help — that case wants escalation, not
+    remediation.
+    """
+    if not rfc3339_timestamp or not isinstance(rfc3339_timestamp, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(rfc3339_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    delta = datetime.now(timezone.utc) - ts
+    seconds = int(delta.total_seconds())
+    # Clock skew between Mesh's host and the kube API server can produce
+    # negative deltas. Clamp to 0 — "in the future" is meaningless for a
+    # rollout that already happened, and negative values would confuse
+    # downstream threshold checks.
+    return max(0, seconds)
 
 
 def _rollout_started_at(payload: dict[str, Any]) -> str:

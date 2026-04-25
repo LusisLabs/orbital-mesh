@@ -513,7 +513,24 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertEqual(result["execution"]["applied_action"]["system"], "kubernetes_service")
         self.assertEqual(result["execution"]["applied_action"]["action"], "rollback_deployment")
 
-    def test_kubernetes_probe_failure_prefers_restart(self) -> None:
+    def test_kubernetes_probe_failure_alone_escalates(self) -> None:
+        """Probe-failure-only signal (no crash, no OOM, no image-pull)
+        is the textbook SRE case for ``escalate``, not ``restart``.
+
+        Why: the kubelet has already been restarting the container
+        (restarts > 0) in response to the failing probe. If kubelet's
+        restart-and-pray loop hasn't fixed it, Mesh issuing another
+        rolling restart won't either — the probe will fail on the
+        new pods for the same reason. Most often, sustained probe
+        failure indicates a sick downstream dependency (DB
+        unreachable, upstream API timing out) that no amount of
+        container churn can fix.
+
+        The previous policy routed this to ``restart_deployment`` —
+        exactly the naive remediation SREs criticize as "buying time
+        without fixing anything." The SRE-grade response is to
+        escalate so a human can investigate the actual cause.
+        """
         signal = base_kubernetes_signal()
         signal["logs"] = []
         signal["events"] = [
@@ -536,8 +553,8 @@ class LoopBehaviorTests(unittest.TestCase):
 
         result = FirstSlicePipeline(config=config).run(signal)
 
-        self.assertEqual(result["decision"]["decision_type"], "restart_deployment")
-        self.assertEqual(result["execution"]["applied_action"]["action"], "restart_deployment")
+        self.assertEqual(result["decision"]["decision_type"], "escalate")
+        self.assertEqual(result["decision"]["execution_plan"]["system"], "incident_service")
 
 
 if __name__ == "__main__":
