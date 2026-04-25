@@ -33,6 +33,22 @@ _CROPS_DOMAIN_BY_FAMILY = {
     "security": "security",
 }
 
+_CALIBRATION_PASS_FLOOR_BY_FAMILY = {
+    "capacity": 0.75,
+    "traffic": 0.75,
+    "feature_flag": 0.75,
+    "developer_platform": 0.75,
+    "service_ownership": 0.75,
+}
+
+_CALIBRATION_PASS_FLOOR_BY_DOMAIN = {
+    "cloud": 0.75,
+    "reliability": 0.75,
+    "ops": 0.75,
+    "platform": 0.75,
+    "security": 0.8,
+}
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -127,7 +143,11 @@ def score_run(
         for reason in blocking_reasons
     )
     blocker_classes = [_blocker_class(str(reason)) for reason in blocking_reasons]
-    gate_tuning = _gate_tuning(blocker_classes)
+    gate_tuning = _gate_tuning(
+        blocker_classes,
+        scenario_family=scenario.scenario_family,
+        crops_domain=scenario.crops_domain,
+    )
     expected_pause = scenario.expected_decision_type == "escalate" or risk_or_approval_blocked
     decision_match = (
         scenario.expected_decision_type is None
@@ -212,15 +232,47 @@ def _blocker_class(reason: str) -> str:
     return _BLOCKER_CLASSES.get(normalized, "other")
 
 
-def _gate_tuning(blocker_classes: list[str]) -> dict[str, Any]:
+def _gate_tuning(
+    blocker_classes: list[str],
+    *,
+    scenario_family: str = "general",
+    crops_domain: str = "reliability",
+) -> dict[str, Any]:
     classes = set(blocker_classes)
     if not classes:
-        return {"severity": "unblocked", "pass_floor": 0.8, "operator_replay": "none"}
-    if classes <= {"evaluator_quality", "confidence"}:
-        return {"severity": "calibration", "pass_floor": 0.75, "operator_replay": "approve_with_evidence"}
+        return {
+            "severity": "unblocked",
+            "pass_floor": 0.8,
+            "operator_replay": "none",
+            "threshold_scope": "unblocked",
+        }
     if classes & {"risk", "human_review", "approval_gate"}:
-        return {"severity": "protected", "pass_floor": 0.85, "operator_replay": "reject_or_escalate"}
-    return {"severity": "readiness", "pass_floor": 0.82, "operator_replay": "repair_then_replay"}
+        return {
+            "severity": "protected",
+            "pass_floor": 0.85,
+            "operator_replay": "reject_or_escalate",
+            "threshold_scope": "protected",
+        }
+    if classes <= {"evaluator_quality", "confidence"}:
+        family_floor = _CALIBRATION_PASS_FLOOR_BY_FAMILY.get(scenario_family, 0.75)
+        domain_floor = _CALIBRATION_PASS_FLOOR_BY_DOMAIN.get(crops_domain, 0.75)
+        pass_floor = max(family_floor, domain_floor)
+        return {
+            "severity": "calibration",
+            "pass_floor": pass_floor,
+            "operator_replay": "approve_with_evidence",
+            "threshold_scope": "family_domain",
+            "scenario_family": scenario_family,
+            "crops_domain": crops_domain,
+            "family_pass_floor": family_floor,
+            "domain_pass_floor": domain_floor,
+        }
+    return {
+        "severity": "readiness",
+        "pass_floor": 0.82,
+        "operator_replay": "repair_then_replay",
+        "threshold_scope": "readiness",
+    }
 
 
 class BenchmarkStore:
