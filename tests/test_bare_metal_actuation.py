@@ -25,6 +25,7 @@ from services.decision.service import DecisionService
 from services.ingest.bare_metal_node import (
     BareMetalNodeTarget,
     EthereumNodeIngester,
+    RethNodeIngester,
     RpcError,
     SolanaNodeIngester,
 )
@@ -225,6 +226,23 @@ def _geth_target() -> BareMetalNodeTarget:
     })
 
 
+def _reth_target() -> BareMetalNodeTarget:
+    return BareMetalNodeTarget.from_dict({
+        "name": "reth-mainnet-01",
+        "kind": "reth",
+        "rpc_url": "http://127.0.0.1:8545",
+        "host": "reth-mainnet-01",
+        "service": "reth.service",
+        "region": "us-east-1",
+        "deployment_mode": "systemd",
+        "network": "mainnet",
+        "role": "full",
+        "consensus_client": "lighthouse",
+        "min_peer_count": 3,
+        "max_block_lag": 32,
+    })
+
+
 class SolanaIngesterTests(unittest.TestCase):
     def test_builds_signal_with_slot_lag(self) -> None:
         ingester = SolanaNodeIngester(_solana_target(), reference_rpc_url="http://reference:8899")
@@ -297,6 +315,28 @@ class EthereumIngesterTests(unittest.TestCase):
             self.assertIsNone(ingester.build_signal())
 
 
+class RethNodeIngesterTests(unittest.TestCase):
+    def test_builds_first_class_reth_signal_for_peer_starvation(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["signal_type"], "reth_node")
+        self.assertEqual(signal["node"]["network"], "mainnet")
+        self.assertEqual(signal["execution"]["peer_count"], 1)
+        self.assertIn("peer_starvation", signal["logs"]["error_signatures"])
+        self.assertEqual(signal["resource_attributes"]["mesh.node.host"], "reth-mainnet-01")
+        self.assertEqual(signal["resource_attributes"]["mesh.node.service"], "reth.service")
+
+    def test_rpc_failure_returns_none(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            self.assertIsNone(ingester.build_signal())
+
+
 # ---------------------------------------------------------------- end-to-end
 
 
@@ -348,6 +388,45 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         decision = DecisionService().decide(trigger)
         self.assertEqual(decision.decision_type, "restart_systemd_service")
         self.assertEqual(decision.execution_plan["parameters"]["host"], "eth-archival-02")
+
+    def test_reth_peer_starvation_is_approval_gated_systemd_restart(self) -> None:
+        ingester = RethNodeIngester(_reth_target())
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x1", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+        envelope = IngestService().normalize_signal(signal)
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+        self.assertEqual(trigger.trigger_type, "reth_node_degraded")
+
+        decision = DecisionService().decide(trigger)
+
+        self.assertEqual(decision.decision_type, "restart_systemd_service")
+        self.assertEqual(decision.autonomy_tier, "approval_required")
+        self.assertEqual(decision.execution_plan["system"], "systemd_service")
+        self.assertEqual(decision.execution_plan["parameters"]["host"], "reth-mainnet-01")
+        self.assertEqual(decision.execution_plan["parameters"]["service"], "reth.service")
+
+    def test_reth_consensus_disconnect_escalates_instead_of_restart(self) -> None:
+        signal = RethNodeIngester(_reth_target()).build_signal
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0xa", "0x1234", "reth/v2.1.0"],
+        ):
+            payload = signal()
+        self.assertIsNotNone(payload)
+        payload["consensus"]["engine_api_reachable"] = False
+        payload["consensus"]["forkchoice_updates_recent"] = False
+
+        trigger = TriggerService().detect(IngestService().normalize_signal(payload))
+        self.assertIsNotNone(trigger)
+        decision = DecisionService().decide(trigger)
+
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.execution_plan["system"], "incident_service")
 
 
 if __name__ == "__main__":

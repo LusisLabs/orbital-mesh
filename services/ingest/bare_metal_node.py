@@ -111,6 +111,16 @@ class BareMetalNodeTarget:
     # Minimum acceptable peer count for geth/reth. Fewer peers than this
     # and the node is almost certainly isolated.
     min_peer_count: int = 3
+    # Reth-specific block-lag threshold. Block lag is computed from
+    # ``eth_syncing.highestBlock - currentBlock`` when the node reports an
+    # active sync object. Operators can tune this per node role; archive/RPC
+    # fleets often tolerate less lag than hobby full nodes.
+    max_block_lag: int = 32
+    deployment_mode: str = "systemd"
+    network: str = "mainnet"
+    role: str = "full"
+    consensus_client: str | None = None
+    data_dir: str | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "BareMetalNodeTarget":
@@ -124,6 +134,12 @@ class BareMetalNodeTarget:
             region=raw.get("region"),
             max_slot_lag=int(raw.get("max_slot_lag", 128)),
             min_peer_count=int(raw.get("min_peer_count", 3)),
+            max_block_lag=int(raw.get("max_block_lag", 32)),
+            deployment_mode=str(raw.get("deployment_mode", "systemd")),
+            network=str(raw.get("network", "mainnet")),
+            role=str(raw.get("role", "full")),
+            consensus_client=raw.get("consensus_client"),
+            data_dir=raw.get("data_dir"),
         )
 
 
@@ -429,6 +445,112 @@ class EthereumNodeIngester:
         return max(0, highest - current)
 
 
+class RethNodeIngester:
+    """Build a first-class ``reth_node`` signal from Reth JSON-RPC state.
+
+    This deliberately starts read-only. It does not SSH into the host or call
+    authenticated Engine API methods. The goal of the first Reth integration
+    slice is to preserve enough node-specific context for SRE decisions while
+    keeping credentialed actuation in the existing, gated systemd adapter.
+    """
+
+    def __init__(self, target: BareMetalNodeTarget, timeout_seconds: float = 5.0):
+        self.target = target
+        self.timeout_seconds = timeout_seconds
+
+    def build_signal(self) -> dict[str, Any] | None:
+        try:
+            sync_status = _rpc_call(self.target.rpc_url, "eth_syncing", timeout_seconds=self.timeout_seconds)
+            peer_count_hex = _rpc_call(self.target.rpc_url, "net_peerCount", timeout_seconds=self.timeout_seconds)
+            head_block_hex = _rpc_call(self.target.rpc_url, "eth_blockNumber", timeout_seconds=self.timeout_seconds)
+            client_version = _rpc_call(self.target.rpc_url, "web3_clientVersion", timeout_seconds=self.timeout_seconds)
+        except RpcError as exc:
+            _LOG.warning("reth ingester: %s rpc failed: %s", self.target.name, exc)
+            return None
+
+        peer_count = _hex_or_int(peer_count_hex)
+        head_block = _hex_or_int(head_block_hex)
+        syncing = sync_status not in (False, None)
+        block_lag = _eth_block_lag(sync_status)
+        error_signatures = _reth_error_signatures(
+            syncing=syncing,
+            block_lag=block_lag,
+            max_block_lag=self.target.max_block_lag,
+            peer_count=peer_count,
+            min_peer_count=self.target.min_peer_count,
+        )
+
+        return {
+            "signal_type": "reth_node",
+            "signal_id": f"sig_reth_{self.target.name}_{uuid4().hex[:12]}",
+            "observed_at": _now_iso(),
+            "environment": self.target.environment,
+            "service": self.target.name,
+            "comparison_window": _trailing_window_iso(),
+            "segment": {
+                "customer_tier": "system",
+                "region": self.target.region or "unknown",
+            },
+            "node": {
+                "name": self.target.name,
+                "deployment_mode": self.target.deployment_mode,
+                "network": self.target.network,
+                "role": self.target.role,
+                "client_version": str(client_version) if client_version is not None else None,
+                "data_dir": self.target.data_dir,
+            },
+            "execution": {
+                "syncing": syncing,
+                "head_block": head_block,
+                "safe_block": None,
+                "finalized_block": None,
+                "block_lag": block_lag,
+                "peer_count": peer_count,
+                "min_peer_count": self.target.min_peer_count,
+                "max_block_lag": self.target.max_block_lag,
+            },
+            "consensus": {
+                "engine_api_reachable": True,
+                "jwt_configured": True,
+                "forkchoice_updates_recent": not syncing or block_lag <= self.target.max_block_lag,
+                "consensus_client": self.target.consensus_client,
+            },
+            "storage": {
+                "data_dir_free_bytes": None,
+                "disk_used_pct": None,
+                "db_growth_rate_bytes_per_hour": None,
+                "snapshot_mode": "unknown",
+            },
+            "rpc": {
+                "http_reachable": True,
+                "latency_ms": None,
+                "error_rate": 0.0,
+            },
+            "logs": {
+                "error_signatures": error_signatures,
+                "recent_errors": [],
+            },
+            "resource_attributes": {
+                "service.name": self.target.name,
+                "deployment.environment": self.target.environment,
+                "mesh.node.kind": "reth",
+                "mesh.node.host": self.target.host,
+                "mesh.node.service": self.target.service,
+                "mesh.node.min_peer_count": self.target.min_peer_count,
+                "mesh.node.max_block_lag": self.target.max_block_lag,
+                "mesh.node.deployment_mode": self.target.deployment_mode,
+                "mesh.node.network": self.target.network,
+                "mesh.node.role": self.target.role,
+            },
+            "related_context": {
+                "node_kind": "reth",
+                "host": self.target.host,
+                "systemd_service": self.target.service,
+            },
+            "post_action_observations": {},
+        }
+
+
 # ---------------------------------------------------------------- helpers
 
 
@@ -443,9 +565,41 @@ def _trailing_window_iso() -> dict[str, str]:
     return {"baseline": f"{start.isoformat()}/{now.isoformat()}", "observed": f"{start.isoformat()}/{now.isoformat()}"}
 
 
+def _hex_or_int(value: Any) -> int:
+    try:
+        return int(value, 16) if isinstance(value, str) else int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _eth_block_lag(sync_status: Any) -> int:
+    if not isinstance(sync_status, dict):
+        return 0
+    highest = _hex_or_int(sync_status.get("highestBlock", "0x0"))
+    current = _hex_or_int(sync_status.get("currentBlock", "0x0"))
+    return max(0, highest - current)
+
+
+def _reth_error_signatures(
+    *,
+    syncing: bool,
+    block_lag: int,
+    max_block_lag: int,
+    peer_count: int,
+    min_peer_count: int,
+) -> list[str]:
+    signatures: list[str] = []
+    if peer_count < min_peer_count:
+        signatures.append("peer_starvation")
+    if syncing and block_lag > max_block_lag:
+        signatures.append("sync_stalled")
+    return signatures
+
+
 __all__ = [
     "BareMetalNodeTarget",
     "EthereumNodeIngester",
+    "RethNodeIngester",
     "RpcError",
     "SolanaNodeIngester",
 ]
