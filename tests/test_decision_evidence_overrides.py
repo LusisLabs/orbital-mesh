@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import unittest
 
+from services.decision.hypothesis_engine import HypothesisEngine
 from services.decision.service import DecisionService
 from shared.mesh_runtime import Trigger
 
@@ -106,7 +107,8 @@ class FastPathForceEscalateTests(unittest.TestCase):
 
     def test_no_fast_path_no_force_escalate(self):
         """Negative control: when fast_path_signatures is empty,
-        the override does not fire. Normal restart path stands."""
+        the override does not fire. Normal restart path stands only
+        when evidence and hypothesis ranking support it."""
         trigger = _trigger(error_signatures=["peer_starvation"])
         evidence_pack = {
             "pack": {
@@ -121,8 +123,24 @@ class FastPathForceEscalateTests(unittest.TestCase):
             "missing_fields": [],
             "fast_path_signatures": [],
         }
-        decision = DecisionService().decide(trigger, evidence_pack=evidence_pack)
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+            trigger,
+            evidence_pack=evidence_pack,
+        )
         self.assertEqual(decision.decision_type, "restart_systemd_service")
+
+    def test_restartable_reth_signal_without_evidence_escalates(self):
+        """A restartable signature is only a lead. Without an evidence
+        pack and a supporting hypothesis, Mesh must route the node to
+        review rather than restarting a stateful blockchain process from
+        signal text alone.
+        """
+        trigger = _trigger(error_signatures=["peer_starvation"])
+
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(trigger)
+
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.autonomy_tier, "escalated")
 
 
 if __name__ == "__main__":
