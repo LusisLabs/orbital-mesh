@@ -94,7 +94,15 @@ class PeerStarvationTemplateTests(unittest.TestCase):
             positions["h_reth_peer_transient"],
         )
 
-    def test_engine_api_unreachable_promotes_consensus_disconnect(self):
+    def test_cascade_peer_zero_engine_down_ranks_consensus_disconnect_top(self):
+        """Regression test for the ranking misorder.
+
+        When peers are zero AND engine_api is unreachable, the safer
+        cause (consensus_disconnect → escalate) must outrank
+        local_isolation (which would recommend a restart that won't
+        fix the actual problem). Without this ordering, the cascade
+        produces an unsafe action whenever the LLM observer is off.
+        """
         engine = HypothesisEngine()
         ranked = engine.generate(
             _trigger(["peer_starvation"]),
@@ -104,12 +112,16 @@ class PeerStarvationTemplateTests(unittest.TestCase):
             ),
         )
         top = ranked[0]
-        # Both local_isolation and consensus_disconnect have predicates
-        # firing; consensus_disconnect should outrank others when EAPI is
-        # down.
-        candidate_causes = [h.candidate_cause for h in ranked[:2]]
-        self.assertIn("consensus_disconnect", candidate_causes)
-        self.assertIn(top.recommended_action, ("escalate", "restart_systemd_service"))
+        self.assertEqual(top.candidate_cause, "consensus_disconnect")
+        self.assertEqual(top.recommended_action, "escalate")
+        # local_isolation should have at least one disconfirming
+        # predicate (engine_api_reachable) and rank below.
+        local = next(h for h in ranked if h.candidate_cause == "local_isolation")
+        self.assertGreater(top.posterior_confidence, local.posterior_confidence)
+        self.assertTrue(
+            any("engine_api_reachable" in d for d in local.disconfirming_evidence),
+            "local_isolation must disconfirm when engine_api is unreachable",
+        )
 
 
 class SyncStalledTemplateTests(unittest.TestCase):

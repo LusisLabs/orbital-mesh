@@ -212,6 +212,12 @@ def _reth_peer_starvation_templates() -> list[Hypothesis]:
             predicates=[
                 FalsificationPredicate(kind="peer_count_zero", arguments={}),
                 FalsificationPredicate(kind="rpc_http_reachable", arguments={}),
+                # Local isolation only makes sense when the consensus
+                # client can still reach us. If engine_api is gone, the
+                # CL is the more likely root cause and this hypothesis
+                # should disconfirm — keeping consensus_disconnect at
+                # the top of the ranking for cascade scenarios.
+                FalsificationPredicate(kind="engine_api_reachable", arguments={}),
             ],
         ),
         Hypothesis(
@@ -221,7 +227,13 @@ def _reth_peer_starvation_templates() -> list[Hypothesis]:
             recommended_action="escalate",
             prior_confidence=0.50,
             predicates=[
-                FalsificationPredicate(kind="engine_api_unreachable", arguments={}),
+                # Weighted higher than the default predicate weight of
+                # 1.0 because EAPI unreachable is the single most
+                # decisive signal of CL-driven EL failure; without this
+                # boost, the cascade case (peer_count=0 AND eapi=down)
+                # would tie with local_isolation despite the EAPI
+                # signal being more diagnostic.
+                FalsificationPredicate(kind="engine_api_unreachable", arguments={}, weight=1.5),
             ],
         ),
         Hypothesis(
@@ -317,6 +329,7 @@ _RETH_PREDICATE_KINDS: frozenset[str] = frozenset({
     "peer_count_zero",
     "peer_count_above",
     "rpc_http_reachable",
+    "engine_api_reachable",
     "engine_api_unreachable",
     "forkchoice_updates_stale",
     "disk_used_pct_above",
@@ -605,6 +618,12 @@ class HypothesisEngine:
             if reachable is None:
                 return "unknown", None
             return ("supported" if not reachable else "disconfirmed", f"consensus.engine_api_reachable={reachable}")
+
+        if kind == "engine_api_reachable":
+            reachable = consensus.get("engine_api_reachable")
+            if reachable is None:
+                return "unknown", None
+            return ("supported" if reachable else "disconfirmed", f"consensus.engine_api_reachable={reachable}")
 
         if kind == "forkchoice_updates_stale":
             recent = consensus.get("forkchoice_updates_recent")

@@ -352,6 +352,31 @@ class DecisionService:
                 risk_level = "high"
                 autonomy_tier = "escalated"
 
+        # Fast-path override: when the EvidenceService skipped probe
+        # assembly because the trigger already named a credential or
+        # exposure signature, the only safe outcome is escalate. We
+        # do NOT rely on the autonomy/escalation_signatures cross-file
+        # invariant here — if a fast-path signature is missing from the
+        # policy's escalation list, that's a misconfig that should still
+        # not produce ``no_action`` for an unsafe condition. Belt and
+        # suspenders.
+        fast_path = (
+            (evidence_pack or {}).get("fast_path_signatures")
+            if isinstance(evidence_pack, dict)
+            else None
+        )
+        if fast_path:
+            if decision_type != "escalate":
+                _LOG.warning(
+                    "decide.reth: fast-path signatures forced escalate (policy "
+                    "did not already escalate, possible misconfig); signatures=%s",
+                    fast_path,
+                )
+                decision_type = "escalate"
+                confidence = max(confidence, 0.80)
+                risk_level = "high"
+                autonomy_tier = "escalated"
+
         evidence = [
             f"reth node role={node.get('role', 'unknown')} network={node.get('network', 'unknown')}",
             f"peer_count={execution.get('peer_count')} block_lag={execution.get('block_lag')} syncing={execution.get('syncing')}",

@@ -50,7 +50,7 @@ def _post_with_retry(
     max_retries: int = 1,
 ) -> bytes:
     """POST with one retry on transient 429/5xx, honoring ``Retry-After``
-    when present.
+    only within the caller's overall ``timeout_seconds`` budget.
 
     Production providers commonly rate-limit; we surface the first
     failure as an observer error after retries are exhausted, so the
@@ -58,12 +58,30 @@ def _post_with_retry(
     the simulation's burst-then-pause access pattern; longer backoff is
     not the right loop shape because the observer is on the critical
     path and operators expect a verdict promptly or not at all.
+
+    The retry obeys the **same** wall-clock budget as the original
+    call. If the provider's ``Retry-After`` would push us past
+    ``timeout_seconds``, we don't sleep — we surface the 429 immediately
+    so the observer can fail-open. Otherwise an 8-second observer
+    timeout could become a 30-second hang the moment Anthropic returns a
+    long Retry-After.
     """
+    start = time.monotonic()
     attempt = 0
+    # Reserve a 0.5s safety floor for the actual retried call so we
+    # don't sleep up to the budget then time out the socket.
+    _MIN_RETRY_CALL_BUDGET = 0.5
     while True:
+        elapsed = time.monotonic() - start
+        remaining = timeout_seconds - elapsed
+        if remaining <= 0:
+            raise ObserverClientError(
+                f"observer budget exhausted after {elapsed:.1f}s"
+            )
+        per_call_timeout = min(remaining, timeout_seconds)
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(request, timeout=per_call_timeout) as response:
                 return response.read()
         except urllib.error.HTTPError as exc:
             retryable = exc.code in (429, 500, 502, 503, 504)
@@ -73,8 +91,6 @@ def _post_with_retry(
                 except Exception:
                     detail = ""
                 raise ObserverClientError(f"observer http {exc.code}: {detail}") from exc
-            # Honor Retry-After in seconds when the provider sets it,
-            # else exponential-ish (a few seconds).
             wait_s = 5.0
             try:
                 retry_after = exc.headers.get("Retry-After") if exc.headers else None
@@ -82,9 +98,28 @@ def _post_with_retry(
                     wait_s = float(retry_after)
             except (TypeError, ValueError):
                 pass
+            elapsed = time.monotonic() - start
+            remaining = timeout_seconds - elapsed
+            if wait_s + _MIN_RETRY_CALL_BUDGET >= remaining:
+                # Retry-After would exceed our budget; abandon the retry
+                # and let the caller fall back. Drain any error body so
+                # the message is useful.
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")[:500]
+                except Exception:
+                    detail = ""
+                raise ObserverClientError(
+                    f"observer http {exc.code}: retry-after={wait_s:.1f}s "
+                    f"exceeds remaining budget {remaining:.1f}s; {detail}"
+                ) from exc
             time.sleep(wait_s)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             if attempt >= max_retries:
+                raise ObserverClientError(f"observer transport: {exc}") from exc
+            elapsed = time.monotonic() - start
+            remaining = timeout_seconds - elapsed
+            if remaining <= _MIN_RETRY_CALL_BUDGET + 2.0:
+                # Not enough budget left for a 2s backoff + a real call.
                 raise ObserverClientError(f"observer transport: {exc}") from exc
             time.sleep(2.0)
         attempt += 1

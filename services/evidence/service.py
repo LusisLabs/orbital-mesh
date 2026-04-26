@@ -51,6 +51,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
 
+from shared.mesh_runtime import load_policy
+
 if TYPE_CHECKING:
     from shared.mesh_runtime import Trigger
 
@@ -75,7 +77,8 @@ _FAST_PATH_ESCALATION_SIGNATURES: frozenset[str] = frozenset({
 # Default sufficiency check: these are the fields the hypothesis engine's
 # Reth predicates need to resolve. If the inbound signal omits them, the
 # engine cannot falsify alternatives and the decision is forced to
-# escalate. The policy file can override this list.
+# escalate. ``policies/reth-node.policy.json`` may override these via its
+# ``evidence_sufficiency`` block — see ``_load_policy_overrides``.
 _DEFAULT_REQUIRED_FIELDS: tuple[str, ...] = (
     "execution.peer_count",
     "execution.syncing",
@@ -88,6 +91,35 @@ _DEFAULT_REQUIRED_FIELDS: tuple[str, ...] = (
 # the pack insufficient. Two is enough slack for a probe timeout on one
 # RPC method without forcing escalate.
 _DEFAULT_MAX_NULL_FIELDS: int = 2
+
+
+def _load_policy_overrides() -> tuple[tuple[str, ...] | None, int | None]:
+    """Read the ``evidence_sufficiency`` block from the Reth policy.
+
+    Returns ``(required_fields, max_null_fields)`` from the policy, or
+    ``(None, None)`` for any value the policy doesn't set or if the
+    policy can't be loaded. Either piece can be partially overridden —
+    operators commonly tighten ``min_populated_fields`` without changing
+    the null-tolerance threshold, so we treat the two values
+    independently.
+    """
+    try:
+        policy = load_policy("reth-node.policy.json")
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        _LOG.warning("evidence: could not load reth-node policy: %s", exc)
+        return None, None
+    block = policy.get("evidence_sufficiency")
+    if not isinstance(block, dict):
+        return None, None
+    required: tuple[str, ...] | None = None
+    raw_fields = block.get("min_populated_fields")
+    if isinstance(raw_fields, list) and all(isinstance(f, str) for f in raw_fields):
+        required = tuple(raw_fields)
+    max_null: int | None = None
+    raw_max = block.get("max_null_required_fields")
+    if isinstance(raw_max, int) and raw_max >= 0:
+        max_null = raw_max
+    return required, max_null
 
 
 @dataclass
@@ -193,12 +225,28 @@ class EvidenceService:
         self,
         *,
         probe_runner: ProbeRunner | None = None,
-        required_fields: tuple[str, ...] = _DEFAULT_REQUIRED_FIELDS,
-        max_null_fields: int = _DEFAULT_MAX_NULL_FIELDS,
+        required_fields: tuple[str, ...] | None = None,
+        max_null_fields: int | None = None,
     ) -> None:
         self._probe_runner = probe_runner or _identity_runner
-        self._required_fields = required_fields
-        self._max_null_fields = max_null_fields
+        # Resolution order for sufficiency thresholds:
+        #   1. Explicit constructor argument (used by tests).
+        #   2. ``evidence_sufficiency`` block in reth-node.policy.json.
+        #   3. Hardcoded defaults at the top of this module.
+        # Operators changing the policy file should not have to also
+        # change source — that was the original drift the policy block
+        # was meant to prevent.
+        policy_required, policy_max_null = _load_policy_overrides()
+        self._required_fields = (
+            required_fields
+            if required_fields is not None
+            else (policy_required if policy_required is not None else _DEFAULT_REQUIRED_FIELDS)
+        )
+        self._max_null_fields = (
+            max_null_fields
+            if max_null_fields is not None
+            else (policy_max_null if policy_max_null is not None else _DEFAULT_MAX_NULL_FIELDS)
+        )
 
     def assemble(
         self,

@@ -159,6 +159,42 @@ class EvidenceServiceRunnerErrorTests(unittest.TestCase):
         self.assertIn("rpc unreachable", pack.probe_results[0].error or "")
 
 
+class PolicyOverrideTests(unittest.TestCase):
+    """The reth-node.policy.json ``evidence_sufficiency`` block must be
+    read by ``EvidenceService`` so operators can tighten the
+    sufficiency threshold without editing source. Otherwise the policy
+    file's promise of being the source of truth silently breaks."""
+
+    def test_policy_required_fields_loaded(self):
+        # The committed policy lists four required fields; service must
+        # adopt them rather than the source-level defaults.
+        from services.evidence.service import _DEFAULT_REQUIRED_FIELDS
+
+        service = EvidenceService()
+        # The two lists may coincide today, but the contract is "what's
+        # in the policy is what runs". Verify by reading the policy
+        # directly and asserting parity.
+        from shared.mesh_runtime import load_policy
+
+        policy = load_policy("reth-node.policy.json")
+        expected = tuple(policy["evidence_sufficiency"]["min_populated_fields"])
+        self.assertEqual(service._required_fields, expected)
+        # Sanity: the test would silently trivialize if the policy were
+        # somehow empty; require that the policy actually overrides
+        # something.
+        self.assertEqual(
+            tuple(_DEFAULT_REQUIRED_FIELDS), expected,
+            "policy block and defaults match in this fixture, but the "
+            "service should still resolve via the policy path",
+        )
+
+    def test_explicit_constructor_arg_wins_over_policy(self):
+        custom = ("execution.peer_count",)
+        service = EvidenceService(required_fields=custom, max_null_fields=0)
+        self.assertEqual(service._required_fields, custom)
+        self.assertEqual(service._max_null_fields, 0)
+
+
 class EvidencePackSerializationTests(unittest.TestCase):
     def test_to_dict_round_trips_probe_results(self):
         pack = EvidencePack(

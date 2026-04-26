@@ -212,5 +212,112 @@ class JsonExtractTests(unittest.TestCase):
         self.assertIsNone(_try_parse_json_block("not json at all"))
 
 
+class RetryAfterBudgetTests(unittest.TestCase):
+    """``Retry-After`` must not push the call past the caller's
+    ``timeout_seconds`` budget. An 8-second observer budget should not
+    be silently stretched to 30 seconds because the provider rate-
+    limited us — the deterministic decision needs to come back promptly
+    or the observer should fail-open."""
+
+    def test_retry_after_exceeding_budget_aborts_immediately(self):
+        import urllib.error
+        from io import BytesIO
+        from services.observer.client import _post_with_retry, ObserverClientError
+
+        class _Headers(dict):
+            def get(self, k, default=None):
+                return super().get(k, default)
+
+        # Build a 429 with Retry-After well over the budget.
+        headers = _Headers({"Retry-After": "30"})
+        http_err = urllib.error.HTTPError(
+            url="http://x", code=429, msg="Too Many Requests",
+            hdrs=headers, fp=BytesIO(b'{"error":"rate_limit"}'),
+        )
+        http_err.headers = headers
+
+        calls = {"n": 0}
+
+        class _FakeResponse:
+            def __init__(self) -> None:
+                pass
+
+        def fake_urlopen(req, timeout):
+            calls["n"] += 1
+            raise http_err
+
+        # 5-second budget, 30s Retry-After -> must not sleep, must abort
+        # quickly. We measure wall time to confirm.
+        import time as _time
+        from unittest.mock import patch as _patch
+
+        start = _time.monotonic()
+        with _patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaises(ObserverClientError) as ctx:
+                _post_with_retry(
+                    url="http://x",
+                    body=b"{}",
+                    headers={},
+                    timeout_seconds=5.0,
+                    max_retries=1,
+                )
+        elapsed = _time.monotonic() - start
+
+        # Single attempt — the retry was abandoned because Retry-After
+        # exceeded budget. No 30-second sleep.
+        self.assertEqual(calls["n"], 1)
+        self.assertLess(elapsed, 2.0, "must not sleep through Retry-After when over budget")
+        self.assertIn("retry-after", str(ctx.exception).lower())
+
+    def test_retry_after_within_budget_does_retry(self):
+        """Sanity: if Retry-After is short enough to fit, the retry runs."""
+        import urllib.error
+        from io import BytesIO
+        from services.observer.client import _post_with_retry
+        from unittest.mock import patch as _patch
+
+        class _Headers(dict):
+            def get(self, k, default=None):
+                return super().get(k, default)
+
+        headers = _Headers({"Retry-After": "0"})  # no wait
+        http_err_429 = urllib.error.HTTPError(
+            url="http://x", code=429, msg="Too Many Requests",
+            hdrs=headers, fp=BytesIO(b"{}"),
+        )
+        http_err_429.headers = headers
+
+        class _OkResponse:
+            def __init__(self):
+                self._read = b'{"choices":[]}'
+
+            def read(self):
+                return self._read
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        responses = [http_err_429, _OkResponse()]
+
+        def fake_urlopen(req, timeout):
+            r = responses.pop(0)
+            if isinstance(r, urllib.error.HTTPError):
+                raise r
+            return r
+
+        with _patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            result = _post_with_retry(
+                url="http://x",
+                body=b"{}",
+                headers={},
+                timeout_seconds=10.0,
+                max_retries=1,
+            )
+        self.assertEqual(result, b'{"choices":[]}')
+
+
 if __name__ == "__main__":
     unittest.main()
