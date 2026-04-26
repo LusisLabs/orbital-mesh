@@ -115,6 +115,20 @@ class RuntimeConfig:
     llm_escalation_provider: str = "goose"
     llm_escalation_model: str | None = None
     llm_escalation_timeout_seconds: int = 30
+    # OpenAI-compatible LLM observer that reviews every deterministic
+    # decision before it executes. Provider-neutral: any URL that speaks
+    # ``/v1/chat/completions`` works (OpenAI, Anthropic via shim, vLLM,
+    # Ollama, Together, Groq, OpenRouter, ...). Disabled by default; the
+    # deterministic engine remains the safety floor when this is off.
+    observer_enabled: bool = False
+    observer_base_url: str = ""
+    observer_api_key: str = ""
+    observer_model: str = ""
+    observer_timeout_seconds: float = 8.0
+    observer_max_tokens: int = 512
+    # ``openai`` for /v1/chat/completions (OpenAI, vLLM, Ollama, ...);
+    # ``anthropic`` for /v1/messages with x-api-key auth.
+    observer_provider: str = "openai"
     correlation_enabled: bool = False
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
@@ -313,6 +327,13 @@ class RuntimeConfig:
             ssh_allowed_hosts=_csv_env("MESH_SSH_ALLOWED_HOSTS"),
             ssh_allowed_services=_csv_env("MESH_SSH_ALLOWED_SERVICES"),
             bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
+            observer_enabled=os.getenv("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes"),
+            observer_base_url=os.getenv("MESH_OBSERVER_BASE_URL", ""),
+            observer_api_key=os.getenv("MESH_OBSERVER_API_KEY", ""),
+            observer_model=os.getenv("MESH_OBSERVER_MODEL", ""),
+            observer_timeout_seconds=float(os.getenv("MESH_OBSERVER_TIMEOUT_SECONDS", "8.0")),
+            observer_max_tokens=int(os.getenv("MESH_OBSERVER_MAX_TOKENS", "512")),
+            observer_provider=os.getenv("MESH_OBSERVER_PROVIDER", "openai").lower(),
         )
 
 

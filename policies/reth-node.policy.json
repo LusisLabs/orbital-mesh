@@ -20,6 +20,17 @@
   "max_restarts_per_window": 1,
   "disk_pressure_pct": 90,
   "rpc_error_rate": 0.05,
+  "evidence_sufficiency": {
+    "$comment": "Forces escalation when the assembled evidence pack is too sparse to defend an action. The EvidenceService applies its own defaults; this block lets operators override per-policy.",
+    "min_populated_fields": [
+      "execution.peer_count",
+      "execution.syncing",
+      "execution.block_lag",
+      "rpc.http_reachable"
+    ],
+    "max_null_required_fields": 2,
+    "on_insufficient": "escalate"
+  },
   "allowed_consensus_clients": [
     "lighthouse",
     "prysm",

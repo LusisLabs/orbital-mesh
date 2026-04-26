@@ -23,11 +23,14 @@ packages = [
   "services",
   "services.ingest",
   "services.trigger",
+  "services.evidence",
   "services.decision",
   "services.evaluation",
   "services.orchestrator",
   "services.feedback",
   "services.actuators",
+  "services.observer",
+  "simulation",
 ]
 
 [tool.ruff]

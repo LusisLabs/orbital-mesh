@@ -14,6 +14,7 @@ from typing import Any
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
+from services.evidence import EvidencePack, EvidenceService
 from services.ingest.webhook_service import (
     WebhookIngestService,
     build_signal_from_alert,
@@ -26,6 +27,9 @@ from shared.mesh_runtime import (
     APPROVAL_BLOCKED,
     DECISION_READY,
     EVIDENCE_NODE_RECORDED,
+    EVIDENCE_PACK_ASSEMBLING,
+    EVIDENCE_PACK_READY,
+    EVIDENCE_PROBE_COMPLETED,
     EVALUATION_READY,
     EXECUTION_RECORDED,
     FEEDBACK_RECORDED,
@@ -243,6 +247,12 @@ class RunCoordinator:
             context_store=self.context_store,
             active_memory=self.active_memory,
         )
+        # Evidence stage: promotes the inbound signal to an audited
+        # ``evidence_pack`` artifact before the decision branch reads it.
+        # See docs/plans/node-evidence-loop.md for design notes. The
+        # service is pure (no I/O at this layer) — live probe runners are
+        # injected by the caller when enrichment is needed.
+        self.evidence = EvidenceService()
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.evo_launcher = EvoLaunchService(self.config)
@@ -879,6 +889,25 @@ class RunCoordinator:
                     continue
                 break
 
+            evidence_pack: EvidencePack | None = None
+            try:
+                evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
+            except Exception as exc:
+                # Evidence stage failure is non-fatal: the pipeline falls
+                # back to reading the inbound signal directly. The run log
+                # carries the error event so operators can see why the
+                # pack is missing.
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="evidence_pack_ready",
+                    event_type=EVIDENCE_PACK_READY,
+                    payload={"error": str(exc), "fallback": "inline_signal"},
+                    summary={"status": "failed"},
+                    artifact_key="evidence_pack",
+                    status="failed",
+                )
+                _LOG.exception("Evidence pack assembly failed for run %s", run_id)
+
             scenario_analysis = None
             try:
                 scenario_analysis = self._record_scenario_analysis(run_id, trigger)
@@ -894,7 +923,11 @@ class RunCoordinator:
                 )
                 _LOG.exception("Scenario analysis failed for run %s", run_id)
 
-            decision = engine.decision.decide(trigger, scenario_analysis=scenario_analysis)
+            decision = engine.decision.decide(
+                trigger,
+                scenario_analysis=scenario_analysis,
+                evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+            )
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
             if self._maybe_launch_recovery_run(
                 run_id,
@@ -1264,6 +1297,68 @@ class RunCoordinator:
             )
         except Exception:
             _LOG.exception("Memory crystallization failed for run %s", run_id)
+
+    def _record_evidence_pack(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        signal_payload: dict[str, Any],
+    ) -> EvidencePack:
+        """Run the evidence stage and stamp the audited pack onto the run.
+
+        Emits one event per probe so the run log shows exactly what was
+        looked up and how long each lookup took. The pack is also stored
+        as a run artifact under key ``evidence_pack`` so the UI and
+        downstream services read the same snapshot.
+        """
+        self._update_session(run_id, stage="evidence_pack_ready", status="running")
+        self.state_store.append_run_event(
+            run_id,
+            stage="evidence_pack_ready",
+            event_type=EVIDENCE_PACK_ASSEMBLING,
+            payload={
+                "trigger_id": trigger.trigger_id,
+                "signal_type": signal_payload.get("signal_type"),
+            },
+            summary={"trigger_type": trigger.trigger_type},
+            status="running",
+        )
+
+        pack = self.evidence.assemble(trigger=trigger, signal_payload=signal_payload)
+
+        for probe in pack.probe_results:
+            self.state_store.append_run_event(
+                run_id,
+                stage="evidence_pack_ready",
+                event_type=EVIDENCE_PROBE_COMPLETED,
+                payload={
+                    "name": probe.name,
+                    "source": probe.source,
+                    "success": probe.success,
+                    "latency_ms": probe.latency_ms,
+                    "error": probe.error,
+                },
+                summary={"probe": probe.name, "success": probe.success},
+                status="recorded",
+            )
+
+        pack_payload = pack.to_dict()
+        self._set_artifact(run_id, "evidence_pack", pack_payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="evidence_pack_ready",
+            event_type=EVIDENCE_PACK_READY,
+            payload=pack_payload,
+            summary={
+                "source": pack.source,
+                "sufficient": pack.sufficient,
+                "missing_field_count": len(pack.missing_fields),
+                "fast_path_signatures": pack.fast_path_signatures,
+            },
+            artifact_key="evidence_pack",
+            status="recorded",
+        )
+        return pack
 
     def _record_scenario_analysis(self, run_id: str, trigger: Trigger):
         self._update_session(run_id, stage="scenario_analysis_ready", status="running")

@@ -69,6 +69,15 @@
         "evidence_pack": {
           "type": "object"
         },
+        "ranked_hypotheses": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "observer_verdict": {
+          "type": ["object", "null"]
+        },
         "alternatives_considered": {
           "type": "array",
           "items": {

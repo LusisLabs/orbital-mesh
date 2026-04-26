@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from services.decision.hypothesis_engine import HypothesisEngine
     from services.decision.llm_fallback import LlmActionProposer
     from services.decision.llm_reasoning import EscalationReasoner
+    from services.observer import LlmObserver
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
 
@@ -50,6 +51,7 @@ class DecisionService:
         hypothesis_engine: HypothesisEngine | None = None,
         metric_action_rules_path: str | None = None,
         llm_proposer: "LlmActionProposer | None" = None,
+        llm_observer: "LlmObserver | None" = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
@@ -61,8 +63,17 @@ class DecisionService:
         # Layer 3: optional LLM fallback invoked only when no rule matched.
         # Injected rather than constructed here so tests can pass a mock.
         self._llm_proposer = llm_proposer
+        # Layer 5: optional LLM observer that reviews the deterministic
+        # decision and can promote (but not demote) toward escalation.
+        # See services/observer/ — provider-neutral, OpenAI-compatible.
+        self._llm_observer = llm_observer
 
-    def decide(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+    def decide(
+        self,
+        trigger: Trigger,
+        scenario_analysis: ScenarioAnalysis | dict | None = None,
+        evidence_pack: dict | None = None,
+    ) -> Decision:
         # Log the branch up front. Readers scanning a server log for
         # "why did Mesh propose X" need to know which decision path ran
         # before they look at the rule registry, the LLM fallback, or
@@ -93,7 +104,7 @@ class DecisionService:
             )
             return decision
         if trigger.trigger_type == "reth_node_degraded":
-            decision = self._decide_reth_node(trigger)
+            decision = self._decide_reth_node(trigger, evidence_pack=evidence_pack)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -245,12 +256,24 @@ class DecisionService:
 
     # ------------------------------------------------------------------ OTel
 
-    def _decide_reth_node(self, trigger: Trigger) -> Decision:
+    def _decide_reth_node(
+        self,
+        trigger: Trigger,
+        evidence_pack: dict | None = None,
+    ) -> Decision:
         """Decide on a first-class Reth node health trigger.
 
         Reth is stateful execution infrastructure, so the safe default differs
         from stateless Kubernetes apps: restart only for bounded process/network
         symptoms, and escalate for storage, JWT/Engine API, or DB-like failures.
+
+        When a hypothesis engine is bound, ranked hypotheses are computed
+        from the evidence pack and stamped on the reasoning record. The top
+        hypothesis can *promote* a restart to escalate, but never *demote*
+        a deterministic escalation — the safety direction is one-way.
+        Likewise, if the evidence pack is marked insufficient, the
+        decision is forced to escalate regardless of which signatures
+        matched.
         """
         signatures = set(trigger.related_context.get("error_signatures", []))
         policy = load_policy("reth-node.policy.json")
@@ -282,12 +305,124 @@ class DecisionService:
             risk_level = "low"
             autonomy_tier = "autonomous"
 
+        # Hypothesis ranking. The engine is optional; when absent, the
+        # downstream observer (LLM) reads only the deterministic decision.
+        ranked_hypotheses: list[dict] = []
+        top_hypothesis: dict | None = None
+        if self.hypothesis_engine is not None:
+            try:
+                hypotheses = self.hypothesis_engine.generate(trigger, evidence_pack=evidence_pack)
+                ranked_hypotheses = [h.to_dict() for h in hypotheses]
+                if ranked_hypotheses:
+                    top_hypothesis = ranked_hypotheses[0]
+            except Exception:
+                _LOG.exception("hypothesis_engine.generate failed for trigger=%s", trigger.trigger_id)
+
+        # One-way promotion: hypothesis can move us toward escalate but
+        # never away from it. ``no_action``/``restart_systemd_service`` →
+        # ``escalate`` is allowed when the top hypothesis recommends it
+        # with high posterior. Anything in the reverse direction is
+        # ignored — the deterministic policy is the safety floor.
+        if (
+            top_hypothesis is not None
+            and top_hypothesis.get("recommended_action") == "escalate"
+            and float(top_hypothesis.get("posterior_confidence", 0)) >= 0.55
+            and decision_type != "escalate"
+        ):
+            _LOG.info(
+                "decide.reth: hypothesis promoted to escalate id=%s posterior=%.2f",
+                top_hypothesis.get("hypothesis_id"),
+                float(top_hypothesis.get("posterior_confidence", 0)),
+            )
+            decision_type = "escalate"
+            confidence = max(confidence, 0.75)
+            risk_level = "high"
+            autonomy_tier = "escalated"
+
+        # Evidence sufficiency override: an insufficient pack forces
+        # escalation. We act on facts, not on the absence of them.
+        if isinstance(evidence_pack, dict) and evidence_pack.get("sufficient") is False:
+            if decision_type != "escalate":
+                _LOG.info(
+                    "decide.reth: insufficient evidence pack forces escalate, missing=%s",
+                    evidence_pack.get("missing_fields"),
+                )
+                decision_type = "escalate"
+                confidence = max(confidence, 0.70)
+                risk_level = "high"
+                autonomy_tier = "escalated"
+
+        # Fast-path override: when the EvidenceService skipped probe
+        # assembly because the trigger already named a credential or
+        # exposure signature, the only safe outcome is escalate. We
+        # do NOT rely on the autonomy/escalation_signatures cross-file
+        # invariant here — if a fast-path signature is missing from the
+        # policy's escalation list, that's a misconfig that should still
+        # not produce ``no_action`` for an unsafe condition. Belt and
+        # suspenders.
+        fast_path = (
+            (evidence_pack or {}).get("fast_path_signatures")
+            if isinstance(evidence_pack, dict)
+            else None
+        )
+        if fast_path:
+            if decision_type != "escalate":
+                _LOG.warning(
+                    "decide.reth: fast-path signatures forced escalate (policy "
+                    "did not already escalate, possible misconfig); signatures=%s",
+                    fast_path,
+                )
+                decision_type = "escalate"
+                confidence = max(confidence, 0.80)
+                risk_level = "high"
+                autonomy_tier = "escalated"
+
         evidence = [
             f"reth node role={node.get('role', 'unknown')} network={node.get('network', 'unknown')}",
             f"peer_count={execution.get('peer_count')} block_lag={execution.get('block_lag')} syncing={execution.get('syncing')}",
             f"engine_api_reachable={consensus.get('engine_api_reachable')} forkchoice_recent={consensus.get('forkchoice_updates_recent')}",
             f"disk_used_pct={storage.get('disk_used_pct')}",
         ]
+        primary_hypothesis = _reth_primary_hypothesis(trigger, signatures, top_hypothesis)
+
+        # Layer 5: LLM observer review. The observer reads the
+        # deterministic snapshot and emits a verdict; only ``escalate``,
+        # ``reject_unsafe``, and ``request_more_evidence`` change the
+        # outcome, and only in the safer direction. ``approve`` is a
+        # no-op. A failed/disabled observer behaves like ``approve``,
+        # so the deterministic engine remains the floor.
+        observer_verdict_dict: dict | None = None
+        if self._llm_observer is not None and self._llm_observer.is_active():
+            try:
+                deterministic_snapshot = {
+                    "decision_type": decision_type,
+                    "autonomy_tier": autonomy_tier,
+                    "confidence": confidence,
+                    "reasoning": {
+                        "primary_hypothesis": primary_hypothesis,
+                    },
+                }
+                verdict = self._llm_observer.review(
+                    trigger=trigger.to_dict(),
+                    evidence_pack=evidence_pack,
+                    ranked_hypotheses=ranked_hypotheses,
+                    deterministic_decision=deterministic_snapshot,
+                    policy_excerpt=policy,
+                )
+                observer_verdict_dict = verdict.to_dict()
+                if verdict.promotes_to_escalate() and decision_type != "escalate":
+                    _LOG.info(
+                        "decide.reth: observer promoted to escalate verdict=%s reason=%s",
+                        verdict.verdict,
+                        verdict.reason,
+                    )
+                    decision_type = "escalate"
+                    autonomy_tier = "escalated"
+                    risk_level = "high"
+                    confidence = max(confidence, 0.75)
+            except Exception:
+                _LOG.exception("LLM observer raised; deterministic decision stands")
+
         decision = Decision(
             decision_id=f"dec_{trigger.trigger_id}",
             trigger_id=trigger.trigger_id,
@@ -295,10 +430,9 @@ class DecisionService:
             autonomy_tier=autonomy_tier,
             summary=_summary(trigger, decision_type, 0),
             reasoning={
-                "primary_hypothesis": (
-                    f"Reth node {trigger.service} is degraded due to "
-                    f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
-                ),
+                "primary_hypothesis": primary_hypothesis,
+                "ranked_hypotheses": ranked_hypotheses,
+                "observer_verdict": observer_verdict_dict,
                 "evidence": evidence,
                 "evidence_pack": {
                     "error_signatures": sorted(signatures),
@@ -311,6 +445,12 @@ class DecisionService:
                         "max_restarts_per_window": policy["max_restarts_per_window"],
                         "restart_window_seconds": policy["restart_window_seconds"],
                         "require_approval_for_restart": policy["require_approval_for_restart"],
+                    },
+                    "evidence_pack_artifact": {
+                        "source": (evidence_pack or {}).get("source"),
+                        "sufficient": (evidence_pack or {}).get("sufficient"),
+                        "missing_fields": (evidence_pack or {}).get("missing_fields", []),
+                        "fast_path_signatures": (evidence_pack or {}).get("fast_path_signatures", []),
                     },
                     "trust_boundary": (
                         "systemd restart remains approval-gated; storage, Engine API, JWT, and DB "
@@ -724,7 +864,8 @@ class DecisionService:
             top = hypotheses[0]
             allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
             if (
-                top.get("posterior_confidence", 0.0) >= 0.55
+                _hypothesis_has_resolved_evidence(top)
+                and top.get("posterior_confidence", 0.0) >= 0.55
                 and top.get("recommended_action") in allowed_upgrades
             ):
                 decision_type = top["recommended_action"]
@@ -882,6 +1023,28 @@ def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
         "resource_attributes": trigger.related_context.get("resource_attributes", {}),
         "related_metrics": trigger.related_context.get("related_metrics", []),
     }
+
+
+def _reth_primary_hypothesis(
+    trigger: Trigger,
+    signatures: set[str],
+    top_hypothesis: dict | None,
+) -> str:
+    if top_hypothesis and top_hypothesis.get("hypothesis_id") != "h_unknown":
+        description = top_hypothesis.get("description")
+        if isinstance(description, str) and description:
+            return description
+    return (
+        f"Reth node {trigger.service} is degraded due to "
+        f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
+    )
+
+
+def _hypothesis_has_resolved_evidence(hypothesis: dict) -> bool:
+    return bool(
+        hypothesis.get("supporting_evidence")
+        or hypothesis.get("disconfirming_evidence")
+    )
 
 
 def _delta_pct(baseline: float, observed: float) -> float:
