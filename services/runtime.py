@@ -14,8 +14,10 @@ from services.scenario_analysis.service import ScenarioAnalysisService
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
+from shared.mesh_runtime.run_events import HYPOTHESIS_RANKED
 
 if TYPE_CHECKING:
+    from shared.mesh_runtime.contracts import Decision
     from shared.mesh_runtime.alert_store import AlertStore
     from shared.mesh_runtime.context_store import ContextStore
     from shared.mesh_runtime.infra_graph import InfraGraph
@@ -180,6 +182,19 @@ class MeshRuntimeEngine:
             scenario_analysis=scenario_analysis,
             evidence_pack=evidence_pack.to_dict(),
         )
+        ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
+        if ranked_hypotheses:
+            record_event(
+                "decision_ready",
+                HYPOTHESIS_RANKED,
+                {
+                    "trigger_id": trigger.trigger_id,
+                    "top_hypothesis": deepcopy(ranked_hypotheses[0]),
+                    "ranked_hypotheses": deepcopy(ranked_hypotheses),
+                },
+                artifact_key="ranked_hypotheses",
+                status="recorded",
+            )
         record_event(
             "decision_ready",
             "decision_ready",
@@ -262,3 +277,16 @@ def _execution_review_artifact(execution) -> tuple[str, str, dict] | None:
         if isinstance(payload, dict):
             return artifact_key, integration_name, payload
     return None
+
+
+def _ranked_hypotheses_from_decision(decision: "Decision") -> list[dict]:
+    reasoning = decision.reasoning if isinstance(decision.reasoning, dict) else {}
+    ranked = reasoning.get("ranked_hypotheses")
+    if isinstance(ranked, list) and ranked:
+        return [dict(item) for item in ranked if isinstance(item, dict)]
+    evidence_pack = reasoning.get("evidence_pack")
+    if isinstance(evidence_pack, dict):
+        hypotheses = evidence_pack.get("hypotheses")
+        if isinstance(hypotheses, list) and hypotheses:
+            return [dict(item) for item in hypotheses if isinstance(item, dict)]
+    return []

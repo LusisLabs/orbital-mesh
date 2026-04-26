@@ -383,6 +383,7 @@ class DecisionService:
             f"engine_api_reachable={consensus.get('engine_api_reachable')} forkchoice_recent={consensus.get('forkchoice_updates_recent')}",
             f"disk_used_pct={storage.get('disk_used_pct')}",
         ]
+        primary_hypothesis = _reth_primary_hypothesis(trigger, signatures, top_hypothesis)
 
         # Layer 5: LLM observer review. The observer reads the
         # deterministic snapshot and emits a verdict; only ``escalate``,
@@ -398,12 +399,7 @@ class DecisionService:
                     "autonomy_tier": autonomy_tier,
                     "confidence": confidence,
                     "reasoning": {
-                        "primary_hypothesis": (
-                            top_hypothesis.get("description")
-                            if top_hypothesis
-                            else f"Reth node {trigger.service} is degraded due to "
-                            f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
-                        ),
+                        "primary_hypothesis": primary_hypothesis,
                     },
                 }
                 verdict = self._llm_observer.review(
@@ -434,14 +430,7 @@ class DecisionService:
             autonomy_tier=autonomy_tier,
             summary=_summary(trigger, decision_type, 0),
             reasoning={
-                "primary_hypothesis": (
-                    top_hypothesis.get("description")
-                    if top_hypothesis
-                    else (
-                        f"Reth node {trigger.service} is degraded due to "
-                        f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
-                    )
-                ),
+                "primary_hypothesis": primary_hypothesis,
                 "ranked_hypotheses": ranked_hypotheses,
                 "observer_verdict": observer_verdict_dict,
                 "evidence": evidence,
@@ -875,7 +864,8 @@ class DecisionService:
             top = hypotheses[0]
             allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
             if (
-                top.get("posterior_confidence", 0.0) >= 0.55
+                _hypothesis_has_resolved_evidence(top)
+                and top.get("posterior_confidence", 0.0) >= 0.55
                 and top.get("recommended_action") in allowed_upgrades
             ):
                 decision_type = top["recommended_action"]
@@ -1033,6 +1023,28 @@ def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
         "resource_attributes": trigger.related_context.get("resource_attributes", {}),
         "related_metrics": trigger.related_context.get("related_metrics", []),
     }
+
+
+def _reth_primary_hypothesis(
+    trigger: Trigger,
+    signatures: set[str],
+    top_hypothesis: dict | None,
+) -> str:
+    if top_hypothesis and top_hypothesis.get("hypothesis_id") != "h_unknown":
+        description = top_hypothesis.get("description")
+        if isinstance(description, str) and description:
+            return description
+    return (
+        f"Reth node {trigger.service} is degraded due to "
+        f"{', '.join(sorted(signatures) or ['unknown symptoms'])}."
+    )
+
+
+def _hypothesis_has_resolved_evidence(hypothesis: dict) -> bool:
+    return bool(
+        hypothesis.get("supporting_evidence")
+        or hypothesis.get("disconfirming_evidence")
+    )
 
 
 def _delta_pct(baseline: float, observed: float) -> float:

@@ -45,12 +45,12 @@ from simulation.fault_catalog import CATALOG
 _DEFAULT_OUTPUT_DIR = Path(".mesh-runtime-state") / "simulation"
 
 
-def _set_env_if_missing(name: str, value: str) -> None:
-    """Set an env var only if the user hasn't already set one. Avoids
-    silently overriding operator-supplied config when the simulation
-    runs inside a configured environment."""
-    if not os.environ.get(name):
-        os.environ[name] = value
+def _set_env_from_cli_or_default(name: str, cli_value: str | None, default: str) -> None:
+    """Apply conventional precedence: CLI flag, then existing env, then default."""
+    if cli_value is not None:
+        os.environ[name] = cli_value
+    elif not os.environ.get(name):
+        os.environ[name] = default
 
 
 def _configure_observer_env(args: argparse.Namespace) -> bool:
@@ -59,9 +59,17 @@ def _configure_observer_env(args: argparse.Namespace) -> bool:
         os.environ["MESH_OBSERVER_ENABLED"] = "false"
         return False
 
-    provider = (args.observer_provider or "").lower() or _detect_provider()
+    provider = (
+        args.observer_provider
+        or os.environ.get("MESH_OBSERVER_PROVIDER")
+        or _detect_provider()
+    ).lower()
     if provider == "anthropic":
-        api_key = os.environ.get("ANTHROPIC_API_KEY") or args.observer_api_key
+        api_key = (
+            args.observer_api_key
+            or os.environ.get("ANTHROPIC_API_KEY")
+            or os.environ.get("MESH_OBSERVER_API_KEY")
+        )
         if not api_key:
             print(
                 "[sim] WARNING: --no-observer was not set but no ANTHROPIC_API_KEY is "
@@ -71,17 +79,25 @@ def _configure_observer_env(args: argparse.Namespace) -> bool:
             )
             os.environ["MESH_OBSERVER_ENABLED"] = "false"
             return False
-        _set_env_if_missing("MESH_OBSERVER_PROVIDER", "anthropic")
-        _set_env_if_missing("MESH_OBSERVER_BASE_URL", "https://api.anthropic.com")
-        _set_env_if_missing("MESH_OBSERVER_MODEL", args.observer_model or "claude-sonnet-4-6")
+        os.environ["MESH_OBSERVER_PROVIDER"] = "anthropic"
+        _set_env_from_cli_or_default(
+            "MESH_OBSERVER_BASE_URL",
+            args.observer_base_url,
+            "https://api.anthropic.com",
+        )
+        _set_env_from_cli_or_default(
+            "MESH_OBSERVER_MODEL",
+            args.observer_model,
+            "claude-sonnet-4-6",
+        )
         os.environ["MESH_OBSERVER_API_KEY"] = api_key
         os.environ["MESH_OBSERVER_ENABLED"] = "true"
         return True
 
     if provider == "openai":
         api_key = (
-            os.environ.get("OPENAI_API_KEY")
-            or args.observer_api_key
+            args.observer_api_key
+            or os.environ.get("OPENAI_API_KEY")
             or os.environ.get("MESH_OBSERVER_API_KEY")
         )
         if not api_key:
@@ -92,11 +108,17 @@ def _configure_observer_env(args: argparse.Namespace) -> bool:
             )
             os.environ["MESH_OBSERVER_ENABLED"] = "false"
             return False
-        _set_env_if_missing("MESH_OBSERVER_PROVIDER", "openai")
-        _set_env_if_missing(
-            "MESH_OBSERVER_BASE_URL", args.observer_base_url or "https://api.openai.com"
+        os.environ["MESH_OBSERVER_PROVIDER"] = "openai"
+        _set_env_from_cli_or_default(
+            "MESH_OBSERVER_BASE_URL",
+            args.observer_base_url,
+            "https://api.openai.com",
         )
-        _set_env_if_missing("MESH_OBSERVER_MODEL", args.observer_model or "gpt-4o-mini")
+        _set_env_from_cli_or_default(
+            "MESH_OBSERVER_MODEL",
+            args.observer_model,
+            "gpt-4o-mini",
+        )
         os.environ["MESH_OBSERVER_API_KEY"] = api_key
         os.environ["MESH_OBSERVER_ENABLED"] = "true"
         return True

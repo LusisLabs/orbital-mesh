@@ -244,6 +244,7 @@ class DecisionServiceIntegrationTests(unittest.TestCase):
                 recommended_action="restart_deployment",
                 prior_confidence=0.60,
                 posterior_confidence=0.70,
+                supporting_evidence=["signal.recovered_after_restart=true"],
             ),
         ]
         svc = DecisionService(hypothesis_engine=mock_engine)
