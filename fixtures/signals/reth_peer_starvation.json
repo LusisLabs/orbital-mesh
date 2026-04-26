@@ -1,0 +1,84 @@
+{
+  "signal_type": "reth_node",
+  "signal_id": "sig_reth_peer_starvation_001",
+  "observed_at": "2026-04-26T12:00:00Z",
+  "environment": "production",
+  "service": "reth-mainnet-07",
+  "endpoint": "reth.rpc",
+  "comparison_window": {
+    "baseline": "PT1H",
+    "observed": "PT5M"
+  },
+  "segment": {
+    "customer_tier": "system",
+    "region": "us-east-1"
+  },
+  "node": {
+    "name": "reth-mainnet-07",
+    "deployment_mode": "systemd",
+    "network": "mainnet",
+    "role": "rpc",
+    "client_version": "reth/v1.0.6",
+    "data_dir": "/var/lib/reth",
+    "jwt_secret_path": "/etc/reth/jwt.hex"
+  },
+  "execution": {
+    "syncing": false,
+    "head_block": 19234567,
+    "block_lag": 0,
+    "peer_count": 0,
+    "min_peer_count": 3,
+    "max_block_lag": 32,
+    "safe_block": null,
+    "finalized_block": null
+  },
+  "consensus": {
+    "engine_api_reachable": true,
+    "jwt_configured": true,
+    "forkchoice_updates_recent": true,
+    "consensus_client": "lighthouse",
+    "client_kind": "lighthouse",
+    "client_healthy": true,
+    "jwt_secret_exists": true,
+    "jwt_secret_mode": "0600"
+  },
+  "storage": {
+    "data_dir_free_bytes": 549755813888,
+    "disk_used_pct": 62.0,
+    "db_growth_rate_bytes_per_hour": null,
+    "snapshot_mode": "none",
+    "diagnostic_source": "ssh_df"
+  },
+  "rpc": {
+    "http_reachable": true,
+    "latency_ms": 32.0,
+    "error_rate": 0.0,
+    "publicly_exposed": false,
+    "authrpc_publicly_exposed": false
+  },
+  "logs": {
+    "error_signatures": [],
+    "recent_errors": [
+      "no peers connected for 4m20s; entering peer_starvation state"
+    ]
+  },
+  "resource_attributes": {
+    "service.name": "reth-mainnet-07",
+    "deployment.environment": "production",
+    "mesh.node.kind": "reth",
+    "mesh.node.host": "vault-prod-07",
+    "mesh.node.service": "reth.service",
+    "mesh.node.min_peer_count": 3,
+    "mesh.node.max_block_lag": 32,
+    "mesh.node.deployment_mode": "systemd",
+    "mesh.node.network": "mainnet",
+    "mesh.node.role": "rpc"
+  },
+  "related_context": {
+    "node_kind": "reth",
+    "host": "vault-prod-07",
+    "systemd_service": "reth.service",
+    "systemd_restarts_last_1h": 0
+  },
+  "post_action_observations": {}
+}

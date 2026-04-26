@@ -191,12 +191,140 @@ def _probe_failure_templates() -> list[Hypothesis]:
     ]
 
 
+# ---------------------------------------------------------------------
+# Reth (execution-layer node) templates
+#
+# Predicates here read from the EvidencePack rather than from
+# trigger.related_context. The engine threads the pack through; predicates
+# without a pack to read return ``unknown`` (which neither supports nor
+# disconfirms — leaves the prior in place).
+# ---------------------------------------------------------------------
+
+
+def _reth_peer_starvation_templates() -> list[Hypothesis]:
+    return [
+        Hypothesis(
+            hypothesis_id="h_reth_peer_local_isolation",
+            description="Zero peers but RPC reachable; node is up, the network is the problem",
+            candidate_cause="local_isolation",
+            recommended_action="restart_systemd_service",
+            prior_confidence=0.55,
+            predicates=[
+                FalsificationPredicate(kind="peer_count_zero", arguments={}),
+                FalsificationPredicate(kind="rpc_http_reachable", arguments={}),
+            ],
+        ),
+        Hypothesis(
+            hypothesis_id="h_reth_peer_consensus_disconnect",
+            description="EL has no peers AND the consensus client is gone",
+            candidate_cause="consensus_disconnect",
+            recommended_action="escalate",
+            prior_confidence=0.50,
+            predicates=[
+                FalsificationPredicate(kind="engine_api_unreachable", arguments={}),
+            ],
+        ),
+        Hypothesis(
+            hypothesis_id="h_reth_peer_transient",
+            description="Peers briefly below floor; routine discovery hiccup",
+            candidate_cause="transient",
+            recommended_action="no_action",
+            prior_confidence=0.35,
+            predicates=[
+                FalsificationPredicate(kind="peer_count_above", arguments={"threshold": 0}, weight=0.6),
+            ],
+        ),
+    ]
+
+
+def _reth_sync_stalled_templates() -> list[Hypothesis]:
+    return [
+        Hypothesis(
+            hypothesis_id="h_reth_sync_consensus_disconnect",
+            description="Sync stalled because the consensus client is unreachable",
+            candidate_cause="consensus_disconnect",
+            recommended_action="escalate",
+            prior_confidence=0.55,
+            predicates=[
+                FalsificationPredicate(kind="engine_api_unreachable", arguments={}),
+                FalsificationPredicate(kind="forkchoice_updates_stale", arguments={}, weight=0.8),
+            ],
+        ),
+        Hypothesis(
+            hypothesis_id="h_reth_sync_disk_pressure",
+            description="Disk near full; node cannot write new chain segments",
+            candidate_cause="disk_pressure",
+            recommended_action="escalate",
+            prior_confidence=0.50,
+            predicates=[
+                FalsificationPredicate(kind="disk_used_pct_above", arguments={"threshold": 88.0}),
+            ],
+        ),
+        Hypothesis(
+            hypothesis_id="h_reth_sync_catching_up",
+            description="Block lag exists but sync is making progress",
+            candidate_cause="transient",
+            recommended_action="no_action",
+            prior_confidence=0.30,
+            predicates=[
+                FalsificationPredicate(kind="block_lag_below", arguments={"threshold": 64}, weight=0.6),
+            ],
+        ),
+    ]
+
+
+def _reth_rpc_degraded_templates() -> list[Hypothesis]:
+    return [
+        Hypothesis(
+            hypothesis_id="h_reth_rpc_exposed_overload",
+            description="RPC publicly exposed AND error rate elevated; abuse traffic likely",
+            candidate_cause="rpc_exposure_abuse",
+            recommended_action="escalate",
+            prior_confidence=0.65,
+            predicates=[
+                FalsificationPredicate(kind="rpc_publicly_exposed", arguments={}),
+                FalsificationPredicate(kind="rpc_error_rate_above", arguments={"threshold": 0.05}, weight=0.8),
+            ],
+        ),
+        Hypothesis(
+            hypothesis_id="h_reth_rpc_internal_overload",
+            description="RPC internal-only but saturated; restart-eligible",
+            candidate_cause="rpc_saturation",
+            recommended_action="restart_systemd_service",
+            prior_confidence=0.55,
+            predicates=[
+                FalsificationPredicate(kind="rpc_error_rate_above", arguments={"threshold": 0.05}),
+                FalsificationPredicate(kind="rpc_not_publicly_exposed", arguments={}, weight=0.5),
+            ],
+        ),
+    ]
+
+
 _TEMPLATES_BY_SIGNATURE: dict[str, Callable[[], list[Hypothesis]]] = {
     "crash_loop": _crash_loop_templates,
     "oom_killed": _oom_killed_templates,
     "image_pull_failure": _image_pull_failure_templates,
     "probe_failure": _probe_failure_templates,
+    "peer_starvation": _reth_peer_starvation_templates,
+    "sync_stalled": _reth_sync_stalled_templates,
+    "rpc_degraded": _reth_rpc_degraded_templates,
 }
+
+
+# Reth predicate kinds — kept as a module-level set so the dispatcher
+# doesn't pay a frozenset construction cost per call.
+_RETH_PREDICATE_KINDS: frozenset[str] = frozenset({
+    "peer_count_zero",
+    "peer_count_above",
+    "rpc_http_reachable",
+    "engine_api_unreachable",
+    "forkchoice_updates_stale",
+    "disk_used_pct_above",
+    "block_lag_below",
+    "rpc_publicly_exposed",
+    "rpc_not_publicly_exposed",
+    "rpc_error_rate_above",
+})
 
 
 # ----------------------------------------------------------------------
@@ -218,8 +346,18 @@ class HypothesisEngine:
         self.alert_store = alert_store
         self.context_store = context_store
 
-    def generate(self, trigger: Trigger) -> list[Hypothesis]:
-        """Return ranked hypotheses (highest posterior first)."""
+    def generate(
+        self,
+        trigger: Trigger,
+        evidence_pack: dict[str, Any] | None = None,
+    ) -> list[Hypothesis]:
+        """Return ranked hypotheses (highest posterior first).
+
+        ``evidence_pack`` is the audited Reth/node snapshot from the
+        evidence stage. Reth predicates resolve against it; k8s predicates
+        ignore it (they read trigger context and stores). Predicates with
+        no data to read return ``unknown``.
+        """
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         hypotheses: list[Hypothesis] = []
         seen_ids: set[str] = set()
@@ -244,23 +382,32 @@ class HypothesisEngine:
 
         # Falsify each hypothesis
         for hypothesis in hypotheses:
-            self._evaluate(hypothesis, trigger)
+            self._evaluate(hypothesis, trigger, evidence_pack)
             hypothesis.posterior_confidence = self._posterior(hypothesis)
 
         hypotheses.sort(key=lambda h: h.posterior_confidence, reverse=True)
         return hypotheses
 
-    def top_hypothesis(self, trigger: Trigger) -> Hypothesis | None:
-        hypotheses = self.generate(trigger)
+    def top_hypothesis(
+        self,
+        trigger: Trigger,
+        evidence_pack: dict[str, Any] | None = None,
+    ) -> Hypothesis | None:
+        hypotheses = self.generate(trigger, evidence_pack=evidence_pack)
         return hypotheses[0] if hypotheses else None
 
     # ------------------------------------------------------------------
     # Predicate evaluation
     # ------------------------------------------------------------------
 
-    def _evaluate(self, hypothesis: Hypothesis, trigger: Trigger) -> None:
+    def _evaluate(
+        self,
+        hypothesis: Hypothesis,
+        trigger: Trigger,
+        evidence_pack: dict[str, Any] | None,
+    ) -> None:
         for predicate in hypothesis.predicates:
-            result, evidence_ref = self._test_predicate(predicate, trigger)
+            result, evidence_ref = self._test_predicate(predicate, trigger, evidence_pack)
             predicate.result = result
             predicate.evidence_ref = evidence_ref
             if result == "supported":
@@ -276,9 +423,17 @@ class HypothesisEngine:
         self,
         predicate: FalsificationPredicate,
         trigger: Trigger,
+        evidence_pack: dict[str, Any] | None = None,
     ) -> tuple[str, str | None]:
         kind = predicate.kind
         args = predicate.arguments or {}
+
+        # Reth-shaped predicates: resolve against the evidence pack. Unknown
+        # if the pack is missing — keeps the prior in place rather than
+        # silently confirming or disconfirming on no data.
+        reth_result = self._test_reth_predicate(kind, args, evidence_pack)
+        if reth_result is not None:
+            return reth_result
 
         if kind == "recent_deploy":
             return self._check_recent_deploy(trigger, within_seconds=int(args.get("within_seconds", 900)))
@@ -389,6 +544,117 @@ class HypothesisEngine:
         if correlation.get("type") == "blast_wave":
             return "supported", "correlation.type=blast_wave"
         return "disconfirmed", None
+
+    # ------------------------------------------------------------------
+    # Reth-shaped predicates (read evidence_pack)
+    #
+    # Each returns ``("supported"|"disconfirmed"|"unknown", ref)`` if the
+    # predicate is one we recognize, else ``None`` so the caller falls
+    # through to the k8s/generic predicate dispatch above.
+    # ------------------------------------------------------------------
+
+    def _test_reth_predicate(
+        self,
+        kind: str,
+        args: dict[str, Any],
+        evidence_pack: dict[str, Any] | None,
+    ) -> tuple[str, str | None] | None:
+        if kind not in _RETH_PREDICATE_KINDS:
+            return None
+
+        # The pack here is what EvidenceService.assemble emits, which
+        # wraps the actual reth_node payload under ``pack``. Tests may
+        # pass the bare payload — accept both.
+        node_pack = None
+        if isinstance(evidence_pack, dict):
+            node_pack = evidence_pack.get("pack") if "pack" in evidence_pack else evidence_pack
+
+        if not isinstance(node_pack, dict):
+            return "unknown", None
+
+        execution = node_pack.get("execution") if isinstance(node_pack.get("execution"), dict) else {}
+        consensus = node_pack.get("consensus") if isinstance(node_pack.get("consensus"), dict) else {}
+        storage = node_pack.get("storage") if isinstance(node_pack.get("storage"), dict) else {}
+        rpc = node_pack.get("rpc") if isinstance(node_pack.get("rpc"), dict) else {}
+
+        if kind == "peer_count_zero":
+            peer_count = execution.get("peer_count")
+            if peer_count is None:
+                return "unknown", None
+            if int(peer_count) == 0:
+                return "supported", "execution.peer_count=0"
+            return "disconfirmed", f"execution.peer_count={peer_count}"
+
+        if kind == "peer_count_above":
+            peer_count = execution.get("peer_count")
+            threshold = int(args.get("threshold", 0))
+            if peer_count is None:
+                return "unknown", None
+            if int(peer_count) > threshold:
+                return "supported", f"execution.peer_count={peer_count} > {threshold}"
+            return "disconfirmed", f"execution.peer_count={peer_count} <= {threshold}"
+
+        if kind == "rpc_http_reachable":
+            reachable = rpc.get("http_reachable")
+            if reachable is None:
+                return "unknown", None
+            return ("supported" if reachable else "disconfirmed", f"rpc.http_reachable={reachable}")
+
+        if kind == "engine_api_unreachable":
+            reachable = consensus.get("engine_api_reachable")
+            if reachable is None:
+                return "unknown", None
+            return ("supported" if not reachable else "disconfirmed", f"consensus.engine_api_reachable={reachable}")
+
+        if kind == "forkchoice_updates_stale":
+            recent = consensus.get("forkchoice_updates_recent")
+            if recent is None:
+                return "unknown", None
+            return ("supported" if not recent else "disconfirmed", f"consensus.forkchoice_updates_recent={recent}")
+
+        if kind == "disk_used_pct_above":
+            used = storage.get("disk_used_pct")
+            threshold = float(args.get("threshold", 88.0))
+            if used is None:
+                return "unknown", None
+            return (
+                ("supported" if float(used) > threshold else "disconfirmed"),
+                f"storage.disk_used_pct={used} threshold={threshold}",
+            )
+
+        if kind == "block_lag_below":
+            block_lag = execution.get("block_lag")
+            threshold = int(args.get("threshold", 64))
+            if block_lag is None:
+                return "unknown", None
+            return (
+                ("supported" if int(block_lag) < threshold else "disconfirmed"),
+                f"execution.block_lag={block_lag} threshold={threshold}",
+            )
+
+        if kind == "rpc_publicly_exposed":
+            exposed = rpc.get("publicly_exposed")
+            if exposed is None:
+                return "unknown", None
+            return ("supported" if exposed else "disconfirmed", f"rpc.publicly_exposed={exposed}")
+
+        if kind == "rpc_not_publicly_exposed":
+            exposed = rpc.get("publicly_exposed")
+            if exposed is None:
+                return "unknown", None
+            return ("supported" if not exposed else "disconfirmed", f"rpc.publicly_exposed={exposed}")
+
+        if kind == "rpc_error_rate_above":
+            rate = rpc.get("error_rate")
+            threshold = float(args.get("threshold", 0.05))
+            if rate is None:
+                return "unknown", None
+            return (
+                ("supported" if float(rate) > threshold else "disconfirmed"),
+                f"rpc.error_rate={rate} threshold={threshold}",
+            )
+
+        return "unknown", None
 
     # ------------------------------------------------------------------
     # Posterior computation

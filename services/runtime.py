@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 from services.decision.llm_fallback import LlmActionProposer
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
+from services.evidence import EvidenceService
 from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
 from services.orchestrator.service import OrchestratorService
@@ -32,6 +33,7 @@ class MeshRuntimeEngine:
         alert_store: AlertStore | None = None,
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
+        evidence: EvidenceService | None = None,
         decision: DecisionService | None = None,
         evaluation: EvaluationService | None = None,
         orchestrator: OrchestratorService | None = None,
@@ -43,6 +45,7 @@ class MeshRuntimeEngine:
         self.context_store = context_store
         self.ingest = ingest or IngestService(learning_store=learning_store)
         self.trigger = trigger or TriggerService()
+        self.evidence = evidence or EvidenceService()
         escalation_reasoner = None
         if self.config.llm_escalation_enabled and (learning_store or context_store):
             from services.decision.llm_reasoning import EscalationReasoner
@@ -51,24 +54,44 @@ class MeshRuntimeEngine:
                 context_store=context_store,
                 learning_store=learning_store,
             )
-        hypothesis_engine = None
-        if infra_graph is not None or alert_store is not None or context_store is not None:
-            from services.decision.hypothesis_engine import HypothesisEngine
-            hypothesis_engine = HypothesisEngine(
-                infra_graph=infra_graph,
-                alert_store=alert_store,
-                context_store=context_store,
-            )
+        # The hypothesis engine is always wired now. Its k8s predicates
+        # gracefully return ``unknown`` when the relevant store is None,
+        # and its Reth predicates read the evidence pack rather than any
+        # store — so there's no benefit to gating construction on
+        # store presence. Construction itself is cheap (no I/O).
+        from services.decision.hypothesis_engine import HypothesisEngine
+        hypothesis_engine = HypothesisEngine(
+            infra_graph=infra_graph,
+            alert_store=alert_store,
+            context_store=context_store,
+        )
         # Layer 3: construct the LLM decision proposer only when enabled. Cheap
         # object (no subprocess until propose() fires) so we build it lazily
         # through the config gate and pass it into DecisionService alongside
         # master's escalation_reasoner and hypothesis_engine.
         llm_proposer = LlmActionProposer(self.config) if self.config.llm_decision_fallback_enabled else None
+        # Layer 5: OpenAI-compatible LLM observer. Lazy: built only when
+        # MESH_OBSERVER_ENABLED + a base_url + api_key + model are set.
+        # Disabled-by-default keeps the deterministic-only path the floor
+        # for everyone who hasn't opted in.
+        llm_observer = None
+        if self.config.observer_enabled:
+            from services.observer import LlmObserver, ObserverConfig
+            llm_observer = LlmObserver(ObserverConfig(
+                enabled=True,
+                base_url=self.config.observer_base_url,
+                api_key=self.config.observer_api_key,
+                model=self.config.observer_model,
+                timeout_seconds=self.config.observer_timeout_seconds,
+                max_tokens=self.config.observer_max_tokens,
+                provider=self.config.observer_provider,
+            ))
         self.decision = decision or DecisionService(
             learning_store=learning_store,
             escalation_reasoner=escalation_reasoner,
             hypothesis_engine=hypothesis_engine,
             llm_proposer=llm_proposer,
+            llm_observer=llm_observer,
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
@@ -126,6 +149,16 @@ class MeshRuntimeEngine:
             artifact_key="trigger",
             status="recorded",
         )
+
+        evidence_pack = self.evidence.assemble(trigger=trigger, signal_payload=raw_signal)
+        record_event(
+            "evidence_pack_ready",
+            "evidence_pack_ready",
+            evidence_pack.to_dict(),
+            artifact_key="evidence_pack",
+            status="recorded",
+        )
+
         scenario_analysis, memory_compaction = self.scenario_analysis.analyze(trigger)
         record_event(
             "scenario_analysis_ready",
@@ -142,7 +175,11 @@ class MeshRuntimeEngine:
                 artifact_key="memory_compaction",
                 status="recorded",
             )
-        decision = self.decision.decide(trigger, scenario_analysis=scenario_analysis)
+        decision = self.decision.decide(
+            trigger,
+            scenario_analysis=scenario_analysis,
+            evidence_pack=evidence_pack.to_dict(),
+        )
         record_event(
             "decision_ready",
             "decision_ready",
