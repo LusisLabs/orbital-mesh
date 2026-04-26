@@ -2,9 +2,18 @@
 
 ## Scope
 
-`mesh-intelligence` is a bounded closed-loop remediation system for feature-flag and Kubernetes
-deployment regressions. It is an operator control plane with a fixed action surface, not a general
-autonomous platform for arbitrary infra changes, code changes, or open-ended planning.
+`mesh-intelligence` is a bounded closed-loop remediation system for three classes of regression:
+
+1. **Feature-flag regressions** (latency / error / timeout deltas attributable to a flag flip).
+2. **Kubernetes deployment regressions** (crash loops, OOM, image-pull failures, probe failures).
+3. **Blockchain execution-node degradations** (Reth-class symptoms: peer starvation, sync stall,
+   RPC degradation, consensus disconnect, JWT/exposure misconfigurations, disk pressure).
+
+Across all three, Mesh treats an inbound alert as a *lead*, not the truth. Every run assembles an
+audited evidence pack, ranks falsifiable hypotheses, runs an optional LLM observer, and applies a
+one-way safety promotion before acting. It is an operator control plane with a fixed action
+surface, not a general autonomous platform for arbitrary infra changes, code changes, or open-ended
+planning.
 
 ## Current Runtime Shape
 
@@ -12,8 +21,13 @@ autonomous platform for arbitrary infra changes, code changes, or open-ended pla
 flowchart LR
     raw[Telemetry + Flag + Release Context] --> ingest[IngestService]
     k8s[Live Kubernetes Snapshot] --> ingest
+    reth[Reth JSON-RPC + systemd state] --> ingest
     ingest --> trigger[TriggerService]
-    trigger -->|valid regression| decision[DecisionService]
+    trigger -->|valid regression| evidence[EvidenceService]
+    evidence --> scenario[ScenarioAnalysisService]
+    scenario --> decision[DecisionService]
+    decision --> hypothesis[HypothesisEngine]
+    decision --> observer[LlmObserver — OpenAI-compatible]
     decision --> evaluation[EvaluationService]
     evaluation --> promptfoo[Promptfoo Bridge]
     evaluation -->|execute| orchestrator[OrchestratorService]
@@ -59,14 +73,36 @@ This topology is not the production template. It intentionally uses a privileged
 
 ### 1. Core remediation loop
 
-- `IngestService` normalizes raw telemetry, flag metadata, deployment context, segment context, and
-  post-action observations into one event envelope.
+- `IngestService` normalizes raw telemetry, flag metadata, deployment context, segment context,
+  Reth/geth/Solana RPC snapshots, and post-action observations into one event envelope.
 - `TriggerService` emits a trigger only when evidence is recent, persistent, above thresholds, and
   not suppressed.
+- **`EvidenceService`** (in `services/evidence/`) promotes the inbound signal from a *lead* to an
+  audited *evidence pack*. For Reth signals it stamps the snapshot as a separate run artifact with
+  per-probe results, runs a sufficiency check (per `evidence_sufficiency` in
+  `policies/reth-node.policy.json`), and short-circuits to a fast-path skip for credential or
+  exposure signatures (`authrpc_exposed`, `rpc_exposed`, `jwt_missing`, `db_corruption_suspected`,
+  `jwt_secret_insecure_permissions`). The pack is what every downstream stage reads — never the
+  raw inbound signal directly.
 - `ScenarioAnalysisService` records cross-run evidence, modular subdecisions, active-memory
   compaction, and a Merkle-bound advisory synthesis before final decision creation.
-- `DecisionService` produces exactly one bounded decision from the allowed set:
-  `no_action`, `reduce_rollout`, `disable_flag`, `escalate`.
+- `DecisionService` produces exactly one bounded decision from the allowed set per signal class:
+  - **Feature-flag**: `no_action`, `reduce_rollout`, `disable_flag`, `escalate`,
+    `investigate_and_patch`.
+  - **Kubernetes**: `no_action`, `restart_deployment`, `rollback_deployment`, `patch_resources`,
+    `escalate`.
+  - **Reth node**: `no_action`, `restart_systemd_service` (approval-gated), `cordon_node`,
+    `drain_node`, `escalate`.
+  - The autonomy policy (`policies/autonomy.policy.json`) enumerates which `(system, action)`
+    pairs are ever allowed; nothing else is reachable from this layer.
+- `HypothesisEngine` (in `services/decision/hypothesis_engine.py`) generates ranked hypotheses
+  with falsification predicates that resolve against the evidence pack, the AlertStore, the
+  InfraGraph, and the ContextStore. Today it carries templates for Kubernetes signatures
+  (`crash_loop`, `oom_killed`, `image_pull_failure`, `probe_failure`) and Reth signatures
+  (`peer_starvation`, `sync_stalled`, `rpc_degraded`). Output biases the deterministic decision
+  one-way only — it can promote toward `escalate` but never demote an escalation.
+- `LlmObserver` (in `services/observer/`) is an optional second-opinion layer that reviews the
+  deterministic decision and emits a typed verdict. See *AI reasoning layer* below.
 - `EvaluationService` merges policy and business gates with Promptfoo-backed quality artifacts.
 - `OrchestratorService` executes only approved actions and attaches Goose-backed review artifacts.
 - `FeedbackService` evaluates `T+10m` and `T+30m` outcomes and writes bounded world-model updates.
@@ -127,15 +163,22 @@ Telemetry is **not** pushed service-by-service over HTTP. One **`POST /api/runs`
 | --- | --- | --- | --- |
 | 1 | `IngestService.normalize_signal` | Raw signal dict → `EventEnvelope` | `ingesting` |
 | 2 | `TriggerService.detect` | Envelope → `Trigger` or `None` | `trigger_ready` or `no_trigger` (then terminal if no trigger) |
-| 3 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
-| 4 | `DecisionService.decide` | `Trigger` + advisory analysis → `Decision` | `decision_ready` |
-| 5 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
+| 3 | `EvidenceService.assemble` | `Trigger` + signal payload → `EvidencePack` (audited) | `evidence_pack_ready` (emits per-probe events) |
+| 4 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
+| 5 | `DecisionService.decide` | `Trigger` + analysis + `EvidencePack` → `Decision` | `decision_ready` (calls `HypothesisEngine` and, if enabled, `LlmObserver`) |
+| 6 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
 | — | *Operator gate* | If approval mode or failed auto conditions: **`awaiting_operator`** until `POST .../steer` | `awaiting_operator` |
-| 6 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
-| 7 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 5) |
-| 8 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
+| 7 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
+| 8 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 6) |
+| 9 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
 
 Overrides (`override_decision`, `override_execution_parameters`) cause **re-evaluation**: `decide` is not re-run from scratch in all cases, but evaluation is run again with the updated decision path before execution resumes.
+
+The evidence stage is the only one that may emit *multiple* run events for one logical step:
+`evidence_pack_assembling` (entry), one `evidence_probe_completed` per probe run, then
+`evidence_pack_ready`. This makes the audit trail show exactly what was looked up and how long
+each lookup took, even when the pack is built from the inbound signal alone (the no-op probe
+runner case).
 
 **3. Non-HTTP entry (same pipeline)**
 
@@ -163,8 +206,16 @@ sequenceDiagram
         RC-->>Client: SSE / GET run → no_trigger, completed
     else trigger
         T-->>RC: Trigger
-        RC->>D: decide(trigger)
-        D-->>RC: Decision
+        RC->>EV: assemble(trigger, signal_payload)
+        EV-->>RC: EvidencePack (sufficient? fast_path?)
+        RC->>D: decide(trigger, evidence_pack)
+        D->>HE: generate(trigger, evidence_pack)
+        HE-->>D: ranked hypotheses
+        opt observer enabled
+            D->>OBS: review(decision, pack, hypotheses)
+            OBS-->>D: ObserverVerdict (one-way promotion)
+        end
+        D-->>RC: Decision (post-promotion)
         RC->>E: evaluate(trigger, decision)
         E-->>RC: EvaluationResult
         opt approval_gate or pause_points
@@ -180,6 +231,11 @@ sequenceDiagram
     end
 ```
 
+(The `EV` participant is `EvidenceService`; `HE` is `HypothesisEngine`; `OBS` is `LlmObserver`.
+Both `HE` and `OBS` are called inside `DecisionService.decide` rather than as separate stages on
+the run timeline — they are *part of the decision*, not standalone gates, and their outputs are
+stamped onto `decision.reasoning` for audit.)
+
 ### 3. Integration bridges
 
 - `promptfoo` mode uses `services/evaluation/promptfoo_bridge.py` to run real `promptfoo eval`,
@@ -193,6 +249,38 @@ sequenceDiagram
   artifacts let agents plug into Mesh without getting production write access; Mesh still owns
   evaluation, tests, audit, Kubernetes actuation, and promotion gates.
 
+### 4. AI reasoning layer (LLM observer)
+
+The deterministic engine is the safety floor; the AI observer is a second pair of eyes.
+
+- **Modular and provider-neutral.** The observer in `services/observer/` speaks two protocols:
+  the OpenAI `/v1/chat/completions` shape (works with OpenAI, vLLM, Ollama, Together, Groq,
+  OpenRouter, llama.cpp's OpenAI shim) and Anthropic's native `/v1/messages` API. Switching
+  providers is a config change — `MESH_OBSERVER_PROVIDER`, `MESH_OBSERVER_BASE_URL`,
+  `MESH_OBSERVER_MODEL`, `MESH_OBSERVER_API_KEY`. Disabled by default.
+- **Typed verdict.** The observer reads the trigger, the evidence pack, the ranked hypotheses,
+  and the deterministic decision-in-progress, then returns one of four verdicts:
+  - `approve` — the decision is grounded and safe; no change.
+  - `escalate` — route to a human even if the engine proposed an automated action.
+  - `request_more_evidence` — pack is too sparse to defend the action.
+  - `reject_unsafe` — proposed action is unsafe given the node's state (validator mid-attestation,
+    DB at corruption risk on shutdown, etc.).
+- **One-way safety promotion.** Verdicts can only push the decision toward more conservative
+  outcomes (`approve` ≤ `escalate` ≤ `reject_unsafe`/`request_more_evidence`). The observer can
+  promote a `restart_systemd_service` to `escalate`; it cannot demote an `escalate` to `approve`.
+  A hallucinating model can therefore only make the system more conservative, never less safe.
+- **Fail-open.** Provider down, timeout, malformed JSON, unknown verdict — every failure mode
+  collapses to `verdict=approve` with the failure stamped on `error`, and the deterministic
+  decision stands. The observer cannot block the pipeline.
+- **Prompt caching.** The static prefix (system instructions, policy file, action allowlist,
+  hypothesis-template descriptions) is structured to be cache-prefix-stable. On Anthropic the
+  observer sends an explicit `cache_control: ephemeral` marker on the system block. Per-run
+  evidence is the only uncached portion, keeping repeat-call latency and cost low.
+- **Defense in depth.** The observer is layer 5 of a 5-layer architecture: (1) trigger
+  thresholds, (2) deterministic policy match, (3) evidence sufficiency check, (4) hypothesis
+  ranking with falsification predicates, (5) LLM observer. Each layer can promote toward
+  escalation; none can demote.
+
 ## Run Lifecycle
 
 Each run advances through explicit stages:
@@ -200,16 +288,29 @@ Each run advances through explicit stages:
 1. `queued`
 2. `ingesting`
 3. `trigger_ready` or `no_trigger`
-4. `decision_ready`
-5. `evaluation_ready`
-6. `awaiting_operator`
-7. `executing`
-8. `feedback_ready`
-9. `completed`, `failed`, or `cancelled`
+4. `evidence_pack_ready` (Reth signals; no-op pass-through for other types)
+5. `scenario_analysis_ready`
+6. `decision_ready`
+7. `evaluation_ready`
+8. `awaiting_operator`
+9. `executing`
+10. `feedback_ready`
+11. `completed`, `failed`, or `cancelled`
 
 The control plane records typed run events for these transitions and stores artifact metadata such
 as `artifact_key`, `integration_name`, and `status` so the existing event log can later back a real
 event bus or projection layer.
+
+Per-stage events of note:
+
+- `evidence_pack_assembling`, `evidence_probe_completed` (one per probe), `evidence_pack_ready`
+- `hypothesis_ranked` (when the engine produces a non-empty ranking)
+- `decision_ready` carries the observer verdict on `decision.reasoning.observer_verdict` when
+  the observer is enabled
+
+Pauseable stages (when `default_steering_mode=approval_gate` or operator-set pause points):
+`trigger_ready`, `decision_ready`, `evaluation_ready`, `feedback_ready`. The evidence stage is
+**not** pauseable — it's fast, audited, and not a decision point.
 
 ## Persistence Model
 
@@ -232,23 +333,43 @@ Allowed side effects:
 - feature-flag rollout changes
 - incident or ticket creation
 - audit-log writes
+- approval-gated `systemctl restart` of allowlisted blockchain-node services on allowlisted hosts
+  via the SSH adapter (see `MESH_SSH_*` env vars + `policies/reth-node.policy.json`)
+- approval-gated Kubernetes `rollout restart`, `rollback`, and `patch` on allowlisted contexts and
+  namespaces (see `MESH_KUBERNETES_*` env vars + `policies/autonomy.policy.json`)
 
 Disallowed side effects:
 
 - source-code changes
-- infrastructure mutation
+- infrastructure mutation outside the allowlists above
 - direct production database writes
 - arbitrary shell execution against production
+- any of the actions in `policies/reth-node.policy.json#forbidden_automated_actions`
+  (delete datadir, restore snapshot, rewrite JWT, change pruning mode, client up/downgrade)
 
 ## Contracts
 
 Active shared contracts live in:
 
 - `shared/mesh_runtime/schemas/trigger.schema.json`
-- `shared/mesh_runtime/schemas/decision.schema.json`
+- `shared/mesh_runtime/schemas/decision.schema.json` (now permits
+  `reasoning.ranked_hypotheses` and `reasoning.observer_verdict`)
 - `shared/mesh_runtime/schemas/evaluation-result.schema.json`
 - `shared/mesh_runtime/schemas/execution-record.schema.json`
 - `shared/mesh_runtime/schemas/feedback-record.schema.json`
+- `shared/mesh_runtime/schemas/reth-node-signal.schema.json` (also serves as the evidence pack
+  shape — signal and pack are intentionally byte-compatible)
+- `shared/mesh_runtime/schemas/kubernetes-signal.schema.json`
+- `shared/mesh_runtime/schemas/otel-metric-signal.schema.json`
+
+Policy files in `policies/` carry the operator-tunable thresholds:
+
+- `autonomy.policy.json` — allowed `(system, action)` pairs, idempotent flags
+- `reth-node.policy.json` — restartable vs escalation signatures, `evidence_sufficiency` block,
+  forbidden automated actions, restart-rate limits
+- `metric-actions.policy.json` — OTel signal → action mappings (~40 rules)
+- `protected-scope.policy.json` — services / endpoints off-limits for autonomy
+- `rollback.policy.json` — rollback-frequency caps
 
 These schemas back the Python contract models in `shared/mesh_runtime/contracts.py`.
 
@@ -265,6 +386,19 @@ These schemas back the Python contract models in `shared/mesh_runtime/contracts.
 - Real Goose CLI-backed review bridge: yes
 - Replay-friendly typed run-event log: yes
 - Durable local run state and vault mirroring: yes
+- Audited evidence pack stage (Reth signals): yes
+- Hypothesis engine with falsification predicates over the evidence pack: yes (k8s + Reth
+  templates wired; Solana / geth / archive-specific templates pending)
+- Modular OpenAI-compatible LLM observer with one-way safety promotion and prompt caching: yes
+- Live JSON-RPC probe runner driven by the evidence service: no — current evidence path passes
+  through the inbound signal; probes happen via the existing `RethNodeIngester` for cron-driven
+  flows. Pluggable `probe_runner` parameter is wired but no production runner is yet attached.
+- Diagnostic-action class (operator-approvable read-only probes that run as audited actions):
+  no — phase 3 work
+- Validator attestation-duty awareness for execution-node restarts: no — phase 3 work, will need
+  CL-client-specific probes (Lighthouse REST, Prysm gRPC, ...)
+- Fault-injection simulation harness (`simulation/`) with 26 scenarios driving Mesh in-process
+  and producing a markdown report focused on observer reasoning quality: yes
 - External message bus or database projection: no
 - Durable world-model store beyond bounded feedback updates: no
 - Open-ended diagnosis/planning or arbitrary execution: no
@@ -277,10 +411,29 @@ Primary verification command:
 python3 -m unittest discover -s tests -v
 ```
 
+Secondary verification — fault-injection harness with the AI observer engaged:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+MESH_OBSERVER_MODEL=claude-haiku-4-5-20251001 python -m simulation
+# or for a sustained noise burst:
+MESH_OBSERVER_MODEL=claude-haiku-4-5-20251001 python -m simulation --mode cron --duration 600 --interval 15
+```
+
+The simulation drives 26 fault scenarios through `MeshRuntimeEngine.run_sync` and produces a
+markdown report in `.mesh-runtime-state/simulation/` scoring observer behavior (verdict
+distribution, evidence-citation rate, escalation precision) alongside deterministic accuracy.
+
 Key test coverage includes:
 
 - contract validation
-- pipeline behavior
+- pipeline behavior (ingest → trigger → evidence → decision → evaluation → orchestrator → feedback)
 - integration bridge parsing
 - control-plane HTTP flows
 - TUI/controller behavior
+- evidence service: policy override loading, fast-path skip, sufficiency check
+- LLM observer: verdict parsing, fail-open behavior, retry budget bounding, JSON extraction
+  from fenced responses
+- hypothesis engine: Reth template ranking, cascade-case ordering (consensus_disconnect must
+  outrank local_isolation when EAPI is down)
+- decision service: one-way safety promotion, fast-path force-escalate
