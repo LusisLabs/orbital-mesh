@@ -56,14 +56,13 @@ class DecisionService:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
         self.hypothesis_engine = hypothesis_engine
-        # Layer 2: declarative rule matcher for OTel metric-regression signals.
+        # declarative rule matcher for OTel metric-regression signals.
         # Load lazily through the cached loader so constructing DecisionService
-        # stays cheap for tests.
         self._metric_action_matcher: MetricActionMatcher = load_metric_action_rules(metric_action_rules_path)
-        # Layer 3: optional LLM fallback invoked only when no rule matched.
+        # optional LLM fallback invoked only when no rule matched.
         # Injected rather than constructed here so tests can pass a mock.
         self._llm_proposer = llm_proposer
-        # Layer 5: optional LLM observer that reviews the deterministic
+        # optional LLM observer that reviews the deterministic
         # decision and can promote (but not demote) toward escalation.
         # See services/observer/ — provider-neutral, OpenAI-compatible.
         self._llm_observer = llm_observer
@@ -140,9 +139,9 @@ class DecisionService:
         test_commands = list(trigger.related_context.get("test_commands", []))
         patch_template = trigger.related_context.get("patch_template")
 
-        decision_type = "reduce_rollout"
-        confidence = 0.82
-        risk_level = "medium"
+        decision_type = "escalate"
+        confidence = 0.60
+        risk_level = "high"
         blast_radius = "single_flag_single_service" if not multi_service_impact else "multi_service"
 
         if (
@@ -171,6 +170,23 @@ class DecisionService:
             decision_type = "no_action"
             confidence = 0.77
             risk_level = "low"
+        elif _feature_flag_reduction_supported(
+            trigger,
+            latency_delta_pct=latency_delta_pct,
+            error_multiplier=error_multiplier,
+            timeout_rate=timeout_rate,
+        ):
+            decision_type = "reduce_rollout"
+            confidence = 0.82
+            risk_level = "medium"
+        else:
+            _LOG.info(
+                "decide: feature-flag fallback escalates; no explicit bounded action matched "
+                "latency_delta_pct=%.1f error_multiplier=%.2f timeout_rate=%.3f",
+                latency_delta_pct,
+                error_multiplier,
+                timeout_rate,
+            )
 
         if decision_type == "no_action" and active_incidents > 0 and (flag_causality_confidence or 0) >= 0.7:
             decision_type = "reduce_rollout"
@@ -295,10 +311,13 @@ class DecisionService:
             risk_level = "high"
             autonomy_tier = "escalated"
         elif restartable:
-            decision_type = "restart_systemd_service"
-            confidence = 0.72
+            # A restartable signature is only a lead. Reth is stateful, so
+            # the signal alone must not choose a process restart; evidence
+            # and hypothesis ranking have to defend that action below.
+            decision_type = "escalate"
+            confidence = 0.62
             risk_level = "medium"
-            autonomy_tier = "approval_required" if policy.get("require_approval_for_restart", True) else "autonomous"
+            autonomy_tier = "escalated"
         else:
             decision_type = "no_action"
             confidence = 0.66
@@ -317,6 +336,21 @@ class DecisionService:
                     top_hypothesis = ranked_hypotheses[0]
             except Exception:
                 _LOG.exception("hypothesis_engine.generate failed for trigger=%s", trigger.trigger_id)
+
+        # Evidence-backed restart: the only Reth autonomous-ish remediation
+        # in this slice is an approval-gated systemd restart, and even that
+        # requires a sufficient evidence pack plus a top hypothesis that
+        # specifically recommends restart. Raw restartable signatures never
+        # get to select this action on their own.
+        if (
+            restartable
+            and not unsafe
+            and _reth_restart_supported_by_evidence(top_hypothesis, evidence_pack)
+        ):
+            decision_type = "restart_systemd_service"
+            confidence = max(confidence, float(top_hypothesis.get("posterior_confidence", 0.72)))
+            risk_level = "medium"
+            autonomy_tier = "approval_required" if policy.get("require_approval_for_restart", True) else "autonomous"
 
         # One-way promotion: hypothesis can move us toward escalate but
         # never away from it. ``no_action``/``restart_systemd_service`` →
@@ -1040,10 +1074,43 @@ def _reth_primary_hypothesis(
     )
 
 
+def _reth_restart_supported_by_evidence(
+    top_hypothesis: dict | None,
+    evidence_pack: dict | None,
+) -> bool:
+    if not isinstance(evidence_pack, dict) or evidence_pack.get("sufficient") is False:
+        return False
+    if top_hypothesis is None:
+        return False
+    if top_hypothesis.get("recommended_action") != "restart_systemd_service":
+        return False
+    if float(top_hypothesis.get("posterior_confidence", 0.0)) < 0.55:
+        return False
+    return _hypothesis_has_resolved_evidence(top_hypothesis)
+
+
 def _hypothesis_has_resolved_evidence(hypothesis: dict) -> bool:
     return bool(
         hypothesis.get("supporting_evidence")
         or hypothesis.get("disconfirming_evidence")
+    )
+
+
+def _feature_flag_reduction_supported(
+    trigger: Trigger,
+    *,
+    latency_delta_pct: float,
+    error_multiplier: float,
+    timeout_rate: float,
+) -> bool:
+    if not trigger.flag_key or trigger.current_rollout_pct is None:
+        return False
+    if trigger.current_rollout_pct <= 0:
+        return False
+    return (
+        latency_delta_pct >= 25
+        or error_multiplier >= 1.5
+        or timeout_rate > 0
     )
 
 

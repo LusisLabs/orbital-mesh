@@ -17,6 +17,9 @@ def _base_trigger(
     trigger_type: str,
     service: str,
     related_context: dict,
+    flag_key: str | None = None,
+    current_rollout_pct: int | None = None,
+    metrics: dict | None = None,
 ) -> Trigger:
     return Trigger(
         trigger_id=trigger_id,
@@ -25,11 +28,11 @@ def _base_trigger(
         environment="prod",
         service=service,
         endpoint=f"{service}.health",
-        flag_key=None,
-        current_rollout_pct=None,
+        flag_key=flag_key,
+        current_rollout_pct=current_rollout_pct,
         comparison_window={"baseline": "PT1H", "observed": "PT5M"},
         segment={"customer_tier": "system", "region": "us-east-1"},
-        metrics={
+        metrics=metrics or {
             "baseline_p95_latency_ms": None,
             "observed_p95_latency_ms": None,
             "baseline_error_rate": None,
@@ -83,6 +86,31 @@ class RethReasoningTests(unittest.TestCase):
         self.assertEqual(decision.decision_type, "escalate")
         self.assertIn("authrpc_exposed", decision.reasoning["primary_hypothesis"])
         self.assertNotIn("Unrecognized error signature", decision.reasoning["primary_hypothesis"])
+
+
+class FeatureFlagFallbackTests(unittest.TestCase):
+    def test_unknown_feature_flag_signal_escalates_instead_of_defaulting_reduce(self):
+        trigger = _base_trigger(
+            trigger_id="trig_feature_unknown",
+            trigger_type="feature_flag_regression",
+            service="checkout",
+            related_context={},
+            flag_key=None,
+            current_rollout_pct=None,
+            metrics={
+                "baseline_p95_latency_ms": 100.0,
+                "observed_p95_latency_ms": 130.0,
+                "baseline_error_rate": 0.01,
+                "observed_error_rate": 0.012,
+                "baseline_timeout_rate": 0.0,
+                "observed_timeout_rate": 0.0,
+                "sample_size": 50,
+            },
+        )
+
+        decision = DecisionService().decide(trigger)
+
+        self.assertEqual(decision.decision_type, "escalate")
 
 
 class SimulationObserverEnvTests(unittest.TestCase):
