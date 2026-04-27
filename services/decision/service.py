@@ -299,7 +299,32 @@ class DecisionService:
         storage = trigger.related_context.get("storage", {})
         resource_attributes = trigger.related_context.get("resource_attributes", {})
 
-        recent_restarts = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        # Restart-rate cap. Two sources, max wins:
+        #   1. ``systemd_restarts_last_1h`` from the trigger payload —
+        #      what the host's systemd remembers. Reliable when the
+        #      ingester probed it; missing or stale otherwise.
+        #   2. Mesh's own decision history via ``learning_store`` — what
+        #      *Mesh* recommended in the last hour. Catches the case
+        #      where the host was rebuilt but Mesh's run history shows
+        #      "we asked you to restart this thing 5 times today."
+        recent_restarts_signal = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        recent_restarts_mesh = 0
+        window_seconds = int(policy.get("restart_window_seconds", 3600))
+        if self.learning_store is not None:
+            try:
+                recent_restarts_mesh = self.learning_store.count_recent_decisions(
+                    decision_type="restart_systemd_service",
+                    service=trigger.service,
+                    within_seconds=window_seconds,
+                )
+            except Exception:
+                # Never let a learning-store failure break decisions —
+                # we have the trigger's count as a fallback.
+                _LOG.exception(
+                    "decide.reth: learning_store.count_recent_decisions failed; "
+                    "falling back to trigger-stamped count",
+                )
+        recent_restarts = max(recent_restarts_signal, recent_restarts_mesh)
         if recent_restarts >= int(policy["max_restarts_per_window"]):
             signatures.add("restart_frequency_exceeded")
 
@@ -318,6 +343,27 @@ class DecisionService:
         )
         if validator_duty_imminent:
             signatures.add("validator_duty_imminent")
+
+        # Doppelganger-protection guard: a CL that just imported keys
+        # spends 2 epochs (~13 min) listening for self-attestations
+        # before signing. Restarting the EL during that window resets
+        # the CL's view of head and forces the doppelganger window to
+        # re-arm — costing missed attestations and, worse, masking a
+        # genuine duplicate-VC if one exists. Hard rule: any time
+        # ``doppelganger_protection_active=true``, refuse to restart.
+        if consensus.get("doppelganger_protection_active") is True:
+            signatures.add("doppelganger_window_active")
+
+        # Slashing-protection DB freshness guard: a non-null value below
+        # the threshold means the operator (or their automation) just
+        # restored the slashing-protection DB from backup. Per the
+        # research dossier, that's the most common cause of mainnet
+        # slashing (EIP-3076 high-watermark not advanced past the last
+        # signed slot). We refuse all action — let the operator confirm
+        # the DB is consistent with on-chain history before resuming.
+        slashing_age = consensus.get("slashing_db_restored_within_seconds")
+        if isinstance(slashing_age, (int, float)) and 0 <= slashing_age < 3600:
+            signatures.add("slashing_db_recently_restored")
 
         restartable = signatures & set(policy["restartable_signatures"])
         unsafe = signatures & set(policy["escalation_signatures"])

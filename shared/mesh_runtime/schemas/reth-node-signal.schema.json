@@ -60,7 +60,11 @@
         },
         "client_version": { "type": ["string", "null"] },
         "data_dir": { "type": ["string", "null"] },
-        "jwt_secret_path": { "type": ["string", "null"] }
+        "jwt_secret_path": { "type": ["string", "null"] },
+        "fork_version": {
+          "type": ["string", "null"],
+          "description": "Active hard-fork version the node reports (e.g. 'cancun', 'prague', 'electra'). Lets Mesh distinguish Pectra-aware from older paths and surface fork-mismatch."
+        }
       },
       "additionalProperties": false
     },
@@ -75,7 +79,11 @@
         "min_peer_count": { "type": "integer" },
         "max_block_lag": { "type": "integer" },
         "safe_block": { "type": ["integer", "null"] },
-        "finalized_block": { "type": ["integer", "null"] }
+        "finalized_block": { "type": ["integer", "null"] },
+        "blob_count_last_block": {
+          "type": ["integer", "null"],
+          "description": "Number of blobs included in the most recent block. Post-Pectra peak is 6 blobs/block; sustained 6 means saturation. Used to reason about bandwidth headroom."
+        }
       },
       "additionalProperties": false
     },
@@ -106,6 +114,18 @@
         "validator_proposer_within_seconds": {
           "type": ["integer", "null"],
           "description": "Seconds until the next slot in which one of the paired CL's loaded validators is the block proposer, or null if no proposer duty is scheduled in the watch window. Used to refuse restarts that would race a 12s slot deadline."
+        },
+        "engine_api_p99_ms": {
+          "type": ["number", "null"],
+          "description": "Recent p99 latency of engine_newPayload + engine_forkchoiceUpdated calls in milliseconds. Healthy <2000; >4000 means the CL is missing duties. Read by the LLM observer; no deterministic predicate fires on it (judgment call)."
+        },
+        "doppelganger_protection_active": {
+          "type": ["boolean", "null"],
+          "description": "True if the paired CL's validator client is in the doppelganger-detection listening window (the first 2 epochs after key import, before signing begins). Mesh refuses to restart while this is active because a restart resets the window and missed attestations compound."
+        },
+        "slashing_db_restored_within_seconds": {
+          "type": ["integer", "null"],
+          "description": "Seconds since the slashing-protection DB was suspected to be restored from a backup, or null if no recent restore detected. Operator-stamped (e.g. by watching mtime jumps relative to wall-clock). Any non-null value < 3600 forces escalate — restoring an old slashing-protection DB is the most common slashing cause on mainnet."
         }
       },
       "additionalProperties": false
@@ -124,6 +144,58 @@
         "diagnostic_source": {
           "type": "string",
           "enum": ["none", "ssh_df", "prometheus", "configured", "unknown"]
+        },
+        "filesystem": {
+          "type": ["string", "null"],
+          "description": "Filesystem type backing the data directory (e.g. 'ext4', 'xfs', 'zfs', 'nfs4', 'fuse.s3fs'). Mesh refuses to act when this is in the unsafe-fs deny-list (NFS/FUSE/tmpfs/SMB break the atomicity guarantees chain DBs require)."
+        },
+        "compaction_pending_count": {
+          "type": ["integer", "null"],
+          "description": "Number of pending compaction jobs (RocksDB) or write stalls (Pebble) at probe time. Sustained high values indicate compaction starvation; the LLM observer reasons about it but the deterministic engine does not auto-act on it."
+        },
+        "write_stall_seconds": {
+          "type": ["number", "null"],
+          "description": "Seconds the DB engine has been in a write-stall state. Pebble exposes this directly; RocksDB approximates via its Stall histogram. Sustained >30s is bad; the engine waits rather than restarting (restart guarantees more stall, not less)."
+        }
+      },
+      "additionalProperties": false
+    },
+    "system": {
+      "type": "object",
+      "description": "Host-level health signals that affect node behavior even when the node itself looks fine. Operator-stamped by node-exporter / a Prometheus rule.",
+      "properties": {
+        "ntp_offset_ms": {
+          "type": ["number", "null"],
+          "description": "Absolute clock offset against NTP in milliseconds. >500 ms causes attestation timing failures. The LLM observer escalates when this is high; no deterministic predicate (host migration is the fix, not a node restart)."
+        },
+        "cpu_steal_pct": {
+          "type": ["number", "null"],
+          "description": "Percent of CPU time stolen by the hypervisor over the last sampling window. Sustained >5% on a validator means noisy-neighbor contention; restart will not help. LLM observer escalates."
+        },
+        "ecc_memory": {
+          "type": ["boolean", "null"],
+          "description": "True if the host has ECC RAM. Non-ECC hosts ≥32 GB silently corrupt chain DBs over months. One-shot operator stamp."
+        },
+        "numa_pinned": {
+          "type": ["boolean", "null"],
+          "description": "True if the EL/CL processes are pinned to a single NUMA node. Unpinned multi-socket hosts incur cross-socket cache penalties on every state read."
+        }
+      },
+      "additionalProperties": false
+    },
+    "mev_boost": {
+      "type": "object",
+      "description": "MEV-Boost relay health, when configured. Absent for non-validating nodes.",
+      "properties": {
+        "total_relays": { "type": ["integer", "null"] },
+        "unhealthy_relays": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Relay names that are currently failing health checks (slow getHeader, invalid bids, signing-key incident). Operator-stamped from the relay's own metrics."
+        },
+        "local_fallback_ready": {
+          "type": ["boolean", "null"],
+          "description": "True if the EL has a local block ready as fallback when all relays fail. Required for proposer-duty safety."
         }
       },
       "additionalProperties": false
