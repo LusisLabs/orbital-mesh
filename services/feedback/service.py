@@ -39,15 +39,19 @@ class FeedbackService:
         observed_error = trigger.metrics["observed_error_rate"]
         post_latency = check_30m.get("p95_latency_ms", observed_latency)
         post_error = check_30m.get("error_rate", observed_error)
-        improved_10m = (
-            check_10m.get("p95_latency_ms", observed_latency) < observed_latency
-            and check_10m.get("error_rate", observed_error) < observed_error
+        # Reth signals carry latency metrics that can legitimately be
+        # ``None`` (RPC degraded → no measurement). Treat ``None < None``
+        # as "no improvement observed" rather than crashing the run.
+        improved_10m = _safe_lt(
+            check_10m.get("p95_latency_ms", observed_latency), observed_latency
+        ) and _safe_lt(
+            check_10m.get("error_rate", observed_error), observed_error
         )
         review_source, review = _execution_review(execution)
         successful_30m = (
             execution.status == "succeeded"
-            and post_latency <= baseline_latency * 1.10
-            and post_error <= baseline_error * 1.20
+            and _safe_le(post_latency, _safe_mul(baseline_latency, 1.10))
+            and _safe_le(post_error, _safe_mul(baseline_error, 1.20))
             and check_30m.get("new_severe_incidents", 0) == 0
         )
         regressions_last_7d = trigger.related_context.get("regressions_last_7d", 0)
@@ -163,6 +167,34 @@ class FeedbackService:
         )
         feedback.validate()
         return feedback
+
+
+def _safe_lt(a: float | int | None, b: float | int | None) -> bool:
+    """``a < b`` that returns False when either side is None.
+
+    Reth-class signals carry latency/error metrics that can be None
+    (RPC down, no sample). Treating "no comparison possible" as "no
+    improvement observed" is the conservative choice for the
+    improvement check.
+    """
+    if a is None or b is None:
+        return False
+    return a < b
+
+
+def _safe_le(a: float | int | None, b: float | int | None) -> bool:
+    """``a <= b`` with None-tolerance; returns True when both None."""
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    return a <= b
+
+
+def _safe_mul(a: float | int | None, factor: float) -> float | None:
+    if a is None:
+        return None
+    return a * factor
 
 
 def _execution_review(execution: ExecutionRecord) -> tuple[str | None, dict]:

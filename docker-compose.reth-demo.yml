@@ -1,0 +1,119 @@
+# Local Reth + Lighthouse for the live Mesh demo.
+#
+# # What this is
+#
+# A minimal two-container topology that mirrors a production Reth + CL
+# pairing closely enough to exercise Mesh's decision pipeline against
+# real RPC, real systemd-style lifecycle, and real network/disk
+# faults. Targets the **Hoodi** testnet because:
+#
+#   * Smallest live testnet (post-Pectra, ~10 GB chaindata)
+#   * Stable enough to checkpoint-sync reliably in <15 min
+#   * No real ETH at risk; we can deliberately misconfigure
+#
+# # Network model
+#
+# Both services share a user-defined bridge network ``mesh-demo-net``.
+# Mesh polls reth's RPC at ``http://127.0.0.1:18545`` (mapped from the
+# container's 8545). The chaos injector runs ``docker exec`` against
+# the container, plus iptables-style network manipulation on the
+# bridge to simulate peer starvation.
+#
+# # JWT secret
+#
+# Deterministic for the demo (32 zero bytes hex'd). DO NOT use this
+# pattern in production — it's documented as the canonical
+# "exposed JWT" anti-pattern. Mesh will see ``jwt_secret_mode=0644``
+# and stamp ``jwt_secret_insecure_permissions``.
+#
+# # Why expose the ports
+#
+# So Mesh's bare-metal ingester can poll from outside the container.
+# In production the ingester would be reaching the node over the
+# operator's private network; here it's localhost.
+
+services:
+  reth:
+    image: ghcr.io/paradigmxyz/reth:latest
+    container_name: mesh-demo-reth
+    restart: unless-stopped
+    networks:
+      - mesh-demo-net
+    ports:
+      - "127.0.0.1:18545:8545"   # HTTP RPC (Mesh polls here)
+      - "127.0.0.1:18551:8551"   # Auth RPC (Engine API to Lighthouse)
+      - "127.0.0.1:30303:30303"  # P2P TCP
+      - "127.0.0.1:30303:30303/udp"
+    volumes:
+      - reth-data:/root/.local/share/reth
+      - ./jwt-demo.hex:/jwt.hex:ro
+    command:
+      - node
+      - --chain=hoodi
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3,admin
+      - --authrpc.addr=0.0.0.0
+      - --authrpc.port=8551
+      - --authrpc.jwtsecret=/jwt.hex
+      - --metrics=0.0.0.0:9001
+      - --log.stdout.format=json
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf -X POST -H 'Content-Type: application/json'
+          -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'
+          http://localhost:8545 || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  lighthouse:
+    image: sigp/lighthouse:latest
+    container_name: mesh-demo-lighthouse
+    restart: unless-stopped
+    networks:
+      - mesh-demo-net
+    depends_on:
+      reth:
+        condition: service_started
+    ports:
+      - "127.0.0.1:15052:5052"   # Beacon HTTP (for inspection)
+      - "127.0.0.1:9000:9000"    # libp2p
+      - "127.0.0.1:9000:9000/udp"
+    volumes:
+      - lighthouse-data:/root/.lighthouse
+      - ./jwt-demo.hex:/jwt.hex:ro
+    command:
+      - lighthouse
+      - bn
+      - --network=hoodi
+      - --execution-endpoint=http://reth:8551
+      - --execution-jwt=/jwt.hex
+      - --checkpoint-sync-url=https://hoodi.beaconstate.info
+      - --http
+      - --http-address=0.0.0.0
+      - --http-port=5052
+      - --metrics
+      - --metrics-address=0.0.0.0
+      - --metrics-port=5054
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "curl -sf http://localhost:5052/eth/v1/node/syncing || exit 1"
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 90s
+
+networks:
+  mesh-demo-net:
+    driver: bridge
+    name: mesh-demo-net
+
+volumes:
+  reth-data:
+  lighthouse-data:
