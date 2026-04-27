@@ -303,6 +303,22 @@ class DecisionService:
         if recent_restarts >= int(policy["max_restarts_per_window"]):
             signatures.add("restart_frequency_exceeded")
 
+        # Validator-state safety: refuse to even consider an EL restart
+        # when the paired CL has imminent attestation/proposal duty.
+        # Restarting Reth mid-attestation costs the operator one missed
+        # attestation; restarting in the proposer's slot can cost a
+        # missed block (worth tens of ETH post-MaxEB). The CL-side
+        # exporter stamps these fields; if neither is present we fall
+        # through (no opinion) — this guard never *adds* aggressiveness,
+        # only conservatism.
+        validator_pending = consensus.get("validator_attestation_pending")
+        proposer_eta = consensus.get("validator_proposer_within_seconds")
+        validator_duty_imminent = bool(validator_pending) or (
+            isinstance(proposer_eta, int) and 0 <= proposer_eta <= 30
+        )
+        if validator_duty_imminent:
+            signatures.add("validator_duty_imminent")
+
         restartable = signatures & set(policy["restartable_signatures"])
         unsafe = signatures & set(policy["escalation_signatures"])
         if unsafe:

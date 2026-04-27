@@ -10,10 +10,12 @@
     "consensus_disconnected",
     "db_corruption_suspected",
     "disk_pressure",
+    "filesystem_unsuitable",
     "jwt_missing",
     "jwt_secret_insecure_permissions",
     "restart_frequency_exceeded",
-    "rpc_exposed"
+    "rpc_exposed",
+    "validator_duty_imminent"
   ],
   "require_approval_for_restart": true,
   "restart_window_seconds": 3600,

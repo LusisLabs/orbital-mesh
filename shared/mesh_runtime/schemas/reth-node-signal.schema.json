@@ -98,7 +98,15 @@
         },
         "client_healthy": { "type": ["boolean", "null"] },
         "jwt_secret_exists": { "type": ["boolean", "null"] },
-        "jwt_secret_mode": { "type": ["string", "null"] }
+        "jwt_secret_mode": { "type": ["string", "null"] },
+        "validator_attestation_pending": {
+          "type": ["boolean", "null"],
+          "description": "True if the paired CL is currently in an attestation duty window (between the start of the slot and the 4s aggregation deadline) for any of its loaded validator keys. Operator-supplied; usually stamped by a CL-side exporter that watches duty assignments."
+        },
+        "validator_proposer_within_seconds": {
+          "type": ["integer", "null"],
+          "description": "Seconds until the next slot in which one of the paired CL's loaded validators is the block proposer, or null if no proposer duty is scheduled in the watch window. Used to refuse restarts that would race a 12s slot deadline."
+        }
       },
       "additionalProperties": false
     },

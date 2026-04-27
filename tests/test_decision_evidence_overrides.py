@@ -143,5 +143,85 @@ class FastPathForceEscalateTests(unittest.TestCase):
         self.assertEqual(decision.autonomy_tier, "escalated")
 
 
+class ValidatorDutyImminentTests(unittest.TestCase):
+    """A restartable Reth symptom + paired-CL validator duty pending =
+    must escalate. Restarting an EL while its paired CL has an
+    attestation or proposal duty in the next 30 seconds risks the
+    validator missing the duty (or worst case double-signing on
+    restart if slashing protection is misconfigured).
+
+    The CL-side exporter stamps ``consensus.validator_attestation_pending``
+    and ``consensus.validator_proposer_within_seconds``; absence means
+    "no opinion" and the normal decision path runs.
+    """
+
+    def _trigger_with_consensus(self, consensus_extras: dict) -> Trigger:
+        consensus = {
+            "engine_api_reachable": True,
+            "forkchoice_updates_recent": True,
+            **consensus_extras,
+        }
+        return _trigger(
+            error_signatures=["peer_starvation"],
+            extra_context={"consensus": consensus},
+        )
+
+    def _evidence_pack(self, consensus_overrides: dict) -> dict:
+        return {
+            "pack": {
+                "signal_type": "reth_node",
+                "execution": {"peer_count": 0, "syncing": False, "block_lag": 0},
+                "rpc": {"http_reachable": True},
+                "consensus": {
+                    "engine_api_reachable": True,
+                    **consensus_overrides,
+                },
+                "storage": {"disk_used_pct": 60.0},
+            },
+            "source": "inline_signal",
+            "sufficient": True,
+            "missing_fields": [],
+            "fast_path_signatures": [],
+        }
+
+    def test_attestation_pending_forces_escalate(self):
+        trigger = self._trigger_with_consensus({"validator_attestation_pending": True})
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+            trigger,
+            evidence_pack=self._evidence_pack({"validator_attestation_pending": True}),
+        )
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.autonomy_tier, "escalated")
+
+    def test_proposer_within_30s_forces_escalate(self):
+        trigger = self._trigger_with_consensus({"validator_proposer_within_seconds": 12})
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+            trigger,
+            evidence_pack=self._evidence_pack({"validator_proposer_within_seconds": 12}),
+        )
+        self.assertEqual(decision.decision_type, "escalate")
+
+    def test_proposer_far_in_future_does_not_force_escalate(self):
+        # 600s away — plenty of slack. The validator-duty guard must
+        # not fire; the normal path with hypothesis engine + sufficient
+        # evidence allows the approval-gated restart.
+        trigger = self._trigger_with_consensus({"validator_proposer_within_seconds": 600})
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+            trigger,
+            evidence_pack=self._evidence_pack({"validator_proposer_within_seconds": 600}),
+        )
+        self.assertEqual(decision.decision_type, "restart_systemd_service")
+
+    def test_no_validator_fields_does_not_force_escalate(self):
+        # Neither field present — guard is "no opinion". Normal path
+        # decides.
+        trigger = self._trigger_with_consensus({})
+        decision = DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+            trigger,
+            evidence_pack=self._evidence_pack({}),
+        )
+        self.assertEqual(decision.decision_type, "restart_systemd_service")
+
+
 if __name__ == "__main__":
     unittest.main()
