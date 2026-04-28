@@ -47,6 +47,7 @@ this layer — keeps the service unit-testable without network mocks.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable
@@ -71,7 +72,150 @@ _FAST_PATH_ESCALATION_SIGNATURES: frozenset[str] = frozenset({
     "jwt_missing",
     "jwt_secret_insecure_permissions",
     "db_corruption_suspected",
+    # Detected by the log-pattern matcher below — we add it so any
+    # downstream consumer that lists "what's in the fast-path set" sees
+    # it explicitly, not just as a runtime side-effect.
+    "filesystem_unsuitable",
 })
+
+
+# Log patterns that indicate database-engine corruption per client.
+# Each entry is ``(regex, signature)`` where ``signature`` is the
+# error_signatures token we stamp on the trigger so the deterministic
+# policy and the LLM observer both see "DB on fire" rather than guess.
+#
+# Sources for the patterns (April 2026):
+#   * libmdbx README + ``mdbx_chk`` man page (Reth, Erigon hot DB)
+#   * Pebble error strings in ``cockroachdb/pebble`` (Geth ≥1.13)
+#   * RocksDB Status messages (Nethermind, Teku, legacy Geth)
+#   * BoltDB error constants (Prysm)
+#   * SQLite ``integrity_check`` outputs (Lighthouse slashing-protection,
+#     Nimbus chain DB)
+#
+# We deliberately cast a wide net: false-positives here cost us a single
+# escalation, false-negatives can cost a node. Each pattern is
+# case-insensitive and anchored at a token boundary so we don't match
+# the literal string in a comment or chat log.
+_DB_CORRUPTION_PATTERNS: tuple[tuple[str, str], ...] = (
+    # MDBX (Reth, Erigon)
+    (r"\bMDBX_CORRUPTED\b", "db_corruption_suspected"),
+    (r"\bMDBX_INVALID\b", "db_corruption_suspected"),
+    (r"\bMDBX_WANNA_RECOVERY\b", "db_corruption_suspected"),
+    (r"\bMDBX_PAGE_NOTFOUND\b", "db_corruption_suspected"),
+    (r"\bMDBX_INCOMPATIBLE\b", "db_corruption_suspected"),
+    # Pebble (Geth)
+    (r"pebble:\s*manifest\s+version\s+not\s+found", "db_corruption_suspected"),
+    (r"pebble:\s*corruption\s+at\s+offset", "db_corruption_suspected"),
+    (r"cannot\s+find\s+file.*\.sst.*referenced\s+in\s+manifest", "db_corruption_suspected"),
+    # RocksDB (Nethermind, Teku)
+    (r"Corruption:\s*SST\s+file\s+is\s+ahead\s+of\s+WAL", "db_corruption_suspected"),
+    (r"Corruption:\s*MANIFEST\s+missing", "db_corruption_suspected"),
+    (r"Corruption:\s*bad\s+block\s+contents", "db_corruption_suspected"),
+    # BoltDB (Prysm validator.db, beaconchaindata)
+    (r"\bbolt:\s*invalid\s+database\b", "db_corruption_suspected"),
+    (r"\bmeta\s+page\s+checksum\s+failed\b", "db_corruption_suspected"),
+    # SQLite (Lighthouse slashing-protection, Nimbus)
+    (r"database\s+disk\s+image\s+is\s+malformed", "db_corruption_suspected"),
+    (r"file\s+is\s+not\s+a\s+database", "db_corruption_suspected"),
+    (r"PRAGMA\s+integrity_check[\s\S]{0,200}?(?!ok\b)\b\w+", "db_corruption_suspected"),
+    # Generic state-trie divergence (bit-rot, pruner bugs)
+    (r"\bmissing\s+trie\s+node\b", "db_corruption_suspected"),
+    (r"\bstate\s+root\s+mismatch\b", "db_corruption_suspected"),
+)
+
+
+# Filesystems that are unsafe for chain databases. The MDBX README is
+# explicit that NFS and FUSE break atomicity guarantees; tmpfs is a
+# disk-loss-on-reboot trap; CIFS/SMB is even worse than NFS.
+#
+# We accept the filesystem name as it appears in ``/proc/mounts`` (and
+# in ``signal.resource_attributes["mesh.node.fstype"]`` if the operator
+# stamps it). The fast-path fires when the datadir's reported fstype
+# matches; we do **not** call ``findmnt`` from inside the service because
+# that would couple Mesh to the host where the *signal* originated, not
+# where Mesh runs.
+_UNSAFE_FILESYSTEMS: frozenset[str] = frozenset({
+    "nfs", "nfs3", "nfs4",
+    "cifs", "smbfs", "smb3",
+    "fuse", "fuse.s3fs", "fuse.rclone", "fuse.sshfs",
+    "tmpfs",
+})
+
+
+# Pre-compile the corruption patterns once. Module-import cost is one-shot.
+_DB_CORRUPTION_REGEX: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(pattern, re.IGNORECASE), signature)
+    for pattern, signature in _DB_CORRUPTION_PATTERNS
+)
+
+
+def _scan_logs_for_corruption(log_lines: list[str]) -> list[str]:
+    """Return the corruption signatures detected in the log lines.
+
+    The matcher is allow-list-by-pattern: only patterns explicitly
+    listed in ``_DB_CORRUPTION_PATTERNS`` produce a stamp, and the
+    stamp is the signature token from that table. Multiple patterns
+    can hit the same signature (e.g. several MDBX errors → one
+    ``db_corruption_suspected``); we de-dupe.
+    """
+    if not log_lines:
+        return []
+    hits: set[str] = set()
+    for line in log_lines:
+        if not isinstance(line, str):
+            continue
+        for regex, signature in _DB_CORRUPTION_REGEX:
+            if regex.search(line):
+                hits.add(signature)
+                break  # one signature per line is enough
+    return sorted(hits)
+
+
+def _detect_unsafe_filesystem(signal_payload: dict[str, Any]) -> str | None:
+    """Return the filesystem name if it's in ``_UNSAFE_FILESYSTEMS``,
+    else ``None``.
+
+    The signal carries fs type via either:
+      * ``resource_attributes["mesh.node.fstype"]`` — string,
+        canonical lowercase name as it appears in /proc/mounts
+      * ``storage["filesystem"]`` — same string in a more discoverable
+        location for new emitters
+
+    We accept both because operator-stamped attributes are easier to
+    add to existing Prometheus rules than a schema change.
+    """
+    storage = signal_payload.get("storage") if isinstance(signal_payload.get("storage"), dict) else {}
+    rsc = signal_payload.get("resource_attributes") if isinstance(signal_payload.get("resource_attributes"), dict) else {}
+    candidates: list[str] = []
+    fs_storage = storage.get("filesystem") if isinstance(storage, dict) else None
+    if isinstance(fs_storage, str) and fs_storage:
+        candidates.append(fs_storage.strip().lower())
+    fs_attr = rsc.get("mesh.node.fstype") if isinstance(rsc, dict) else None
+    if isinstance(fs_attr, str) and fs_attr:
+        candidates.append(fs_attr.strip().lower())
+    for fs in candidates:
+        if fs in _UNSAFE_FILESYSTEMS:
+            return fs
+    return None
+
+
+def _stamp_signature_on_trigger(trigger: "Trigger", signature: str) -> None:
+    """Add a signature to the trigger's ``related_context.error_signatures``
+    in place, if not already present.
+
+    The decision service reads this list to choose an action; the
+    hypothesis engine reads it to pick templates. By stamping at
+    evidence-time we ensure both downstream stages see the same set.
+    """
+    rc = trigger.related_context
+    if not isinstance(rc, dict):
+        return
+    sigs = rc.get("error_signatures")
+    if not isinstance(sigs, list):
+        sigs = []
+    if signature not in sigs:
+        sigs.append(signature)
+    rc["error_signatures"] = sigs
 
 
 # Default sufficiency check: these are the fields the hypothesis engine's
@@ -274,9 +418,42 @@ class EvidenceService:
                 sufficient=True,
             )
 
+        # Pre-fast-path scans. Two passes that can stamp escalation
+        # signatures the trigger didn't carry:
+        #
+        #   1. Log-pattern matcher for DB-engine corruption. The
+        #      operator's Prometheus rule may have fired on a generic
+        #      symptom (peer count low, sync stalled) while the actual
+        #      root cause is MDBX/Pebble/RocksDB/BoltDB/SQLite saying
+        #      "I'm broken." We scan the recent error lines the
+        #      ingester captured and stamp ``db_corruption_suspected``
+        #      so the decision escalates instead of restarting a
+        #      stateful process from a corrupted DB.
+        #   2. Filesystem unsuitability check. Operators sometimes
+        #      mount data directories on NFS/FUSE/tmpfs to "save
+        #      money" or "share state." Both are unsafe for chain DBs;
+        #      MDBX in particular relies on atomic 4K-aligned writes
+        #      that NFS does not provide. If the signal carries a
+        #      filesystem hint that's in our deny-list, we stamp
+        #      ``filesystem_unsuitable`` and let the fast-path
+        #      escalation fire.
+        recent_errors = (signal_payload.get("logs") or {}).get("recent_errors") or []
+        if isinstance(recent_errors, list):
+            for sig in _scan_logs_for_corruption(recent_errors):
+                _stamp_signature_on_trigger(trigger, sig)
+        unsafe_fs = _detect_unsafe_filesystem(signal_payload)
+        if unsafe_fs is not None:
+            _LOG.warning(
+                "evidence: unsafe filesystem detected for trigger=%s fstype=%s",
+                trigger.trigger_id,
+                unsafe_fs,
+            )
+            _stamp_signature_on_trigger(trigger, "filesystem_unsuitable")
+
         # Fast path: if the trigger already names an exposure/credential
-        # signature, skip probe assembly. The decision will escalate
-        # regardless and there's no point waiting on RPC.
+        # signature (originally, or stamped above), skip probe assembly.
+        # The decision will escalate regardless and there's no point
+        # waiting on RPC.
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         fast_path_hits = sorted(
             sig for sig in error_signatures if sig in _FAST_PATH_ESCALATION_SIGNATURES

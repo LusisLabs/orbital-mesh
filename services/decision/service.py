@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shared.mesh_runtime import Decision, Trigger, load_policy
 from shared.mesh_runtime.metric_action_rules import MetricActionMatcher, RuleMatch, load_metric_action_rules
@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from services.decision.llm_fallback import LlmActionProposer
     from services.decision.llm_reasoning import EscalationReasoner
     from services.observer import LlmObserver
+    from services.signal_history import SignalHistoryStore
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
 
@@ -52,6 +53,7 @@ class DecisionService:
         metric_action_rules_path: str | None = None,
         llm_proposer: "LlmActionProposer | None" = None,
         llm_observer: "LlmObserver | None" = None,
+        signal_history: "SignalHistoryStore | None" = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
@@ -66,6 +68,11 @@ class DecisionService:
         # decision and can promote (but not demote) toward escalation.
         # See services/observer/ — provider-neutral, OpenAI-compatible.
         self._llm_observer = llm_observer
+        # Per-target signal-history store. When present, the decision
+        # service can ask "has peer_count been below floor for ≥ N
+        # seconds?" instead of judging on a single tick. See S2 in the
+        # audit notes — this is what gives the engine memory.
+        self.signal_history = signal_history
 
     def decide(
         self,
@@ -166,6 +173,14 @@ class DecisionService:
         elif timeout_rate >= 0.02 or error_multiplier >= 2 or latency_delta_pct >= 40:
             decision_type = "disable_flag"
             confidence = 0.88
+            # ``aa1fbc1`` raised the initial ``risk_level`` to "high" so
+            # the unclassified-fallback escalates safely. This branch
+            # must reset because ``disable_flag`` is a deterministic,
+            # well-understood action — leaving ``risk_level="high"``
+            # makes the evaluation's risk gate flag every disable_flag
+            # decision and parks the run at ``awaiting_operator`` even
+            # in ``interruptible_auto`` mode.
+            risk_level = "medium"
         elif latency_delta_pct < 25 and error_multiplier < 1.5:
             decision_type = "no_action"
             confidence = 0.77
@@ -299,17 +314,115 @@ class DecisionService:
         storage = trigger.related_context.get("storage", {})
         resource_attributes = trigger.related_context.get("resource_attributes", {})
 
-        recent_restarts = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        # S2: pull a small set of trend predicates from signal history.
+        # When a history store is bound, we ask "has peer_count been
+        # below the floor for ≥ X seconds?" instead of trusting a
+        # single tick. This is the single biggest false-positive
+        # reduction available — most ladder branches over-fire on
+        # transient network blips, and "sustained" is exactly the
+        # extra evidence that distinguishes blip from real partition.
+        history_trends = self._reth_history_trends(trigger, execution)
+
+        # Restart-rate cap. Two sources, max wins:
+        #   1. ``systemd_restarts_last_1h`` from the trigger payload —
+        #      what the host's systemd remembers. Reliable when the
+        #      ingester probed it; missing or stale otherwise.
+        #   2. Mesh's own decision history via ``learning_store`` — what
+        #      *Mesh* recommended in the last hour. Catches the case
+        #      where the host was rebuilt but Mesh's run history shows
+        #      "we asked you to restart this thing 5 times today."
+        recent_restarts_signal = int(trigger.related_context.get("systemd_restarts_last_1h", 0) or 0)
+        recent_restarts_mesh = 0
+        window_seconds = int(policy.get("restart_window_seconds", 3600))
+        if self.learning_store is not None:
+            try:
+                recent_restarts_mesh = self.learning_store.count_recent_decisions(
+                    decision_type="restart_systemd_service",
+                    service=trigger.service,
+                    within_seconds=window_seconds,
+                )
+            except Exception:
+                # Never let a learning-store failure break decisions —
+                # we have the trigger's count as a fallback.
+                _LOG.exception(
+                    "decide.reth: learning_store.count_recent_decisions failed; "
+                    "falling back to trigger-stamped count",
+                )
+        recent_restarts = max(recent_restarts_signal, recent_restarts_mesh)
         if recent_restarts >= int(policy["max_restarts_per_window"]):
             signatures.add("restart_frequency_exceeded")
 
+        # Validator-state safety: refuse to even consider an EL restart
+        # when the paired CL has imminent attestation/proposal duty.
+        # Restarting Reth mid-attestation costs the operator one missed
+        # attestation; restarting in the proposer's slot can cost a
+        # missed block (worth tens of ETH post-MaxEB). The CL-side
+        # exporter stamps these fields; if neither is present we fall
+        # through (no opinion) — this guard never *adds* aggressiveness,
+        # only conservatism.
+        validator_pending = consensus.get("validator_attestation_pending")
+        proposer_eta = consensus.get("validator_proposer_within_seconds")
+        validator_duty_imminent = bool(validator_pending) or (
+            isinstance(proposer_eta, int) and 0 <= proposer_eta <= 30
+        )
+        if validator_duty_imminent:
+            signatures.add("validator_duty_imminent")
+
+        # Doppelganger-protection guard: a CL that just imported keys
+        # spends 2 epochs (~13 min) listening for self-attestations
+        # before signing. Restarting the EL during that window resets
+        # the CL's view of head and forces the doppelganger window to
+        # re-arm — costing missed attestations and, worse, masking a
+        # genuine duplicate-VC if one exists. Hard rule: any time
+        # ``doppelganger_protection_active=true``, refuse to restart.
+        if consensus.get("doppelganger_protection_active") is True:
+            signatures.add("doppelganger_window_active")
+
+        # Slashing-protection DB freshness guard: a non-null value below
+        # the threshold means the operator (or their automation) just
+        # restored the slashing-protection DB from backup. Per the
+        # research dossier, that's the most common cause of mainnet
+        # slashing (EIP-3076 high-watermark not advanced past the last
+        # signed slot). We refuse all action — let the operator confirm
+        # the DB is consistent with on-chain history before resuming.
+        slashing_age = consensus.get("slashing_db_restored_within_seconds")
+        if isinstance(slashing_age, (int, float)) and 0 <= slashing_age < 3600:
+            signatures.add("slashing_db_recently_restored")
+
         restartable = signatures & set(policy["restartable_signatures"])
         unsafe = signatures & set(policy["escalation_signatures"])
+        # G1: ``node_unreachable`` is special. It's listed in
+        # ``escalation_signatures`` so the default safe path is "escalate
+        # to a human", but operators can opt into an SSH-based recovery
+        # attempt: SSH and JSON-RPC are different network paths, so when
+        # the RPC port is dead but SSH still works, the service is wedged
+        # on a live host — exactly what ``systemctl restart`` is for.
+        # We surface this as a low-confidence approval-required
+        # ``restart_systemd_service`` proposal, never autonomous.
+        is_node_unreachable = "node_unreachable" in signatures
+        recovery_cfg = policy.get("node_unreachable_recovery") or {}
+        recovery_mode = str(recovery_cfg.get("mode", "escalate_only"))
+
         if unsafe:
             decision_type = "escalate"
             confidence = 0.74
             risk_level = "high"
             autonomy_tier = "escalated"
+            # If the only unsafe signature is node_unreachable AND policy
+            # opts into SSH-based recovery AND we haven't recently tried,
+            # downgrade from pure-escalate to a restart proposal that the
+            # human can approve. Never autonomous — the host might be
+            # truly dead and we don't want to flap.
+            if (
+                is_node_unreachable
+                and unsafe == {"node_unreachable"}
+                and recovery_mode == "ssh_restart_with_approval"
+                and recent_restarts < int(recovery_cfg.get("max_recovery_attempts_per_window", 1))
+            ):
+                decision_type = "restart_systemd_service"
+                confidence = float(recovery_cfg.get("ssh_restart_confidence", 0.55))
+                risk_level = "medium"
+                autonomy_tier = "approval_required"
         elif restartable:
             # A restartable signature is only a lead. Reth is stateful, so
             # the signal alone must not choose a process restart; evidence
@@ -475,6 +588,7 @@ class DecisionService:
                     "consensus": consensus,
                     "storage": storage,
                     "resource_attributes": resource_attributes,
+                    "history_trends": history_trends,
                     "reth_policy": {
                         "max_restarts_per_window": policy["max_restarts_per_window"],
                         "restart_window_seconds": policy["restart_window_seconds"],
@@ -510,6 +624,222 @@ class DecisionService:
         )
         decision.validate()
         return decision
+
+    def _reth_history_trends(
+        self,
+        trigger: Trigger,
+        execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compute a compact bag of duration-based predicates over the
+        target's recent signal history.
+
+        Returns ``{}`` when no history store is bound or no trend window
+        applies — the rule ladder treats absence as "no opinion", same
+        convention as operator-stamped fields.
+
+        The block is added to the decision's ``evidence_pack`` so the LLM
+        observer can read it via the same prompt as other evidence.
+        Format intentionally matches what ``Trend.to_summary`` returns,
+        plus boolean predicates for quick rule checks. The integer
+        seconds counts let the LLM reason about cadence ("4 ticks at
+        peer<floor" reads more naturally than a timedelta)."""
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {"signal_type": "reth_node", "service": trigger.service}
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+
+        try:
+            min_peer_count = int(execution.get("min_peer_count") or 3)
+            peer_trend = self.signal_history.trend(
+                target_id, "execution.peer_count", window_seconds=600,
+            )
+            if peer_trend.count > 0:
+                duration = peer_trend.duration_at_or_below(float(min_peer_count - 1))
+                out["peer_count"] = {
+                    **peer_trend.to_summary(),
+                    "duration_below_floor_seconds": int(duration.total_seconds()),
+                    "sustained_below_floor": duration.total_seconds() >= 60,
+                }
+
+            block_lag_trend = self.signal_history.trend(
+                target_id, "execution.block_lag", window_seconds=600,
+            )
+            if block_lag_trend.count > 0 and block_lag_trend.numeric_values:
+                max_lag = int(execution.get("max_block_lag") or 32)
+                duration = block_lag_trend.duration_at_or_above(float(max_lag))
+                out["block_lag"] = {
+                    **block_lag_trend.to_summary(),
+                    "duration_above_max_seconds": int(duration.total_seconds()),
+                    "sustained_above_max": duration.total_seconds() >= 60,
+                }
+
+            engine_p99_trend = self.signal_history.trend(
+                target_id, "consensus.engine_api_p99_ms", window_seconds=600,
+            )
+            if engine_p99_trend.count > 0 and engine_p99_trend.numeric_values:
+                duration = engine_p99_trend.duration_at_or_above(4000.0)
+                out["engine_api_p99_ms"] = {
+                    **engine_p99_trend.to_summary(),
+                    "duration_critical_seconds": int(duration.total_seconds()),
+                    "sustained_critical": duration.total_seconds() >= 60,
+                }
+
+            disk_trend = self.signal_history.trend(
+                target_id, "storage.disk_used_pct", window_seconds=600,
+            )
+            if disk_trend.count > 0 and disk_trend.numeric_values:
+                out["disk_used_pct"] = disk_trend.to_summary()
+
+        except Exception:
+            _LOG.exception("decide.reth: signal_history.trend failed (non-fatal)")
+        return out
+
+    def _kubernetes_history_trends(
+        self,
+        trigger: Trigger,
+        namespace: str,
+        cluster: str,
+        deployment_name: str,
+    ) -> dict[str, Any]:
+        """Trend predicates for a Kubernetes deployment's signal history.
+
+        The most useful k8s-side temporal questions are:
+
+        * ``rollout_status`` — has the deployment been ``failed`` for ≥
+          some duration? Single-tick ``failed`` can be transient
+          (controller in the middle of a roll); sustained ``failed`` is
+          ProgressDeadlineExceeded territory.
+        * ``pods.ready_replicas`` — sustained below desired? That's a
+          stuck rollout, not a brief recreate.
+        * ``metric_regression.observed_p95_latency_ms`` (when projected
+          into k8s context) — trending up over multiple ticks?
+
+        The returned dict goes into ``evidence_pack.history_trends`` so
+        the rule ladder and the LLM observer share the same view.
+        """
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {
+                "signal_type": "kubernetes_deployment_issue",
+                "cluster": cluster,
+                "namespace": namespace,
+                "deployment": {"name": deployment_name},
+                "service": trigger.service,
+            }
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+        try:
+            # Sustained-failed-rollout: a single ``failed`` is rarely
+            # actionable (the controller may be retrying); ≥120s
+            # sustained is the ProgressDeadlineExceeded shape. The
+            # envelope nests this under ``deployment``.
+            rollout_trend = self.signal_history.trend(
+                target_id, "deployment.rollout_status", window_seconds=600,
+            )
+            if rollout_trend.count > 0:
+                duration_failed = rollout_trend.duration_equal_to("failed")
+                out["rollout_status"] = {
+                    "count": rollout_trend.count,
+                    "current": rollout_trend.current,
+                    "duration_failed_seconds": int(duration_failed.total_seconds()),
+                    "sustained_failed": duration_failed.total_seconds() >= 120,
+                }
+
+            # Stuck rollout via ready-replica deficit. The k8s envelope
+            # exposes ``available_replicas`` (the controller's view of
+            # ready+passing-readiness pods) and ``desired_replicas``
+            # (the spec target). Sustained deficit is what distinguishes
+            # a stuck rollout from a brief pod recreate.
+            available_trend = self.signal_history.trend(
+                target_id, "deployment.available_replicas", window_seconds=600,
+            )
+            if available_trend.count > 0 and available_trend.numeric_values:
+                # ``desired_replicas`` lives on ``trigger.metrics`` for
+                # k8s triggers (see services/trigger/service.py:230),
+                # not on related_context.
+                desired = trigger.metrics.get("desired_replicas") if isinstance(trigger.metrics, dict) else None
+                if isinstance(desired, int) and desired > 0:
+                    duration_short = available_trend.duration_at_or_below(float(desired - 1))
+                    out["available_replicas"] = {
+                        **available_trend.to_summary(),
+                        "desired": desired,
+                        "duration_below_desired_seconds": int(duration_short.total_seconds()),
+                        "sustained_below_desired": duration_short.total_seconds() >= 120,
+                    }
+        except Exception:
+            _LOG.exception("decide.kubernetes: signal_history.trend failed (non-fatal)")
+        return out
+
+    def _otel_history_trends(
+        self,
+        trigger: Trigger,
+    ) -> dict[str, Any]:
+        """Trend predicates for an OTel metric-regression target.
+
+        The OTel envelope already carries the metric value; the
+        history view answers "is this regression sustained or a
+        single-tick spike?" One-tick spikes are noise; multi-tick
+        upward drift is a real degradation.
+
+        Stamped into the rule-match and escalation decision paths so
+        the LLM observer can read the same data downstream.
+        """
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {
+                "signal_type": "otel_metric_regression",
+                "service": trigger.service,
+                "endpoint": trigger.endpoint,
+            }
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+        try:
+            value_trend = self.signal_history.trend(
+                target_id, "metric_regression.observed_value", window_seconds=600,
+            )
+            if value_trend.count > 0 and value_trend.numeric_values:
+                out["observed_value"] = value_trend.to_summary()
+
+            # Delta percentage. Sustained large deltas are the strong
+            # cue — a single huge delta could be a sample-size artifact.
+            delta_trend = self.signal_history.trend(
+                target_id, "metric_regression.delta_pct", window_seconds=600,
+            )
+            if delta_trend.count > 0 and delta_trend.numeric_values:
+                # 10% is a low-bar drift threshold; rule-actionable
+                # thresholds usually live in metric_actions.policy.json.
+                # We use this only to note "consistently above 10%
+                # over the window" to the LLM, not to make decisions.
+                duration_above = delta_trend.duration_at_or_above(10.0)
+                out["delta_pct"] = {
+                    **delta_trend.to_summary(),
+                    "duration_above_10pct_seconds": int(duration_above.total_seconds()),
+                }
+        except Exception:
+            _LOG.exception("decide.otel: signal_history.trend failed (non-fatal)")
+        return out
 
     def _decide_otel_metric(self, trigger: Trigger) -> Decision:
         """Decide on an OTel metric-regression trigger.
@@ -598,6 +928,7 @@ class DecisionService:
                     "matched_on": rule_match.matched_on,
                     "metric_regression": metric_regression,
                     "bounds": rule_match.bounds,
+                    "history_trends": self._otel_history_trends(trigger),
                 },
                 "alternatives_considered": [
                     "continue with no change",
@@ -665,6 +996,7 @@ class DecisionService:
                     "metric_regression": metric_regression,
                     "available_rules": [rule.name for rule in self._metric_action_matcher.rules],
                     "llm_risk_flags": llm_risk_flags or [],
+                    "history_trends": self._otel_history_trends(trigger),
                 },
                 "alternatives_considered": [
                     "continue with no change",
@@ -734,6 +1066,12 @@ class DecisionService:
         deployment_name = str(trigger.related_context.get("deployment_name", trigger.service))
         namespace = str(trigger.related_context.get("namespace", "default"))
         cluster = str(trigger.related_context.get("cluster", "unknown"))
+        # S2: pull duration-based predicates from the per-deployment
+        # signal history. Same generic store as reth uses; the trends
+        # surface in evidence_pack.history_trends so the rule ladder
+        # and the LLM observer both see "rollout_status=failed for
+        # 240s" rather than judging on a single snapshot.
+        history_trends = self._kubernetes_history_trends(trigger, namespace, cluster, deployment_name)
         image = str(trigger.related_context.get("deployment_image", "unknown"))
         likely_layer = str(trigger.related_context.get("likely_layer", "unknown"))
         code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
@@ -962,6 +1300,7 @@ class DecisionService:
                     "confidence_factors": confidence_factors,
                     "hypotheses": hypotheses,
                     "hypothesis_upgrade_applied": hypothesis_upgrade,
+                    "history_trends": history_trends,
                     "defer_until": _defer_until_context(trigger, decision_type),
                 },
                 "alternatives_considered": _alternatives(decision_type),

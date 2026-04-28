@@ -11,6 +11,7 @@ from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
 from services.orchestrator.service import OrchestratorService
 from services.scenario_analysis.service import ScenarioAnalysisService
+from services.signal_history import SignalHistoryStore
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
@@ -40,12 +41,38 @@ class MeshRuntimeEngine:
         evaluation: EvaluationService | None = None,
         orchestrator: OrchestratorService | None = None,
         feedback: FeedbackService | None = None,
+        signal_history: SignalHistoryStore | None = None,
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
         self.learning_store = learning_store
         self.context_store = context_store
-        self.ingest = ingest or IngestService(learning_store=learning_store)
+        # SignalHistoryStore — per-target temporal memory shared across
+        # ingest (write path) and decision (read path). Constructed once
+        # so both services key off the same target ids and the same
+        # in-memory ring buffers. Hydrating from disk gives a Mesh
+        # restart a few minutes of warm context instead of starting
+        # cold; failure to hydrate is best-effort and never blocks
+        # startup.
+        self.signal_history = signal_history or SignalHistoryStore(
+            state_directory=self.config.state_directory,
+        )
+        try:
+            hydrated = self.signal_history.hydrate_from_disk()
+            if hydrated:
+                import logging
+                logging.getLogger("mesh.runtime").info(
+                    "signal_history: hydrated %d records from disk", hydrated,
+                )
+        except Exception:
+            import logging
+            logging.getLogger("mesh.runtime").exception(
+                "signal_history: hydrate failed (non-fatal); starting cold",
+            )
+        self.ingest = ingest or IngestService(
+            learning_store=learning_store,
+            signal_history=self.signal_history,
+        )
         self.trigger = trigger or TriggerService()
         self.evidence = evidence or EvidenceService()
         escalation_reasoner = None
@@ -106,6 +133,7 @@ class MeshRuntimeEngine:
             hypothesis_engine=hypothesis_engine,
             llm_proposer=llm_proposer,
             llm_observer=llm_observer,
+            signal_history=self.signal_history,
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)

@@ -93,3 +93,63 @@ Cron mode picks faults via a seeded RNG (default `42`). Sweep mode
 runs the catalog in source order. Observer responses themselves are
 not deterministic — that's the point of the simulation: see whether
 the LLM's variance keeps it inside the safety envelope.
+
+---
+
+## Live demo (real Reth + Lighthouse in Docker)
+
+For a credibility demo where the node is real, not synthesized:
+
+```bash
+# 1. Generate the JWT and bring up the stack (Reth + Lighthouse on Hoodi)
+./simulation/bootstrap_demo.sh
+
+# 2. Wait for Lighthouse to finish checkpoint sync (5-10 min on a fresh
+#    machine; watch with: docker logs -f mesh-demo-lighthouse)
+
+# 3. Run the live chaos cycle. Default sequence is 7 cycles × 60s ≈ 7 min.
+uv run python -m simulation.run_real
+
+# 4. Tear down
+./simulation/bootstrap_demo.sh --kill
+```
+
+What's real:
+- Reth and Lighthouse are real binaries in Docker on Hoodi testnet,
+  with a real JWT-protected Engine API between them.
+- ``simulation/run_real.py`` polls Reth via the production
+  ``RethNodeIngester`` (same code path the watch daemon uses): real
+  ``eth_syncing``, ``net_peerCount``, ``eth_blockNumber``,
+  ``web3_clientVersion`` calls.
+- Chaos primitives in ``simulation/chaos_real.py`` apply real
+  Linux-level mutations:
+  - ``peer_zero``: ``docker network disconnect`` — peer_count drops
+  - ``engine_api_unreach``: ``docker stop`` on Lighthouse — forkchoice
+    updates stop arriving
+  - ``rpc_overload``: host-side curl loop hammering ``eth_getLogs``
+  - ``jwt_world_readable``: ``chmod 0644`` on the JWT inside Reth
+  - ``disk_pressure``: ``dd`` of a 1 GB filler in the datadir
+  - ``all_clear``: no-op (baseline)
+- Each chaos has a paired revert; the runner reverts the previous
+  chaos before applying the next so symptoms don't compound.
+
+What's still simulated:
+- Validator-duty fields (``validator_attestation_pending``,
+  ``validator_proposer_within_seconds``) — the demo doesn't load
+  validator keys, so these stay null. Mesh's guards correctly treat
+  null as "no opinion."
+- The orchestrator's actuation step (``restart_systemd_service``)
+  remains gated to the SSH-allowlist machinery — Mesh decides what
+  to do, but the actual restart isn't executed against the demo
+  container. To enable real actuation, set ``MESH_SSH_*`` env vars
+  per the production runbook.
+
+Output:
+- Three log files in ``/tmp/mesh-demo/`` (``node.txt``, ``chaos.log``,
+  ``mesh.log``) — same shape as the synthetic demo, viewable with
+  ``./simulation/demo.sh`` panes or plain ``tail -F``.
+- Markdown report at
+  ``.mesh-runtime-state/simulation/live_real.md`` summarizing each
+  chaos cycle: the live signal observed, Mesh's decision, observer
+  verdict, and whether the observed signature matched the chaos's
+  expected one.

@@ -214,5 +214,148 @@ class EvidencePackSerializationTests(unittest.TestCase):
         self.assertTrue(d["sufficient"])
 
 
+class DbCorruptionMatcherTests(unittest.TestCase):
+    """The pre-fast-path log scan should stamp ``db_corruption_suspected``
+    on the trigger when any DB-engine log line matches the known
+    corruption patterns. This means a node that's misbehaving for an
+    obvious-looking reason (peer count low, sync stalled) but is
+    actually MDBX/Pebble-corrupt won't get a restart proposal — the
+    fast-path will escalate.
+    """
+
+    def _payload_with_logs(self, log_lines: list[str]) -> dict:
+        payload = json.loads((_FIXTURE_ROOT / "reth_peer_starvation.json").read_text())
+        payload.setdefault("logs", {})["recent_errors"] = log_lines
+        return payload
+
+    def test_mdbx_corrupted_triggers_fast_path(self):
+        payload = self._payload_with_logs([
+            "2026-04-27T10:30:01Z ERROR reth::db: failed to open: MDBX_CORRUPTED: meta page checksum mismatch",
+        ])
+        trigger = _trigger_for_signal(payload, ["peer_starvation"])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+
+        self.assertEqual(pack.source, "fast_path_skip")
+        self.assertIn("db_corruption_suspected", pack.fast_path_signatures)
+        # The signature must also be stamped on the trigger so the
+        # decision service sees it via related_context.
+        self.assertIn(
+            "db_corruption_suspected",
+            trigger.related_context["error_signatures"],
+        )
+
+    def test_pebble_manifest_corruption_triggers_fast_path(self):
+        payload = self._payload_with_logs([
+            "geth: pebble: manifest version not found",
+        ])
+        trigger = _trigger_for_signal(payload, ["sync_stalled"])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+        self.assertIn("db_corruption_suspected", pack.fast_path_signatures)
+
+    def test_rocksdb_sst_ahead_of_wal_triggers_fast_path(self):
+        payload = self._payload_with_logs([
+            "Nethermind.Db: Corruption: SST file is ahead of WAL",
+        ])
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_boltdb_corruption_triggers_fast_path(self):
+        payload = self._payload_with_logs([
+            "prysm: bolt: invalid database",
+        ])
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_sqlite_malformed_triggers_fast_path(self):
+        payload = self._payload_with_logs([
+            "lighthouse: database disk image is malformed",
+        ])
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_state_root_mismatch_triggers_fast_path(self):
+        # Generic state-trie divergence (bit-rot, pruner bug). No DB
+        # engine error needed.
+        payload = self._payload_with_logs([
+            "reth: ERROR engine: state root mismatch at block 19234567",
+        ])
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_clean_logs_do_not_trigger_fast_path(self):
+        payload = self._payload_with_logs([
+            "reth: INFO main: imported 12 blocks, head=19234600",
+            "reth: INFO net: 27 peers, syncing=false",
+        ])
+        trigger = _trigger_for_signal(payload, ["peer_starvation"])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        # No corruption stamped; the normal path (or its sufficient pack)
+        # runs.
+        self.assertNotEqual(pack.source, "fast_path_skip")
+        self.assertNotIn(
+            "db_corruption_suspected",
+            trigger.related_context.get("error_signatures", []),
+        )
+
+    def test_match_is_case_insensitive(self):
+        payload = self._payload_with_logs([
+            "reth: error: mdbx_corrupted: page invalid",
+        ])
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+
+class FilesystemUnsuitabilityTests(unittest.TestCase):
+    """When the operator stamps the datadir filesystem and it's NFS,
+    FUSE, tmpfs, or SMB, we refuse to act regardless of which symptom
+    fired. Restarting won't fix an MDBX-on-NFS configuration."""
+
+    def _payload_with_fs(self, fstype: str | None, *, attr: bool = False) -> dict:
+        payload = json.loads((_FIXTURE_ROOT / "reth_peer_starvation.json").read_text())
+        if fstype is not None:
+            if attr:
+                payload.setdefault("resource_attributes", {})["mesh.node.fstype"] = fstype
+            else:
+                payload.setdefault("storage", {})["filesystem"] = fstype
+        return payload
+
+    def test_nfs_storage_field_triggers_fast_path(self):
+        payload = self._payload_with_fs("nfs4")
+        trigger = _trigger_for_signal(payload, ["peer_starvation"])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+        self.assertIn("filesystem_unsuitable", pack.fast_path_signatures)
+
+    def test_fuse_resource_attribute_triggers_fast_path(self):
+        payload = self._payload_with_fs("fuse.s3fs", attr=True)
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_tmpfs_triggers_fast_path(self):
+        payload = self._payload_with_fs("tmpfs")
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertEqual(pack.source, "fast_path_skip")
+
+    def test_safe_filesystem_does_not_trigger(self):
+        payload = self._payload_with_fs("ext4")
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertNotEqual(pack.source, "fast_path_skip")
+
+    def test_no_filesystem_field_does_not_trigger(self):
+        payload = self._payload_with_fs(None)
+        trigger = _trigger_for_signal(payload, [])
+        pack = EvidenceService().assemble(trigger=trigger, signal_payload=payload)
+        self.assertNotEqual(pack.source, "fast_path_skip")
+
+
 if __name__ == "__main__":
     unittest.main()

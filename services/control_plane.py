@@ -762,11 +762,30 @@ class RunCoordinator:
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
         session = self.state_store.get_run_session(run_id)
-        control = self._get_control(run_id)
-        if session is None or control is None:
+        if session is None:
+            # Run doesn't exist at all — surface as 404 from the HTTP
+            # handler. Distinct from "run is terminal but exists",
+            # handled below.
             raise KeyError(run_id)
         command_payload = {key: value for key, value in payload.items() if key != "command"}
+        # Run validation against the persisted session BEFORE we look
+        # up the in-memory control. A terminal run has its control
+        # reaped by ``_finalize_run``; if we checked control first,
+        # operators steering on a completed/failed/cancelled run would
+        # see a 404 ("run not found") when the truthful answer is 400
+        # ("steering command not allowed after the run is completed").
+        # ``_validate_steering_command`` explicitly handles the terminal
+        # case and raises ValueError, which the HTTP handler maps to
+        # 400. Order matters here.
         _validate_steering_command(session, command_type, command_payload)
+        control = self._get_control(run_id)
+        if control is None:
+            # Session exists, validation passed (so the run is
+            # non-terminal AND the command is valid for the stage),
+            # but no live control. This is a narrow race during the
+            # reaper window for non-terminal runs; surface as 404 so
+            # the operator retries.
+            raise KeyError(run_id)
         command = SteeringCommand(
             command_id=f"cmd_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{len(session.operator_notes) + 1}",
             run_id=run_id,

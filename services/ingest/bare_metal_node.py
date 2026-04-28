@@ -126,6 +126,13 @@ class BareMetalNodeTarget:
     recent_log_lines: tuple[str, ...] = ()
     rpc_publicly_exposed: bool | None = None
     authrpc_publicly_exposed: bool | None = None
+    # G1: consecutive-failure threshold. After this many ticks where every
+    # core RPC call returns RpcError, the ingester emits a synthetic
+    # ``node_unreachable`` signal so Mesh's pipeline still produces a trigger
+    # / decision instead of going silently dark. 3 ticks at the default 60s
+    # poll = 3 minutes of unreachability, which is the SRE smell-test for
+    # "this is real, not a hiccup".
+    unreachable_threshold_consecutive: int = 3
     lb_target_id: str | None = None
     lb_pool: str | None = None
     lb_provider: str | None = None
@@ -156,6 +163,7 @@ class BareMetalNodeTarget:
             recent_log_lines=tuple(str(line) for line in raw.get("recent_log_lines", ())),
             rpc_publicly_exposed=_optional_bool(raw.get("rpc_publicly_exposed")),
             authrpc_publicly_exposed=_optional_bool(raw.get("authrpc_publicly_exposed")),
+            unreachable_threshold_consecutive=int(raw.get("unreachable_threshold_consecutive", 3)),
             lb_target_id=raw.get("lb_target_id"),
             lb_pool=raw.get("lb_pool"),
             lb_provider=raw.get("lb_provider"),
@@ -501,6 +509,15 @@ class RethNodeIngester:
         self.disk_diagnostics_provider = disk_diagnostics_provider
         self.jwt_metadata_provider = jwt_metadata_provider
         self.metrics_fetcher = metrics_fetcher or _fetch_text_url
+        # G1: track consecutive RPC-failure ticks per ingester instance.
+        # The ingester is constructed once per target and held by the
+        # watch daemon, so this counter survives across polling ticks.
+        # Reset on any successful core-RPC sequence; incremented on any
+        # full-failure. When it crosses ``target.unreachable_threshold_consecutive``
+        # we emit a synthetic ``node_unreachable`` signal instead of None.
+        self._consecutive_rpc_failures: int = 0
+        self._first_failure_at: str | None = None
+        self._last_rpc_error: str | None = None
 
     def build_signal(self) -> dict[str, Any] | None:
         try:
@@ -509,8 +526,12 @@ class RethNodeIngester:
             head_block_hex = _rpc_call(self.target.rpc_url, "eth_blockNumber", timeout_seconds=self.timeout_seconds)
             client_version = _rpc_call(self.target.rpc_url, "web3_clientVersion", timeout_seconds=self.timeout_seconds)
         except RpcError as exc:
-            _LOG.warning("reth ingester: %s rpc failed: %s", self.target.name, exc)
-            return None
+            return self._on_rpc_failure(exc)
+        # All four core RPCs succeeded — clear the unreachability state so
+        # we don't carry it into a healthy run.
+        self._consecutive_rpc_failures = 0
+        self._first_failure_at = None
+        self._last_rpc_error = None
 
         peer_count = _hex_or_int(peer_count_hex)
         head_block = _hex_or_int(head_block_hex)
@@ -577,6 +598,13 @@ class RethNodeIngester:
                 "error_signatures": error_signatures,
                 "recent_errors": [],
             },
+            "ingest_status": "live" if self._is_signal_complete(consensus, storage) else "partial",
+            "field_observability": self._build_observability_map(
+                consensus=consensus,
+                storage=storage,
+                metrics_text=metrics_text,
+                client_version=client_version,
+            ),
             "resource_attributes": {
                 "service.name": self.target.name,
                 "deployment.environment": self.target.environment,
@@ -623,6 +651,251 @@ class RethNodeIngester:
         except Exception as exc:
             _LOG.warning("reth ingester: %s jwt metadata probe failed: %s", self.target.name, exc)
             return None
+
+    # ------------------------------------------------------------------ G1+G2
+
+    def _on_rpc_failure(self, exc: RpcError) -> dict[str, Any] | None:
+        """Update the failure tracker and decide what to emit.
+
+        Three states:
+
+        * **Below threshold** — return None like before. The watch daemon
+          treats this as a transient hiccup and tries again on the next tick.
+        * **At threshold** — emit a synthetic ``node_unreachable`` signal so
+          Mesh's pipeline produces a trigger and decision instead of going
+          silently dark. The signal is best-effort: every probe-derived
+          field is null, every observability entry is ``timeout`` for the
+          fields we tried and ``not_attempted`` for the rest.
+        * **Above threshold** — keep emitting the unreachable signal each
+          tick. Mesh's run-history dedup will collapse these into one
+          incident, but we still want the heartbeat so an operator can see
+          the node has been silent for, say, 12 minutes (4 ticks ✕ 3-min).
+
+        Without this, ``peer_zero``-style chaos (network disconnect kills
+        the host port mapping) makes Mesh produce zero output — the worst
+        possible failure mode for an observability tool.
+        """
+        self._consecutive_rpc_failures += 1
+        self._last_rpc_error = str(exc)
+        if self._first_failure_at is None:
+            self._first_failure_at = _now_iso()
+        _LOG.warning(
+            "reth ingester: %s rpc failed (%d consecutive): %s",
+            self.target.name,
+            self._consecutive_rpc_failures,
+            exc,
+        )
+        if self._consecutive_rpc_failures < self.target.unreachable_threshold_consecutive:
+            return None
+        return self._build_unreachable_signal()
+
+    def _build_unreachable_signal(self) -> dict[str, Any]:
+        """Compose a synthetic ``reth_node`` envelope when the node is dark.
+
+        We deliberately reuse the existing ``reth_node`` signal shape (not
+        a new signal type) so the trigger/decision pipeline doesn't need a
+        parallel branch. The distinguishing marks are:
+
+        * ``ingest_status: "unreachable"``
+        * ``logs.error_signatures: ["node_unreachable"]``
+        * Every probe-derived field is null
+        * ``field_observability`` flags every field as ``timeout`` or
+          ``not_attempted`` so the LLM observer knows the difference
+          between "I checked and it's null" and "I never got a chance"
+        """
+        consensus = {
+            "engine_api_reachable": None,
+            "jwt_configured": None,
+            "forkchoice_updates_recent": None,
+            "consensus_client": self.target.consensus_client,
+            "client_kind": "unknown",
+            "client_healthy": None,
+            "jwt_secret_exists": None,
+            "jwt_secret_mode": None,
+        }
+        storage = {
+            "disk_used_pct": None,
+            "data_dir_free_bytes": None,
+            "diagnostic_source": "none",
+            "filesystem": None,
+        }
+        return {
+            "signal_type": "reth_node",
+            "signal_id": f"sig_reth_{self.target.name}_{uuid4().hex[:12]}",
+            "observed_at": _now_iso(),
+            "environment": self.target.environment,
+            "service": self.target.name,
+            "comparison_window": _trailing_window_iso(),
+            "segment": {
+                "customer_tier": "system",
+                "region": self.target.region or "unknown",
+            },
+            "node": {
+                "name": self.target.name,
+                "deployment_mode": self.target.deployment_mode,
+                "network": self.target.network,
+                "role": self.target.role,
+                "client_version": None,
+                "data_dir": self.target.data_dir,
+                "jwt_secret_path": self.target.jwt_secret_path,
+            },
+            "execution": {
+                "syncing": False,
+                "head_block": 0,
+                "safe_block": None,
+                "finalized_block": None,
+                "block_lag": 0,
+                "peer_count": 0,
+                "min_peer_count": self.target.min_peer_count,
+                "max_block_lag": self.target.max_block_lag,
+            },
+            "consensus": consensus,
+            "storage": storage,
+            "rpc": {
+                "http_reachable": False,
+                "latency_ms": None,
+                "error_rate": None,
+                "publicly_exposed": self.target.rpc_publicly_exposed,
+                "authrpc_publicly_exposed": self.target.authrpc_publicly_exposed,
+            },
+            "logs": {
+                "error_signatures": ["node_unreachable"],
+                "recent_errors": [self._last_rpc_error or "rpc unreachable"],
+            },
+            "ingest_status": "unreachable",
+            "ingest_diagnostics": {
+                "consecutive_rpc_failures": self._consecutive_rpc_failures,
+                "last_rpc_error": self._last_rpc_error,
+                "first_failure_at": self._first_failure_at,
+            },
+            "field_observability": self._observability_for_unreachable(),
+            "resource_attributes": {
+                "service.name": self.target.name,
+                "deployment.environment": self.target.environment,
+                "mesh.node.kind": "reth",
+                "mesh.node.host": self.target.host,
+                "mesh.node.service": self.target.service,
+                "mesh.node.min_peer_count": self.target.min_peer_count,
+                "mesh.node.max_block_lag": self.target.max_block_lag,
+                "mesh.node.deployment_mode": self.target.deployment_mode,
+                "mesh.node.network": self.target.network,
+                "mesh.node.role": self.target.role,
+                "mesh.ingest.status": "unreachable",
+            },
+            "related_context": {
+                "node_kind": "reth",
+                "host": self.target.host,
+                "systemd_service": self.target.service,
+            },
+            "post_action_observations": {},
+        }
+
+    def _is_signal_complete(self, consensus: dict[str, Any], storage: dict[str, Any]) -> bool:
+        """A signal is 'live' iff core RPC succeeded AND every operator-supplied
+        evidence source produced a usable value. If JWT/disk providers are
+        configured but failed, the signal is 'partial' — the LLM observer
+        should know the difference."""
+        if self.jwt_metadata_provider is not None and consensus.get("jwt_secret_mode") is None:
+            return False
+        if self.disk_diagnostics_provider is not None and storage.get("disk_used_pct") is None:
+            return False
+        if self.target.metrics_url and consensus.get("engine_api_p99_ms") is None:
+            return False
+        return True
+
+    def _build_observability_map(
+        self,
+        *,
+        consensus: dict[str, Any],
+        storage: dict[str, Any],
+        metrics_text: str | None,
+        client_version: Any,
+    ) -> dict[str, str]:
+        """Produce a per-field provenance map.
+
+        For every interesting field in the signal, record whether we got
+        the value via real probe (``observed``), via operator config
+        (``operator_supplied``), via probe failure (``timeout``), or
+        skipped because no provider was configured (``not_attempted``).
+
+        The LLM observer reads this and conditions on it: a null with
+        ``observed`` status means "definitely null"; a null with
+        ``not_attempted`` means "this evidence channel was never set up."
+        Without this, the observer hedges to escalate on every null.
+        """
+        m: dict[str, str] = {}
+        # Execution — all four came from the core RPC sequence; if we got
+        # this far, all four observed.
+        m["execution.syncing"] = "observed"
+        m["execution.peer_count"] = "observed"
+        m["execution.head_block"] = "observed"
+        m["execution.block_lag"] = "observed"
+        m["node.client_version"] = "observed" if client_version is not None else "timeout"
+        # Consensus — evidence-derived; the JWT metadata provider is the
+        # ground truth for jwt_secret_mode/exists; if no provider then
+        # not_attempted.
+        if self.jwt_metadata_provider is None:
+            m["consensus.jwt_secret_mode"] = "not_attempted"
+            m["consensus.jwt_secret_exists"] = "not_attempted"
+        else:
+            jwt_observed = consensus.get("jwt_secret_mode") is not None
+            m["consensus.jwt_secret_mode"] = "observed" if jwt_observed else "timeout"
+            m["consensus.jwt_secret_exists"] = "observed" if consensus.get("jwt_secret_exists") is not None else "timeout"
+        # Engine API reachability comes from metrics scrape (CL-side);
+        # if no metrics_url then not_attempted.
+        if not self.target.metrics_url:
+            m["consensus.engine_api_reachable"] = "not_attempted"
+            m["consensus.engine_api_p99_ms"] = "not_attempted"
+            m["consensus.forkchoice_updates_recent"] = "not_attempted"
+        else:
+            m["consensus.engine_api_reachable"] = "observed" if metrics_text is not None else "timeout"
+            m["consensus.engine_api_p99_ms"] = "observed" if metrics_text is not None and consensus.get("engine_api_p99_ms") is not None else "timeout"
+            m["consensus.forkchoice_updates_recent"] = "observed" if metrics_text is not None else "timeout"
+        # Storage — depends on the disk provider. Field names mirror the
+        # schema (``storage.filesystem``, not ``filesystem_type``) so the
+        # LLM can look up the actual values by path.
+        if self.disk_diagnostics_provider is None:
+            m["storage.disk_used_pct"] = "not_attempted"
+            m["storage.filesystem"] = "not_attempted"
+        else:
+            m["storage.disk_used_pct"] = "observed" if storage.get("disk_used_pct") is not None else "timeout"
+            m["storage.filesystem"] = "observed" if storage.get("filesystem") is not None else "timeout"
+        # RPC exposure — operator-supplied via target config; either way,
+        # not from a probe.
+        m["rpc.publicly_exposed"] = "operator_supplied" if self.target.rpc_publicly_exposed is not None else "not_attempted"
+        m["rpc.authrpc_publicly_exposed"] = "operator_supplied" if self.target.authrpc_publicly_exposed is not None else "not_attempted"
+        return m
+
+    def _observability_for_unreachable(self) -> dict[str, str]:
+        """Observability map for a synthetic unreachable signal.
+
+        Every probe-derived field is ``timeout`` (we tried and the RPC
+        was dead), every operator-supplied field keeps its provenance.
+        The LLM observer should read this and immediately understand
+        "Mesh has zero ground truth from the node itself" — versus
+        the partial-signal case where some fields are real.
+        """
+        m: dict[str, str] = {}
+        for field in (
+            "execution.syncing",
+            "execution.peer_count",
+            "execution.head_block",
+            "execution.block_lag",
+            "node.client_version",
+            "consensus.engine_api_reachable",
+            "consensus.engine_api_p99_ms",
+            "consensus.forkchoice_updates_recent",
+            "consensus.jwt_secret_mode",
+            "consensus.jwt_secret_exists",
+            "storage.disk_used_pct",
+            "storage.filesystem",
+            "rpc.latency_ms",
+            "rpc.error_rate",
+        ):
+            m[field] = "timeout"
+        m["rpc.publicly_exposed"] = "operator_supplied" if self.target.rpc_publicly_exposed is not None else "not_attempted"
+        m["rpc.authrpc_publicly_exposed"] = "operator_supplied" if self.target.authrpc_publicly_exposed is not None else "not_attempted"
+        return m
 
 
 # ---------------------------------------------------------------- helpers

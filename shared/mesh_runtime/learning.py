@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -76,6 +76,55 @@ class LearningStore:
         if self._state_store is not None:
             return self._state_store.get_recovery_patterns(service)
         return recovery_patterns(self._load_outcomes(), service)
+
+    def count_recent_decisions(
+        self,
+        decision_type: str,
+        service: str,
+        within_seconds: int,
+    ) -> int:
+        """Count Mesh's own past ``decision_type`` outcomes for ``service``
+        in the last ``within_seconds`` of wall-clock time.
+
+        Used to enforce restart-rate caps even when the inbound trigger
+        didn't carry a host-stamped count. The trigger's
+        ``systemd_restarts_last_1h`` reflects what systemd remembers;
+        this method reflects what *Mesh* did. We take the max of both
+        to protect against the case where the trigger is delivered with
+        the count missing or stale.
+
+        Outcomes are recorded by ``FeedbackService`` at T+10m / T+30m,
+        so a restart issued <10 min ago is not yet counted here. That's
+        the correct gap for the cross-run case (which is about decisions
+        spaced 30 minutes apart, not 30 seconds).
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=within_seconds)
+        count = 0
+        outcomes: list[dict[str, Any]]
+        if self._state_store is not None and hasattr(self._state_store, "list_learning_outcomes"):
+            try:
+                outcomes = list(self._state_store.list_learning_outcomes() or [])
+            except Exception:
+                outcomes = []
+        else:
+            outcomes = self._load_outcomes()
+        for outcome in outcomes:
+            if outcome.get("decision_type") != decision_type:
+                continue
+            if outcome.get("service") != service:
+                continue
+            recorded = outcome.get("recorded_at")
+            if not isinstance(recorded, str):
+                continue
+            try:
+                ts = datetime.fromisoformat(recorded.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if ts >= cutoff:
+                count += 1
+        return count
 
     def _load_outcomes(self) -> list[dict[str, Any]]:
         if not self._outcomes_path.exists():
