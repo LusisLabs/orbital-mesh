@@ -42,6 +42,11 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _clean_header_value(value: str) -> str:
+    """Remove copy/paste whitespace that would make HTTP headers invalid."""
+    return "".join(str(value).split())
+
+
 def _post_with_retry(
     url: str,
     body: bytes,
@@ -193,7 +198,7 @@ def chat_completion(
 
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {_clean_header_value(api_key)}",
     }
     encoded = json.dumps(body).encode("utf-8")
     raw = _post_with_retry(url, encoded, headers, timeout_seconds)
@@ -253,7 +258,7 @@ def _anthropic_messages(
 
     headers = {
         "Content-Type": "application/json",
-        "x-api-key": api_key,
+        "x-api-key": _clean_header_value(api_key),
         "anthropic-version": "2023-06-01",
     }
     encoded = json.dumps(body).encode("utf-8")

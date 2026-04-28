@@ -77,9 +77,28 @@ tmux select-layout -t "$SESSION:0" main-horizontal
 tmux select-pane -t "$SESSION:0.0"
 
 if [[ "${1:-}" == "--auto" ]]; then
+  # tmux panes do not reliably inherit arbitrary newly-exported shell
+  # variables, especially when a tmux server was already running. Copy
+  # observer config explicitly into the session so ``--auto`` behaves
+  # the same as running the command directly in the current shell.
+  for name in \
+    ANTHROPIC_API_KEY \
+    MESH_OBSERVER_ENABLED \
+    MESH_OBSERVER_PROVIDER \
+    MESH_OBSERVER_BASE_URL \
+    MESH_OBSERVER_MODEL \
+    MESH_OBSERVER_API_KEY \
+    MESH_OBSERVER_TIMEOUT_SECONDS \
+    MESH_OBSERVER_MAX_TOKENS
+  do
+    if [[ -n "${!name:-}" ]]; then
+      tmux set-environment -t "$SESSION" "$name" "${!name}"
+    fi
+  done
+
   # Add a small 4th pane on the very bottom that runs the demo.
   tmux split-window -v -t "$SESSION:0" -p 12 \
-    "python -m simulation.demo; echo '[demo] press any key to detach'; read -n1"
+    "PYTHONPATH=. uvx --with-editable . --with deepagents python -m simulation.demo; echo '[demo] press any key to detach'; read -n1"
 fi
 
 # Status line tweak so panes show what's in them.

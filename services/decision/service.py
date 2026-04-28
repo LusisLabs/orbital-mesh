@@ -855,14 +855,15 @@ class DecisionService:
         elif "probe_failure" in error_signatures and not (
             "crash_loop" in error_signatures or "oom_killed" in error_signatures
         ):
-            # Probe failures without a crash usually indicate a
-            # downstream dependency that's sick (DB unreachable,
-            # upstream API timing out). Restarting our container won't
-            # fix the dependency. Escalate so a human can check.
-            decision_type = "escalate"
-            confidence = 0.68
-            risk_level = "medium"
-            autonomy_tier = "escalated"
+            # Probe failures without a crash are often transient or
+            # dependency-driven. The SRE-correct first move is to wait a
+            # bounded interval and re-check, not to restart or page on the
+            # first sample. Persistent probe failures will return with the
+            # deferral evidence attached and can then escalate.
+            decision_type = "defer_until"
+            confidence = 0.70
+            risk_level = "low"
+            autonomy_tier = "autonomous"
             blast_radius = "single_deployment"
         else:
             # Catch-all: when we can't narrow the cause, escalate
@@ -961,6 +962,7 @@ class DecisionService:
                     "confidence_factors": confidence_factors,
                     "hypotheses": hypotheses,
                     "hypothesis_upgrade_applied": hypothesis_upgrade,
+                    "defer_until": _defer_until_context(trigger, decision_type),
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
@@ -1114,6 +1116,21 @@ def _feature_flag_reduction_supported(
     )
 
 
+def _defer_until_context(trigger: Trigger, decision_type: str) -> dict[str, object]:
+    if decision_type != "defer_until":
+        return {}
+    error_signatures = list(trigger.related_context.get("error_signatures", []))
+    condition = ", ".join(error_signatures or ["runtime symptoms"])
+    return {
+        "defer_seconds": int(trigger.related_context.get("defer_seconds", 300) or 300),
+        "condition": f"{condition} on {trigger.endpoint}",
+        "original_trigger_id": trigger.trigger_id,
+        "recheck_signal_type": trigger.trigger_type,
+        "on_persist": "escalate",
+        "on_clear": "no_action",
+    }
+
+
 def _delta_pct(baseline: float, observed: float) -> float:
     if baseline == 0:
         return 0.0
@@ -1127,6 +1144,20 @@ def _ratio(baseline: float, observed: float) -> float:
 
 
 def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -> dict[str, object]:
+    if decision_type == "defer_until":
+        defer_context = _defer_until_context(trigger, decision_type)
+        return {
+            "system": "audit_log_sink",
+            "action": "record_defer_until",
+            "parameters": {
+                "trigger_id": trigger.trigger_id,
+                "service": trigger.service,
+                "endpoint": trigger.endpoint,
+                "environment": trigger.environment,
+                **defer_context,
+            },
+            "rollback_plan": "no infrastructure mutation was performed; cancel the scheduled recheck if the alert is manually resolved",
+        }
     if decision_type == "rollback_deployment":
         return {
             "system": "kubernetes_service",
@@ -1252,6 +1283,8 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
         }
     if decision_type == "restart_systemd_service":
         attrs = trigger.related_context.get("resource_attributes", {})
+        node = trigger.related_context.get("node", {})
+        fleet = trigger.related_context.get("fleet", {})
         return {
             "system": "systemd_service",
             "action": "restart_systemd_service",
@@ -1265,6 +1298,12 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
                     or trigger.related_context.get("systemd_service")
                 ),
                 "reason": ", ".join(trigger.related_context.get("error_signatures", [])),
+                "lb_target_id": attrs.get("mesh.lb.target_id") or node.get("lb_target_id"),
+                "lb_pool": attrs.get("mesh.lb.pool") or node.get("lb_pool"),
+                "lb_provider": attrs.get("mesh.lb.provider") or node.get("lb_provider"),
+                "fleet_id": attrs.get("mesh.fleet.id") or fleet.get("fleet_id") or node.get("fleet_id"),
+                "fleet_min_healthy": fleet.get("min_healthy") or node.get("fleet_min_healthy"),
+                "fleet_healthy_count": fleet.get("healthy_count") or node.get("fleet_healthy_count"),
             },
             "rollback_plan": (
                 "no automatic rollback for a systemd restart; escalate if peers, block lag, "
@@ -1342,6 +1381,12 @@ def _execution_plan(trigger: Trigger, decision_type: str, target_rollout: int) -
 
 
 def _summary(trigger: Trigger, decision_type: str, target_rollout: int) -> str:
+    if decision_type == "defer_until":
+        context = _defer_until_context(trigger, decision_type)
+        return (
+            f"Defer action on {trigger.service} for {context['defer_seconds']}s and re-check "
+            f"whether {context['condition']} persists."
+        )
     if decision_type == "rollback_deployment":
         return (
             f"Rollback Kubernetes deployment {trigger.related_context.get('deployment_name', trigger.service)} in "
@@ -1443,6 +1488,12 @@ def _evidence(trigger: Trigger, latency_delta_pct: float, error_multiplier: floa
 
 
 def _alternatives(decision_type: str) -> list[str]:
+    if decision_type == "defer_until":
+        return [
+            "act immediately",
+            "escalate to human review",
+            "defer and re-check before deciding",
+        ]
     if decision_type == "rollback_deployment":
         return [
             "restart deployment",

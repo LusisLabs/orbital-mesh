@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -129,7 +129,11 @@ class RuntimeConfig:
     # ``openai`` for /v1/chat/completions (OpenAI, vLLM, Ollama, ...);
     # ``anthropic`` for /v1/messages with x-api-key auth.
     observer_provider: str = "openai"
-    correlation_enabled: bool = False
+    observer_secondary_provider: str = ""
+    observer_secondary_base_url: str = ""
+    observer_secondary_api_key: str = ""
+    observer_secondary_model: str = ""
+    correlation_enabled: bool = True
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
     argocd_url: str | None = None
@@ -178,6 +182,9 @@ class RuntimeConfig:
     ssh_server_alive_count_max: int = 3
     ssh_allowed_hosts: tuple[str, ...] = ()
     ssh_allowed_services: tuple[str, ...] = ()
+    load_balancer_provider: str = "mock"
+    load_balancer_drain_timeout_seconds: int = 60
+    load_balancer_max_active_connections: int = 0
     # Node-health ingester targets (Solana RPC + geth/reth JSON-RPC). Each
     # entry is a JSON blob: {"name": "mainnet-07", "kind": "solana",
     # "rpc_url": "http://127.0.0.1:8899", "host": "vault-prod-07",
@@ -292,7 +299,7 @@ class RuntimeConfig:
             llm_escalation_provider=os.getenv("MESH_LLM_ESCALATION_PROVIDER", "goose"),
             llm_escalation_model=os.getenv("MESH_LLM_ESCALATION_MODEL") or None,
             llm_escalation_timeout_seconds=int(os.getenv("MESH_LLM_ESCALATION_TIMEOUT_SECONDS", "30")),
-            correlation_enabled=os.getenv("MESH_CORRELATION_ENABLED", "").lower()
+            correlation_enabled=os.getenv("MESH_CORRELATION_ENABLED", "true").lower()
             in ("1", "true", "yes"),
             correlation_window_seconds=int(os.getenv("MESH_CORRELATION_WINDOW_SECONDS", "300")),
             correlation_min_signals=int(os.getenv("MESH_CORRELATION_MIN_SIGNALS", "2")),
@@ -326,6 +333,9 @@ class RuntimeConfig:
             ssh_server_alive_count_max=int(os.getenv("MESH_SSH_SERVER_ALIVE_COUNT_MAX", "3")),
             ssh_allowed_hosts=_csv_env("MESH_SSH_ALLOWED_HOSTS"),
             ssh_allowed_services=_csv_env("MESH_SSH_ALLOWED_SERVICES"),
+            load_balancer_provider=os.getenv("MESH_LOAD_BALANCER_PROVIDER", "mock").lower(),
+            load_balancer_drain_timeout_seconds=int(os.getenv("MESH_LOAD_BALANCER_DRAIN_TIMEOUT_SECONDS", "60")),
+            load_balancer_max_active_connections=int(os.getenv("MESH_LOAD_BALANCER_MAX_ACTIVE_CONNECTIONS", "0")),
             bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
             observer_enabled=os.getenv("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes"),
             observer_base_url=os.getenv("MESH_OBSERVER_BASE_URL", ""),
@@ -334,6 +344,10 @@ class RuntimeConfig:
             observer_timeout_seconds=float(os.getenv("MESH_OBSERVER_TIMEOUT_SECONDS", "8.0")),
             observer_max_tokens=int(os.getenv("MESH_OBSERVER_MAX_TOKENS", "512")),
             observer_provider=os.getenv("MESH_OBSERVER_PROVIDER", "openai").lower(),
+            observer_secondary_provider=os.getenv("MESH_OBSERVER_SECONDARY_PROVIDER", "").lower(),
+            observer_secondary_base_url=os.getenv("MESH_OBSERVER_SECONDARY_BASE_URL", ""),
+            observer_secondary_api_key=os.getenv("MESH_OBSERVER_SECONDARY_API_KEY", ""),
+            observer_secondary_model=os.getenv("MESH_OBSERVER_SECONDARY_MODEL", ""),
         )
 
 

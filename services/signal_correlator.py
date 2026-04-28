@@ -28,6 +28,14 @@ class CorrelationContext:
             "type": self.correlation_type,
             "affected_services": self.affected_services,
             "correlated_signal_count": len(self.correlated_signals),
+            "correlated_signals": list(self.correlated_signals),
+            "signatures": sorted(
+                {
+                    str(signal.get("error_signature"))
+                    for signal in self.correlated_signals
+                    if signal.get("error_signature")
+                }
+            ),
             "correlation_confidence": self.correlation_confidence,
         }
 

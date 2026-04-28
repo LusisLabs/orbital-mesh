@@ -17,9 +17,9 @@ was rewritten to follow standard SRE escalation practice:
   The bug existed before the rollout. Restart can't fix it; needs
   log investigation by a human.
 
-* ``probe_failure`` only (no crash, no OOM) → ``escalate``
+* ``probe_failure`` only (no crash, no OOM) → ``defer_until``
   Probe failures usually mean a downstream dependency is sick;
-  restarting our container won't fix the dependency.
+  restarting our container won't fix the dependency. Re-check before paging.
 
 * ``rollout_status == "failed"`` → ``rollback_deployment``
   ProgressDeadlineExceeded; controller has given up.
@@ -174,13 +174,16 @@ class CrashLoopPolicyTests(unittest.TestCase):
 class ProbeFailurePolicyTests(unittest.TestCase):
     """Probe failure alone (no crash, no OOM, no image-pull) usually
     means a downstream dependency is sick. Restarting our container
-    won't fix the dependency. Escalate."""
+    won't fix the dependency. Re-check before paging."""
 
-    def test_probe_failure_alone_escalates(self) -> None:
+    def test_probe_failure_alone_defers_for_recheck(self) -> None:
         svc = DecisionService()
         trigger = _make_trigger(error_signatures=["probe_failure"])
         decision = svc._decide_kubernetes(trigger)
-        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.decision_type, "defer_until")
+        self.assertEqual(decision.execution_plan["action"], "record_defer_until")
+        self.assertEqual(decision.execution_plan["parameters"]["on_persist"], "escalate")
+        self.assertEqual(decision.execution_plan["parameters"]["on_clear"], "no_action")
 
     def test_probe_failure_with_crash_loop_uses_crash_branch(self) -> None:
         """If the probe is failing AND we have a crash loop, the crash

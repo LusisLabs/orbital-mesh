@@ -176,7 +176,12 @@ class KubernetesWatcher:
                 error_signature=error_sig,
             )
             if correlation.correlation_type != "none":
-                run_payload["live_signal"]["correlation"] = correlation.to_dict()
+                correlation_payload = correlation.to_dict()
+                run_payload["live_signal"]["correlation"] = correlation_payload
+                run_payload["live_signal"]["correlation_key"] = _correlation_key(correlation_payload)
+                run_payload["live_signal"]["co_signatures"] = sorted(
+                    set(correlation_payload.get("signatures", [])) | {error_sig}
+                )
 
         run = self.coordinator.create_run(run_payload)
 
@@ -223,3 +228,8 @@ class KubernetesWatcher:
             if reason:
                 parts.append(reason)
         return "|".join(sorted(set(parts))) or "healthy"
+
+
+def _correlation_key(correlation: dict[str, Any]) -> str:
+    services = ",".join(str(s) for s in correlation.get("affected_services", []))
+    return f"{correlation.get('type', 'none')}:{services}"

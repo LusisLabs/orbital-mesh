@@ -78,8 +78,8 @@ class MeshRuntimeEngine:
         # for everyone who hasn't opted in.
         llm_observer = None
         if self.config.observer_enabled:
-            from services.observer import LlmObserver, ObserverConfig
-            llm_observer = LlmObserver(ObserverConfig(
+            from services.observer import LlmObserver, MultiLlmObserver, ObserverConfig
+            primary_observer = LlmObserver(ObserverConfig(
                 enabled=True,
                 base_url=self.config.observer_base_url,
                 api_key=self.config.observer_api_key,
@@ -88,6 +88,18 @@ class MeshRuntimeEngine:
                 max_tokens=self.config.observer_max_tokens,
                 provider=self.config.observer_provider,
             ))
+            secondary_observer = None
+            if self.config.observer_secondary_model:
+                secondary_observer = LlmObserver(ObserverConfig(
+                    enabled=True,
+                    base_url=self.config.observer_secondary_base_url or self.config.observer_base_url,
+                    api_key=self.config.observer_secondary_api_key or self.config.observer_api_key,
+                    model=self.config.observer_secondary_model,
+                    timeout_seconds=self.config.observer_timeout_seconds,
+                    max_tokens=self.config.observer_max_tokens,
+                    provider=self.config.observer_secondary_provider or self.config.observer_provider,
+                ))
+            llm_observer = MultiLlmObserver(primary_observer, secondary_observer)
         self.decision = decision or DecisionService(
             learning_store=learning_store,
             escalation_reasoner=escalation_reasoner,
