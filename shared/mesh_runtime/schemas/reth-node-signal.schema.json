@@ -229,7 +229,36 @@
     },
     "resource_attributes": { "type": "object" },
     "related_context": { "type": "object" },
-    "post_action_observations": { "type": "object" }
+    "post_action_observations": { "type": "object" },
+    "field_observability": {
+      "type": "object",
+      "description": "Per-field provenance/observability map. Tells the LLM observer (and any downstream reasoning) the difference between 'I checked and the value is null' vs 'I never checked'. Without this, every null is ambiguous and the observer hedges to escalate. Keys are dotted JSON paths into the signal (e.g. 'execution.peer_count', 'rpc.publicly_exposed'). Values are one of: observed, operator_supplied, timeout, not_attempted, not_applicable.",
+      "additionalProperties": {
+        "type": "string",
+        "enum": [
+          "observed",
+          "operator_supplied",
+          "timeout",
+          "not_attempted",
+          "not_applicable"
+        ]
+      }
+    },
+    "ingest_status": {
+      "type": "string",
+      "description": "Top-level provenance for this signal. 'live' means every required RPC succeeded; 'partial' means some sub-probes failed but core RPC succeeded; 'unreachable' means the node has been silent for N consecutive ticks and Mesh emitted a synthetic best-effort signal so the trigger pipeline still fires.",
+      "enum": ["live", "partial", "unreachable"]
+    },
+    "ingest_diagnostics": {
+      "type": "object",
+      "description": "Why ingest_status is what it is. Set on partial/unreachable signals; absent on live signals. Helps the observer cite the cause instead of guessing.",
+      "properties": {
+        "consecutive_rpc_failures": { "type": "integer" },
+        "last_rpc_error": { "type": ["string", "null"] },
+        "first_failure_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

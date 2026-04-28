@@ -14,11 +14,18 @@
     "filesystem_unsuitable",
     "jwt_missing",
     "jwt_secret_insecure_permissions",
+    "node_unreachable",
     "restart_frequency_exceeded",
     "rpc_exposed",
     "slashing_db_recently_restored",
     "validator_duty_imminent"
   ],
+  "node_unreachable_recovery": {
+    "$comment": "How Mesh responds to a synthetic node_unreachable signal — emitted by the ingester after N consecutive RPC-failure ticks. SSH and RPC are different network paths: if SSH is reachable the host is alive but the EL service is wedged → restart fixes it. If SSH is also down the host itself is gone → escalate. Default 'escalate_only' is the safe choice; operators with a reliable SSH executor can opt into 'ssh_restart_with_approval' to let Mesh propose (still approval-gated) a systemd restart.",
+    "mode": "escalate_only",
+    "max_recovery_attempts_per_window": 1,
+    "ssh_restart_confidence": 0.55
+  },
   "require_approval_for_restart": true,
   "restart_window_seconds": 3600,
   "max_restarts_per_window": 1,

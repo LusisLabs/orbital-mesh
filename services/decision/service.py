@@ -375,11 +375,38 @@ class DecisionService:
 
         restartable = signatures & set(policy["restartable_signatures"])
         unsafe = signatures & set(policy["escalation_signatures"])
+        # G1: ``node_unreachable`` is special. It's listed in
+        # ``escalation_signatures`` so the default safe path is "escalate
+        # to a human", but operators can opt into an SSH-based recovery
+        # attempt: SSH and JSON-RPC are different network paths, so when
+        # the RPC port is dead but SSH still works, the service is wedged
+        # on a live host — exactly what ``systemctl restart`` is for.
+        # We surface this as a low-confidence approval-required
+        # ``restart_systemd_service`` proposal, never autonomous.
+        is_node_unreachable = "node_unreachable" in signatures
+        recovery_cfg = policy.get("node_unreachable_recovery") or {}
+        recovery_mode = str(recovery_cfg.get("mode", "escalate_only"))
+
         if unsafe:
             decision_type = "escalate"
             confidence = 0.74
             risk_level = "high"
             autonomy_tier = "escalated"
+            # If the only unsafe signature is node_unreachable AND policy
+            # opts into SSH-based recovery AND we haven't recently tried,
+            # downgrade from pure-escalate to a restart proposal that the
+            # human can approve. Never autonomous — the host might be
+            # truly dead and we don't want to flap.
+            if (
+                is_node_unreachable
+                and unsafe == {"node_unreachable"}
+                and recovery_mode == "ssh_restart_with_approval"
+                and recent_restarts < int(recovery_cfg.get("max_recovery_attempts_per_window", 1))
+            ):
+                decision_type = "restart_systemd_service"
+                confidence = float(recovery_cfg.get("ssh_restart_confidence", 0.55))
+                risk_level = "medium"
+                autonomy_tier = "approval_required"
         elif restartable:
             # A restartable signature is only a lead. Reth is stateful, so
             # the signal alone must not choose a process restart; evidence

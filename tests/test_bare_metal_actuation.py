@@ -384,6 +384,149 @@ class RethNodeIngesterTests(unittest.TestCase):
             self.assertIsNone(ingester.build_signal())
 
 
+class RethNodeUnreachableSignalTests(unittest.TestCase):
+    """G1: when the JSON-RPC ingester sees ``unreachable_threshold_consecutive``
+    failures back-to-back, it must emit a synthetic ``node_unreachable`` signal
+    instead of returning None forever — otherwise a network partition (the
+    chaos that broke ``peer_zero`` in the live-real demo) makes Mesh go silent.
+    """
+
+    def test_first_failure_returns_none(self) -> None:
+        """One failure is a hiccup, not a partition. Below threshold = None."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            result = ingester.build_signal()
+        self.assertIsNone(result)
+        self.assertEqual(ingester._consecutive_rpc_failures, 1)
+
+    def test_threshold_failure_emits_synthetic_signal(self) -> None:
+        """At the threshold, a synthetic ``node_unreachable`` envelope appears.
+        This is the core of G1 — Mesh's pipeline must keep producing a trigger
+        and decision instead of going dark."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("connection refused")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        self.assertIsNotNone(signal, "third consecutive failure must emit synthetic signal")
+        self.assertEqual(signal["signal_type"], "reth_node")
+        self.assertEqual(signal["ingest_status"], "unreachable")
+        self.assertIn("node_unreachable", signal["logs"]["error_signatures"])
+        self.assertEqual(signal["execution"]["peer_count"], 0)
+        self.assertFalse(signal["rpc"]["http_reachable"])
+        diag = signal["ingest_diagnostics"]
+        self.assertEqual(diag["consecutive_rpc_failures"], 3)
+        self.assertIn("connection refused", diag["last_rpc_error"])
+        self.assertIsNotNone(diag["first_failure_at"])
+
+    def test_one_success_resets_the_counter(self) -> None:
+        """A single successful tick must clear the unreachability state — we
+        don't want stale counters bleeding into a healthy run."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            ingester.build_signal()
+            ingester.build_signal()
+        self.assertEqual(ingester._consecutive_rpc_failures, 2)
+
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0xa", "0x1234", "reth/v2.1.0"],
+        ):
+            result = ingester.build_signal()
+        self.assertIsNotNone(result)
+        self.assertEqual(result["ingest_status"], "live")
+        self.assertEqual(ingester._consecutive_rpc_failures, 0)
+        self.assertIsNone(ingester._first_failure_at)
+
+    def test_synthetic_signal_validates_against_schema(self) -> None:
+        """The synthetic signal must round-trip through the IngestService
+        schema validator. If the schema doesn't accept what the ingester
+        emits, the signal silently dies in normalize_signal — exactly
+        what the fix is supposed to prevent."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+
+        envelope = IngestService().normalize_signal(signal)
+        self.assertEqual(envelope.event_type, "normalized_signal")
+
+    def test_observability_map_distinguishes_timeout_from_not_attempted(self) -> None:
+        """G2: live signal — fields populated by configured providers
+        report ``observed``, fields with no provider report ``not_attempted``.
+        The LLM observer reads this map to disambiguate nulls."""
+        target = _reth_target()
+        # No metrics_url, no jwt provider, no disk provider — three classes
+        # of evidence are intentionally not configured.
+        target.metrics_url = None
+        ingester = RethNodeIngester(target)
+        with patch(
+            "services.ingest.bare_metal_node._rpc_call",
+            side_effect=[False, "0x5", "0x1234", "reth/v2.1.0"],
+        ):
+            signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+        obs = signal["field_observability"]
+
+        # Probe-derived: observed.
+        self.assertEqual(obs["execution.peer_count"], "observed")
+        self.assertEqual(obs["execution.syncing"], "observed")
+
+        # No metrics_url → engine API is not_attempted (different from
+        # 'we tried and timed out').
+        self.assertEqual(obs["consensus.engine_api_reachable"], "not_attempted")
+        self.assertEqual(obs["consensus.engine_api_p99_ms"], "not_attempted")
+
+        # No JWT provider → not_attempted.
+        self.assertEqual(obs["consensus.jwt_secret_mode"], "not_attempted")
+
+        # No disk provider → not_attempted.
+        self.assertEqual(obs["storage.disk_used_pct"], "not_attempted")
+
+    def test_observability_keys_use_schema_field_names(self) -> None:
+        """The observability keys must point at fields that actually exist
+        in the schema. If we use ``storage.filesystem_type`` but the
+        schema field is ``storage.filesystem``, the LLM observer reads
+        the path with the wrong name and effectively gets nothing.
+        Locks in schema-key alignment."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        obs_keys = set(signal["field_observability"].keys())
+        # Schema field is ``storage.filesystem`` (not filesystem_type).
+        self.assertIn("storage.filesystem", obs_keys)
+        # Pick a few representative paths that exist in the schema.
+        for must_have in (
+            "execution.peer_count",
+            "consensus.engine_api_reachable",
+            "consensus.jwt_secret_mode",
+            "storage.disk_used_pct",
+            "rpc.publicly_exposed",
+        ):
+            self.assertIn(must_have, obs_keys)
+
+    def test_observability_map_for_unreachable_signal_marks_probe_fields_timeout(self) -> None:
+        """On the synthetic unreachable signal, every probe-derived field
+        is ``timeout`` (we tried, and the RPC was dead). Operator-supplied
+        fields keep their provenance — they didn't come from a probe in
+        the first place."""
+        target = _reth_target()
+        target.rpc_publicly_exposed = True  # operator-supplied
+        ingester = RethNodeIngester(target)
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+        obs = signal["field_observability"]
+
+        self.assertEqual(obs["execution.peer_count"], "timeout")
+        self.assertEqual(obs["consensus.engine_api_reachable"], "timeout")
+        self.assertEqual(obs["storage.disk_used_pct"], "timeout")
+        # Operator-supplied retained its provenance even though probes failed.
+        self.assertEqual(obs["rpc.publicly_exposed"], "operator_supplied")
+
+
 # ---------------------------------------------------------------- end-to-end
 
 
@@ -548,6 +691,104 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
 
         self.assertTrue(ready)
         self.assertEqual(notes, [])
+
+    def test_reth_node_unreachable_default_policy_escalates(self) -> None:
+        """G1 end-to-end with policy default (escalate_only): the synthetic
+        ``node_unreachable`` signal must produce a trigger and an
+        ``escalate`` decision, not silent dropout."""
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("connection refused")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        self.assertIsNotNone(signal)
+
+        envelope = IngestService().normalize_signal(signal)
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger, "node_unreachable must produce a trigger")
+        self.assertEqual(trigger.trigger_type, "reth_node_degraded")
+        self.assertIn("node_unreachable", trigger.related_context["error_signatures"])
+
+        decision = DecisionService().decide(trigger)
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.autonomy_tier, "escalated")
+
+    def test_reth_node_unreachable_with_ssh_recovery_proposes_restart(self) -> None:
+        """G1 with ``ssh_restart_with_approval`` mode: the policy can opt
+        into a low-confidence approval-required restart proposal. Mesh
+        will surface the action to the operator who can either approve
+        (if SSH separately confirms the host is alive) or reject (if
+        the host itself is gone). Never autonomous."""
+        # Policy defaults to escalate_only; flip to ssh_restart_with_approval
+        # for this test by patching the loaded policy.
+        from services.decision import service as decision_service_module
+        original_load_policy = decision_service_module.load_policy
+
+        def patched_load_policy(name: str) -> dict:
+            policy = original_load_policy(name)
+            if name == "reth-node.policy.json":
+                policy = dict(policy)
+                policy["node_unreachable_recovery"] = {
+                    "mode": "ssh_restart_with_approval",
+                    "max_recovery_attempts_per_window": 1,
+                    "ssh_restart_confidence": 0.55,
+                }
+            return policy
+
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+
+        envelope = IngestService().normalize_signal(signal)
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+
+        with patch.object(decision_service_module, "load_policy", side_effect=patched_load_policy):
+            decision = DecisionService().decide(trigger)
+
+        self.assertEqual(decision.decision_type, "restart_systemd_service")
+        self.assertEqual(decision.autonomy_tier, "approval_required")
+        self.assertLess(decision.confidence, 0.65, "ssh-recovery must be low-confidence by design")
+
+    def test_reth_node_unreachable_with_co_signature_stays_escalate(self) -> None:
+        """If ``node_unreachable`` co-occurs with another unsafe signature
+        (e.g., disk_pressure piggybacking on the synthetic signal because
+        the operator stamped it via post_action_observations), the
+        ssh-recovery path MUST NOT fire — restarting a node with disk
+        pressure risks DB corruption. The unsafe set must equal exactly
+        ``{node_unreachable}`` for the recovery override to apply."""
+        from services.decision import service as decision_service_module
+        original_load_policy = decision_service_module.load_policy
+
+        def patched_load_policy(name: str) -> dict:
+            policy = original_load_policy(name)
+            if name == "reth-node.policy.json":
+                policy = dict(policy)
+                policy["node_unreachable_recovery"] = {
+                    "mode": "ssh_restart_with_approval",
+                    "max_recovery_attempts_per_window": 1,
+                    "ssh_restart_confidence": 0.55,
+                }
+            return policy
+
+        ingester = RethNodeIngester(_reth_target())
+        with patch("services.ingest.bare_metal_node._rpc_call", side_effect=RpcError("timeout")):
+            for _ in range(3):
+                signal = ingester.build_signal()
+        # Stamp a co-signature — disk_pressure — so the unsafe set is now
+        # {node_unreachable, disk_pressure}. The override must NOT apply.
+        signal["logs"]["error_signatures"].append("disk_pressure")
+
+        envelope = IngestService().normalize_signal(signal)
+        trigger = TriggerService().detect(envelope)
+        with patch.object(decision_service_module, "load_policy", side_effect=patched_load_policy):
+            decision = DecisionService().decide(trigger)
+
+        self.assertEqual(
+            decision.decision_type,
+            "escalate",
+            "co-signature must block ssh-recovery override",
+        )
 
 
 if __name__ == "__main__":
