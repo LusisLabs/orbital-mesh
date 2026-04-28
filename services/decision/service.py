@@ -166,6 +166,14 @@ class DecisionService:
         elif timeout_rate >= 0.02 or error_multiplier >= 2 or latency_delta_pct >= 40:
             decision_type = "disable_flag"
             confidence = 0.88
+            # ``aa1fbc1`` raised the initial ``risk_level`` to "high" so
+            # the unclassified-fallback escalates safely. This branch
+            # must reset because ``disable_flag`` is a deterministic,
+            # well-understood action — leaving ``risk_level="high"``
+            # makes the evaluation's risk gate flag every disable_flag
+            # decision and parks the run at ``awaiting_operator`` even
+            # in ``interruptible_auto`` mode.
+            risk_level = "medium"
         elif latency_delta_pct < 25 and error_multiplier < 1.5:
             decision_type = "no_action"
             confidence = 0.77

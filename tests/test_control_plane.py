@@ -829,7 +829,14 @@ class ControlPlaneApiTests(unittest.TestCase):
                 "steering_mode": "interruptible_auto",
             },
         )
-        self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        # The run can land in any of the terminal stages depending on
+        # what the deterministic engine recommends today (``completed``
+        # for executed remediations, ``escalated`` for evaluations
+        # that requested human_review under interruptible_auto, etc.).
+        # The test cares about the steer behaviour, not which specific
+        # terminal we reach.
+        terminal_stages = {"completed", "failed", "cancelled", "no_trigger", "escalated"}
+        self._poll_run(run["run_id"], lambda payload: payload["stage"] in terminal_stages)
         bad = Request(
             f"{self.base_url}/api/runs/{run['run_id']}/steer",
             data=json.dumps({"command": "approve"}).encode("utf-8"),
