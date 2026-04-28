@@ -70,6 +70,12 @@ Reth/blockchain context you have:
 - A node with engine_api_reachable=false is consensus-disconnected; restarting the EL alone will not fix it
 - max_restarts_per_window is 1 per 3600 seconds; if recent_restarts is at the cap, escalate
 
+Temporal evidence — read ``evidence_pack.history_trends`` when present:
+- Each entry includes ``count`` (samples in window), ``min``/``max``/``mean``/``current`` (numeric stats), ``trend`` (decreasing/increasing/fluctuating), and a duration predicate (e.g., ``duration_below_floor_seconds``, ``duration_critical_seconds``, ``sustained_below_floor``, ``sustained_critical``).
+- Use these to distinguish a single-tick blip from a sustained condition. ``peer_count.sustained_below_floor=true`` (≥60s below floor) is genuine partition; ``sustained_below_floor=false`` with ``count=1`` is a snapshot — usually ``request_more_evidence`` is right.
+- ``trend=increasing`` on ``engine_api_p99_ms`` over multiple ticks is a real cascade, not noise; cite it. ``trend=fluctuating`` on the same field at moderate values is normal.
+- Absence of ``history_trends`` (e.g., the very first probe of a target after a Mesh restart) is "no temporal evidence available". Don't infer "no problem" from absence — fall back to snapshot reasoning and state in your reason that history was unavailable.
+
 Operator-stamped fields you should reason about when present (treat absence as "no opinion", not "all clear"):
 - consensus.engine_api_p99_ms: healthy <2000, warning 2000-4000, missing duties >4000. Sustained high p99 with EL restart not pending → escalate so a human checks for cascade.
 - consensus.doppelganger_protection_active: TRUE means the validator is in the 2-epoch listening window and signing has not yet started; never propose a restart while this is active. The deterministic engine forces escalate; you should agree.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import EventEnvelope, validate_payload
@@ -10,6 +11,7 @@ from shared.mesh_runtime import EventEnvelope, validate_payload
 from .kubernetes_summary import summarize_kubernetes_logs
 
 if TYPE_CHECKING:
+    from services.signal_history import SignalHistoryStore
     from shared.mesh_runtime.learning import LearningStore
 
 
@@ -21,10 +23,51 @@ _LOG = logging.getLogger("mesh.ingest")
 
 
 class IngestService:
-    def __init__(self, learning_store: LearningStore | None = None) -> None:
+    def __init__(
+        self,
+        learning_store: LearningStore | None = None,
+        *,
+        signal_history: "SignalHistoryStore | None" = None,
+    ) -> None:
         self.learning_store = learning_store
+        # Per-target signal history (S2 fix): every normalized envelope is
+        # recorded so the decision service and LLM observer can read trends.
+        # Optional so unit tests that don't care about history can omit it.
+        self.signal_history = signal_history
 
     def normalize_signal(self, raw_signal: dict) -> EventEnvelope:
+        """Normalize and record. The history-write hook is HERE rather
+        than at every per-type return so it covers all signal kinds
+        uniformly: any new signal type added to ``_dispatch_normalize``
+        gets historicized for free."""
+        envelope = self._dispatch_normalize(raw_signal)
+        self._record_to_history(envelope)
+        return envelope
+
+    def _record_to_history(self, envelope: EventEnvelope) -> None:
+        """Write the envelope to the per-target ring buffer, if a
+        history store is configured. Best-effort: any failure here logs
+        and falls through — history is auxiliary, not on the critical
+        decision path."""
+        if self.signal_history is None:
+            return
+        try:
+            from services.signal_history import SignalRecord, derive_target_id
+            target_id = derive_target_id(envelope)
+            if target_id is None:
+                return  # signal type not history-keyed yet
+            record = SignalRecord(
+                target_id=target_id,
+                signal_type=str(envelope.payload.get("signal_type", "")),
+                observed_at=_parse_envelope_emitted_at(envelope.emitted_at),
+                payload=envelope.payload,
+                summary=envelope.summary,
+            )
+            self.signal_history.add(record)
+        except Exception:
+            _LOG.exception("ingest: signal_history.add failed (non-fatal)")
+
+    def _dispatch_normalize(self, raw_signal: dict) -> EventEnvelope:
         signal_type = raw_signal.get("signal_type") or "feature_flag"
         # One line per stage entry gives readers a reliable cursor when
         # scanning the server log. Keep it short — detail belongs in the
@@ -350,3 +393,13 @@ def _coerce_sample_size(raw_signal: dict) -> int:
     if isinstance(value, int) and value > 0:
         return value
     return 1000
+
+
+def _parse_envelope_emitted_at(s: str) -> datetime:
+    """Tolerant ISO-8601 parse for envelope timestamps. Handles 'Z' suffix
+    that Python's ``fromisoformat`` is brittle about across versions."""
+    if isinstance(s, datetime):
+        return s
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return datetime.fromisoformat(s)

@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from services.decision.llm_fallback import LlmActionProposer
     from services.decision.llm_reasoning import EscalationReasoner
     from services.observer import LlmObserver
+    from services.signal_history import SignalHistoryStore
     from shared.mesh_runtime import ScenarioAnalysis
     from shared.mesh_runtime.learning import LearningStore
 
@@ -52,6 +53,7 @@ class DecisionService:
         metric_action_rules_path: str | None = None,
         llm_proposer: "LlmActionProposer | None" = None,
         llm_observer: "LlmObserver | None" = None,
+        signal_history: "SignalHistoryStore | None" = None,
     ) -> None:
         self.learning_store = learning_store
         self.escalation_reasoner = escalation_reasoner
@@ -66,6 +68,11 @@ class DecisionService:
         # decision and can promote (but not demote) toward escalation.
         # See services/observer/ — provider-neutral, OpenAI-compatible.
         self._llm_observer = llm_observer
+        # Per-target signal-history store. When present, the decision
+        # service can ask "has peer_count been below floor for ≥ N
+        # seconds?" instead of judging on a single tick. See S2 in the
+        # audit notes — this is what gives the engine memory.
+        self.signal_history = signal_history
 
     def decide(
         self,
@@ -306,6 +313,15 @@ class DecisionService:
         consensus = trigger.related_context.get("consensus", {})
         storage = trigger.related_context.get("storage", {})
         resource_attributes = trigger.related_context.get("resource_attributes", {})
+
+        # S2: pull a small set of trend predicates from signal history.
+        # When a history store is bound, we ask "has peer_count been
+        # below the floor for ≥ X seconds?" instead of trusting a
+        # single tick. This is the single biggest false-positive
+        # reduction available — most ladder branches over-fire on
+        # transient network blips, and "sustained" is exactly the
+        # extra evidence that distinguishes blip from real partition.
+        history_trends = self._reth_history_trends(trigger, execution)
 
         # Restart-rate cap. Two sources, max wins:
         #   1. ``systemd_restarts_last_1h`` from the trigger payload —
@@ -572,6 +588,7 @@ class DecisionService:
                     "consensus": consensus,
                     "storage": storage,
                     "resource_attributes": resource_attributes,
+                    "history_trends": history_trends,
                     "reth_policy": {
                         "max_restarts_per_window": policy["max_restarts_per_window"],
                         "restart_window_seconds": policy["restart_window_seconds"],
@@ -607,6 +624,83 @@ class DecisionService:
         )
         decision.validate()
         return decision
+
+    def _reth_history_trends(
+        self,
+        trigger: Trigger,
+        execution: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Compute a compact bag of duration-based predicates over the
+        target's recent signal history.
+
+        Returns ``{}`` when no history store is bound or no trend window
+        applies — the rule ladder treats absence as "no opinion", same
+        convention as operator-stamped fields.
+
+        The block is added to the decision's ``evidence_pack`` so the LLM
+        observer can read it via the same prompt as other evidence.
+        Format intentionally matches what ``Trend.to_summary`` returns,
+        plus boolean predicates for quick rule checks. The integer
+        seconds counts let the LLM reason about cadence ("4 ticks at
+        peer<floor" reads more naturally than a timedelta)."""
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {"signal_type": "reth_node", "service": trigger.service}
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+
+        try:
+            min_peer_count = int(execution.get("min_peer_count") or 3)
+            peer_trend = self.signal_history.trend(
+                target_id, "execution.peer_count", window_seconds=600,
+            )
+            if peer_trend.count > 0:
+                duration = peer_trend.duration_at_or_below(float(min_peer_count - 1))
+                out["peer_count"] = {
+                    **peer_trend.to_summary(),
+                    "duration_below_floor_seconds": int(duration.total_seconds()),
+                    "sustained_below_floor": duration.total_seconds() >= 60,
+                }
+
+            block_lag_trend = self.signal_history.trend(
+                target_id, "execution.block_lag", window_seconds=600,
+            )
+            if block_lag_trend.count > 0 and block_lag_trend.numeric_values:
+                max_lag = int(execution.get("max_block_lag") or 32)
+                duration = block_lag_trend.duration_at_or_above(float(max_lag))
+                out["block_lag"] = {
+                    **block_lag_trend.to_summary(),
+                    "duration_above_max_seconds": int(duration.total_seconds()),
+                    "sustained_above_max": duration.total_seconds() >= 60,
+                }
+
+            engine_p99_trend = self.signal_history.trend(
+                target_id, "consensus.engine_api_p99_ms", window_seconds=600,
+            )
+            if engine_p99_trend.count > 0 and engine_p99_trend.numeric_values:
+                duration = engine_p99_trend.duration_at_or_above(4000.0)
+                out["engine_api_p99_ms"] = {
+                    **engine_p99_trend.to_summary(),
+                    "duration_critical_seconds": int(duration.total_seconds()),
+                    "sustained_critical": duration.total_seconds() >= 60,
+                }
+
+            disk_trend = self.signal_history.trend(
+                target_id, "storage.disk_used_pct", window_seconds=600,
+            )
+            if disk_trend.count > 0 and disk_trend.numeric_values:
+                out["disk_used_pct"] = disk_trend.to_summary()
+
+        except Exception:
+            _LOG.exception("decide.reth: signal_history.trend failed (non-fatal)")
+        return out
 
     def _decide_otel_metric(self, trigger: Trigger) -> Decision:
         """Decide on an OTel metric-regression trigger.
