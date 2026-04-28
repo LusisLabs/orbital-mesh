@@ -6,12 +6,16 @@ import logging
 from datetime import datetime, timezone
 
 from shared.mesh_runtime import Decision, EventEnvelope, ExecutionRecord, FeedbackRecord, Trigger
+from .otel_observer import PrometheusFeedbackObserver, augment_observations
 
 
 _LOG = logging.getLogger("mesh.feedback")
 
 
 class FeedbackService:
+    def __init__(self, observer: PrometheusFeedbackObserver | None = None) -> None:
+        self.observer = observer
+
     def record(
         self,
         trigger: Trigger,
@@ -30,7 +34,14 @@ class FeedbackService:
                 feedback.outcome, feedback.recommended_follow_up,
             )
             return feedback
-        observations = normalized_event.payload.get("post_action_observations", {})
+        if trigger.trigger_type == "webhook_alert_firing":
+            feedback = self._record_webhook_feedback(trigger, decision, execution, normalized_event)
+            _LOG.info(
+                "feedback: outcome=%s recommended_follow_up=%s",
+                feedback.outcome, feedback.recommended_follow_up,
+            )
+            return feedback
+        observations = self._observations(trigger.service, normalized_event)
         check_10m = observations.get("10m", {})
         check_30m = observations.get("30m", {})
         baseline_latency = trigger.metrics["baseline_p95_latency_ms"]
@@ -117,7 +128,7 @@ class FeedbackService:
         execution: ExecutionRecord,
         normalized_event: EventEnvelope,
     ) -> FeedbackRecord:
-        observations = normalized_event.payload.get("post_action_observations", {})
+        observations = self._observations(trigger.service, normalized_event)
         check_30m = observations.get("30m", {})
         review_source, review = _execution_review(execution)
         desired = int(check_30m.get("desired_replicas", trigger.metrics.get("desired_replicas") or 0))
@@ -167,6 +178,53 @@ class FeedbackService:
         )
         feedback.validate()
         return feedback
+
+    def _record_webhook_feedback(
+        self,
+        trigger: Trigger,
+        decision: Decision,
+        execution: ExecutionRecord,
+        normalized_event: EventEnvelope,
+    ) -> FeedbackRecord:
+        observations = self._observations(trigger.service, normalized_event)
+        check_30m = observations.get("30m", {})
+        review_source, review = _execution_review(execution)
+        incident_id = execution.external_refs.get("incident_id") if isinstance(execution.external_refs, dict) else None
+        successful = execution.status == "succeeded" and bool(incident_id)
+        feedback = FeedbackRecord(
+            feedback_id=f"fb_{decision.decision_id}",
+            decision_id=decision.decision_id,
+            execution_id=execution.execution_id,
+            measured_at=check_30m.get("measured_at", datetime.now(timezone.utc).isoformat()),
+            window="30m",
+            outcome="successful" if successful else "escalated",
+            metric_comparison={
+                "incident_opened": successful,
+                "incident_id": incident_id,
+                "severity": trigger.related_context.get("severity"),
+            },
+            prediction_accuracy={
+                "expected_time_to_effect": decision.expected_outcome["time_to_effect"],
+                "observed_time_to_effect": "immediate" if successful else "not_achieved",
+            },
+            side_effects=check_30m.get("side_effects", [])
+            + ([{"source": review_source, "risk_flags": review.get("risk_flags", [])}] if review else []),
+            world_model_updates={
+                "webhook_source_id": trigger.related_context.get("webhook_source_id"),
+                "webhook_alert_id": trigger.related_context.get("webhook_alert_id"),
+                "incident_routing_pattern": "webhook_alert_opened_incident" if successful else "webhook_alert_failed_to_open_incident",
+            },
+            recommended_follow_up=None if successful else "human_review",
+        )
+        feedback.validate()
+        return feedback
+
+    def _observations(self, service: str, normalized_event: EventEnvelope) -> dict:
+        return augment_observations(
+            signal_observations=normalized_event.payload.get("post_action_observations", {}),
+            observer=self.observer,
+            service=service,
+        )
 
 
 def _safe_lt(a: float | int | None, b: float | int | None) -> bool:

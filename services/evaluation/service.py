@@ -116,7 +116,7 @@ class EvaluationService:
         if cooldown_conflict:
             business_notes.append("recent rollback cooldown conflict")
             blocking_reasons.append("recent rollback cooldown conflict")
-        if decision.decision_type == "escalate":
+        if decision.decision_type == "escalate" and trigger.trigger_type != "webhook_alert_firing":
             business_notes.append("decision routes to human review")
             blocking_reasons.append("decision routes to human review")
 

@@ -42,6 +42,8 @@ class FileStateStore:
         self._supersessions_path = self._memory_dir / "supersessions.json"
         self._retrievals_path = self._memory_dir / "retrievals.json"
         self._packets_path = self._memory_dir / "packets.json"
+        self._benchmarks_path = self.state_directory / "benchmarks" / "records.json"
+        self._benchmarks_path.parent.mkdir(parents=True, exist_ok=True)
         # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
         # JSON from disk + redeserializing is 10-50x more expensive than a
         # deque slice. The tail is bounded per run_id, populated on append
@@ -279,6 +281,25 @@ class FileStateStore:
         session.updated_at = _timestamp()
         self.save_run_session(session)
         return session
+
+    def record_benchmark(self, record: dict[str, Any]) -> None:
+        with LockedJsonFile(self._benchmarks_path) as payload:
+            rows = payload.setdefault("benchmarks", [])
+            rows.insert(0, deepcopy(record))
+            payload["benchmarks"] = rows[:1000]
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        if not self._benchmarks_path.exists():
+            return []
+        with LockedJsonFile(self._benchmarks_path) as payload:
+            rows = payload.get("benchmarks", [])
+        return [deepcopy(row) for row in rows[:limit] if isinstance(row, dict)]
+
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any] | None:
+        for record in self.list_benchmarks(limit=1000):
+            if record.get("benchmark_id") == benchmark_id:
+                return record
+        return None
 
     def record_approval(self, run_id: str, approval: dict[str, Any]) -> None:
         session = self.get_run_session(run_id)

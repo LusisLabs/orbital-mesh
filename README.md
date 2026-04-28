@@ -438,6 +438,31 @@ The decision stage handles OTel metric-regression signals through four composabl
 
 **Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
 
+## AI CROPS simulation and benchmarks
+
+Mesh includes a sandbox-first AI CROPS spine for Cloud, Reliability, Ops, Platform, and Security work: simulation catalogs, benchmark records, service-agent routing, and agent-lane reconciliation. The public surfaces are `GET /api/simulations`, `POST /api/simulations/{scenario_id}/run`, `GET /api/benchmarks`, `GET /api/service-agents`, and `GET /api/reconciliation/{run_id}`. Simulation runs are disabled by default and require explicit sandbox context allowlists.
+
+Runbook: [`docs/ai-sre-platform.md`](./docs/ai-sre-platform.md). The filename remains stable for existing links; the operating model is now AI CROPS, not AI SRE alone.
+
+Parallel local stress harness:
+
+```bash
+python3 scripts/run_simulation_matrix.py --iterations 32 --workers 8 --output .mesh-runtime-state/simulation-stress/run-32x8
+```
+
+Continuous randomized benchmark loop:
+
+```bash
+python3 scripts/run_continuous_simulations.py --cycles 3 --iterations 64 --workers 8 --sleep-seconds 2 --root .mesh-runtime-state/simulation-stress/post-merge-randomized
+```
+
+Current measured baseline:
+
+- deterministic one-hour run: 1808 runs, 0 harness failures, pass rate 0.4375, average score 0.775;
+- post-merge randomized run: 192 runs, 0 harness failures, pass rate 0.8125, average score 0.8167, 133 override replay rows.
+
+The randomized run is the stronger current benchmark because it includes seeded telemetry variation and pause-aware scoring. High-risk or missing-authority cases count as valid bounded outcomes when Mesh pauses or escalates instead of executing autonomously.
+
 ## Kubernetes Remediation Policy (SRE-grade)
 
 Mesh's k8s decision policy follows the standard SRE escalation ladder rather than the naive "any failure → restart" pattern that most automation tools default to. The core principle: **gather evidence first, take the minimum action**, escalate when evidence is ambiguous.
@@ -611,6 +636,11 @@ Supported configuration variables:
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_EVO_COMMAND` — optional Evo proposal-lane command; must resolve to `evo-hq-cli`.
 - `MESH_EVO_COMMAND_TIMEOUT_SECONDS` — timeout for the Evo `--version` readiness probe.
+- `MESH_SIMULATION_ENABLED` — enables `POST /api/simulations/{scenario_id}/run`; disabled by default.
+- `MESH_SIMULATION_CONTEXT_ALLOWLIST` — comma-separated sandbox kube contexts permitted for simulation runs.
+- `MESH_BENCHMARK_EXPORT_PATH` — JSONL dataset export path for simulation-backed benchmark runs.
+- `MESH_SERVICE_AGENTS_CONFIG_PATH` — JSON service-agent routing config.
+- `MESH_AGENT_RECONCILIATION_ENABLED` — records reconciliation artifacts for agent-task attempts; defaults on.
 - `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` — when `1`/`true`, `kubernetes_service` actions use live `kubectl` execution instead of the default mock adapter.
 - `MESH_KUBECTL_COMMAND` — override the `kubectl` command used for live Kubernetes execution.
 - `MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS` — timeout for `kubectl rollout status` after restart/rollback actions.

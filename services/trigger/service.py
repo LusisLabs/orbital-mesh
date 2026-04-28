@@ -7,14 +7,8 @@ from datetime import datetime
 
 from shared.mesh_runtime import EventEnvelope, Trigger
 
-
 _LOG = logging.getLogger("mesh.trigger")
 
-
-# Container states the kubelet considers unambiguously broken. A pod in
-# any of these is actively failing — not starting, not transitioning,
-# not recovering. These are the states that should fire a trigger
-# regardless of restart count.
 _ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
     "CrashLoopBackOff",
     "ImagePullBackOff",
@@ -26,25 +20,33 @@ _ACTIVELY_FAILING_CONTAINER_STATES: frozenset[str] = frozenset({
     "CreateContainerError",
 })
 
-
-# Error signatures the aggregated log summary treats as "hard" evidence
-# of a real fault (as opposed to startup-probe noise). Used as the
-# corroborating signal when rollout_status is merely ``degraded``:
-# a degraded rollout with no hard signature is treated as self-healing
-# churn and skipped; a degraded rollout with one of these signatures
-# is treated as a genuine fault and fires the trigger.
-#
-# ``probe_failure`` is deliberately *excluded* from this set because the
-# kubelet emits "Readiness probe failed" and "Unhealthy" events during
-# every normal pod startup — including successful ones. Treating those
-# as a hard signature gave us false positives on every pod_kill_one in
-# the first real chaos session.
 _HARD_ERROR_SIGNATURES: frozenset[str] = frozenset({
     "crash_loop",
     "image_pull_failure",
     "oom_killed",
     "application_error",
 })
+
+
+def kubernetes_signal_is_actionable(signal: dict[str, object]) -> bool:
+    deployment = signal.get("deployment", {})
+    pods = signal.get("pods", [])
+    log_summary = signal.get("log_summary", {})
+    if not isinstance(deployment, dict) or not isinstance(pods, list):
+        return False
+    rollout_failed = deployment.get("rollout_status") == "failed"
+    rollout_degraded = deployment.get("rollout_status") == "degraded"
+    failing_pods = [
+        pod for pod in pods
+        if isinstance(pod, dict) and (
+            int(pod.get("restarts", 0)) > 0
+            or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
+        )
+    ]
+    hard_signatures = set()
+    if isinstance(log_summary, dict):
+        hard_signatures = _HARD_ERROR_SIGNATURES & set(log_summary.get("error_signatures", []))
+    return rollout_failed or bool(failing_pods) or (rollout_degraded and bool(hard_signatures))
 
 
 class TriggerService:
@@ -58,6 +60,8 @@ class TriggerService:
             trigger = self._detect_reth_node_trigger(envelope)
         elif signal_type == "otel_metric_regression":
             trigger = self._detect_otel_metric_trigger(envelope)
+        elif signal_type == "webhook_alert":
+            trigger = self._detect_webhook_trigger(envelope)
         else:
             trigger = self._detect_feature_flag_trigger(envelope)
         # Log the outcome in a single place so readers don't have to hunt
@@ -166,44 +170,11 @@ class TriggerService:
             or related_context.get("incident_owned_by_human", False)
             or related_context.get("known_upstream_outage", False)
         )
-        rollout_failed = deployment["rollout_status"] == "failed"
-        rollout_degraded = deployment["rollout_status"] == "degraded"
-        # Tightened "failing pod" definition. The original check
-        # (not ready OR restarts > 0) was too permissive: a pod 3
-        # seconds into its startup is "not ready" but not "failing",
-        # and chaos primitives like pod_kill_one produce exactly that
-        # transient state. Without tightening, every pod kill fires
-        # a trigger and Mesh proposes a remediation for cluster
-        # self-healing that would have worked in 5 more seconds.
-        failing_pods = [
-            pod for pod in pods
-            if int(pod.get("restarts", 0)) > 0
-            or pod.get("container_status") in _ACTIVELY_FAILING_CONTAINER_STATES
-        ]
-        # ``rollout_status == "degraded"`` is too broad on its own. The
-        # k8s deployment controller marks a rollout degraded during
-        # normal pod recreation — e.g. ``pod_kill_one`` deletes one
-        # pod, readyReplicas drops to 1/2 for a couple of seconds, and
-        # kubectl reports ``degraded`` for that window even though
-        # nothing is actually broken. Firing on this alone generates
-        # false positives on every transient churn.
-        #
-        # ``rollout_status == "failed"`` is definitive (the deployment
-        # controller has given up on this revision) — worth firing
-        # alone.
-        #
-        # For the intermediate ``degraded`` state, require corroboration:
-        # either actually-failing pods (``failing_pods`` non-empty) or
-        # hard error signatures in the aggregated log summary. Pure
-        # transient degradation with no hard signal gets treated as
-        # self-healing and skipped.
-        hard_signatures = _HARD_ERROR_SIGNATURES & set(log_summary.get("error_signatures", []))
-        actionable = (
-            rollout_failed
-            or bool(failing_pods)
-            or (rollout_degraded and bool(hard_signatures))
-        )
-        if suppressed or not actionable:
+        if suppressed or not kubernetes_signal_is_actionable({
+            "deployment": deployment,
+            "pods": pods,
+            "log_summary": log_summary,
+        }):
             return None
 
         trigger_signals = list(log_summary.get("error_signatures", []))
@@ -344,6 +315,59 @@ class TriggerService:
                 "disk_used_pct": storage.get("disk_used_pct"),
             },
             related_context=trigger_context,
+        )
+        trigger.validate()
+        return trigger
+
+    def _detect_webhook_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
+        webhook = payload["webhook"]
+        related_context = payload["related_context"]
+        if (
+            webhook.get("action") != "fire"
+            or related_context.get("active_suppression", False)
+            or related_context.get("incident_owned_by_human", False)
+            or related_context.get("known_upstream_outage", False)
+        ):
+            return None
+        severity = str(webhook.get("severity") or "unknown").lower()
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="webhook_alert_firing",
+            triggered_at=envelope.emitted_at,
+            environment=payload["environment"],
+            service=payload["service"],
+            endpoint=payload["endpoint"],
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=None,
+            segment=payload["segment"],
+            metrics={
+                "baseline_p95_latency_ms": None,
+                "observed_p95_latency_ms": None,
+                "baseline_error_rate": None,
+                "observed_error_rate": None,
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": None,
+            },
+            related_context={
+                "release_id": None,
+                "active_incidents": int(related_context.get("active_incidents", 0)),
+                "similar_prior_cases": int(related_context.get("similar_prior_cases", 0)),
+                "alert_count": 1,
+                "severity_rank": {"critical": 4, "high": 3, "warning": 2, "info": 1}.get(severity, 0),
+                "webhook_source_id": related_context.get("webhook_source_id"),
+                "webhook_alert_id": related_context.get("webhook_alert_id"),
+                "webhook_source_type": related_context.get("webhook_source_type"),
+                "webhook_action": webhook.get("action"),
+                "severity": severity,
+                "title": webhook.get("title"),
+                "description": webhook.get("description"),
+                "labels": webhook.get("labels", {}),
+                "annotations": webhook.get("annotations", {}),
+                **related_context,
+            },
         )
         trigger.validate()
         return trigger

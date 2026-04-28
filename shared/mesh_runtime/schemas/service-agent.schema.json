@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/service-agent.schema.json",
+  "title": "ServiceAgent",
+  "type": "object",
+  "required": ["service", "scope"],
+  "properties": {
+    "service": {"type": "string", "minLength": 1},
+    "scope": {
+      "type": "object",
+      "properties": {
+        "services": {"type": "array", "items": {"type": "string"}},
+        "deployments": {"type": "array", "items": {"type": "string"}},
+        "namespaces": {"type": "array", "items": {"type": "string"}},
+        "flags": {"type": "array", "items": {"type": "string"}},
+        "repos": {"type": "array", "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "runbook_path": {"type": ["string", "null"]},
+    "preferred_lanes": {"type": "array", "items": {"type": "string"}},
+    "autonomy_overrides": {"type": "object", "additionalProperties": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

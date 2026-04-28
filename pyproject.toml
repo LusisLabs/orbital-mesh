@@ -27,6 +27,8 @@ packages = [
   "services.decision",
   "services.evaluation",
   "services.orchestrator",
+  "services.orchestrator.service_agents",
+  "services.simulation",
   "services.feedback",
   "services.actuators",
   "services.observer",

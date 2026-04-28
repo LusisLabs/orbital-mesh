@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/benchmark-record.schema.json",
+  "title": "BenchmarkRecord",
+  "type": "object",
+  "required": ["benchmark_id", "run_id", "scenario_id", "recorded_at", "score", "passed", "dimensions"],
+  "properties": {
+    "benchmark_id": {"type": "string", "minLength": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "scenario_id": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string"},
+    "score": {"type": "number", "minimum": 0, "maximum": 1},
+    "passed": {"type": "boolean"},
+    "dimensions": {"type": "object"},
+    "dataset_ref": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

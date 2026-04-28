@@ -274,6 +274,49 @@ class PostgresStateStore:
                 ),
             )
 
+    def record_benchmark(self, record: dict[str, Any]) -> None:
+        payload = deepcopy(record)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO benchmark_records
+                (benchmark_id, run_id, scenario_id, recorded_at, score, passed, payload)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (benchmark_id) DO UPDATE SET
+                  run_id = EXCLUDED.run_id,
+                  scenario_id = EXCLUDED.scenario_id,
+                  recorded_at = EXCLUDED.recorded_at,
+                  score = EXCLUDED.score,
+                  passed = EXCLUDED.passed,
+                  payload = EXCLUDED.payload
+                """,
+                (
+                    payload["benchmark_id"],
+                    payload["run_id"],
+                    payload["scenario_id"],
+                    payload["recorded_at"],
+                    payload.get("score", 0.0),
+                    payload.get("passed", False),
+                    self._jsonb(payload),
+                ),
+            )
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM benchmark_records ORDER BY recorded_at DESC LIMIT %s",
+                (limit,),
+            ).fetchall()
+        return [_json_payload(row[0]) for row in rows]
+
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM benchmark_records WHERE benchmark_id = %s",
+                (benchmark_id,),
+            ).fetchone()
+        return _json_payload(row[0]) if row else None
+
     def get_learning_context(self, service: str, endpoint: str | None = None) -> dict[str, Any]:
         return learning_context_from_outcomes(self._load_learning_outcomes(service=service, endpoint=endpoint), service, endpoint)
 

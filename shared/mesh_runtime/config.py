@@ -13,6 +13,7 @@ DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
+DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
@@ -153,6 +154,8 @@ class RuntimeConfig:
     prometheus_url: str | None = None
     prometheus_query_timeout_seconds: float = 10.0
     feedback_prometheus_enabled: bool = False
+    feedback_prometheus_latency_query: str = 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000'
+    feedback_prometheus_error_rate_query: str = 'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)'
     # Layer 3: LLM-backed decision fallback for OTel signals that don't match
     # any metric-action rule. Opt-in because it adds LLM latency (5-30s) to
     # the decision stage for unknown signals.
@@ -162,6 +165,11 @@ class RuntimeConfig:
     rule_learning_enabled: bool = False
     rule_learning_min_observations: int = 5
     rule_learning_max_age_days: int = 30
+    simulation_enabled: bool = False
+    simulation_context_allowlist: tuple[str, ...] = ()
+    benchmark_export_path: str = str(DEFAULT_BENCHMARK_EXPORT_PATH)
+    service_agents_config_path: str | None = None
+    agent_reconciliation_enabled: bool = True
     # Bare-metal SSH actuator: blockchain nodes (Solana/Agave, geth, reth,
     # lighthouse) run as systemd services on dedicated hardware, not in k8s.
     # Actuation goes through the SSH adapter with four overlapping safety
@@ -318,12 +326,33 @@ class RuntimeConfig:
             prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
             feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            feedback_prometheus_latency_query=os.getenv(
+                "MESH_FEEDBACK_PROMETHEUS_LATENCY_QUERY",
+                'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000',
+            ),
+            feedback_prometheus_error_rate_query=os.getenv(
+                "MESH_FEEDBACK_PROMETHEUS_ERROR_RATE_QUERY",
+                'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)',
+            ),
             llm_decision_fallback_enabled=os.getenv("MESH_LLM_DECISION_FALLBACK_ENABLED", "").lower()
             in ("1", "true", "yes"),
             llm_decision_fallback_timeout_seconds=float(os.getenv("MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS", "30")),
             rule_learning_enabled=os.getenv("MESH_RULE_LEARNING_ENABLED", "").lower() in ("1", "true", "yes"),
             rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
             rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
+            simulation_enabled=os.getenv("MESH_SIMULATION_ENABLED", "").lower() in ("1", "true", "yes"),
+            simulation_context_allowlist=_csv_env("MESH_SIMULATION_CONTEXT_ALLOWLIST"),
+            benchmark_export_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_BENCHMARK_EXPORT_PATH"),
+                default=str(DEFAULT_BENCHMARK_EXPORT_PATH),
+            ),
+            service_agents_config_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH"), default="")
+                if os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH")
+                else None
+            ),
+            agent_reconciliation_enabled=os.getenv("MESH_AGENT_RECONCILIATION_ENABLED", "true").lower()
+            not in ("0", "false", "no"),
             ssh_execution_enabled=os.getenv("MESH_SSH_EXECUTION_ENABLED", "").lower() in ("1", "true", "yes"),
             ssh_command=os.getenv("MESH_SSH_COMMAND", "ssh"),
             ssh_identity_file=os.getenv("MESH_SSH_IDENTITY_FILE") or None,

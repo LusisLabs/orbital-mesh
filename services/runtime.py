@@ -16,6 +16,7 @@ from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig, RuntimeStateStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 from shared.mesh_runtime.run_events import HYPOTHESIS_RANKED
+from shared.mesh_runtime.otel import PrometheusClient
 
 if TYPE_CHECKING:
     from shared.mesh_runtime.contracts import Decision
@@ -23,6 +24,21 @@ if TYPE_CHECKING:
     from shared.mesh_runtime.context_store import ContextStore
     from shared.mesh_runtime.infra_graph import InfraGraph
     from shared.mesh_runtime.learning import LearningStore
+
+
+def _build_feedback_observer(config: RuntimeConfig):
+    if not (config.feedback_prometheus_enabled and config.prometheus_url):
+        return None
+    from services.feedback.otel_observer import PrometheusFeedbackObserver
+
+    return PrometheusFeedbackObserver(
+        client=PrometheusClient(
+            config.prometheus_url,
+            timeout_seconds=config.prometheus_query_timeout_seconds,
+        ),
+        latency_query_template=config.feedback_prometheus_latency_query,
+        error_rate_query_template=config.feedback_prometheus_error_rate_query,
+    )
 
 
 class MeshRuntimeEngine:
@@ -137,7 +153,7 @@ class MeshRuntimeEngine:
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
-        self.feedback = feedback or FeedbackService()
+        self.feedback = feedback or FeedbackService(observer=_build_feedback_observer(self.config))
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=None,
             learning_store=learning_store,
