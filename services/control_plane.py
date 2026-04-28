@@ -8,7 +8,7 @@ import shutil
 import threading
 from collections import deque
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -61,6 +61,7 @@ from services.watch_daemon import WatchDaemon, WatchTarget  # noqa: F401 (legacy
 from services.watchers.base import WatcherRegistry
 from services.watchers.compat import LEGACY_WATCHER_NAME, register_legacy_watchers
 from shared.mesh_runtime.context_store import ContextStore
+from shared.mesh_runtime.deferred_runs import DeferredRunStore
 from shared.mesh_runtime.infra_graph import InfraGraph
 from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
@@ -253,6 +254,10 @@ class RunCoordinator:
         # service is pure (no I/O at this layer) — live probe runners are
         # injected by the caller when enrichment is needed.
         self.evidence = EvidenceService()
+        self.deferred_runs = DeferredRunStore(self.config.state_directory)
+        self._deferred_stop = threading.Event()
+        self._deferred_thread = threading.Thread(target=self._deferred_recheck_loop, daemon=True)
+        self._deferred_thread.start()
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.evo_launcher = EvoLaunchService(self.config)
@@ -691,6 +696,9 @@ class RunCoordinator:
         pause_points = self._normalize_pause_points(raw_pause_points)
         goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
         signal_payload = self._resolve_signal(payload)
+        correlated_parent = self._maybe_attach_to_correlated_run(payload, signal_payload)
+        if correlated_parent is not None:
+            return correlated_parent
         scenario_key = payload.get("scenario_key")
         run_config = replace(
             self.config,
@@ -698,6 +706,9 @@ class RunCoordinator:
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
         readiness_snapshot = build_readiness(run_config).to_dict()
+        artifacts = {"input_signal": signal_payload, "integration_readiness": readiness_snapshot}
+        if payload.get("correlation_key"):
+            artifacts["correlation_key"] = payload["correlation_key"]
         session = self.state_store.create_run_session(
             goal_id=goal_id,
             scenario_key=scenario_key,
@@ -706,7 +717,7 @@ class RunCoordinator:
             pause_points=pause_points,
             evaluation_mode=run_config.evaluation_mode,
             orchestration_mode=run_config.orchestration_mode,
-            artifacts={"input_signal": signal_payload, "integration_readiness": readiness_snapshot},
+            artifacts=artifacts,
         )
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
@@ -958,6 +969,19 @@ class RunCoordinator:
             ):
                 return
 
+            if decision.decision_type == "defer_until":
+                self._record_deferred_recheck(run_id, signal_payload, decision)
+                self.state_store.append_run_event(
+                    run_id,
+                    stage="completed",
+                    event_type=RUN_COMPLETED,
+                    payload={"decision_type": "defer_until", "status": "deferred"},
+                    summary={"status": "deferred"},
+                    status="deferred",
+                )
+                self._update_session(run_id, stage="completed", status="completed")
+                return
+
             while True:
                 outcome = self._wait_if_needed(run_id, "evaluation_ready", trigger=trigger, decision=decision, evaluation=evaluation)
                 if outcome["action"] == "continue":
@@ -1152,6 +1176,67 @@ class RunCoordinator:
             if isinstance(payload, dict):
                 return artifact_key, integration_name, payload
         return None
+
+    def _record_deferred_recheck(
+        self,
+        run_id: str,
+        signal_payload: dict[str, Any],
+        decision: Decision,
+    ) -> dict[str, Any]:
+        params = dict(decision.execution_plan.get("parameters", {}))
+        defer_seconds = int(params.get("defer_seconds", 300) or 300)
+        due_at = (datetime.now(timezone.utc) + timedelta(seconds=max(defer_seconds, 0))).isoformat().replace("+00:00", "Z")
+        record = self.deferred_runs.create(
+            source_run_id=run_id,
+            due_at=due_at,
+            signal_payload=copy.deepcopy(signal_payload),
+            parameters=params,
+        )
+        self._set_artifact(run_id, "deferred_recheck", record)
+        self.state_store.append_run_event(
+            run_id,
+            stage="decision_ready",
+            event_type="deferred_recheck_scheduled",
+            payload=record,
+            summary={"due_at": due_at, "condition": params.get("condition")},
+            artifact_key="deferred_recheck",
+            status="scheduled",
+        )
+        return record
+
+    def _deferred_recheck_loop(self) -> None:
+        while not self._deferred_stop.wait(1.0):
+            for record in self.deferred_runs.claim_due(limit=5):
+                try:
+                    child = self._spawn_deferred_recheck(record)
+                    self.deferred_runs.mark_spawned(record["defer_id"], str(child.get("run_id")))
+                except Exception as exc:
+                    _LOG.exception("deferred recheck failed for %s", record.get("defer_id"))
+                    self.deferred_runs.mark_failed(str(record.get("defer_id")), str(exc))
+
+    def _spawn_deferred_recheck(self, record: dict[str, Any]) -> dict[str, Any]:
+        signal_payload = copy.deepcopy(record.get("signal_payload") or {})
+        related = signal_payload.setdefault("related_context", {})
+        if isinstance(related, dict):
+            recovery = dict(related.get("recovery_context") or {})
+            recovery.update(
+                {
+                    "defer_id": record.get("defer_id"),
+                    "source_run_id": record.get("source_run_id"),
+                    "previous_decision_type": "defer_until",
+                    "defer_condition": (record.get("parameters") or {}).get("condition"),
+                }
+            )
+            related["recovery_context"] = recovery
+        return self.create_run(
+            {
+                "signal_payload": signal_payload,
+                "scenario_key": f"deferred_recheck:{record.get('source_run_id')}",
+                "steering_mode": self.config.default_steering_mode,
+                "evaluation_mode": self.config.evaluation_mode,
+                "orchestration_mode": self.config.orchestration_mode,
+            }
+        )
 
     def _explain_blockers(self, run_id: str, session: RunSession) -> None:
         decision, decision_payload, evaluation_payload, blocking_reasons, existing = self._hermes_blocker_context(run_id, session)
@@ -2219,7 +2304,63 @@ class RunCoordinator:
         ns = live_signal.get("namespace", "default")
         name = live_signal["deployment_name"]
         payload["scenario_key"] = f"live_kubernetes:{ns}/{name}"
+        related = signal.setdefault("related_context", {})
+        if isinstance(related, dict):
+            for key in ("correlation", "correlation_key", "co_signatures"):
+                if key in live_signal:
+                    related[key] = copy.deepcopy(live_signal[key])
         return signal
+
+    def _maybe_attach_to_correlated_run(
+        self,
+        payload: dict[str, Any],
+        signal_payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        live_signal = payload.get("live_signal")
+        if not isinstance(live_signal, dict):
+            return None
+        correlation_key = live_signal.get("correlation_key")
+        if not correlation_key:
+            return None
+        parent = self._find_active_correlation_parent(str(correlation_key))
+        if parent is None:
+            payload["correlation_key"] = correlation_key
+            signal_payload.setdefault("related_context", {})["correlation_key"] = correlation_key
+            return None
+        event_payload = {
+            "correlation_key": correlation_key,
+            "live_signal": copy.deepcopy(live_signal),
+            "signal_payload": copy.deepcopy(signal_payload),
+        }
+        self.state_store.append_run_event(
+            parent.run_id,
+            stage=parent.stage,
+            event_type="correlated_signal_recorded",
+            payload=event_payload,
+            summary={"correlation_key": correlation_key},
+            artifact_key="correlated_signal",
+            status="recorded",
+        )
+        artifacts = dict(parent.artifacts)
+        siblings = list(artifacts.get("correlated_signals", [])) if isinstance(artifacts.get("correlated_signals"), list) else []
+        siblings.append(event_payload)
+        artifacts["correlated_signals"] = siblings
+        parent.artifacts = artifacts
+        parent.updated_at = _timestamp()
+        self.state_store.save_run_session(parent)
+        return self.get_run(parent.run_id) or parent.to_dict()
+
+    def _find_active_correlation_parent(self, correlation_key: str) -> RunSession | None:
+        for session in self.state_store.list_run_sessions(limit=100):
+            if session.status in {"completed", "failed", "cancelled"}:
+                continue
+            if session.artifacts.get("correlation_key") == correlation_key:
+                return session
+            input_signal = session.artifacts.get("input_signal")
+            related = input_signal.get("related_context") if isinstance(input_signal, dict) else None
+            if isinstance(related, dict) and related.get("correlation_key") == correlation_key:
+                return session
+        return None
 
     def _resolve_signal_placeholders(self, signal: dict[str, Any]) -> dict[str, Any]:
         related_context = signal.get("related_context")

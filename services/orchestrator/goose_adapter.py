@@ -7,6 +7,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
+from services.actuators.load_balancer import LoadBalancerAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.orchestrator.adapters_common import CliExecutionResult
@@ -41,6 +42,7 @@ class NativeGooseAdapter(GooseAdapter):
         # gates real side effects; without it the adapter returns mock
         # results. This keeps test environments hermetic.
         self.systemd_ssh = SystemdSshAdapter(config=config)
+        self.load_balancer = LoadBalancerAdapter(config=config)
         cfg = config or RuntimeConfig()
         self.argocd = ArgoCDAdapter(
             url=cfg.argocd_url,
@@ -92,7 +94,7 @@ class NativeGooseAdapter(GooseAdapter):
             # actions fail loudly rather than get silently dropped.
             action = execution_plan["action"]
             if action == "restart_systemd_service":
-                result = self.systemd_ssh.restart_service(execution_plan["parameters"])
+                result = self._restart_systemd_with_preflight(execution_plan["parameters"])
             elif action == "start_systemd_service":
                 result = self.systemd_ssh.start_service(execution_plan["parameters"])
             elif action == "stop_systemd_service":
@@ -126,6 +128,42 @@ class NativeGooseAdapter(GooseAdapter):
             retryable=result.get("retryable", False),
         )
 
+    def _restart_systemd_with_preflight(self, parameters: dict) -> dict:
+        fleet_failure = _fleet_preflight_failure(parameters)
+        if fleet_failure is not None:
+            return fleet_failure
+
+        lb_target_id = parameters.get("lb_target_id")
+        lb_refs: dict[str, object] = {}
+        if lb_target_id:
+            drain = self.load_balancer.drain_target(parameters)
+            if drain["status"] != "succeeded":
+                return drain
+            lb_refs["lb_drain"] = drain.get("external_refs", {})
+            status = self.load_balancer.target_status(parameters)
+            if status["status"] != "succeeded":
+                return status
+            lb_refs["lb_status_before_restart"] = status.get("external_refs", {})
+
+        restart = self.systemd_ssh.restart_service(parameters)
+        restart.setdefault("external_refs", {}).update(lb_refs)
+        if restart["status"] != "succeeded":
+            return restart
+
+        if lb_target_id:
+            restore = self.load_balancer.restore_target(parameters)
+            restart["external_refs"]["lb_restore"] = restore.get("external_refs", {})
+            if restore["status"] != "succeeded":
+                return {
+                    "status": "failed",
+                    "failure": {
+                        "reason": "load_balancer_restore_failed",
+                        "detail": (restore.get("failure") or {}).get("detail", "restore failed"),
+                    },
+                    "external_refs": restart["external_refs"],
+                }
+        return restart
+
     def open_execution_incident(self, decision: Decision, failure_reason: str) -> dict[str, str]:
         result = self.incidents.open_incident(
             {
@@ -136,6 +174,27 @@ class NativeGooseAdapter(GooseAdapter):
             }
         )
         return result.get("external_refs", {})
+
+
+def _fleet_preflight_failure(parameters: dict) -> dict | None:
+    min_healthy = parameters.get("fleet_min_healthy")
+    healthy_count = parameters.get("fleet_healthy_count")
+    if min_healthy is None or healthy_count is None:
+        return None
+    if int(healthy_count) < int(min_healthy):
+        return {
+            "status": "failed",
+            "failure": {
+                "reason": "fleet_capacity_below_threshold",
+                "detail": f"healthy_count={healthy_count} < fleet_min_healthy={min_healthy}",
+            },
+            "external_refs": {
+                "fleet_id": parameters.get("fleet_id"),
+                "healthy_count": healthy_count,
+                "fleet_min_healthy": min_healthy,
+            },
+        }
+    return None
 
 
 class GooseCliAdapter(GooseAdapter):

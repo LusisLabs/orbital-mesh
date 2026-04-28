@@ -24,6 +24,7 @@ import json
 from typing import Any
 
 from services.observer.client import ChatMessage
+from services.observer.redaction import redact_for_observer
 
 
 # The static system message. Kept as a single triple-quoted string so it
@@ -118,7 +119,7 @@ def build_messages(
         )
 
     user_payload = {
-        "trigger": {
+        "trigger": redact_for_observer({
             "trigger_id": trigger.get("trigger_id"),
             "trigger_type": trigger.get("trigger_type"),
             "service": trigger.get("service"),
@@ -126,17 +127,17 @@ def build_messages(
             "systemd_restarts_last_1h": (trigger.get("related_context") or {}).get(
                 "systemd_restarts_last_1h", 0
             ),
-        },
-        "evidence_pack": evidence_pack or {},
-        "ranked_hypotheses": ranked_hypotheses[:5],
-        "deterministic_decision": {
+        }),
+        "evidence_pack": redact_for_observer(evidence_pack or {}),
+        "ranked_hypotheses": redact_for_observer(ranked_hypotheses[:5]),
+        "deterministic_decision": redact_for_observer({
             "decision_type": deterministic_decision.get("decision_type"),
             "autonomy_tier": deterministic_decision.get("autonomy_tier"),
             "confidence": deterministic_decision.get("confidence"),
             "primary_hypothesis": (deterministic_decision.get("reasoning") or {}).get(
                 "primary_hypothesis"
             ),
-        },
+        }),
     }
 
     user_message = (

@@ -13,6 +13,16 @@ from shared.mesh_runtime.state import parse_state_json_file
 
 
 class RuntimeConfigPathTests(unittest.TestCase):
+    def test_correlation_enabled_by_default(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(cfg.correlation_enabled)
+
+    def test_correlation_can_be_disabled(self) -> None:
+        with patch.dict("os.environ", {"MESH_CORRELATION_ENABLED": "false"}, clear=True):
+            cfg = RuntimeConfig.from_env()
+        self.assertFalse(cfg.correlation_enabled)
+
     def test_relative_state_directory_is_repo_anchored(self) -> None:
         with patch.dict(
             "os.environ",

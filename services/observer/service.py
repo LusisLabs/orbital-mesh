@@ -305,3 +305,52 @@ class LlmObserver:
             error=None,
             observed_at=_now_iso(),
         )
+
+
+class MultiLlmObserver:
+    """Run a primary observer plus an optional secondary sanity-check model."""
+
+    def __init__(self, primary: LlmObserver, secondary: LlmObserver | None = None) -> None:
+        self.primary = primary
+        self.secondary = secondary
+
+    def is_active(self) -> bool:
+        return self.primary.is_active()
+
+    def review(self, **kwargs: Any) -> ObserverVerdict:
+        primary = self.primary.review(**kwargs)
+        if self.secondary is None or not self.secondary.is_active():
+            return primary
+        secondary = self.secondary.review(**kwargs)
+        verdicts = [primary, secondary]
+        agreement = primary.verdict == secondary.verdict
+        chosen = _most_conservative_verdict(verdicts)
+        return ObserverVerdict(
+            verdict=chosen.verdict,
+            reason=(
+                f"observer_agreement={agreement}; primary={primary.verdict}; "
+                f"secondary={secondary.verdict}. {chosen.reason}"
+            ),
+            concerns=[
+                f"primary:{primary.model}:{primary.verdict}",
+                f"secondary:{secondary.model}:{secondary.verdict}",
+                *chosen.concerns,
+            ],
+            confidence=max(primary.confidence, secondary.confidence),
+            model=f"{primary.model}+{secondary.model}",
+            latency_ms=(primary.latency_ms or 0) + (secondary.latency_ms or 0),
+            raw_response=json.dumps(
+                {
+                    "observer_agreement": agreement,
+                    "observer_verdicts": [primary.to_dict(), secondary.to_dict()],
+                },
+                sort_keys=True,
+            )[:1000],
+            error=None if not (primary.error or secondary.error) else primary.error or secondary.error,
+            observed_at=_now_iso(),
+        )
+
+
+def _most_conservative_verdict(verdicts: list[ObserverVerdict]) -> ObserverVerdict:
+    rank = {"approve": 0, "escalate": 1, "request_more_evidence": 2, "reject_unsafe": 3}
+    return max(verdicts, key=lambda verdict: rank.get(verdict.verdict, 0))

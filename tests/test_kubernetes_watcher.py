@@ -181,6 +181,8 @@ class KubernetesWatcherTickTests(unittest.TestCase):
         correlator.correlate.assert_called_once()
         payload = coordinator.create_run.call_args[0][0]
         self.assertEqual(payload["live_signal"]["correlation"]["type"], "same_namespace")
+        self.assertIn("correlation_key", payload["live_signal"])
+        self.assertIn("CrashLoopBackOff|Error", payload["live_signal"]["co_signatures"])
 
     @patch("services.ingest.kubernetes_live_signal.collect_kubernetes_signal")
     def test_tick_continues_after_per_target_exception(self, mock_collect):

@@ -47,14 +47,12 @@ Plus a markdown report at the configured ``--output`` path.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
-import shlex
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -63,7 +61,6 @@ from services.runtime import MeshRuntimeEngine
 from shared.mesh_runtime import RuntimeConfig
 
 from simulation import chaos_real
-from simulation.chaos_real import CATALOG as CHAOS_CATALOG
 from simulation.chaos_real import Chaos
 
 
@@ -315,6 +312,7 @@ def _setup_demo_dir() -> None:
 def _run_one(
     chaos: Chaos,
     target: BareMetalNodeTarget,
+    ingester: RethNodeIngester,
     engine: MeshRuntimeEngine,
     *,
     settle_seconds: float,
@@ -349,7 +347,6 @@ def _run_one(
     # calls; disk chaos can take longer to be reflected in df.
     time.sleep(settle_seconds)
 
-    ingester = RethNodeIngester(target=target, timeout_seconds=5.0)
     signal = ingester.build_signal()
     probed_at = _stamp()
     if signal is None:
@@ -615,6 +612,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     engine = MeshRuntimeEngine(config=RuntimeConfig.from_env())
+    ingester = RethNodeIngester(target=target, timeout_seconds=5.0)
     _setup_demo_dir()
 
     chaos_ids = [c.strip() for c in args.chaos_sequence.split(",") if c.strip()]
@@ -644,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
         result = _run_one(
             chaos,
             target,
+            ingester,
             engine,
             settle_seconds=args.settle,
             container_reth=args.container_reth,

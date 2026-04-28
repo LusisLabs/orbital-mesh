@@ -19,6 +19,7 @@ class TestCorrelationContext(unittest.TestCase):
         self.assertEqual(d["type"], "same_namespace")
         self.assertEqual(d["correlated_signal_count"], 1)
         self.assertEqual(d["affected_services"], ["api", "worker"])
+        self.assertEqual(d["correlated_signals"], [{"deployment_name": "api"}])
 
 
 class TestSignalCorrelator(unittest.TestCase):
@@ -35,6 +36,7 @@ class TestSignalCorrelator(unittest.TestCase):
         self.assertEqual(ctx.correlation_type, "same_namespace")
         self.assertIn("svc-a", ctx.affected_services)
         self.assertIn("svc-b", ctx.affected_services)
+        self.assertIn("crash_loop", ctx.to_dict()["signatures"])
         self.assertGreater(ctx.correlation_confidence, 0)
 
     def test_same_deployment_not_correlated(self):

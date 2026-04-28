@@ -15,6 +15,11 @@ from shared.mesh_runtime import (
     log_runtime_event,
     resolve_integrations_config,
 )
+from shared.mesh_runtime.execution_attempts import (
+    ExecutionAttemptStore,
+    dispatched_without_outcome,
+    has_terminal_outcome,
+)
 
 from .goose_adapter import GooseAdapter, GooseCliAdapter, NativeGooseAdapter
 from .hermes_adapter import HermesAdapter, HermesCliAdapter, NativeHermesAdapter
@@ -32,6 +37,7 @@ class OrchestratorService:
         self.adapter = adapter or self._build_adapter()
         self.clock = clock or time.monotonic
         self.sleeper = sleeper or time.sleep
+        self.attempt_store = ExecutionAttemptStore(self.config.state_directory)
 
     def _build_adapter(self) -> GooseAdapter | HermesAdapter:
         mode = (self.config.orchestration_mode or "auto").lower()
@@ -79,6 +85,7 @@ class OrchestratorService:
     def execute(self, decision: Decision, evaluation: EvaluationResult) -> ExecutionRecord:
         started_at = datetime.now(timezone.utc).isoformat()
         idempotency_key = f"{decision.decision_id}:{decision.execution_plan['action']}"
+        replay_guarded = _requires_replay_guard(decision)
         if not evaluation.passed or evaluation.final_recommendation != "execute":
             log_runtime_event(
                 "execution_rejected",
@@ -114,8 +121,25 @@ class OrchestratorService:
         retry_window_started_at = self.clock()
         while attempts <= self.config.max_transient_retries:
             attempts += 1
+            prior_attempt = self.attempt_store.get(idempotency_key) if replay_guarded else None
+            if has_terminal_outcome(prior_attempt):
+                result = self._result_from_prior_attempt(prior_attempt)
+                break
+            if dispatched_without_outcome(prior_attempt):
+                result = self._unknown_after_dispatch(prior_attempt)
+                break
+            if replay_guarded:
+                self.attempt_store.begin(idempotency_key, decision.decision_id, decision.execution_plan)
+                self.attempt_store.mark_dispatched(idempotency_key)
             candidate = self.adapter.execute_decision(decision, idempotency_key)
             result = candidate
+            if replay_guarded:
+                self.attempt_store.complete(
+                    idempotency_key,
+                    status=candidate.status,
+                    external_refs=candidate.external_refs,
+                    failure=candidate.failure,
+                )
             if candidate.status == "succeeded":
                 break
             if not candidate.retryable:
@@ -183,9 +207,46 @@ class OrchestratorService:
         )
         return record
 
+    @staticmethod
+    def _result_from_prior_attempt(record: dict) -> object:
+        from .adapters_common import CliExecutionResult
+
+        refs = dict(record.get("external_refs") or {})
+        refs["idempotency_replayed"] = True
+        return CliExecutionResult(
+            status=str(record.get("status", "failed")),
+            external_refs=refs,
+            failure=record.get("failure") if isinstance(record.get("failure"), dict) else None,
+            retryable=False,
+        )
+
+    @staticmethod
+    def _unknown_after_dispatch(record: dict | None) -> object:
+        from .adapters_common import CliExecutionResult
+
+        return CliExecutionResult(
+            status="failed",
+            external_refs={
+                "idempotency_guard": "remote_command_dispatched_without_outcome",
+                "idempotency_key": (record or {}).get("idempotency_key"),
+            },
+            failure={
+                "reason": "outcome_unknown_after_dispatch",
+                "detail": "remote command may already have executed; refusing to retry side-effecting action",
+            },
+            retryable=False,
+        )
+
     def _retry_delay_seconds(self, attempts: int, failure: dict | None) -> float:
         if failure is not None and failure.get("retry_after_seconds") is not None:
             return float(failure["retry_after_seconds"])
         # Use bounded exponential backoff for transient failures that do not provide
         # an explicit retry hint so unattended runs do not hot-loop integrations.
         return float(min(2 ** max(attempts - 1, 0), 8))
+
+
+def _requires_replay_guard(decision: Decision) -> bool:
+    return (
+        decision.execution_plan.get("system") == "systemd_service"
+        and decision.execution_plan.get("action") == "restart_systemd_service"
+    )

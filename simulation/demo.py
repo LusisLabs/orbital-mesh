@@ -59,6 +59,10 @@ _NODE_FILE = _DEMO_DIR / "node.txt"
 _CHAOS_LOG = _DEMO_DIR / "chaos.log"
 _MESH_LOG = _DEMO_DIR / "mesh.log"
 
+# Add env for observer toggle/trace
+_OBSERVER_ENABLED = os.environ.get("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes")
+_ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
 
 # Default story arc. See module docstring for why.
 _STORY: tuple[str, ...] = (
@@ -267,16 +271,55 @@ def _auto_configure_observer() -> bool:
     if os.environ.get("MESH_OBSERVER_ENABLED", "").lower() in ("0", "false", "no"):
         return False
     api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if api_key and not os.environ.get("MESH_OBSERVER_ENABLED"):
-        os.environ["MESH_OBSERVER_ENABLED"] = "true"
+    if api_key:
+        api_key = "".join(api_key.split())
+        os.environ.setdefault("MESH_OBSERVER_ENABLED", "true")
         os.environ.setdefault("MESH_OBSERVER_PROVIDER", "anthropic")
         os.environ.setdefault("MESH_OBSERVER_BASE_URL", "https://api.anthropic.com")
         os.environ.setdefault(
-            "MESH_OBSERVER_MODEL", "claude-haiku-4-5-20251001"
+            "MESH_OBSERVER_MODEL", "claude-opus-4-6"
         )
         os.environ.setdefault("MESH_OBSERVER_API_KEY", api_key)
         os.environ.setdefault("MESH_OBSERVER_TIMEOUT_SECONDS", "30")
-    return _truthy(os.environ.get("MESH_OBSERVER_ENABLED", "false"))
+    if os.environ.get("MESH_OBSERVER_API_KEY"):
+        os.environ["MESH_OBSERVER_API_KEY"] = "".join(
+            os.environ["MESH_OBSERVER_API_KEY"].split()
+        )
+    return _observer_ready_from_env()
+
+
+def _observer_ready_from_env() -> bool:
+    return (
+        _truthy(os.environ.get("MESH_OBSERVER_ENABLED", "false"))
+        and bool(os.environ.get("MESH_OBSERVER_BASE_URL"))
+        and bool(os.environ.get("MESH_OBSERVER_API_KEY"))
+        and bool(os.environ.get("MESH_OBSERVER_MODEL"))
+    )
+
+
+def _observer_status_line() -> str:
+    enabled = _truthy(os.environ.get("MESH_OBSERVER_ENABLED", "false"))
+    provider = os.environ.get("MESH_OBSERVER_PROVIDER", "openai")
+    model = os.environ.get("MESH_OBSERVER_MODEL", "")
+    base_url = os.environ.get("MESH_OBSERVER_BASE_URL", "")
+    has_key = bool(os.environ.get("MESH_OBSERVER_API_KEY"))
+    missing = [
+        name
+        for name, present in (
+            ("enabled", enabled),
+            ("base_url", bool(base_url)),
+            ("api_key", has_key),
+            ("model", bool(model)),
+        )
+        if not present
+    ]
+    state = "on" if not missing else "off"
+    suffix = "" if not missing else f"; missing={','.join(missing)}"
+    return (
+        f"[{_stamp()}]  observer {state}; provider={provider}; "
+        f"model={model or '<unset>'}; base_url={base_url or '<unset>'}; "
+        f"api_key={'set' if has_key else 'missing'}{suffix}\n"
+    )
 
 
 def _resolve_faults(fault_ids: list[str]) -> list[Fault]:
@@ -345,6 +388,9 @@ def main(argv: list[str] | None = None) -> int:
     observer_active = _auto_configure_observer()
     if not args.no_clear:
         _setup_demo_dir()
+    with _MESH_LOG.open("a") as f:
+        f.write(_observer_status_line())
+        f.write("\n")
 
     fault_ids = [f.strip() for f in args.faults.split(",") if f.strip()]
     faults = _resolve_faults(fault_ids)

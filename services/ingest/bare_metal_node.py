@@ -133,6 +133,12 @@ class BareMetalNodeTarget:
     # poll = 3 minutes of unreachability, which is the SRE smell-test for
     # "this is real, not a hiccup".
     unreachable_threshold_consecutive: int = 3
+    lb_target_id: str | None = None
+    lb_pool: str | None = None
+    lb_provider: str | None = None
+    fleet_id: str | None = None
+    fleet_min_healthy: int | None = None
+    fleet_healthy_count: int | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "BareMetalNodeTarget":
@@ -158,6 +164,12 @@ class BareMetalNodeTarget:
             rpc_publicly_exposed=_optional_bool(raw.get("rpc_publicly_exposed")),
             authrpc_publicly_exposed=_optional_bool(raw.get("authrpc_publicly_exposed")),
             unreachable_threshold_consecutive=int(raw.get("unreachable_threshold_consecutive", 3)),
+            lb_target_id=raw.get("lb_target_id"),
+            lb_pool=raw.get("lb_pool"),
+            lb_provider=raw.get("lb_provider"),
+            fleet_id=raw.get("fleet_id"),
+            fleet_min_healthy=int(raw["fleet_min_healthy"]) if raw.get("fleet_min_healthy") is not None else None,
+            fleet_healthy_count=int(raw["fleet_healthy_count"]) if raw.get("fleet_healthy_count") is not None else None,
         )
 
 
