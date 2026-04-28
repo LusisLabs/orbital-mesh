@@ -324,5 +324,135 @@ class SignalHistoryEndToEndTests(unittest.TestCase):
         self.assertEqual(decision.reasoning["evidence_pack"]["history_trends"], {})
 
 
+class KubernetesHistoryTrendsTests(unittest.TestCase):
+    """The k8s read site: ``_decide_kubernetes`` should pull trends
+    via the same generic store and expose them in the same
+    ``evidence_pack.history_trends`` slot the LLM observer reads.
+
+    Uses the kubernetes_crashloop_patch fixture as the base — same
+    fixture that locks in the schema contract — and varies just the
+    rollout fields per tick.
+    """
+
+    def _k8s_signal(self, *, available_replicas: int = 0, rollout_status: str = "failed") -> dict:
+        """Schema-compliant k8s signal cloned from the canonical fixture
+        and varied per tick. Loading the fixture (instead of hand-rolling
+        a payload here) means a future schema change won't break this
+        test in a way that's hard to debug."""
+        from shared.mesh_runtime import load_fixture
+        signal = load_fixture("signals", "kubernetes_crashloop_patch.json")
+        # Distinguish each tick's signal_id so they're not deduped on the
+        # state store side.
+        signal["signal_id"] = f"sig_k8s_{int(time.time() * 1_000_000)}"
+        signal["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        signal["deployment"]["rollout_status"] = rollout_status
+        signal["deployment"]["available_replicas"] = available_replicas
+        return signal
+
+    def test_kubernetes_trends_appear_in_evidence_pack(self) -> None:
+        """Drive 4 ticks of a stuck rollout and verify the rollout
+        history shows up under ``evidence_pack.history_trends``."""
+        store = SignalHistoryStore(persist=False)
+        ingest = IngestService(signal_history=store)
+
+        last_envelope = None
+        for _ in range(4):
+            signal = self._k8s_signal(available_replicas=0, rollout_status="failed")
+            last_envelope = ingest.normalize_signal(signal)
+            time.sleep(0.001)
+
+        # The fixture's cluster/namespace/deployment-name produce this id.
+        target_id = "k8s:prod-us-east-1:search:semantic-search"
+        records = store.recent(target_id)
+        self.assertEqual(len(records), 4)
+
+        trigger = TriggerService().detect(last_envelope)
+        self.assertIsNotNone(trigger)
+        decision = DecisionService(signal_history=store).decide(trigger)
+
+        history_trends = decision.reasoning["evidence_pack"]["history_trends"]
+        self.assertIn("rollout_status", history_trends)
+        self.assertEqual(history_trends["rollout_status"]["current"], "failed")
+        self.assertEqual(history_trends["rollout_status"]["count"], 4)
+        self.assertIn("duration_failed_seconds", history_trends["rollout_status"])
+        # ``available_replicas`` trend should also be present (desired=3,
+        # available=0 across all four ticks) and report sustained-below-desired.
+        self.assertIn("available_replicas", history_trends)
+        self.assertEqual(history_trends["available_replicas"]["desired"], 3)
+
+
+class OtelHistoryTrendsTests(unittest.TestCase):
+    """The otel read site: both the rule-match path and the escalation
+    fallback expose ``evidence_pack.history_trends``."""
+
+    def _otel_signal(self, *, observed_value: float, delta_pct: float) -> dict:
+        return {
+            "signal_type": "otel_metric_regression",
+            "signal_id": f"sig_{int(time.time() * 1000)}",
+            "observed_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "environment": "prod",
+            "service": "checkout",
+            "endpoint": "POST /api/checkout",
+            "metric_regression": {
+                "metric_name": "service.request.error_rate",
+                "baseline_value": 0.01,
+                "observed_value": observed_value,
+                "delta_pct": delta_pct,
+                "attributes": {"sample_size": 5000},
+            },
+            "comparison_window": {"baseline": "5m", "observed": "5m"},
+            "segment": {"customer_tier": "standard"},
+        }
+
+    def test_otel_trends_appear_in_escalation_evidence_pack(self) -> None:
+        """Drive 4 ticks of an escalating regression. The escalation
+        fallback (no rule match in the default policy for this metric)
+        must include the trend block."""
+        store = SignalHistoryStore(persist=False)
+        ingest = IngestService(signal_history=store)
+
+        last_envelope = None
+        for value, delta in [(0.05, 5), (0.08, 8), (0.12, 12), (0.18, 18)]:
+            signal = self._otel_signal(observed_value=value, delta_pct=delta)
+            last_envelope = ingest.normalize_signal(signal)
+            time.sleep(0.001)
+
+        target_id = "otel:checkout:POST /api/checkout"
+        self.assertEqual(len(store.recent(target_id)), 4)
+
+        trigger = TriggerService().detect(last_envelope)
+        self.assertIsNotNone(trigger)
+        decision = DecisionService(signal_history=store).decide(trigger)
+
+        history_trends = decision.reasoning["evidence_pack"]["history_trends"]
+        self.assertIn("observed_value", history_trends)
+        self.assertEqual(history_trends["observed_value"]["count"], 4)
+        # The series 0.05 → 0.08 → 0.12 → 0.18 is monotonically
+        # increasing, which the trend extractor should label.
+        self.assertEqual(history_trends["observed_value"].get("trend"), "increasing")
+
+        self.assertIn("delta_pct", history_trends)
+        self.assertGreaterEqual(history_trends["delta_pct"]["duration_above_10pct_seconds"], 0)
+
+
+class RuntimeEngineWiringTests(unittest.TestCase):
+    """The store must be constructed inside ``MeshRuntimeEngine`` and
+    threaded into both ``IngestService`` and ``DecisionService`` so
+    end-to-end traffic populates and reads the same instance."""
+
+    def test_runtime_engine_constructs_signal_history_store(self) -> None:
+        from services.runtime import MeshRuntimeEngine
+        from shared.mesh_runtime import RuntimeConfig
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = RuntimeConfig(state_directory=tmp)
+            engine = MeshRuntimeEngine(config=config)
+            self.assertIsNotNone(engine.signal_history)
+            # Both services must reference the SAME store instance —
+            # otherwise reads after writes will return empty.
+            self.assertIs(engine.ingest.signal_history, engine.signal_history)
+            self.assertIs(engine.decision.signal_history, engine.signal_history)
+
+
 if __name__ == "__main__":
     unittest.main()

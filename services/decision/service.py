@@ -702,6 +702,145 @@ class DecisionService:
             _LOG.exception("decide.reth: signal_history.trend failed (non-fatal)")
         return out
 
+    def _kubernetes_history_trends(
+        self,
+        trigger: Trigger,
+        namespace: str,
+        cluster: str,
+        deployment_name: str,
+    ) -> dict[str, Any]:
+        """Trend predicates for a Kubernetes deployment's signal history.
+
+        The most useful k8s-side temporal questions are:
+
+        * ``rollout_status`` — has the deployment been ``failed`` for ≥
+          some duration? Single-tick ``failed`` can be transient
+          (controller in the middle of a roll); sustained ``failed`` is
+          ProgressDeadlineExceeded territory.
+        * ``pods.ready_replicas`` — sustained below desired? That's a
+          stuck rollout, not a brief recreate.
+        * ``metric_regression.observed_p95_latency_ms`` (when projected
+          into k8s context) — trending up over multiple ticks?
+
+        The returned dict goes into ``evidence_pack.history_trends`` so
+        the rule ladder and the LLM observer share the same view.
+        """
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {
+                "signal_type": "kubernetes_deployment_issue",
+                "cluster": cluster,
+                "namespace": namespace,
+                "deployment": {"name": deployment_name},
+                "service": trigger.service,
+            }
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+        try:
+            # Sustained-failed-rollout: a single ``failed`` is rarely
+            # actionable (the controller may be retrying); ≥120s
+            # sustained is the ProgressDeadlineExceeded shape. The
+            # envelope nests this under ``deployment``.
+            rollout_trend = self.signal_history.trend(
+                target_id, "deployment.rollout_status", window_seconds=600,
+            )
+            if rollout_trend.count > 0:
+                duration_failed = rollout_trend.duration_equal_to("failed")
+                out["rollout_status"] = {
+                    "count": rollout_trend.count,
+                    "current": rollout_trend.current,
+                    "duration_failed_seconds": int(duration_failed.total_seconds()),
+                    "sustained_failed": duration_failed.total_seconds() >= 120,
+                }
+
+            # Stuck rollout via ready-replica deficit. The k8s envelope
+            # exposes ``available_replicas`` (the controller's view of
+            # ready+passing-readiness pods) and ``desired_replicas``
+            # (the spec target). Sustained deficit is what distinguishes
+            # a stuck rollout from a brief pod recreate.
+            available_trend = self.signal_history.trend(
+                target_id, "deployment.available_replicas", window_seconds=600,
+            )
+            if available_trend.count > 0 and available_trend.numeric_values:
+                # ``desired_replicas`` lives on ``trigger.metrics`` for
+                # k8s triggers (see services/trigger/service.py:230),
+                # not on related_context.
+                desired = trigger.metrics.get("desired_replicas") if isinstance(trigger.metrics, dict) else None
+                if isinstance(desired, int) and desired > 0:
+                    duration_short = available_trend.duration_at_or_below(float(desired - 1))
+                    out["available_replicas"] = {
+                        **available_trend.to_summary(),
+                        "desired": desired,
+                        "duration_below_desired_seconds": int(duration_short.total_seconds()),
+                        "sustained_below_desired": duration_short.total_seconds() >= 120,
+                    }
+        except Exception:
+            _LOG.exception("decide.kubernetes: signal_history.trend failed (non-fatal)")
+        return out
+
+    def _otel_history_trends(
+        self,
+        trigger: Trigger,
+    ) -> dict[str, Any]:
+        """Trend predicates for an OTel metric-regression target.
+
+        The OTel envelope already carries the metric value; the
+        history view answers "is this regression sustained or a
+        single-tick spike?" One-tick spikes are noise; multi-tick
+        upward drift is a real degradation.
+
+        Stamped into the rule-match and escalation decision paths so
+        the LLM observer can read the same data downstream.
+        """
+        if self.signal_history is None:
+            return {}
+        try:
+            from services.signal_history import derive_target_id
+            payload = {
+                "signal_type": "otel_metric_regression",
+                "service": trigger.service,
+                "endpoint": trigger.endpoint,
+            }
+            target_id = derive_target_id(payload)
+            if target_id is None:
+                return {}
+        except Exception:
+            return {}
+
+        out: dict[str, Any] = {"target_id": target_id}
+        try:
+            value_trend = self.signal_history.trend(
+                target_id, "metric_regression.observed_value", window_seconds=600,
+            )
+            if value_trend.count > 0 and value_trend.numeric_values:
+                out["observed_value"] = value_trend.to_summary()
+
+            # Delta percentage. Sustained large deltas are the strong
+            # cue — a single huge delta could be a sample-size artifact.
+            delta_trend = self.signal_history.trend(
+                target_id, "metric_regression.delta_pct", window_seconds=600,
+            )
+            if delta_trend.count > 0 and delta_trend.numeric_values:
+                # 10% is a low-bar drift threshold; rule-actionable
+                # thresholds usually live in metric_actions.policy.json.
+                # We use this only to note "consistently above 10%
+                # over the window" to the LLM, not to make decisions.
+                duration_above = delta_trend.duration_at_or_above(10.0)
+                out["delta_pct"] = {
+                    **delta_trend.to_summary(),
+                    "duration_above_10pct_seconds": int(duration_above.total_seconds()),
+                }
+        except Exception:
+            _LOG.exception("decide.otel: signal_history.trend failed (non-fatal)")
+        return out
+
     def _decide_otel_metric(self, trigger: Trigger) -> Decision:
         """Decide on an OTel metric-regression trigger.
 
@@ -789,6 +928,7 @@ class DecisionService:
                     "matched_on": rule_match.matched_on,
                     "metric_regression": metric_regression,
                     "bounds": rule_match.bounds,
+                    "history_trends": self._otel_history_trends(trigger),
                 },
                 "alternatives_considered": [
                     "continue with no change",
@@ -856,6 +996,7 @@ class DecisionService:
                     "metric_regression": metric_regression,
                     "available_rules": [rule.name for rule in self._metric_action_matcher.rules],
                     "llm_risk_flags": llm_risk_flags or [],
+                    "history_trends": self._otel_history_trends(trigger),
                 },
                 "alternatives_considered": [
                     "continue with no change",
@@ -925,6 +1066,12 @@ class DecisionService:
         deployment_name = str(trigger.related_context.get("deployment_name", trigger.service))
         namespace = str(trigger.related_context.get("namespace", "default"))
         cluster = str(trigger.related_context.get("cluster", "unknown"))
+        # S2: pull duration-based predicates from the per-deployment
+        # signal history. Same generic store as reth uses; the trends
+        # surface in evidence_pack.history_trends so the rule ladder
+        # and the LLM observer both see "rollout_status=failed for
+        # 240s" rather than judging on a single snapshot.
+        history_trends = self._kubernetes_history_trends(trigger, namespace, cluster, deployment_name)
         image = str(trigger.related_context.get("deployment_image", "unknown"))
         likely_layer = str(trigger.related_context.get("likely_layer", "unknown"))
         code_remediation_candidate = bool(trigger.related_context.get("code_remediation_candidate", False))
@@ -1152,6 +1299,7 @@ class DecisionService:
                     "confidence_factors": confidence_factors,
                     "hypotheses": hypotheses,
                     "hypothesis_upgrade_applied": hypothesis_upgrade,
+                    "history_trends": history_trends,
                 },
                 "alternatives_considered": _alternatives(decision_type),
             },
