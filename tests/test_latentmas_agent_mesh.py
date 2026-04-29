@@ -13,6 +13,7 @@ from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
+from services.orchestrator.latentmas_server import MeshLatentMasRuntime
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import FileStateStore, RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
 
@@ -252,6 +253,15 @@ class LatentMasAgentMeshTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
+
+    def test_latentmas_runtime_options_preserve_explicit_zero_values(self) -> None:
+        self.config.latentmas_latent_steps = 10
+        self.config.latentmas_max_new_tokens = 1024
+        runtime_config = MeshLatentMasRuntime(self.config)._config_from_options(
+            {"latent_steps": 0, "max_new_tokens": 0}
+        )
+        self.assertEqual(runtime_config.latentmas_latent_steps, 0)
+        self.assertEqual(runtime_config.latentmas_max_new_tokens, 0)
 
     def test_readiness_reports_latentmas_health(self) -> None:
         unhealthy = build_readiness(self.config).to_dict()

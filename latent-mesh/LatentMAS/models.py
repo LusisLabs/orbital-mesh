@@ -20,10 +20,15 @@ def _ensure_pad_token(tokenizer: AutoTokenizer) -> None:
 
 
 def _past_length(past_key_values: Optional[Tuple]) -> int:
+    if past_key_values is None:
+        return 0
+    if hasattr(past_key_values, "get_seq_length"):
+        return int(past_key_values.get_seq_length())
     if not past_key_values:
         return 0
-    k = past_key_values[0][0]
-    return k.shape[-2]
+    first_layer = past_key_values[0]
+    k = first_layer[0] if isinstance(first_layer, (tuple, list)) else first_layer
+    return int(k.shape[-2])
 
 
 class ModelWrapper:
@@ -412,4 +417,3 @@ class ModelWrapper:
             curr_output_embedding.append(latent_embed.detach())
 
         return past, torch.cat(curr_output_embedding, dim=1) # Output input embeddings
-

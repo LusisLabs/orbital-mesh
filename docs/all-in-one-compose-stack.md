@@ -45,36 +45,35 @@ The internal OS companion is published through `mesh-ui` at:
 http://127.0.0.1:3000/?app=MeshControl
 ```
 
-The default stack keeps `MESH_STACK_AGENT_FABRIC_MODE=native`. That is deliberate: the smoke run should validate Mesh and Kubernetes deterministically without requiring model credentials.
+The default stack runs `MESH_STACK_AGENT_FABRIC_MODE=deepagents` and enables the CPU LatentMAS sidecar. DeepAgents and LatentMAS stay advisory: Mesh policy, deterministic evaluation, approval gates, and Kubernetes allowlists remain authoritative.
 
 ## Optional Lanes
 
-Enable the LatentMAS GPU worker sidecar:
+Use the CUDA LatentMAS worker sidecar instead of the default CPU sidecar:
 
 ```bash
-COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docker-compose.stack.yml up --build
+MESH_LATENTMAS_DOCKERFILE=Dockerfile.latentmas MESH_LATENTMAS_DEVICE=cuda \
+  docker compose -f docker-compose.stack.yml -f docker-compose.latentmas-nvidia.yml up --build
 ```
 
-**Apple Silicon / Docker Desktop:** Linux containers do not see Metal. Use the CPU image and device (no NVIDIA `deploy` block in the stack file):
+**Apple Silicon / Docker Desktop:** Linux containers do not see Metal. The stack defaults to the CPU image and `MESH_LATENTMAS_DEVICE=cpu` so the sidecar is reachable without NVIDIA pass-through.
 
 ```bash
-MESH_LATENTMAS_DOCKERFILE=Dockerfile.latentmas.cpu MESH_LATENTMAS_DEVICE=cpu \
-  COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 \
-  docker compose -f docker-compose.stack.yml up --build
+docker compose -f docker-compose.stack.yml up --build
 ```
 
 **Metal (MPS) on macOS:** run LatentMAS on the host (`MESH_LATENTMAS_DEVICE=mps`, `python -m services.orchestrator.latentmas_server`) and set `MESH_STACK_LATENTMAS_URL=http://host.docker.internal:8791` for Mesh. **Linux + NVIDIA + CUDA:** keep `Dockerfile.latentmas`, set `MESH_LATENTMAS_DEVICE=cuda`, and add `-f docker-compose.latentmas-nvidia.yml` so Compose requests the GPU.
 
-Enable Deep Agents proposal lanes:
+Force native-only proposal lanes:
 
 ```bash
-MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
+MESH_STACK_AGENT_FABRIC_MODE=native docker compose -f docker-compose.stack.yml up --build
 ```
 
-Enable both:
+Disable LatentMAS sidecar expectations while keeping the service present:
 
 ```bash
-COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
+MESH_STACK_ENABLE_LATENTMAS=0 docker compose -f docker-compose.stack.yml up --build
 ```
 
 Deep Agents remains proposal-only. It does not receive direct Kubernetes credentials, does not edit the real checkout, and does not execute Mesh actuation. LatentMAS is advisory. Mesh policy, evaluation, approval behavior, audit, and Kubernetes allowlists remain authoritative.
@@ -193,7 +192,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |
 | `MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one post-injection Mesh run wait, even when progress is observed |
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
-| `MESH_STACK_AGENT_FABRIC_MODE` | `native` | `native` or `deepagents` proposal fabric |
+| `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
+| `MESH_AGENT_TASK_TIMEOUT_SECONDS` | `180` | Overall proposal-lane collection budget for DeepAgents and LatentMAS attempts |
 | `MESH_REASONING_BANK_ENABLED` | `1` | Enables pre-decision retrieval and post-run distillation of strategy memory |
 | `MESH_REASONING_BANK_MAX_STRATEGIES` | `8` | Maximum advisory strategy memories attached to a run |
 | `MESH_REASONING_BANK_SCALING_MODE` | `sequential` | ReasoningBank retrieval/scaling mode |
@@ -208,8 +208,9 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_EVAL_LATENTMAS_COMMAND` | `latentmas` | Rust LatentMAS CLI used by native `mesh_eval` inside the Mesh image |
 | `MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS` | `30` | Timeout for the best-effort tokenizer probe |
 | `MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE` | `1` | Makes smoke fail unless `task_trace.mesh_eval.latent_mesh.tokenizer_probe.status == ok` |
-| `MESH_STACK_ENABLE_LATENTMAS` | `0` | Enables Mesh readiness expectation for LatentMAS |
+| `MESH_STACK_ENABLE_LATENTMAS` | `1` | Enables Mesh readiness expectation for LatentMAS |
 | `MESH_STACK_LATENTMAS_URL` | `http://latentmas:8791` | Mesh-to-sidecar LatentMAS URL |
+| `MESH_LATENTMAS_MODEL_NAME` | `sshleifer/tiny-gpt2` | CPU-safe default for local sidecar inference; set to `Qwen/Qwen3-4B` or another HF causal LM for real advisory quality |
 | `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/mesh-intel ... mesh-intel-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
 | `MESH_STACK_GITNEXUS_URL` | empty | Optional external GitNexus sidecar URL |
 | `MESH_STACK_SMOKE_EVALUATION_MODE` | `native` | Smoke run evaluation mode |

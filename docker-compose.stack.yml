@@ -320,6 +320,8 @@ services:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
+      latentmas:
+        condition: service_healthy
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
     environment:
@@ -355,11 +357,12 @@ services:
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
       MESH_MAX_JSON_BODY_BYTES: "${MESH_MAX_JSON_BODY_BYTES:-1048576}"
       MESH_VAULT_AI_POSTPROCESS_ENABLED: "${MESH_VAULT_AI_POSTPROCESS_ENABLED:-0}"
-      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-native}"
+      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-deepagents}"
       MESH_DEEPAGENTS_MODEL: "${MESH_DEEPAGENTS_MODEL:-openai:MiniMax-M2.7}"
       MESH_DEEPAGENTS_TIMEOUT_SECONDS: "${MESH_DEEPAGENTS_TIMEOUT_SECONDS:-120}"
       MESH_DEEPAGENTS_WORKSPACE_ROOT: /app/.mesh-runtime-state/deepagents
       MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS: "${MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS:-20000}"
+      MESH_AGENT_TASK_TIMEOUT_SECONDS: "${MESH_AGENT_TASK_TIMEOUT_SECONDS:-180}"
       MESH_REASONING_BANK_ENABLED: "${MESH_REASONING_BANK_ENABLED:-1}"
       MESH_REASONING_BANK_MAX_STRATEGIES: "${MESH_REASONING_BANK_MAX_STRATEGIES:-8}"
       MESH_REASONING_BANK_SCALING_MODE: "${MESH_REASONING_BANK_SCALING_MODE:-sequential}"
@@ -390,11 +393,11 @@ services:
       MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS: "${MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS:-120}"
       MESH_KUBERNETES_ALLOWED_CONTEXTS: "${MESH_STACK_MULTI_ALLOWED_CONTEXTS:-mesh-compose,mesh-compose-vm,mesh-compose-baremetal}"
       MESH_KUBERNETES_ALLOWED_NAMESPACES: "${MESH_STACK_ALLOWED_NAMESPACES:-search}"
-      MESH_LATENTMAS_ENABLED: "${MESH_STACK_ENABLE_LATENTMAS:-0}"
+      MESH_LATENTMAS_ENABLED: "${MESH_STACK_ENABLE_LATENTMAS:-1}"
       MESH_LATENTMAS_URL: "${MESH_STACK_LATENTMAS_URL:-http://latentmas:8791}"
       MESH_LATENTMAS_TIMEOUT_SECONDS: "${MESH_LATENTMAS_TIMEOUT_SECONDS:-600}"
-      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
-      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-sshleifer/tiny-gpt2}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cpu}"
       MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
       MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
       MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"
@@ -457,8 +460,8 @@ services:
       E2E_RUN_PROGRESS_GRACE_SECONDS: "${E2E_RUN_PROGRESS_GRACE_SECONDS:-120}"
       E2E_RUN_STAGE_GRACE_SECONDS: "${E2E_RUN_STAGE_GRACE_SECONDS:-600}"
       E2E_RUN_MAX_WAIT_SECONDS: "${E2E_RUN_MAX_WAIT_SECONDS:-1800}"
-      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-native}"
-      MESH_EXPECT_LATENTMAS: "${MESH_STACK_ENABLE_LATENTMAS:-0}"
+      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-deepagents}"
+      MESH_EXPECT_LATENTMAS: "${MESH_STACK_ENABLE_LATENTMAS:-1}"
       MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE: "${MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE:-1}"
       MESH_STACK_RPC_GATEWAY_URL: "http://rpc-gateway:8080/health"
       MESH_STACK_INDEXER_URL: "http://indexer:8080/health"
@@ -552,19 +555,18 @@ services:
         max-file: "3"
 
   latentmas:
-    profiles: ["latentmas"]
     build:
       context: .
-      dockerfile: "${MESH_LATENTMAS_DOCKERFILE:-Dockerfile.latentmas}"
+      dockerfile: "${MESH_LATENTMAS_DOCKERFILE:-Dockerfile.latentmas.cpu}"
     image: "${MESH_LATENTMAS_IMAGE:-mesh-intel-latentmas:${MESH_BUILD_VERSION:-dev}}"
     container_name: mesh-intel-latentmas
     environment:
       MESH_LATENTMAS_URL: "http://0.0.0.0:8791"
-      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
-      # Docker Desktop (macOS/Windows): use Dockerfile.latentmas.cpu and cpu — no Metal inside Linux VMs.
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-sshleifer/tiny-gpt2}"
+      # Docker Desktop (macOS/Windows): default to Dockerfile.latentmas.cpu and cpu — no Metal inside Linux VMs.
       # Apple Silicon Metal (MPS): run `python -m services.orchestrator.latentmas_server` on the host with
       # MESH_LATENTMAS_DEVICE=mps and point Mesh at http://host.docker.internal:8791 .
-      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cpu}"
       MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
       MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
       MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"

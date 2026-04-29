@@ -91,14 +91,18 @@ class MeshLatentMasRuntime:
             return result
 
     def _config_from_options(self, options: dict[str, Any]) -> RuntimeConfig:
+        def option(name: str, fallback: Any) -> Any:
+            value = options.get(name, None)
+            return fallback if value is None else value
+
         return replace(
             self.config,
-            latentmas_model_name=str(options.get("model_name") or self.config.latentmas_model_name),
-            latentmas_device=str(options.get("device") or self.config.latentmas_device),
-            latentmas_prompt_mode=str(options.get("prompt_mode") or self.config.latentmas_prompt_mode),
-            latentmas_latent_steps=int(options.get("latent_steps") or self.config.latentmas_latent_steps),
-            latentmas_max_new_tokens=int(options.get("max_new_tokens") or self.config.latentmas_max_new_tokens),
-            latentmas_use_vllm=bool(options.get("use_vllm", self.config.latentmas_use_vllm)),
+            latentmas_model_name=str(option("model_name", self.config.latentmas_model_name)),
+            latentmas_device=str(option("device", self.config.latentmas_device)),
+            latentmas_prompt_mode=str(option("prompt_mode", self.config.latentmas_prompt_mode)),
+            latentmas_latent_steps=int(option("latent_steps", self.config.latentmas_latent_steps)),
+            latentmas_max_new_tokens=int(option("max_new_tokens", self.config.latentmas_max_new_tokens)),
+            latentmas_use_vllm=bool(option("use_vllm", self.config.latentmas_use_vllm)),
         )
 
     def _ensure_model(self, config: RuntimeConfig):
