@@ -201,6 +201,12 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_CORPUS_DATABASE_PATH` | `/workspace/mesh-intel/.mesh-runtime-state/corpus/incident_corpus.sqlite` | SQLite incident corpus imported into live memory |
 | `MESH_CORPUS_MEMORY_PROJECTION_LIMIT` | `5000` | Maximum corpus rows projected on startup |
 | `MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between non-terminal vault bundle rewrites for the same run |
+| `MESH_EVAL_CONTEXT_TOKEN_BUDGET` | `2048` | Context token budget recorded and probed by native `mesh_eval` |
+| `MESH_EVAL_TOKENIZER_JSON` | empty | Optional Hugging Face `tokenizer.json` for the Rust tokenizer probe |
+| `MESH_EVAL_SENTENCEPIECE_MODEL` | empty | Optional SentencePiece `.model` for the Rust tokenizer probe |
+| `MESH_EVAL_LATENTMAS_COMMAND` | `latentmas` | Rust LatentMAS CLI used by native `mesh_eval` inside the Mesh image |
+| `MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS` | `30` | Timeout for the best-effort tokenizer probe |
+| `MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE` | `1` | Makes smoke fail unless `task_trace.mesh_eval.latent_mesh.tokenizer_probe.status == ok` |
 | `MESH_STACK_ENABLE_LATENTMAS` | `0` | Enables Mesh readiness expectation for LatentMAS |
 | `MESH_STACK_LATENTMAS_URL` | `http://latentmas:8791` | Mesh-to-sidecar LatentMAS URL |
 | `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/mesh-intel ... mesh-intel-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
@@ -291,6 +297,7 @@ Common failure modes:
 - `hermes` is unavailable: verify the `hermes` service is healthy for the active Compose project and the Mesh container can access the mounted Docker socket.
 - GitNexus is unavailable: the stack does not start GitNexus by default. Start it externally and set `MESH_STACK_GITNEXUS_URL` if repository-context inspection is required.
 - Deep Agents readiness fails: provide the provider API key for the selected `MESH_DEEPAGENTS_MODEL`, or run the default native fabric.
+- `mesh_eval` tokenizer probe fails: verify the Mesh image contains `/usr/local/bin/latentmas`, leave both tokenizer model env vars empty for the heuristic fallback, or provide a valid `MESH_EVAL_TOKENIZER_JSON` / `MESH_EVAL_SENTENCEPIECE_MODEL`.
 - LatentMAS readiness fails: use the `latentmas` profile, provide GPU-capable Docker runtime if `MESH_LATENTMAS_DEVICE=cuda`, or keep `MESH_STACK_ENABLE_LATENTMAS=0`.
 
 ## Relationship To Other Compose Files

@@ -10,6 +10,7 @@ DEPLOYMENT_NAME="${DEPLOYMENT_NAME:-semantic-search}"
 NAMESPACE="${NAMESPACE:-search}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-mesh-e2e}"
 ENVIRONMENT="${ENVIRONMENT:-local}"
+EXPECT_MESH_EVAL_TOKENIZER_PROBE="${MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE:-0}"
 
 export BASE_URL
 export GOAL_ID
@@ -20,6 +21,7 @@ export DEPLOYMENT_NAME
 export NAMESPACE
 export KUBE_CONTEXT
 export ENVIRONMENT
+export EXPECT_MESH_EVAL_TOKENIZER_PROBE
 
 python3 - <<'PY'
 import json
@@ -102,6 +104,14 @@ while True:
         grace = stage_grace_seconds if run.get("stage") in long_running_stages else progress_grace_seconds
         deadline = min(hard_deadline, max(deadline, now + grace))
     if run["stage"] in terminal_stages:
+        artifacts = run.get("artifacts") or {}
+        task_trace = artifacts.get("task_trace") or {}
+        mesh_eval = task_trace.get("mesh_eval") if isinstance(task_trace, dict) else {}
+        latent_mesh = mesh_eval.get("latent_mesh") if isinstance(mesh_eval, dict) else {}
+        tokenizer_probe = latent_mesh.get("tokenizer_probe") if isinstance(latent_mesh, dict) else {}
+        if os.environ.get("EXPECT_MESH_EVAL_TOKENIZER_PROBE", "0").lower() in {"1", "true", "yes"}:
+            if tokenizer_probe.get("status") != "ok":
+                raise SystemExit(f"mesh_eval tokenizer probe did not complete: {tokenizer_probe}")
         summary = {
             "run_id": run["run_id"],
             "scenario_key": run.get("scenario_key"),
@@ -110,6 +120,7 @@ while True:
             "decision_type": (run.get("artifacts") or {}).get("decision", {}).get("decision_type"),
             "execution_status": (run.get("artifacts") or {}).get("execution", {}).get("status"),
             "feedback_outcome": (run.get("artifacts") or {}).get("feedback", {}).get("outcome"),
+            "mesh_eval_tokenizer_probe": tokenizer_probe,
         }
         print(json.dumps(summary, indent=2))
         raise SystemExit(0)
