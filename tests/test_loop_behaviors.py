@@ -522,9 +522,9 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertEqual(result["execution"]["applied_action"]["system"], "kubernetes_service")
         self.assertEqual(result["execution"]["applied_action"]["action"], "rollback_deployment")
 
-    def test_kubernetes_probe_failure_alone_escalates(self) -> None:
+    def test_kubernetes_probe_failure_alone_defers_for_recheck(self) -> None:
         """Probe-failure-only signal (no crash, no OOM, no image-pull)
-        is the textbook SRE case for ``escalate``, not ``restart``.
+        is the textbook SRE case for bounded recheck, not ``restart``.
 
         Why: the kubelet has already been restarting the container
         (restarts > 0) in response to the failing probe. If kubelet's
@@ -538,7 +538,7 @@ class LoopBehaviorTests(unittest.TestCase):
         The previous policy routed this to ``restart_deployment`` —
         exactly the naive remediation SREs criticize as "buying time
         without fixing anything." The SRE-grade response is to
-        escalate so a human can investigate the actual cause.
+        defer briefly and re-check before paging a human.
         """
         signal = base_kubernetes_signal()
         signal["logs"] = []
@@ -562,8 +562,8 @@ class LoopBehaviorTests(unittest.TestCase):
 
         result = FirstSlicePipeline(config=config).run(signal)
 
-        self.assertEqual(result["decision"]["decision_type"], "escalate")
-        self.assertEqual(result["decision"]["execution_plan"]["system"], "incident_service")
+        self.assertEqual(result["decision"]["decision_type"], "defer_until")
+        self.assertEqual(result["decision"]["execution_plan"]["action"], "record_defer_until")
 
 
 if __name__ == "__main__":

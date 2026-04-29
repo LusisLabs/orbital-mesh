@@ -17,16 +17,14 @@ import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 from services.decision.service import DecisionService
-from services.ingest.bare_metal_node import BareMetalNodeTarget, RethNodeIngester, RpcError
+from services.ingest.bare_metal_node import BareMetalNodeTarget, RethNodeIngester
 from services.ingest.service import IngestService
 from services.signal_history import (
     SignalHistoryStore,
     SignalRecord,
-    Trend,
     derive_target_id,
 )
 from services.trigger.service import TriggerService

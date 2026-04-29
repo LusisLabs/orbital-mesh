@@ -36,6 +36,13 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def tearDown(self) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with self.server.coordinator._lock:
+                active_workers = list(self.server.coordinator._threads.values())
+            if not any(worker.is_alive() for worker in active_workers):
+                break
+            time.sleep(0.05)
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)

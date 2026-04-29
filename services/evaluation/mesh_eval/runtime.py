@@ -6,6 +6,7 @@ import json
 import logging
 import shlex
 import subprocess
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from shared.mesh_runtime import Decision, Trigger
@@ -125,6 +126,8 @@ def _probe_text(trigger: Trigger | dict[str, Any] | None, decision: Decision | d
 def _model_to_dict(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
+    if is_dataclass(value):
+        return asdict(value)
     if hasattr(value, "to_dict"):
         return value.to_dict()
     return {}

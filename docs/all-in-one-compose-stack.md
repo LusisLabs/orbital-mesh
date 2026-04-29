@@ -201,6 +201,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_CORPUS_DATABASE_PATH` | `/workspace/mesh-intel/.mesh-runtime-state/corpus/incident_corpus.sqlite` | SQLite incident corpus imported into live memory |
 | `MESH_CORPUS_MEMORY_PROJECTION_LIMIT` | `5000` | Maximum corpus rows projected on startup |
 | `MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between non-terminal vault bundle rewrites for the same run |
+| `MESH_READINESS_PROBE_TIMEOUT_SECONDS` | `15` | Per-integration CLI readiness timeout used by the Mesh API in the compose stack |
 | `MESH_EVAL_CONTEXT_TOKEN_BUDGET` | `2048` | Context token budget recorded and probed by native `mesh_eval` |
 | `MESH_EVAL_TOKENIZER_JSON` | empty | Optional Hugging Face `tokenizer.json` for the Rust tokenizer probe |
 | `MESH_EVAL_SENTENCEPIECE_MODEL` | empty | Optional SentencePiece `.model` for the Rust tokenizer probe |

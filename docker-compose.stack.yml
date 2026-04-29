@@ -333,6 +333,7 @@ services:
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
+      MESH_READINESS_PROBE_TIMEOUT_SECONDS: "${MESH_READINESS_PROBE_TIMEOUT_SECONDS:-15}"
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"
       MESH_HERMES_COMMAND: "${MESH_STACK_HERMES_EXEC_COMMAND:-docker exec -w /workspace/mesh-intel -e HERMES_HOME=/workspace/mesh-intel/.hermes-local mesh-intel-hermes-stack /opt/venv/bin/hermes}"
       MESH_HERMES_COMMAND_TIMEOUT_SECONDS: "${MESH_HERMES_COMMAND_TIMEOUT_SECONDS:-180}"

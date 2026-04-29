@@ -66,3 +66,11 @@ files = [
   "services/decision/hypothesis_engine.py",
 ]
 follow_imports = "skip"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+  "deepagents",
+  "fixtures",
+  "latent-mesh",
+]

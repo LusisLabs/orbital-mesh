@@ -65,6 +65,10 @@ class MeshControlPlaneServer(ThreadingHTTPServer):
         self.config = config
         self.coordinator = RunCoordinator(config)
 
+    def server_close(self) -> None:
+        self.coordinator.stop_background_workers()
+        super().server_close()
+
 
 class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     server: MeshControlPlaneServer

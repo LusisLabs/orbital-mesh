@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 from shared.mesh_runtime import Decision, Trigger
@@ -313,6 +313,8 @@ def _model_to_dict(value: Any) -> dict[str, Any] | None:
         return None
     if isinstance(value, dict):
         return value
+    if is_dataclass(value):
+        return asdict(value)
     if hasattr(value, "to_dict"):
         return value.to_dict()
     return None

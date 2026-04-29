@@ -251,8 +251,6 @@ def _hard_stops(
     readiness_passed: bool,
 ) -> list[str]:
     stops = []
-    if prior_blocking_reasons:
-        stops.append("existing evaluation blockers are present")
     if not schema_passed:
         stops.append("schema validation failed")
     if not policy_passed:

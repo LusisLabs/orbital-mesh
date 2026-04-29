@@ -320,6 +320,20 @@ class RunCoordinator:
         """Stop every registered watcher. Called during graceful shutdown."""
         self.watcher_registry.stop_all()
 
+    def stop_background_workers(self, timeout: float = 5.0) -> None:
+        """Stop coordinator-owned background loops and wait for active runs."""
+        self._deferred_stop.set()
+        self._deferred_thread.join(timeout=timeout)
+        deadline = time.monotonic() + max(timeout, 0)
+        while time.monotonic() < deadline:
+            with self._lock:
+                workers = list(self._threads.values())
+            live_workers = [worker for worker in workers if worker.is_alive()]
+            if not live_workers:
+                return
+            remaining = max(0.0, deadline - time.monotonic())
+            live_workers[0].join(timeout=min(0.1, remaining))
+
     def watch_status(self) -> dict[str, Any]:
         """Legacy-shape status for the single Kubernetes watcher, if present.
 
