@@ -211,13 +211,15 @@ def _run_latentmas_inference(model: Any, config: RuntimeConfig, question: str) -
     for role in roles:
         messages = _build_role_messages(role, question, config.latentmas_prompt_mode)
         prompt, input_ids, attention_mask, tokens = model.prepare_chat_input(messages, add_generation_prompt=True)
+        past_key_values, cache_reset = _fit_past_to_context_window(model, past_key_values, input_ids.shape[-1])
         if role != "judger":
-            past_key_values = model.generate_latent_batch(
-                input_ids,
-                attention_mask=attention_mask,
-                latent_steps=config.latentmas_latent_steps,
-                past_key_values=past_key_values,
-            )
+            if config.latentmas_latent_steps > 0:
+                past_key_values = model.generate_latent_batch(
+                    input_ids,
+                    attention_mask=attention_mask,
+                    latent_steps=config.latentmas_latent_steps,
+                    past_key_values=past_key_values,
+                )
             traces.append(
                 {
                     "name": role.title(),
@@ -225,6 +227,7 @@ def _run_latentmas_inference(model: Any, config: RuntimeConfig, question: str) -
                     "input": prompt,
                     "input_tokens": tokens,
                     "latent_steps": config.latentmas_latent_steps,
+                    "cache_reset": cache_reset,
                     "output": "",
                 }
             )
@@ -244,10 +247,43 @@ def _run_latentmas_inference(model: Any, config: RuntimeConfig, question: str) -
                 "role": role,
                 "input": prompt,
                 "input_tokens": tokens,
+                "cache_reset": cache_reset,
                 "output": final_text,
             }
         )
     return final_text, traces
+
+
+def _fit_past_to_context_window(model: Any, past_key_values: Any, input_length: int) -> tuple[Any, bool]:
+    if past_key_values is None:
+        return None, False
+    context_window = _model_context_window(model)
+    if context_window <= 0:
+        return past_key_values, False
+    past_length = _past_key_values_length(past_key_values)
+    if past_length + int(input_length) < context_window:
+        return past_key_values, False
+    return None, True
+
+
+def _model_context_window(model: Any) -> int:
+    hf_model = getattr(model, "model", None)
+    config = getattr(hf_model, "config", None)
+    for attr in ("max_position_embeddings", "n_positions", "max_sequence_length"):
+        value = getattr(config, attr, None)
+        if value:
+            return int(value)
+    return 0
+
+
+def _past_key_values_length(past_key_values: Any) -> int:
+    if hasattr(past_key_values, "get_seq_length"):
+        return int(past_key_values.get_seq_length())
+    if not past_key_values:
+        return 0
+    first_layer = past_key_values[0]
+    key = first_layer[0] if isinstance(first_layer, (tuple, list)) else first_layer
+    return int(key.shape[-2])
 
 
 def _latentmas_preflight(config: RuntimeConfig) -> dict[str, object]:

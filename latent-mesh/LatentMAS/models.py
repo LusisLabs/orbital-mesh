@@ -1,5 +1,6 @@
 import os
 import csv
+import inspect
 import torch
 from typing import Dict, List, Optional, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -29,6 +30,22 @@ def _past_length(past_key_values: Optional[Tuple]) -> int:
     first_layer = past_key_values[0]
     k = first_layer[0] if isinstance(first_layer, (tuple, list)) else first_layer
     return int(k.shape[-2])
+
+
+def _supports_cache_position(model: torch.nn.Module) -> bool:
+    try:
+        return "cache_position" in inspect.signature(model.forward).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _context_window(model: torch.nn.Module) -> int:
+    config = getattr(model, "config", None)
+    for attr in ("max_position_embeddings", "n_positions", "max_sequence_length"):
+        value = getattr(config, attr, None)
+        if value:
+            return int(value)
+    return 0
 
 
 class ModelWrapper:
@@ -114,6 +131,11 @@ class ModelWrapper:
         )
         input_ids = encoded["input_ids"].to(self.device)
         attention_mask = encoded["attention_mask"].to(self.device)
+        context_window = _context_window(self.model) if hasattr(self, "model") else 0
+        if context_window > 1 and input_ids.shape[-1] >= context_window:
+            keep_tokens = context_window - 1
+            input_ids = input_ids[:, -keep_tokens:]
+            attention_mask = attention_mask[:, -keep_tokens:]
         active_ids = input_ids[0][attention_mask[0].bool()].tolist()
         tokens = self.tokenizer.convert_ids_to_tokens(active_ids)
         return prompt_text, input_ids, attention_mask, tokens
@@ -134,6 +156,11 @@ class ModelWrapper:
         )
         input_ids = encoded["input_ids"].to(self.device)
         attention_mask = encoded["attention_mask"].to(self.device)
+        context_window = _context_window(self.model) if hasattr(self, "model") else 0
+        if context_window > 1 and input_ids.shape[-1] >= context_window:
+            keep_tokens = context_window - 1
+            input_ids = input_ids[:, -keep_tokens:]
+            attention_mask = attention_mask[:, -keep_tokens:]
         tokens_batch: List[List[str]] = []
         for ids_row, mask_row in zip(input_ids, attention_mask):
             active_ids = ids_row[mask_row.bool()].tolist()
@@ -248,19 +275,26 @@ class ModelWrapper:
                     device=attention_mask.device,
                 )
                 attention_mask = torch.cat([past_mask, attention_mask], dim=-1)
-        outputs = self.model.generate(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=True,
-            pad_token_id=self.tokenizer.pad_token_id,
-            return_dict_in_generate=True,
-            output_scores=False,
-            past_key_values=past_key_values,
-            cache_position=cache_position,
-        )
+        context_window = _context_window(self.model)
+        effective_max_new_tokens = max_new_tokens
+        if context_window > 1:
+            remaining_tokens = context_window - attention_mask.shape[-1]
+            effective_max_new_tokens = max(1, min(max_new_tokens, remaining_tokens))
+        generation_kwargs = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "max_new_tokens": effective_max_new_tokens,
+            "temperature": temperature,
+            "top_p": top_p,
+            "do_sample": True,
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "return_dict_in_generate": True,
+            "output_scores": False,
+            "past_key_values": past_key_values,
+        }
+        if cache_position is not None and _supports_cache_position(self.model):
+            generation_kwargs["cache_position"] = cache_position
+        outputs = self.model.generate(**generation_kwargs)
         sequences = outputs.sequences
         generations: List[str] = []
         for idx, length in enumerate(prompt_lengths):
@@ -321,6 +355,10 @@ class ModelWrapper:
         e_t_plus_1 = None
         latent_vecs_all: List[torch.Tensor] = []
         latent_vecs_all.append(e_t.detach().clone())
+
+        context_window = _context_window(self.model)
+        if context_window > 0:
+            latent_steps = min(latent_steps, max(0, context_window - _past_length(past)))
 
         for step in range(latent_steps):
 
@@ -391,6 +429,9 @@ class ModelWrapper:
         curr_output_embedding = [] 
         curr_output_embedding.append(outputs.hidden_states[0])  # input embedding
         
+        context_window = _context_window(self.HF_model)
+        if context_window > 0:
+            latent_steps = min(latent_steps, max(0, context_window - _past_length(past)))
         
         for _ in range(latent_steps):
 

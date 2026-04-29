@@ -13,7 +13,7 @@ from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
-from services.orchestrator.latentmas_server import MeshLatentMasRuntime
+from services.orchestrator.latentmas_server import MeshLatentMasRuntime, _fit_past_to_context_window
 from services.trigger.service import TriggerService
 from shared.mesh_runtime import FileStateStore, RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
 
@@ -263,6 +263,18 @@ class LatentMasAgentMeshTests(unittest.TestCase):
         self.assertEqual(runtime_config.latentmas_latent_steps, 0)
         self.assertEqual(runtime_config.latentmas_max_new_tokens, 0)
 
+    def test_latentmas_runtime_drops_cache_before_context_overflow(self) -> None:
+        model = _FakeLatentMasModel(context_window=1024)
+        past = _FakePastKeyValues(length=900)
+
+        kept, reset = _fit_past_to_context_window(model, past, 100)
+        self.assertIs(kept, past)
+        self.assertFalse(reset)
+
+        dropped, reset = _fit_past_to_context_window(model, past, 200)
+        self.assertIsNone(dropped)
+        self.assertTrue(reset)
+
     def test_readiness_reports_latentmas_health(self) -> None:
         unhealthy = build_readiness(self.config).to_dict()
         self.assertFalse(unhealthy["latentmas"]["ready"])
@@ -335,6 +347,19 @@ class _FakeLatentMasHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+
+class _FakeLatentMasModel:
+    def __init__(self, context_window: int):
+        self.model = type("Model", (), {"config": type("Config", (), {"max_position_embeddings": context_window})()})()
+
+
+class _FakePastKeyValues:
+    def __init__(self, length: int):
+        self.length = length
+
+    def get_seq_length(self) -> int:
+        return self.length
 
 
 def _start_fake_latentmas(
