@@ -26,6 +26,7 @@ packages = [
   "services.evidence",
   "services.decision",
   "services.evaluation",
+  "services.evaluation.mesh_eval",
   "services.orchestrator",
   "services.orchestrator.service_agents",
   "services.simulation",
@@ -55,3 +56,13 @@ ignore = ["E501", "E402", "W291", "W293", "W292", "E741"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "scripts/*" = ["F401"]
+
+[tool.mypy]
+python_version = "3.11"
+# Strict mypy is intentionally scoped to the hypothesis engine while the rest
+# of the Python runtime is being typed incrementally. The release validation
+# matrix documents this as a partial gate, not whole-repo proof.
+files = [
+  "services/decision/hypothesis_engine.py",
+]
+follow_imports = "skip"

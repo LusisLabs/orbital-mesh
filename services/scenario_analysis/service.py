@@ -64,8 +64,14 @@ class ScenarioAnalysisService:
             EdgeCaseAnalyzer(),
         ]
 
-    def analyze(self, trigger: Trigger, *, run_id: str | None = None) -> tuple[ScenarioAnalysis, Any | None]:
-        payload = self._build_input(trigger, run_id)
+    def analyze(
+        self,
+        trigger: Trigger,
+        *,
+        run_id: str | None = None,
+        reasoning_bank_packet: dict[str, Any] | None = None,
+    ) -> tuple[ScenarioAnalysis, Any | None]:
+        payload = self._build_input(trigger, run_id, reasoning_bank_packet=reasoning_bank_packet)
         evidence_nodes: list[EvidenceNode] = []
         subdecisions: list[Subdecision] = []
 
@@ -79,7 +85,11 @@ class ScenarioAnalysisService:
         synthesis = DecisionSynthesisService().synthesize(trigger, subdecisions, evidence_nodes)
         memory_record = None
         if self.active_memory is not None:
-            refreshed_packet = self._retrieve_memory_packet(trigger, run_id) or payload.memory_packet
+            refreshed_packet = (
+                payload.memory_packet
+                if reasoning_bank_packet is not None
+                else self._retrieve_memory_packet(trigger, run_id)
+            )
             memory_record = self.active_memory.project_packet(
                 run_id=run_id,
                 service=trigger.service,
@@ -101,11 +111,18 @@ class ScenarioAnalysisService:
             evidence_nodes=[item.to_dict() for item in evidence_nodes],
             merkle_root=None,
             merkle_event_ids=[],
+            quality_measurements=_quality_measurements(payload),
         )
         analysis.validate()
         return analysis, memory_record
 
-    def _build_input(self, trigger: Trigger, run_id: str | None) -> ScenarioAnalysisInput:
+    def _build_input(
+        self,
+        trigger: Trigger,
+        run_id: str | None,
+        *,
+        reasoning_bank_packet: dict[str, Any] | None = None,
+    ) -> ScenarioAnalysisInput:
         source_event_ids = _source_event_ids(self.state_store, run_id)
         service_context = self.context_store.get_service_context(trigger.service) if self.context_store else {}
         learning_context = (
@@ -118,7 +135,7 @@ class ScenarioAnalysisService:
             for action in sorted(_ACTIONABLE_RECOMMENDATIONS - {"escalate"}):
                 success_rates[action] = self.learning_store.get_historical_success_rate(action, trigger.service)
         recovery_patterns = self.learning_store.get_recovery_patterns(trigger.service) if self.learning_store else {}
-        memory_packet = self._retrieve_memory_packet(trigger, run_id)
+        memory_packet = dict(reasoning_bank_packet or {}) or self._retrieve_memory_packet(trigger, run_id)
         return ScenarioAnalysisInput(
             trigger=trigger,
             run_id=run_id,
@@ -542,6 +559,25 @@ def _source_event_ids(state_store: Any | None, run_id: str | None) -> list[str]:
     return [event.event_id for event in events if event.event_type in {"trigger_ready", "normalized_event"}]
 
 
+def _quality_measurements(payload: ScenarioAnalysisInput) -> dict[str, Any]:
+    memory_packet = payload.memory_packet
+    claims = memory_packet.get("claims", []) if isinstance(memory_packet, dict) else []
+    procedures = memory_packet.get("procedures", []) if isinstance(memory_packet, dict) else []
+    observations = memory_packet.get("observations", []) if isinstance(memory_packet, dict) else []
+    decision_impact = memory_packet.get("decision_impact", {}) if isinstance(memory_packet, dict) else {}
+    retrieval_improved = (
+        decision_impact.get("retrieval_improved_decision") is True if isinstance(decision_impact, dict) else False
+    )
+    if payload.trigger.related_context.get("retrieval_improved_decision") is True:
+        retrieval_improved = True
+    return {
+        "retrieval_claim_count": len(claims),
+        "retrieval_procedure_count": len(procedures),
+        "retrieval_observation_count": len(observations),
+        "retrieval_improved_decision": retrieval_improved,
+    }
+
+
 def _recent_runs(state_store: Any | None, service: str, run_id: str | None) -> list[dict[str, Any]]:
     if state_store is None:
         return []
@@ -656,10 +692,6 @@ def _ratio(baseline: float, observed: float) -> float:
     if baseline == 0:
         return 0.0 if observed == 0 else float("inf")
     return round(observed / baseline, 2)
-
-
-def _timestamp() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _timestamp() -> str:

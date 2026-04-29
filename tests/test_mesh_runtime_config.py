@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shared.mesh_runtime.config import DEFAULT_RESEARCH_DIRECTORY, DEFAULT_STATE_DIRECTORY, RuntimeConfig
+from shared.mesh_runtime.config import DEFAULT_CORPUS_DATABASE_PATH, DEFAULT_RESEARCH_DIRECTORY, DEFAULT_STATE_DIRECTORY, RuntimeConfig
 from shared.mesh_runtime.state import parse_state_json_file
 
 
@@ -47,6 +47,7 @@ class RuntimeConfigPathTests(unittest.TestCase):
         raw = str(Path("/tmp/mesh-state-direct").resolve())
         cfg = RuntimeConfig(state_directory=raw)
         self.assertEqual(cfg.research_directory, str(Path(raw) / "research"))
+        self.assertEqual(cfg.corpus_database_path, str(Path(raw) / "corpus" / "incident_corpus.sqlite"))
 
     def test_relative_research_directory_is_repo_anchored(self) -> None:
         with patch.dict(
@@ -57,6 +58,22 @@ class RuntimeConfigPathTests(unittest.TestCase):
             cfg = RuntimeConfig.from_env()
         self.assertTrue(Path(cfg.research_directory).is_absolute())
         self.assertEqual(Path(cfg.research_directory), DEFAULT_RESEARCH_DIRECTORY.resolve())
+
+    def test_corpus_memory_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_CORPUS_MEMORY_ENABLED": "1",
+                "MESH_CORPUS_DATABASE_PATH": ".mesh-runtime-state/corpus/incident_corpus.sqlite",
+                "MESH_CORPUS_MEMORY_PROJECTION_LIMIT": "123",
+            },
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(cfg.corpus_memory_enabled)
+        self.assertTrue(Path(cfg.corpus_database_path).is_absolute())
+        self.assertEqual(Path(cfg.corpus_database_path), DEFAULT_CORPUS_DATABASE_PATH.resolve())
+        self.assertEqual(cfg.corpus_memory_projection_limit, 123)
 
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

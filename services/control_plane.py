@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import threading
+import time
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -73,6 +74,8 @@ from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readi
 from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
+from shared.mesh_runtime.corpus_store import CorpusQuery, IncidentCorpusDatabase, project_database_to_memory
+from shared.mesh_runtime.reasoning_bank import ReasoningBankService
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -239,6 +242,12 @@ class RunCoordinator:
         self.override_store = OverrideLearningStore(self.config.state_directory)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        self.reasoning_bank = ReasoningBankService(
+            self.state_store,
+            max_strategies=self.config.reasoning_bank_max_strategies,
+            scaling_mode=self.config.reasoning_bank_scaling_mode,
+        )
+        self._project_corpus_memory_on_startup()
         self.infra_graph = InfraGraph(self.config.state_directory)
         self.trust_ladder = TrustLadder(
             self.config.state_directory,
@@ -465,9 +474,17 @@ class RunCoordinator:
         return report_to_prometheus(report)
 
     def build_readiness(self) -> dict[str, Any]:
-        # build_readiness() itself has a module-level TTL cache, so no wrapper
-        # state is needed here; this method exists for the HTTP surface.
-        return build_readiness(self.config).to_dict()
+        now = time.monotonic()
+        with self._readiness_lock:
+            if (
+                self._readiness_cache is not None
+                and now - self._readiness_cache[0] < self._readiness_ttl_seconds
+            ):
+                return self._readiness_cache[1]
+        readiness = build_readiness(self.config).to_dict()
+        with self._readiness_lock:
+            self._readiness_cache = (now, readiness)
+        return readiness
 
     # ---- webhook surface --------------------------------------------------
 
@@ -521,14 +538,30 @@ class RunCoordinator:
                     "flag_key": deployment["revision"],
                     "latency_delta_ms": sum(int(pod.get("restarts", 0)) for pod in payload["pods"]),
                 }
-            else:
-                observed = payload["request_telemetry"]["observed"]
-                baseline = payload["request_telemetry"]["baseline"]
+            elif payload.get("signal_type") == "reth_node":
+                execution = payload.get("execution", {})
+                summary = {
+                    "service": payload["service"],
+                    "endpoint": payload.get("endpoint", payload["service"]),
+                    "flag_key": payload.get("node", {}).get("name", payload["signal_id"]),
+                    "latency_delta_ms": int(execution.get("block_lag") or execution.get("peer_count") or 0),
+                }
+            elif "request_telemetry" in payload:
+                telemetry = payload["request_telemetry"]
+                observed = telemetry["observed"]
+                baseline = telemetry["baseline"]
                 summary = {
                     "service": payload["service"],
                     "endpoint": payload["endpoint"],
                     "flag_key": payload["feature_flag"]["flag_key"],
                     "latency_delta_ms": observed["p95_latency_ms"] - baseline["p95_latency_ms"],
+                }
+            else:
+                summary = {
+                    "service": payload.get("service", path.stem),
+                    "endpoint": payload.get("endpoint", payload.get("signal_type", "signal")),
+                    "flag_key": payload.get("signal_id", path.stem),
+                    "latency_delta_ms": 0,
                 }
             scenarios.append(
                 {
@@ -706,6 +739,24 @@ class RunCoordinator:
             if session is not None:
                 artifact = session.artifacts.get("memory_crystallization")
         return artifact if isinstance(artifact, dict) else None
+
+    def get_reasoning_bank(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        retrieval = session.artifacts.get("reasoning_bank_packet")
+        lessons = session.artifacts.get("reasoning_bank")
+        if lessons is None and session.stage == "completed" and self.config.reasoning_bank_enabled:
+            lessons = self._record_reasoning_bank_lessons(run_id)
+            session = self.state_store.get_run_session(run_id)
+            if session is not None:
+                lessons = session.artifacts.get("reasoning_bank", lessons)
+        return {
+            "enabled": self.config.reasoning_bank_enabled,
+            "run_id": run_id,
+            "retrieval": retrieval if isinstance(retrieval, dict) else None,
+            "lessons": lessons if isinstance(lessons, dict) else None,
+        }
 
     def list_agent_tasks(self, run_id: str) -> list[dict[str, Any]]:
         session = self.state_store.get_run_session(run_id)
@@ -970,9 +1021,24 @@ class RunCoordinator:
                 )
                 _LOG.exception("Evidence pack assembly failed for run %s", run_id)
 
+            reasoning_bank_artifact = self._record_reasoning_bank_retrieval(
+                run_id,
+                trigger,
+                evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+            )
+            reasoning_bank_packet = (
+                reasoning_bank_artifact.get("packet")
+                if isinstance(reasoning_bank_artifact, dict) and reasoning_bank_artifact.get("enabled")
+                else None
+            )
+
             scenario_analysis = None
             try:
-                scenario_analysis = self._record_scenario_analysis(run_id, trigger)
+                scenario_analysis = self._record_scenario_analysis(
+                    run_id,
+                    trigger,
+                    reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
+                )
             except Exception as exc:
                 self.state_store.append_run_event(
                     run_id,
@@ -1004,6 +1070,7 @@ class RunCoordinator:
                 trigger,
                 scenario_analysis=scenario_analysis,
                 evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+                reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
             )
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
             if self._maybe_launch_recovery_run(
@@ -1100,6 +1167,15 @@ class RunCoordinator:
                 artifact_key="feedback",
                 status=feedback.outcome,
             )
+            self._record_trajectory_artifacts(
+                run_id,
+                engine,
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+                execution=execution,
+                feedback=feedback,
+            )
             while True:
                 wait_feedback = self._wait_if_needed(
                     run_id,
@@ -1148,6 +1224,7 @@ class RunCoordinator:
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
             self._record_benchmark_if_simulation(run_id)
+            self._record_reasoning_bank_lessons(run_id)
         except Exception as exc:
             # The recovery path is itself fragile — if the state store is
             # broken (disk full, db locked) the failure-recording calls
@@ -1450,6 +1527,118 @@ class RunCoordinator:
         except Exception:
             _LOG.exception("Memory crystallization failed for run %s", run_id)
 
+    def _record_reasoning_bank_retrieval(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        *,
+        evidence_pack: dict[str, Any] | None = None,
+        scenario_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not self.config.reasoning_bank_enabled:
+            return self.reasoning_bank.disabled_artifact(reason="disabled")
+        try:
+            artifact = self.reasoning_bank.retrieve_for_trigger(
+                trigger,
+                run_id=run_id,
+                evidence_pack=evidence_pack,
+                scenario_analysis=scenario_analysis,
+            )
+            self._set_artifact(run_id, "reasoning_bank_packet", artifact)
+            self.state_store.append_run_event(
+                run_id,
+                stage="scenario_analysis_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=artifact,
+                summary={
+                    "strategies": len(artifact.get("strategies", [])),
+                    "enabled": artifact.get("enabled"),
+                },
+                artifact_key="reasoning_bank_packet",
+                integration_name="reasoning_bank",
+                status="recorded",
+            )
+            return artifact
+        except Exception:
+            _LOG.exception("ReasoningBank retrieval failed for run %s", run_id)
+            return self.reasoning_bank.disabled_artifact(reason="retrieval_failed")
+
+    def _record_reasoning_bank_lessons(self, run_id: str) -> dict[str, Any] | None:
+        if not self.config.reasoning_bank_enabled:
+            return None
+        session = self.state_store.get_run_session(run_id)
+        if session is not None and isinstance(session.artifacts.get("reasoning_bank"), dict):
+            return session.artifacts["reasoning_bank"]
+        try:
+            artifact = self.reasoning_bank.distill_run(run_id)
+            self._set_artifact(run_id, "reasoning_bank", artifact)
+            self.state_store.append_run_event(
+                run_id,
+                stage="completed",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=artifact,
+                summary={
+                    "lessons": len(artifact.get("lessons", [])),
+                    "enabled": artifact.get("enabled"),
+                },
+                artifact_key="reasoning_bank",
+                integration_name="reasoning_bank",
+                status="recorded",
+            )
+            return artifact
+        except Exception:
+            _LOG.exception("ReasoningBank distillation failed for run %s", run_id)
+            return None
+
+    def _project_corpus_memory_on_startup(self) -> None:
+        if not self.config.corpus_memory_enabled:
+            return
+        database_path = Path(self.config.corpus_database_path)
+        if not database_path.is_file():
+            _LOG.warning("Corpus memory projection skipped; database not found at %s", database_path)
+            self.state_store.put_artifact(
+                {
+                    "artifact_key": "corpus_memory_projection",
+                    "status": "skipped",
+                    "reason": "database_not_found",
+                    "database_path": str(database_path),
+                    "observed_at": _timestamp(),
+                }
+            )
+            return
+        try:
+            database = IncidentCorpusDatabase(database_path)
+            projections = project_database_to_memory(
+                database,
+                self.state_store,
+                query=CorpusQuery(limit=self.config.corpus_memory_projection_limit),
+            )
+            artifact = {
+                "artifact_key": "corpus_memory_projection",
+                "status": "recorded",
+                "database_path": str(database_path),
+                "projected_rows": len(projections),
+                "claim_count": sum(1 for item in projections if item.get("claim_id")),
+                "summary": database.summary(),
+                "observed_at": _timestamp(),
+            }
+            self.state_store.put_artifact(artifact)
+            _LOG.info(
+                "Projected %d incident-corpus rows into runtime memory from %s",
+                len(projections),
+                database_path,
+            )
+        except Exception:
+            _LOG.exception("Corpus memory projection failed from %s", database_path)
+            self.state_store.put_artifact(
+                {
+                    "artifact_key": "corpus_memory_projection",
+                    "status": "failed",
+                    "database_path": str(database_path),
+                    "observed_at": _timestamp(),
+                }
+            )
+
     def _record_evidence_pack(
         self,
         run_id: str,
@@ -1512,9 +1701,19 @@ class RunCoordinator:
         )
         return pack
 
-    def _record_scenario_analysis(self, run_id: str, trigger: Trigger):
+    def _record_scenario_analysis(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        *,
+        reasoning_bank_packet: dict[str, Any] | None = None,
+    ):
         self._update_session(run_id, stage="scenario_analysis_ready", status="running")
-        analysis, memory_compaction = self.scenario_analysis.analyze(trigger, run_id=run_id)
+        analysis, memory_compaction = self.scenario_analysis.analyze(
+            trigger,
+            run_id=run_id,
+            reasoning_bank_packet=reasoning_bank_packet,
+        )
         merkle_event_ids: list[str] = []
         for evidence in analysis.evidence_nodes:
             event = self.state_store.append_run_event(
@@ -1604,6 +1803,7 @@ class RunCoordinator:
             trigger,
             decision,
             allow_rereevaluation=allow_rereevaluation,
+            run_id=run_id,
         )
         self._set_artifact(run_id, "evaluation", evaluation.to_dict())
         self._update_session(run_id, stage="evaluation_ready", status="running")
@@ -1620,19 +1820,7 @@ class RunCoordinator:
             integration_name=engine.config.evaluation_mode if engine.config.evaluation_mode != "native" else None,
             status=evaluation.final_recommendation,
         )
-        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts")
-        if promptfoo_artifact:
-            self._set_artifact(run_id, "promptfoo_artifact", promptfoo_artifact)
-            self.state_store.append_run_event(
-                run_id,
-                stage="evaluation_ready",
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=promptfoo_artifact,
-                summary={"passed": evaluation.stage_results["promptfoo_quality"]["passed"]},
-                artifact_key="promptfoo_artifact",
-                integration_name="promptfoo",
-                status="recorded",
-            )
+        self._record_trajectory_artifacts(run_id, engine, trigger=trigger, decision=decision, evaluation=evaluation)
         session = self.state_store.get_run_session(run_id)
         service_agent = session.artifacts.get("service_agent") if session is not None else None
         tasks = self.agent_mesh.build_tasks(
@@ -1680,8 +1868,44 @@ class RunCoordinator:
                 artifact_key="reconciliation",
                 integration_name="agent_mesh",
                 status="recorded",
-            )
+        )
         return evaluation
+
+    def _record_trajectory_artifacts(
+        self,
+        run_id: str,
+        engine: MeshRuntimeEngine,
+        *,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+        execution: ExecutionRecord | None = None,
+        feedback: Any | None = None,
+    ) -> None:
+        session = self.state_store.get_run_session(run_id)
+        artifacts = dict(session.artifacts) if session is not None and isinstance(session.artifacts, dict) else {}
+        trace_bundle = engine.evaluation.evaluate_trace(
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation.to_dict(),
+            execution=execution.to_dict() if execution is not None else artifacts.get("execution"),
+            feedback=feedback.to_dict() if hasattr(feedback, "to_dict") else artifacts.get("feedback"),
+            run_events=self.state_store.list_run_events(run_id),
+            artifacts=artifacts,
+        )
+        for artifact_key in ("task_trace", "trajectory_score", "verifier_output", "phoenix_spans"):
+            payload = trace_bundle[artifact_key]
+            self._set_artifact(run_id, artifact_key, payload)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready" if execution is None and feedback is None else "feedback_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=payload,
+                summary=_trajectory_artifact_summary(artifact_key, payload),
+                artifact_key=artifact_key,
+                integration_name="mesh_trajectory",
+                status="recorded",
+            )
 
     def _maybe_launch_recovery_run(
         self,
@@ -1843,7 +2067,7 @@ class RunCoordinator:
                     "similar_incident_count",
                     "related_run_count",
                     "scenario_evidence_count",
-                    "promptfoo_failure_count",
+                    "trajectory_failure_count",
                 )
             },
         }
@@ -1880,14 +2104,15 @@ class RunCoordinator:
             )
             if len(related_runs) >= 5:
                 break
-        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts", {})
-        assertion_results = promptfoo_artifact.get("assertion_results", []) if isinstance(promptfoo_artifact, dict) else []
-        failing_assertions = [
+        trajectory_quality = evaluation.stage_results.get("trajectory_quality", {})
+        trajectory_artifacts = trajectory_quality.get("artifacts", {}) if isinstance(trajectory_quality, dict) else {}
+        scorers = trajectory_artifacts.get("scorers", []) if isinstance(trajectory_artifacts, dict) else []
+        failing_scorers = [
             {
                 "name": item.get("name"),
-                "reason": item.get("reason"),
+                "reason": item.get("note"),
             }
-            for item in assertion_results
+            for item in scorers
             if isinstance(item, dict) and not item.get("passed", False)
         ]
         scenario_analysis = session.artifacts.get("scenario_analysis", {}) if isinstance(session.artifacts, dict) else {}
@@ -1902,7 +2127,7 @@ class RunCoordinator:
                 len(similar_incidents),
                 len(related_runs),
                 len(scenario_evidence_refs),
-                len(failing_assertions),
+                len(failing_scorers),
             )
             if count > 0
         )
@@ -1912,12 +2137,12 @@ class RunCoordinator:
             "similar_incident_count": len(similar_incidents),
             "related_run_count": len(related_runs),
             "scenario_evidence_count": len(scenario_evidence_refs),
-            "promptfoo_failure_count": len(failing_assertions),
+            "trajectory_failure_count": len(failing_scorers),
             "service_context": service_context,
             "learning_context": learning_context,
             "similar_incidents": similar_incidents,
             "related_runs": related_runs,
-            "failing_promptfoo_assertions": failing_assertions,
+            "failing_trajectory_scorers": failing_scorers,
             "hermes_summary": hermes_explanation.get("assistant_reply"),
         }
 
@@ -2530,3 +2755,18 @@ def _signal_source_for_routing(trigger: Trigger) -> str:
     if "flag" in trigger.trigger_type:
         return "feature_flag"
     return str(context.get("signal_source") or context.get("source") or "default")
+
+
+def _trajectory_artifact_summary(artifact_key: str, payload: Any) -> dict[str, Any]:
+    if artifact_key == "phoenix_spans":
+        return {"span_count": len(payload) if isinstance(payload, list) else 0}
+    if not isinstance(payload, dict):
+        return {"artifact_key": artifact_key}
+    if artifact_key == "trajectory_score":
+        return {"score": payload.get("score"), "passed": payload.get("passed")}
+    if artifact_key == "verifier_output":
+        return {"passed": payload.get("passed"), "facts": payload.get("facts")}
+    if artifact_key == "task_trace":
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        return {"trace_version": payload.get("trace_version"), "trigger_type": task.get("trigger_type")}
+    return {"artifact_key": artifact_key}

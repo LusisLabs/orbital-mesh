@@ -308,6 +308,82 @@ class ProbeHandlerRevertTests(unittest.TestCase):
         self.assertEqual(normalized, template)
 
 
+class ReadinessFailureObservationTests(unittest.TestCase):
+    def test_readiness_failure_accepts_degraded_updated_rollout(self) -> None:
+        """The compose stack uses rolling Deployments.
+
+        Old pods may stay ready while the bad new ReplicaSet is blocked
+        by the injected readiness probe, so the harness must key on
+        unavailable updated replicas rather than requiring total
+        readyReplicas to hit zero.
+        """
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "status": {
+                "readyReplicas": 3,
+                "updatedReplicas": 1,
+                "unavailableReplicas": 1,
+            }
+        }
+
+        observed_at = injector._wait_for_readiness_degraded("semantic-search", "search", timeout_seconds=1)
+        self.assertIsInstance(observed_at, float)
+
+    def test_scale_to_zero_still_waits_for_zero_ready(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 0},
+            "status": {"readyReplicas": 0},
+        }
+
+        observed_at = injector._wait_for_zero_ready("semantic-search", "search", timeout_seconds=1)
+        self.assertIsInstance(observed_at, float)
+
+    def test_pod_kill_all_waits_for_transient_zero_ready_not_zero_desired(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 3},
+            "status": {"readyReplicas": 0},
+        }
+
+        observed_at = injector._wait_for_ready_replicas_below(
+            "semantic-search",
+            "search",
+            ready_replicas=1,
+            timeout_seconds=1,
+        )
+        self.assertIsInstance(observed_at, float)
+
+    def test_pod_reason_accepts_last_terminated_oom_reason(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._list_pods = lambda *args: [  # type: ignore[method-assign]
+            {
+                "containerStatuses": [
+                    {
+                        "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                        "lastState": {"terminated": {"reason": "OOMKilled"}},
+                    }
+                ]
+            }
+        ]
+
+        observed_at = injector._wait_for_pod_reason(
+            "semantic-search",
+            "search",
+            reasons=("OOMKilled",),
+            timeout_seconds=1,
+        )
+        self.assertIsInstance(observed_at, float)
+
+
 # --------------------------------------------------------- Bug 10: baseline-failure fast-trip
 
 

@@ -19,7 +19,7 @@ never overrides a concrete rule result — guardrails intact.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 if TYPE_CHECKING:
     from shared.mesh_runtime import Trigger
@@ -205,12 +205,12 @@ def _reth_peer_starvation_templates() -> list[Hypothesis]:
     return [
         Hypothesis(
             hypothesis_id="h_reth_peer_local_isolation",
-            description="Zero peers but RPC reachable; node is up, the network is the problem",
+            description="Peers below floor but RPC reachable; node is up, the network is the problem",
             candidate_cause="local_isolation",
             recommended_action="restart_systemd_service",
             prior_confidence=0.55,
             predicates=[
-                FalsificationPredicate(kind="peer_count_zero", arguments={}),
+                FalsificationPredicate(kind="peer_count_below_min", arguments={}),
                 FalsificationPredicate(kind="rpc_http_reachable", arguments={}),
                 # Local isolation only makes sense when the consensus
                 # client can still reach us. If engine_api is gone, the
@@ -327,6 +327,7 @@ _TEMPLATES_BY_SIGNATURE: dict[str, Callable[[], list[Hypothesis]]] = {
 # doesn't pay a frozenset construction cost per call.
 _RETH_PREDICATE_KINDS: frozenset[str] = frozenset({
     "peer_count_zero",
+    "peer_count_below_min",
     "peer_count_above",
     "rpc_http_reachable",
     "engine_api_reachable",
@@ -578,17 +579,18 @@ class HypothesisEngine:
         # The pack here is what EvidenceService.assemble emits, which
         # wraps the actual reth_node payload under ``pack``. Tests may
         # pass the bare payload — accept both.
-        node_pack = None
+        raw_pack: Any = None
         if isinstance(evidence_pack, dict):
-            node_pack = evidence_pack.get("pack") if "pack" in evidence_pack else evidence_pack
+            raw_pack = evidence_pack.get("pack") if "pack" in evidence_pack else evidence_pack
 
-        if not isinstance(node_pack, dict):
+        if not isinstance(raw_pack, dict):
             return "unknown", None
 
-        execution = node_pack.get("execution") if isinstance(node_pack.get("execution"), dict) else {}
-        consensus = node_pack.get("consensus") if isinstance(node_pack.get("consensus"), dict) else {}
-        storage = node_pack.get("storage") if isinstance(node_pack.get("storage"), dict) else {}
-        rpc = node_pack.get("rpc") if isinstance(node_pack.get("rpc"), dict) else {}
+        node_pack = cast(dict[str, Any], raw_pack)
+        execution = cast(dict[str, Any], node_pack.get("execution")) if isinstance(node_pack.get("execution"), dict) else {}
+        consensus = cast(dict[str, Any], node_pack.get("consensus")) if isinstance(node_pack.get("consensus"), dict) else {}
+        storage = cast(dict[str, Any], node_pack.get("storage")) if isinstance(node_pack.get("storage"), dict) else {}
+        rpc = cast(dict[str, Any], node_pack.get("rpc")) if isinstance(node_pack.get("rpc"), dict) else {}
 
         if kind == "peer_count_zero":
             peer_count = execution.get("peer_count")
@@ -598,14 +600,23 @@ class HypothesisEngine:
                 return "supported", "execution.peer_count=0"
             return "disconfirmed", f"execution.peer_count={peer_count}"
 
+        if kind == "peer_count_below_min":
+            peer_count = execution.get("peer_count")
+            min_peer_count = execution.get("min_peer_count")
+            if peer_count is None or min_peer_count is None:
+                return "unknown", None
+            if int(peer_count) < int(min_peer_count):
+                return "supported", f"execution.peer_count={peer_count} < execution.min_peer_count={min_peer_count}"
+            return "disconfirmed", f"execution.peer_count={peer_count} >= execution.min_peer_count={min_peer_count}"
+
         if kind == "peer_count_above":
             peer_count = execution.get("peer_count")
-            threshold = int(args.get("threshold", 0))
+            peer_threshold = int(args.get("threshold", 0))
             if peer_count is None:
                 return "unknown", None
-            if int(peer_count) > threshold:
-                return "supported", f"execution.peer_count={peer_count} > {threshold}"
-            return "disconfirmed", f"execution.peer_count={peer_count} <= {threshold}"
+            if int(peer_count) > peer_threshold:
+                return "supported", f"execution.peer_count={peer_count} > {peer_threshold}"
+            return "disconfirmed", f"execution.peer_count={peer_count} <= {peer_threshold}"
 
         if kind == "rpc_http_reachable":
             reachable = rpc.get("http_reachable")
@@ -633,22 +644,22 @@ class HypothesisEngine:
 
         if kind == "disk_used_pct_above":
             used = storage.get("disk_used_pct")
-            threshold = float(args.get("threshold", 88.0))
+            disk_threshold = float(args.get("threshold", 88.0))
             if used is None:
                 return "unknown", None
             return (
-                ("supported" if float(used) > threshold else "disconfirmed"),
-                f"storage.disk_used_pct={used} threshold={threshold}",
+                ("supported" if float(used) > disk_threshold else "disconfirmed"),
+                f"storage.disk_used_pct={used} threshold={disk_threshold}",
             )
 
         if kind == "block_lag_below":
             block_lag = execution.get("block_lag")
-            threshold = int(args.get("threshold", 64))
+            lag_threshold = int(args.get("threshold", 64))
             if block_lag is None:
                 return "unknown", None
             return (
-                ("supported" if int(block_lag) < threshold else "disconfirmed"),
-                f"execution.block_lag={block_lag} threshold={threshold}",
+                ("supported" if int(block_lag) < lag_threshold else "disconfirmed"),
+                f"execution.block_lag={block_lag} threshold={lag_threshold}",
             )
 
         if kind == "rpc_publicly_exposed":
@@ -665,12 +676,12 @@ class HypothesisEngine:
 
         if kind == "rpc_error_rate_above":
             rate = rpc.get("error_rate")
-            threshold = float(args.get("threshold", 0.05))
+            rate_threshold = float(args.get("threshold", 0.05))
             if rate is None:
                 return "unknown", None
             return (
-                ("supported" if float(rate) > threshold else "disconfirmed"),
-                f"rpc.error_rate={rate} threshold={threshold}",
+                ("supported" if float(rate) > rate_threshold else "disconfirmed"),
+                f"rpc.error_rate={rate} threshold={rate_threshold}",
             )
 
         return "unknown", None

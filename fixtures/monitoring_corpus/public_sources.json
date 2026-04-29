@@ -1,0 +1,371 @@
+{
+  "policy": "public datasets are offline fixtures for parser, anomaly, and regression evaluation only",
+  "schema_version": "mesh.public_monitoring_sources.v1",
+  "sources": [
+    {
+      "domains": [
+        "web2",
+        "infrastructure"
+      ],
+      "environments": [
+        "benchmark"
+      ],
+      "labels": [
+        "some_labeled",
+        "system_logs",
+        "log_parsing"
+      ],
+      "limitation": "Broad system-log coverage, but not crypto-node specific and not private production telemetry.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation"
+      ],
+      "name": "Loghub",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "logs"
+      ],
+      "url": "https://github.com/logpai/loghub"
+    },
+    {
+      "domains": [
+        "web2",
+        "infrastructure"
+      ],
+      "environments": [
+        "benchmark"
+      ],
+      "labels": [
+        "failure_windows",
+        "business_metrics",
+        "platform_metrics",
+        "call_traces"
+      ],
+      "limitation": "Useful multimodal failure benchmark; license and domain differ from node-operator production data.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation",
+        "root_cause"
+      ],
+      "name": "AIOps Challenge 2020",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "metrics",
+        "traces",
+        "events"
+      ],
+      "url": "https://github.com/NetManAIOps/AIOps-Challenge-2020-Data"
+    },
+    {
+      "domains": [
+        "web2"
+      ],
+      "environments": [
+        "benchmark"
+      ],
+      "labels": [
+        "microservices",
+        "prometheus",
+        "jaeger",
+        "version_faults"
+      ],
+      "limitation": "Excellent service-fault shape, but synthetic benchmark traffic.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation",
+        "root_cause"
+      ],
+      "name": "Train Ticket anomaly datasets",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "url": "https://zenodo.org/records/6979726"
+    },
+    {
+      "domains": [
+        "web2"
+      ],
+      "environments": [
+        "benchmark"
+      ],
+      "labels": [
+        "root_cause_localization",
+        "social_network",
+        "train_ticket"
+      ],
+      "limitation": "Good multimodal RCA data; still benchmark-scoped rather than internal fleet behavior.",
+      "mesh_use": [
+        "evaluation",
+        "root_cause"
+      ],
+      "name": "Eadro microservice datasets",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "url": "https://zenodo.org/records/7615394"
+    },
+    {
+      "domains": [
+        "web2"
+      ],
+      "environments": [
+        "benchmark"
+      ],
+      "labels": [
+        "microservices",
+        "api_anomaly",
+        "logs",
+        "metrics",
+        "large_dataset"
+      ],
+      "limitation": "Recent open microservice anomaly dataset, but full data volume is hundreds of GB and not trace-complete.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation",
+        "root_cause"
+      ],
+      "name": "LO2v2 microservice logs and metrics",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "events"
+      ],
+      "url": "https://zenodo.org/records/18937117"
+    },
+    {
+      "domains": [
+        "web2",
+        "infrastructure"
+      ],
+      "environments": [
+        "development",
+        "benchmark"
+      ],
+      "labels": [
+        "opentelemetry",
+        "otlp",
+        "microservices",
+        "synthetic_load",
+        "feature_flags",
+        "collector"
+      ],
+      "limitation": "Generates realistic OpenTelemetry signals, but it is a demo workload rather than production incident data.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation",
+        "root_cause"
+      ],
+      "name": "OpenTelemetry Astronomy Shop demo",
+      "source_kind": "public_tooling",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "traces",
+        "events"
+      ],
+      "url": "https://github.com/open-telemetry/opentelemetry-demo"
+    },
+    {
+      "domains": [
+        "web2",
+        "infrastructure"
+      ],
+      "environments": [
+        "development",
+        "benchmark"
+      ],
+      "labels": [
+        "opentelemetry",
+        "otlp",
+        "telemetry_generator",
+        "collector_pipeline",
+        "load_testing"
+      ],
+      "limitation": "Synthetic signal generator for OTLP pipeline tests, not a labeled incident dataset.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation"
+      ],
+      "name": "OpenTelemetry telemetrygen",
+      "source_kind": "public_tooling",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "traces",
+        "events"
+      ],
+      "url": "https://github.com/open-telemetry/opentelemetry-collector-contrib"
+    },
+    {
+      "domains": [
+        "infrastructure"
+      ],
+      "environments": [
+        "production",
+        "benchmark"
+      ],
+      "labels": [
+        "production_cluster",
+        "workload_traces",
+        "resource_management"
+      ],
+      "limitation": "Production-scale infrastructure traces, not application logs or blockchain node semantics.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation"
+      ],
+      "name": "Google Borg cluster traces",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "events",
+        "metrics"
+      ],
+      "url": "https://github.com/google/cluster-data"
+    },
+    {
+      "domains": [
+        "infrastructure",
+        "web2"
+      ],
+      "environments": [
+        "production",
+        "benchmark"
+      ],
+      "labels": [
+        "production_cluster",
+        "microservices",
+        "gpu",
+        "resource_management"
+      ],
+      "limitation": "Large production traces; telemetry schema is cluster-management oriented.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation"
+      ],
+      "name": "Alibaba Cluster Trace Program",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "events",
+        "metrics",
+        "traces"
+      ],
+      "url": "https://github.com/alibaba/clusterdata"
+    },
+    {
+      "domains": [
+        "web2"
+      ],
+      "environments": [
+        "development",
+        "benchmark"
+      ],
+      "labels": [
+        "microservices",
+        "benchmark_harness",
+        "cloud_edge"
+      ],
+      "limitation": "Benchmark harness, not a standing dataset unless Mesh records generated runs.",
+      "mesh_use": [
+        "bootstrap",
+        "evaluation"
+      ],
+      "name": "DeathStarBench",
+      "source_kind": "public_tooling",
+      "telemetry_planes": [
+        "logs",
+        "metrics",
+        "traces"
+      ],
+      "url": "https://github.com/delimitrou/DeathStarBench"
+    },
+    {
+      "domains": [
+        "crypto"
+      ],
+      "environments": [
+        "production",
+        "development"
+      ],
+      "labels": [
+        "blocks",
+        "transactions",
+        "logs",
+        "traces",
+        "chain_reorgs"
+      ],
+      "limitation": "On-chain truth and event data, not runtime logs from execution or consensus clients.",
+      "mesh_use": [
+        "bootstrap",
+        "live_baseline"
+      ],
+      "name": "Ethereum ETL and public BigQuery exports",
+      "source_kind": "public_tooling",
+      "telemetry_planes": [
+        "events",
+        "graphs"
+      ],
+      "url": "https://ethereum-etl.readthedocs.io/"
+    },
+    {
+      "domains": [
+        "crypto"
+      ],
+      "environments": [
+        "production",
+        "benchmark"
+      ],
+      "labels": [
+        "licit_illicit",
+        "transaction_graph",
+        "temporal_graph"
+      ],
+      "limitation": "Fraud graph benchmark; useful for graph anomaly patterns, not node health monitoring.",
+      "mesh_use": [
+        "evaluation"
+      ],
+      "name": "Elliptic Bitcoin dataset",
+      "source_kind": "public_dataset",
+      "telemetry_planes": [
+        "graphs",
+        "events"
+      ],
+      "url": "https://www.kaggle.com/datasets/ellipticco/elliptic-data-set/data"
+    },
+    {
+      "domains": [
+        "crypto"
+      ],
+      "environments": [
+        "production",
+        "testnet"
+      ],
+      "labels": [
+        "validator_performance",
+        "beacon_api",
+        "prometheus",
+        "grafana"
+      ],
+      "limitation": "Operational guidance and metric vocabulary, not downloadable anomaly-labeled logs.",
+      "mesh_use": [
+        "bootstrap",
+        "live_baseline",
+        "root_cause"
+      ],
+      "name": "Ethereum/Gnosis validator monitoring references",
+      "source_kind": "public_tooling",
+      "telemetry_planes": [
+        "metrics",
+        "events",
+        "runbooks"
+      ],
+      "url": "https://docs.ethstaker.org/scaled-node-operators/monitoring-at-scale/"
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import os
+import time
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
@@ -21,6 +23,7 @@ from .vault import VaultManager
 
 
 _EVENT_CACHE_SIZE = 512
+_TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator"}
 
 
 class FileStateStore:
@@ -50,6 +53,10 @@ class FileStateStore:
         # and warmed on first read.
         self._event_tail_cache: dict[str, Deque[RunEvent]] = {}
         self._event_cache_lock = threading.Lock()
+        self._last_vault_materialized_at: dict[str, float] = {}
+        self._vault_materialize_min_interval_seconds = float(
+            os.getenv("MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS", "30")
+        )
 
     def ensure_default_goal(self) -> GoalRecord:
         goals = self.list_goals()
@@ -160,7 +167,7 @@ class FileStateStore:
             else:
                 records.insert(0, session_dict)
             records.sort(key=lambda record: record.get("created_at", ""), reverse=True)
-        self._materialize_vault(session.run_id)
+        self._materialize_vault(session.run_id, force=session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES)
         return session
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
@@ -469,7 +476,15 @@ class FileStateStore:
     def read_document(self, relative_path: str) -> dict[str, str]:
         return self.vault.read_document(relative_path)
 
-    def _materialize_vault(self, run_id: str) -> None:
+    def _materialize_vault(self, run_id: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        last_materialized = self._last_vault_materialized_at.get(run_id)
+        if (
+            not force
+            and last_materialized is not None
+            and now - last_materialized < self._vault_materialize_min_interval_seconds
+        ):
+            return
         session = self.get_run_session(run_id)
         if session is None:
             return
@@ -482,6 +497,7 @@ class FileStateStore:
         events = self.list_run_events(run_id)
         merkle = build_merkle_snapshot(run_id, events)
         self.vault.write_run_bundle(session, events, merkle, goal)
+        self._last_vault_materialized_at[run_id] = now
 
     def _load_learning_outcomes(self) -> list[dict[str, Any]]:
         learning_path = self.state_directory / "learning" / "outcomes.json"

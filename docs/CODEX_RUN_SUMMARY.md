@@ -1,5 +1,11 @@
 # CODEX Run Summary
 
+This file is a chronological run log. Older entries preserve the state that
+existed when they were written, including scaffold-era mock and placeholder
+language. Current integration boundaries, fallback classification, and release
+validation status live in [`docs/integrations.md`](./integrations.md) and
+[`docs/production-readiness-validation.md`](./production-readiness-validation.md).
+
 ## Run: 2026-04-06 00:00 (local)
 
 ### Scope

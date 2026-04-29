@@ -34,7 +34,10 @@
       "required": [
         "schema_validation",
         "policy_validation",
-        "promptfoo_quality",
+        "contract_checks",
+        "trajectory_quality",
+        "behavioral_scores",
+        "verifier",
         "business_rules",
         "execution_readiness"
       ],
@@ -45,13 +48,25 @@
         "policy_validation": {
           "type": "object"
         },
-        "promptfoo_quality": {
+        "contract_checks": {
+          "type": "object"
+        },
+        "trajectory_quality": {
+          "type": "object"
+        },
+        "behavioral_scores": {
+          "type": "object"
+        },
+        "verifier": {
           "type": "object"
         },
         "business_rules": {
           "type": "object"
         },
         "execution_readiness": {
+          "type": "object"
+        },
+        "remediation_safety": {
           "type": "object"
         },
         "blocker_analysis": {

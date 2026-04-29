@@ -254,7 +254,7 @@ class ChaosInjector:
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected readiness_failure into %s/%s", namespace, deployment)
 
-        observed_at = self._wait_for_zero_ready(deployment, namespace, timeout_seconds=60)
+        observed_at = self._wait_for_readiness_degraded(deployment, namespace, timeout_seconds=90)
         return InjectionResult(
             deployment=deployment,
             namespace=namespace,
@@ -327,7 +327,12 @@ class ChaosInjector:
                     "delete", "pod", name, "-n", namespace, "--grace-period=0", "--force",
                 )
         _LOG.info("injected pod_kill_all on %s/%s (n=%d)", namespace, deployment, len(pods))
-        observed_at = self._wait_for_zero_ready(deployment, namespace, timeout_seconds=30)
+        observed_at = self._wait_for_ready_replicas_below(
+            deployment,
+            namespace,
+            ready_replicas=1,
+            timeout_seconds=45,
+        )
         return InjectionResult(
             deployment=deployment,
             namespace=namespace,
@@ -358,12 +363,15 @@ class ChaosInjector:
                         "containers": [
                             {
                                 "name": deployment,
+                                "command": ["sh", "-c"],
+                                "args": [
+                                    "set -e; dd if=/dev/zero of=/dev/shm/mesh-oom bs=1M count=64; sleep 3600"
+                                ],
                                 "resources": {
-                                    # Absurdly low cap forces OOM on first allocation.
-                                    # Requests stays reasonable so the scheduler still
-                                    # places the pod; only limit is degenerate.
-                                    "requests": {"memory": "1Mi", "cpu": "10m"},
-                                    "limits": {"memory": "2Mi", "cpu": "50m"},
+                                    # Keep the request schedulable, then force the
+                                    # container over its limit with the tmpfs write.
+                                    "requests": {"memory": "8Mi", "cpu": "10m"},
+                                    "limits": {"memory": "8Mi", "cpu": "50m"},
                                 },
                             }
                         ]
@@ -380,7 +388,7 @@ class ChaosInjector:
         observed_at = self._wait_for_pod_reason(
             deployment, namespace,
             reasons=("CrashLoopBackOff", "OOMKilled"),
-            timeout_seconds=60,
+            timeout_seconds=120,
         )
         return InjectionResult(
             deployment=deployment,
@@ -584,7 +592,13 @@ class ChaosInjector:
             for pod in pods:
                 for container_status in pod.get("containerStatuses", []):
                     waiting = container_status.get("state", {}).get("waiting") or {}
+                    terminated = container_status.get("state", {}).get("terminated") or {}
+                    last_terminated = container_status.get("lastState", {}).get("terminated") or {}
                     if waiting.get("reason") in reasons:
+                        return time.monotonic()
+                    if terminated.get("reason") in reasons:
+                        return time.monotonic()
+                    if last_terminated.get("reason") in reasons:
                         return time.monotonic()
             time.sleep(1.0)
         raise ChaosError(
@@ -592,19 +606,73 @@ class ChaosInjector:
             f"within {timeout_seconds}s"
         )
 
-    def _wait_for_zero_ready(self, deployment: str, namespace: str, timeout_seconds: int) -> float:
-        """Block until the deployment's ready replica count hits zero."""
+    def _wait_for_ready_replicas_below(
+        self,
+        deployment: str,
+        namespace: str,
+        ready_replicas: int,
+        timeout_seconds: int,
+    ) -> float:
+        """Block until a transient pod disruption removes ready replicas."""
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             raw = self._kubectl_json(
                 "get", "deployment", deployment, "-n", namespace, "-o", "json",
             )
             status = raw.get("status") or {}
-            if int(status.get("readyReplicas", 0) or 0) == 0:
+            ready = int(status.get("readyReplicas", 0) or 0)
+            if ready < ready_replicas:
                 return time.monotonic()
             time.sleep(1.0)
         raise ChaosError(
-            f"deployment {namespace}/{deployment} still had ready replicas after {timeout_seconds}s"
+            f"deployment {namespace}/{deployment} did not drop below "
+            f"{ready_replicas} ready replicas within {timeout_seconds}s"
+        )
+
+    def _wait_for_readiness_degraded(self, deployment: str, namespace: str, timeout_seconds: int) -> float:
+        """Block until the bad readiness probe creates a degraded rollout.
+
+        A rolling Deployment can keep old replicas ready while the new
+        ReplicaSet is blocked by the injected probe. Requiring
+        ``readyReplicas == 0`` makes the harness depend on strategy
+        details rather than the fault. The useful signal is that updated
+        replicas exist and Kubernetes reports them unavailable.
+        """
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            raw = self._kubectl_json(
+                "get", "deployment", deployment, "-n", namespace, "-o", "json",
+            )
+            status = raw.get("status") or {}
+            updated = int(status.get("updatedReplicas", 0) or 0)
+            unavailable = int(status.get("unavailableReplicas", 0) or 0)
+            ready = int(status.get("readyReplicas", 0) or 0)
+            if updated > 0 and unavailable > 0:
+                return time.monotonic()
+            if updated > 0 and ready == 0:
+                return time.monotonic()
+            time.sleep(1.0)
+        raise ChaosError(
+            f"deployment {namespace}/{deployment} did not report unavailable updated replicas "
+            f"after readiness_failure within {timeout_seconds}s"
+        )
+
+    def _wait_for_zero_ready(self, deployment: str, namespace: str, timeout_seconds: int) -> float:
+        """Block until a scale-to-zero mutation removes all ready replicas."""
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            raw = self._kubectl_json(
+                "get", "deployment", deployment, "-n", namespace, "-o", "json",
+            )
+            status = raw.get("status") or {}
+            ready = int(status.get("readyReplicas", 0) or 0)
+            desired = int((raw.get("spec") or {}).get("replicas", 0) or 0)
+            if desired == 0 and ready == 0:
+                return time.monotonic()
+            time.sleep(1.0)
+        raise ChaosError(
+            f"deployment {namespace}/{deployment} did not reach desired=0 ready=0 "
+            f"within {timeout_seconds}s"
         )
 
     def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, Any]]:

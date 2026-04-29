@@ -2,8 +2,10 @@ import type {
   GoalRecord,
   HealthSnapshot,
   IntegrationReadiness,
+  EvidenceGraph,
   MerkleProof,
   MerkleSnapshot,
+  ScenarioAnalysis,
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
@@ -15,6 +17,7 @@ import type {
   SimulationScenarioRecord,
   SystemSnapshot,
   VaultTreeEntry,
+  WatcherStatus,
 } from "./types";
 
 export function resolveBaseUrl(): string {
@@ -139,8 +142,24 @@ export const api = {
     return request<MerkleSnapshot>(baseUrl, `/api/runs/${runId}/merkle`);
   },
 
+  getScenarioAnalysis(baseUrl: string, runId: string) {
+    return request<ScenarioAnalysis>(baseUrl, `/api/runs/${runId}/scenario-analysis`);
+  },
+
+  getEvidenceGraph(baseUrl: string, runId: string) {
+    return request<EvidenceGraph>(baseUrl, `/api/runs/${runId}/evidence-graph`);
+  },
+
+  getMemoryCrystallization(baseUrl: string, runId: string) {
+    return request<Record<string, unknown>>(baseUrl, `/api/runs/${runId}/memory-crystallization`);
+  },
+
   getAgentTasks(baseUrl: string, runId: string) {
     return request<{ tasks: import("./types").AgentTask[] }>(baseUrl, `/api/runs/${runId}/agent-tasks`);
+  },
+
+  getWatchers(baseUrl: string) {
+    return request<WatcherStatus>(baseUrl, "/api/watchers");
   },
 
   getMerkleProof(baseUrl: string, runId: string, eventId: string) {

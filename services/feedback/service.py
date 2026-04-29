@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from shared.mesh_runtime import Decision, EventEnvelope, ExecutionRecord, FeedbackRecord, Trigger
 from .otel_observer import PrometheusFeedbackObserver, augment_observations
 
 
 _LOG = logging.getLogger("mesh.feedback")
+_QUALITY_MEASUREMENT_FIELDS = {
+    "false_positive_reduction",
+    "false_positive_reduction_pct",
+    "time_to_diagnosis_reduction_seconds",
+    "diagnosis_time_reduction_seconds",
+    "unsafe_action_reduction",
+    "unsafe_actions_prevented",
+}
 
 
 class FeedbackService:
@@ -113,6 +122,7 @@ class FeedbackService:
                     "review_summary": review.get("summary"),
                 },
             },
+            quality_measurements=_quality_measurements(normalized_event.payload, observations),
         )
         feedback.validate()
         _LOG.info(
@@ -175,6 +185,7 @@ class FeedbackService:
                 },
             },
             recommended_follow_up=recommended_follow_up,
+            quality_measurements=_quality_measurements(normalized_event.payload, observations),
         )
         feedback.validate()
         return feedback
@@ -255,7 +266,7 @@ def _safe_mul(a: float | int | None, factor: float) -> float | None:
     return a * factor
 
 
-def _execution_review(execution: ExecutionRecord) -> tuple[str | None, dict]:
+def _execution_review(execution: ExecutionRecord) -> tuple[str | None, dict[str, Any]]:
     if not isinstance(execution.external_refs, dict):
         return None, {}
     for review_source in ("hermes_review", "goose_review"):
@@ -279,3 +290,30 @@ def _service_recovery_pattern(decision_type: str, successful: bool) -> str:
     if decision_type == "no_action":
         return "no_automated_change_recorded"
     return "human_review_required"
+
+
+def _quality_measurements(payload: dict[str, Any], observations: dict[str, Any]) -> dict[str, object] | None:
+    measurements: dict[str, object] = {}
+    evidence_refs: list[str] = []
+    for source_name, source in (
+        ("signal", payload),
+        ("post_action_observations", observations),
+        ("post_action_observations.10m", observations.get("10m", {}) if isinstance(observations, dict) else {}),
+        ("post_action_observations.30m", observations.get("30m", {}) if isinstance(observations, dict) else {}),
+    ):
+        if not isinstance(source, dict):
+            continue
+        for key, value in source.items():
+            if str(key).lower() in _QUALITY_MEASUREMENT_FIELDS:
+                measurements[str(key)] = value
+                evidence_refs.append(f"{source_name}.{key}")
+        nested = source.get("quality_measurements")
+        if isinstance(nested, dict):
+            for key, value in nested.items():
+                if str(key).lower() in _QUALITY_MEASUREMENT_FIELDS:
+                    measurements[str(key)] = value
+                    evidence_refs.append(f"{source_name}.quality_measurements.{key}")
+    if not measurements:
+        return None
+    measurements["evidence_refs"] = tuple(sorted(evidence_refs))
+    return measurements

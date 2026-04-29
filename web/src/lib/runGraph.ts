@@ -1,6 +1,6 @@
 import { Position, type Edge, type Node } from "@xyflow/react";
 
-import type { RunEventRecord } from "../types";
+import type { EvidenceGraph, LabyrinthCrossing, RunEventRecord } from "../types";
 
 const STAGE_ORDER = [
   "queued",
@@ -94,6 +94,190 @@ export function buildRunGraph(events: RunEventRecord[], selectedEventId?: string
       opacity: event.event_id === selectedEventId || events[index].event_id === selectedEventId ? 0.95 : 0.6,
     },
   }));
+
+  return { nodes, edges };
+}
+
+export function buildLabyrinthGraph(crossings: LabyrinthCrossing[], selectedCrossingId?: string): CanvasGraph {
+  if (crossings.length === 0) return { nodes: [], edges: [] };
+
+  const laneY: Record<string, number> = {
+    threshold: 0,
+    main: 150,
+    evidence: 300,
+    execution: 450,
+    memory: 600,
+    watcher: 750,
+  };
+  const laneCounts = new Map<string, number>();
+  const nodes: RunGraphNode[] = crossings.map((crossing, index) => {
+    const lane = crossing.thread;
+    const rowCount = laneCounts.get(lane) ?? 0;
+    laneCounts.set(lane, rowCount + 1);
+    const selected = crossing.id === selectedCrossingId || crossing.event_id === selectedCrossingId;
+    const tone = toneForSeverity(crossing.severity);
+    return canvasNode({
+      id: crossing.id,
+      kind: crossing.thread === "watcher" ? "kubernetes" : crossing.thread === "evidence" ? "artifact" : "run",
+      title: crossing.label,
+      statusLabel: humanizeToken(crossing.status),
+      preview: crossing.preview_out || crossing.preview_in || crossing.target || crossing.type,
+      accent: tone,
+      meta: compact([
+        `#${crossing.sequence || index + 1}`,
+        humanizeToken(crossing.thread),
+        crossing.actor ?? undefined,
+      ]),
+      position: {
+        x: index * 232,
+        y: (laneY[lane] ?? laneY.main) + (rowCount % 2) * 28,
+      },
+      eventId: crossing.event_id ?? crossing.id,
+      sequence: crossing.sequence,
+      eventType: crossing.type,
+      stage: crossing.status,
+      recordedAt: crossing.recorded_at ?? undefined,
+      artifactKey: crossing.artifact_key,
+    }, selected);
+  });
+
+  const edges: Edge[] = crossings.slice(1).map((crossing, index) => {
+    const previous = crossings[index];
+    const threshold = crossing.thread === "threshold" || previous.thread === "threshold";
+    return canvasEdge(
+      `labyrinth-${previous.id}-${crossing.id}`,
+      previous.id,
+      crossing.id,
+      threshold ? "#c9a857" : toneForSeverity(crossing.severity),
+      threshold,
+    );
+  });
+
+  const evidenceByRef = new Map<string, string>();
+  crossings.forEach((crossing) => {
+    crossing.evidence_refs.forEach((ref) => evidenceByRef.set(ref, crossing.id));
+  });
+  crossings.forEach((crossing) => {
+    crossing.evidence_refs.forEach((ref) => {
+      const source = evidenceByRef.get(ref);
+      if (source && source !== crossing.id) {
+        edges.push(canvasEdge(`evidence-ref-${source}-${crossing.id}`, source, crossing.id, "#8d8cff", true));
+      }
+    });
+  });
+
+  return { nodes, edges };
+}
+
+export function buildEvidenceGraph(graph: EvidenceGraph | null | undefined): CanvasGraph {
+  if (!graph?.nodes?.length) return { nodes: [], edges: [] };
+
+  const nodes: RunGraphNode[] = graph.nodes.map((node, index) => {
+    const lane = node.type === "evidence" ? 0 : node.type === "subdecision" ? 1 : 2;
+    const tone = node.requires_review ? "#f2b84b" : node.type === "scenario_analysis" ? "#41d6b1" : "#65a7ff";
+    return canvasNode({
+      id: node.id,
+      kind: node.type === "scenario_analysis" ? "section" : "artifact",
+      title: String(node.label ?? humanizeToken(node.type)),
+      statusLabel: humanizeToken(node.type),
+      preview: compact([
+        node.analyzer ?? undefined,
+        typeof node.confidence === "number" ? `confidence ${Math.round(node.confidence * 100)}%` : undefined,
+        node.requires_review ? "requires review" : undefined,
+      ]).join(" / ") || "evidence graph node",
+      accent: tone,
+      meta: compact([node.id, node.merkle_root ?? undefined]),
+      position: { x: lane * 320, y: 80 + index * 118 },
+      artifactKey: "evidence_graph",
+    });
+  });
+
+  const edges = graph.edges.map((edge, index) =>
+    canvasEdge(
+      `evidence-${index}-${edge.source}-${edge.target}`,
+      edge.source,
+      edge.target,
+      edge.kind === "feeds" ? "#41d6b1" : "#8d8cff",
+      edge.kind === "feeds",
+    ),
+  );
+
+  return { nodes, edges };
+}
+
+export function buildRethSignalGraph(signal: Record<string, any> | null | undefined): CanvasGraph {
+  if (!signal || signal.signal_type !== "reth_node") return { nodes: [], edges: [] };
+
+  const service = String(signal.service ?? signal.node?.name ?? "reth node");
+  const executionTone = Number(signal.execution?.peer_count ?? 0) <= Number(signal.execution?.min_peer_count ?? -1) ? "#f2b84b" : "#83d37d";
+  const storageTone = Number(signal.storage?.disk_used_pct ?? 0) >= 90 ? "#ff6b5f" : "#83d37d";
+  const consensusTone = signal.consensus?.engine_api_reachable === false ? "#ff6b5f" : "#83d37d";
+  const rpcTone = signal.rpc?.http_reachable === false ? "#ff6b5f" : "#65a7ff";
+
+  const nodes = [
+    canvasNode({
+      id: "reth-service",
+      kind: "kubernetes",
+      title: service,
+      statusLabel: String(signal.environment ?? "environment"),
+      preview: `${signal.node?.client_version ?? signal.node?.network ?? "reth"} / ${signal.node?.deployment_mode ?? "node"}`,
+      accent: "#65a7ff",
+      meta: compact([signal.node?.role, signal.related_context?.kurtosis_enclave]),
+      position: { x: 40, y: 240 },
+      artifactKey: "input_signal",
+    }),
+    canvasNode({
+      id: "reth-execution",
+      kind: "kubernetes",
+      title: "Execution",
+      statusLabel: signal.execution?.syncing ? "Syncing" : "Head",
+      preview: `head ${signal.execution?.head_block ?? "?"} / lag ${signal.execution?.block_lag ?? "?"}`,
+      accent: executionTone,
+      meta: compact([`peers:${signal.execution?.peer_count ?? "?"}`, `min:${signal.execution?.min_peer_count ?? "?"}`]),
+      position: { x: 330, y: 90 },
+      artifactKey: "input_signal",
+    }),
+    canvasNode({
+      id: "reth-consensus",
+      kind: "kubernetes",
+      title: "Consensus",
+      statusLabel: String(signal.consensus?.consensus_client ?? signal.consensus?.client_kind ?? "consensus"),
+      preview: signal.consensus?.engine_api_reachable === false ? "Engine API unreachable" : "Engine API reachable",
+      accent: consensusTone,
+      meta: compact([signal.consensus?.client_kind, signal.consensus?.forkchoice_updates_recent ? "forkchoice recent" : undefined]),
+      position: { x: 330, y: 250 },
+      artifactKey: "input_signal",
+    }),
+    canvasNode({
+      id: "reth-storage",
+      kind: "kubernetes",
+      title: "Storage",
+      statusLabel: signal.storage?.disk_used_pct == null ? "Unknown" : `${signal.storage.disk_used_pct}% used`,
+      preview: String(signal.storage?.diagnostic_source ?? signal.storage?.snapshot_mode ?? "storage"),
+      accent: storageTone,
+      meta: compact([signal.storage?.snapshot_mode, signal.storage?.data_dir_free_bytes != null ? `${signal.storage.data_dir_free_bytes} free` : undefined]),
+      position: { x: 630, y: 170 },
+      artifactKey: "input_signal",
+    }),
+    canvasNode({
+      id: "reth-rpc",
+      kind: "kubernetes",
+      title: "RPC",
+      statusLabel: signal.rpc?.http_reachable === false ? "Unreachable" : "Reachable",
+      preview: `error rate ${signal.rpc?.error_rate ?? "?"} / latency ${signal.rpc?.latency_ms ?? "?"}`,
+      accent: rpcTone,
+      meta: compact([signal.rpc?.publicly_exposed ? "public" : "internal", signal.resource_attributes?.["mesh.node.rpc_url"]]),
+      position: { x: 930, y: 240 },
+      artifactKey: "input_signal",
+    }),
+  ];
+
+  const edges = [
+    canvasEdge("reth-service-execution", "reth-service", "reth-execution", executionTone),
+    canvasEdge("reth-service-consensus", "reth-service", "reth-consensus", consensusTone),
+    canvasEdge("reth-execution-storage", "reth-execution", "reth-storage", storageTone, storageTone === "#ff6b5f"),
+    canvasEdge("reth-consensus-rpc", "reth-consensus", "reth-rpc", rpcTone, rpcTone === "#ff6b5f"),
+  ];
 
   return { nodes, edges };
 }
@@ -286,7 +470,10 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
     ["trigger", "Trigger", "#65a7ff"],
     ["decision", "Decision", "#65a7ff"],
     ["evaluation", "Evaluation", "#f2b84b"],
-    ["promptfoo_artifact", "Promptfoo Artifact", "#f2b84b"],
+    ["task_trace", "Task Trace", "#f2b84b"],
+    ["trajectory_score", "Trajectory Score", "#f2b84b"],
+    ["verifier_output", "Verifier Output", "#f2b84b"],
+    ["phoenix_spans", "Phoenix Spans", "#f2b84b"],
     ["hermes_explanation", "Hermes Explanation", "#4aa8ff"],
     ["execution", "Execution", "#41d6b1"],
     ["goose_review", "Goose Review", "#57d5c8"],
@@ -454,10 +641,11 @@ function canvasNode({
   recordedAt?: string;
   integrationName?: string | null;
   artifactKey?: string | null;
-}): RunGraphNode {
+}, selected = false): RunGraphNode {
   return {
     id,
     type: "runEvent",
+    selected,
     data: {
       nodeKind: kind,
       title,
@@ -476,7 +664,7 @@ function canvasNode({
     position,
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
-    style: { width: 204 },
+    style: { width: selected ? 220 : 204 },
   };
 }
 
@@ -620,4 +808,11 @@ function humanizeToken(value: string): string {
   return value
     .replace(/_/g, " ")
     .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function toneForSeverity(severity: string): string {
+  if (severity === "danger") return "#ff6b5f";
+  if (severity === "warning") return "#f2b84b";
+  if (severity === "success") return "#83d37d";
+  return "#65a7ff";
 }

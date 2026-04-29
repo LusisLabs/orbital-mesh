@@ -107,7 +107,7 @@ Field extraction is JSONPath-ish (`extract_path` / `_resolve_field`) with `defau
 1. `validate_payload("kubernetes-signal.schema.json", raw_signal)` (line 21)
 2. Seed `related_context` defaults: `active_suppression`, `incident_owned_by_human`, `known_upstream_outage`, `active_incidents=0`, `similar_prior_cases=0`, `rollbacks_last_24h=0`, `cluster_access_available=True`
 3. `_enrich_from_learning(service, endpoint)` — non-destructive: only raises `similar_prior_cases / rollbacks_last_24h / regressions_last_7d` when currently zero (line 128)
-4. `summarize_kubernetes_logs(logs, events, pods)` ([services/ingest/kubernetes_summary.py](../../services/ingest/kubernetes_summary.py)) — extracts `error_signatures`, `likely_layer`, `primary_symptom`
+4. `summarize_kubernetes_logs(logs, events, pods)` ([services/ingest/kubernetes_summary.py](../../services/ingest/kubernetes_summary.py)) — extracts `error_signatures`, `likely_layer`, `primary_symptom`; `pods` may be empty when a deployment is intentionally scaled to zero.
 5. Emits `EventEnvelope(event_type="normalized_signal", payload=…)` carrying deployment/pods/events/logs/log_summary/related_context
 
 ### 3b. Feature-flag path
@@ -249,7 +249,7 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 | approval required before execution | `autonomy_tier == approval_required` | no |
 | recent rollback cooldown conflict | `rollbacks_last_24h>0` AND autonomous | no |
 | decision routes to human review | `decision_type == escalate` | no |
-| promptfoo quality gate did not pass | adapter passed=False | no |
+| trajectory quality gate did not pass | behavioral scorer failed | no |
 | confidence below minimum threshold | conf < `rollback.minimum_confidence` (0.75) | no |
 | risk level is high | `decision.risk.level == high` | no |
 | action is not idempotent | action ∉ `autonomy.idempotent_actions` | no |
@@ -433,7 +433,7 @@ def status(self) -> dict[str, Any]: ...
 Per-target gates (`_poll_target`):
 1. Active-run dedup — skip if prior run still in-flight (`coordinator.get_run`)
 2. Cooldown — skip if `time.monotonic() - last_run_time < cooldown_seconds`
-3. Actionable check — same predicate as `TriggerService._detect_kubernetes_trigger()`: failed rollout, failing pods (`restarts > 0` or hard failing container state), or degraded rollout plus hard error signatures
+3. Actionable check — same predicate as `TriggerService._detect_kubernetes_trigger()`: failed rollout, failing pods (`restarts > 0` or hard failing container state), or degraded rollout plus hard error signatures. Deployments with `desired_replicas == 0` are treated as healthy absence and do not trigger remediation solely because no pods exist.
 4. Error-signature dedup — skip if `error_sig == last_error_signature`
 5. Enqueue: `coordinator.create_run({"live_signal": {…}, "steering_mode": "interruptible_auto"})`
 

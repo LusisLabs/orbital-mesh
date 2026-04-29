@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="/workspace/mesh-intelligence"
+REPO_ROOT="/workspace/mesh-intel"
 KUBECONFIG_SOURCE="${KUBECONFIG:-/mesh-kubeconfig/kubeconfig}"
 export KUBECONFIG="/tmp/mesh-stack-kubeconfig"
 export BASE_URL="${BASE_URL:-http://mesh:8787}"
@@ -13,9 +13,57 @@ export ORCHESTRATION_MODE="${ORCHESTRATION_MODE:-native}"
 export STEERING_MODE="${STEERING_MODE:-interruptible_auto}"
 export MESH_EXPECT_LATENTMAS="${MESH_EXPECT_LATENTMAS:-0}"
 export MESH_AGENT_FABRIC_MODE="${MESH_AGENT_FABRIC_MODE:-native}"
+export E2E_ACCEPT_AWAITING_OPERATOR="${E2E_ACCEPT_AWAITING_OPERATOR:-1}"
 
 cp "${KUBECONFIG_SOURCE}" "${KUBECONFIG}"
 chmod 600 "${KUBECONFIG}" >/dev/null 2>&1 || true
+kubectl config use-context "${KUBE_CONTEXT}" >/dev/null
+
+KUBE_SERVER="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+case "${KUBE_SERVER}" in
+  https://127.0.0.1:*|http://127.0.0.1:*|https://localhost:*|http://localhost:*)
+    echo "kubeconfig server ${KUBE_SERVER} is loopback inside the smoke container; expected a compose-reachable endpoint such as https://k3s:6443" >&2
+    exit 1
+    ;;
+esac
+
+if ! kubectl get nodes >/dev/null 2>&1; then
+  echo "kube context ${KUBE_CONTEXT} is not reachable from the smoke container" >&2
+  exit 1
+fi
+
+python3 "${REPO_ROOT}/scripts/compose_target_probe.py"
+
+restore_baseline() {
+  kubectl -n "${NAMESPACE}" apply -f - >/dev/null 2>&1 <<EOF || true
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${DEPLOYMENT_NAME}
+  labels:
+    app: ${DEPLOYMENT_NAME}
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: ${DEPLOYMENT_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${DEPLOYMENT_NAME}
+    spec:
+      containers:
+        - name: ${DEPLOYMENT_NAME}
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - while true; do echo healthy; sleep 30; done
+EOF
+  kubectl -n "${NAMESPACE}" rollout status "deployment/${DEPLOYMENT_NAME}" --timeout=120s >/dev/null 2>&1 || true
+}
+
+trap restore_baseline EXIT
 
 python3 - <<'PY'
 import json
@@ -82,6 +130,5 @@ print(json.dumps({
 }, indent=2))
 PY
 
-kubectl config use-context "${KUBE_CONTEXT}" >/dev/null
 "${REPO_ROOT}/scripts/e2e_seed_failure.sh" crashloop
 "${REPO_ROOT}/scripts/e2e_run_mesh.sh"

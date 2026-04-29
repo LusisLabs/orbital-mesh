@@ -11,6 +11,7 @@ pub struct ContextWindow {
     pub text: String,
     pub original_chars: usize,
     pub retained_chars: usize,
+    #[serde(alias = "token_count")]
     pub estimated_tokens: usize,
     pub truncated: bool,
 }

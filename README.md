@@ -21,10 +21,11 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Dimension | Mesh behavior |
 |-----------|----------------|
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
-- Browser-first control plane served by `run_server.py`
+- Internal `MeshControl` OS companion served by the Compose `mesh-ui` sidecar
+- Browser-first Vite control plane served by `run_server.py`
 - Curses TUI served by `run_tui.py` for terminal-native inspection
 
-The browser UI is the primary interface.
+`MeshControl` is the primary internal operator interface. The Vite browser UI remains a migration reference while native OS coverage catches up.
 
 ## What It Does
 
@@ -38,8 +39,8 @@ The browser UI is the primary interface.
 - Computes Merkle roots for canonical run events and returns proofs per event
 - Integrates with a local code/process inspection surface for repository context
 - Supports two evaluation modes:
-  - `native`
-  - `promptfoo`
+  - `native` Mesh trajectory evaluation
+  - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
 - Supports three orchestration modes:
   - `native`
   - `goose`
@@ -72,7 +73,7 @@ Steering is bounded. Supported commands are:
 - `attach_note`
 
 Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
-Recoverable blockers such as low confidence or Promptfoo failures can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
+Recoverable blockers such as low confidence or failed trajectory scorers can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
 
 ## Runtime Modes
 
@@ -80,11 +81,11 @@ Runs choose one evaluation mode and one orchestration mode.
 
 ### Evaluation: `native`
 
-Default local evaluation path. Uses in-process policy and contract validation without external CLIs.
+Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory.
 
 ### Evaluation: `promptfoo`
 
-CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the Mesh evaluation contract. Readiness is reported explicitly through the API and UI.
+Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
 
 ### Orchestration: `native`
 
@@ -134,7 +135,8 @@ mesh-intelligence/
 │   ├── merkle.py
 │   ├── vault.py
 │   └── state.py
-├── web/                             # React/Vite browser control plane
+├── web/                             # React/Vite browser control plane, retained as parity reference
+├── lusisOS-main/                    # Lusis OS shell and native MeshControl app
 ├── fixtures/
 ├── policies/
 └── tests/
@@ -150,7 +152,7 @@ Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster,
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The control plane is available at `http://127.0.0.1:8787`.
+This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, `mesh-ui`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API is available at `http://127.0.0.1:8787`; the internal OS companion is available at `http://127.0.0.1:3000/?app=MeshControl`.
 
 Optional lanes:
 
@@ -159,7 +161,7 @@ COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docke
 MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
 ```
 
-Full runbook: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
+Full runbooks: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md) and [`docs/internal-mesh-control.md`](./docs/internal-mesh-control.md).
 
 Manual local server path:
 
@@ -737,6 +739,7 @@ Or from the CLI:
 ```
 
 `e2e_up.sh` generates a container-safe kubeconfig under `.mesh-runtime-state/e2e/kubeconfig` and starts Compose with `docker-compose.e2e.yml`, which enables live Kubernetes execution inside the mesh container while keeping the allowed context and namespace bounded.
+The overlay uses `MESH_E2E_KUBERNETES_ALLOWED_CONTEXTS` and `MESH_E2E_KUBERNETES_ALLOWED_NAMESPACES` so production `MESH_KUBERNETES_*` values in `.env` do not redirect local e2e runs.
 For local `k3d` use, that generated kubeconfig intentionally enables insecure TLS verification after rewriting the API server host for container access. Treat it as a disposable local-development artifact, not a production kubeconfig.
 
 ### Empirical showcase (multi-scenario pipeline digest)
@@ -1000,6 +1003,9 @@ The stable local path is:
 - [docs/foundations.md](./docs/foundations.md)
 - [docs/integrations.md](./docs/integrations.md)
 - [docs/agent-mesh.md](./docs/agent-mesh.md)
+- [docs/monitoring-corpus.md](./docs/monitoring-corpus.md)
+- [docs/reth-kurtosis-testing.md](./docs/reth-kurtosis-testing.md)
+- [docs/production-readiness-validation.md](./docs/production-readiness-validation.md)
 - [docs/research-intelligence.md](./docs/research-intelligence.md)
 - [docs/production-live-runbook.md](./docs/production-live-runbook.md)
 - [docs/ui-auto-canvas-workspace.md](./docs/ui-auto-canvas-workspace.md)

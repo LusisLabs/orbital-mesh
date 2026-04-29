@@ -94,6 +94,20 @@ class PeerStarvationTemplateTests(unittest.TestCase):
             positions["h_reth_peer_transient"],
         )
 
+    def test_peers_below_min_with_rpc_up_picks_local_isolation(self):
+        engine = HypothesisEngine()
+        ranked = engine.generate(
+            _trigger(["peer_starvation"]),
+            evidence_pack=_pack(execution={"peer_count": 1, "min_peer_count": 3}),
+        )
+        top = ranked[0]
+        self.assertEqual(top.candidate_cause, "local_isolation")
+        self.assertEqual(top.recommended_action, "restart_systemd_service")
+        self.assertTrue(
+            any("peer_count_below_min" in evidence for evidence in top.supporting_evidence),
+            "local_isolation must support peers below min_peer_count, not only zero peers",
+        )
+
     def test_cascade_peer_zero_engine_down_ranks_consensus_disconnect_top(self):
         """Regression test for the ranking misorder.
 

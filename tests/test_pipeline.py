@@ -77,7 +77,10 @@ class PipelineTests(unittest.TestCase):
             stage_results={
                 "schema_validation": {"passed": True},
                 "policy_validation": {"passed": True},
-                "promptfoo_quality": {"passed": False, "score": 0.42, "notes": ["human review required"]},
+                "contract_checks": {"passed": False, "score": 0.0, "checks": {}},
+                "trajectory_quality": {"passed": False, "score": 0.42, "notes": ["human review required"]},
+                "behavioral_scores": {"scorers": []},
+                "verifier": {"passed": True, "score": 1.0, "facts": {}},
                 "business_rules": {"passed": False, "notes": ["human review required"]},
                 "execution_readiness": {"passed": False, "notes": ["human review required"]},
             },

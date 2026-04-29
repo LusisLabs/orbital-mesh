@@ -14,6 +14,7 @@ DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
+DEFAULT_CORPUS_DATABASE_PATH = DEFAULT_STATE_DIRECTORY / "corpus" / "incident_corpus.sqlite"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
@@ -170,6 +171,13 @@ class RuntimeConfig:
     benchmark_export_path: str = str(DEFAULT_BENCHMARK_EXPORT_PATH)
     service_agents_config_path: str | None = None
     agent_reconciliation_enabled: bool = True
+    reasoning_bank_enabled: bool = False
+    reasoning_bank_distiller: str = "deterministic"
+    reasoning_bank_max_strategies: int = 5
+    reasoning_bank_scaling_mode: str = "off"
+    corpus_memory_enabled: bool = False
+    corpus_database_path: str = str(DEFAULT_CORPUS_DATABASE_PATH)
+    corpus_memory_projection_limit: int = 5000
     # Bare-metal SSH actuator: blockchain nodes (Solana/Agave, geth, reth,
     # lighthouse) run as systemd services on dedicated hardware, not in k8s.
     # Actuation goes through the SSH adapter with four overlapping safety
@@ -213,8 +221,24 @@ class RuntimeConfig:
             )
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
+        if self.reasoning_bank_max_strategies < 1:
+            raise ValueError(
+                "reasoning_bank_max_strategies must be >= 1, "
+                f"got {self.reasoning_bank_max_strategies}"
+            )
+        if self.reasoning_bank_scaling_mode not in {"off", "sequential", "parallel"}:
+            self.reasoning_bank_scaling_mode = "off"
+        if self.reasoning_bank_distiller != "deterministic":
+            self.reasoning_bank_distiller = "deterministic"
+        if self.corpus_memory_projection_limit < 1:
+            raise ValueError(
+                "corpus_memory_projection_limit must be >= 1, "
+                f"got {self.corpus_memory_projection_limit}"
+            )
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
             self.research_directory = str(Path(self.state_directory) / "research")
+        if self.corpus_database_path == str(DEFAULT_CORPUS_DATABASE_PATH):
+            self.corpus_database_path = str(Path(self.state_directory) / "corpus" / "incident_corpus.sqlite")
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -353,6 +377,16 @@ class RuntimeConfig:
             ),
             agent_reconciliation_enabled=os.getenv("MESH_AGENT_RECONCILIATION_ENABLED", "true").lower()
             not in ("0", "false", "no"),
+            reasoning_bank_enabled=os.getenv("MESH_REASONING_BANK_ENABLED", "").lower() in ("1", "true", "yes"),
+            reasoning_bank_distiller=os.getenv("MESH_REASONING_BANK_DISTILLER", "deterministic"),
+            reasoning_bank_max_strategies=int(os.getenv("MESH_REASONING_BANK_MAX_STRATEGIES", "5")),
+            reasoning_bank_scaling_mode=os.getenv("MESH_REASONING_BANK_SCALING_MODE", "off"),
+            corpus_memory_enabled=os.getenv("MESH_CORPUS_MEMORY_ENABLED", "").lower() in ("1", "true", "yes"),
+            corpus_database_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_CORPUS_DATABASE_PATH"),
+                default=str(Path(state_directory) / "corpus" / "incident_corpus.sqlite"),
+            ),
+            corpus_memory_projection_limit=int(os.getenv("MESH_CORPUS_MEMORY_PROJECTION_LIMIT", "5000")),
             ssh_execution_enabled=os.getenv("MESH_SSH_EXECUTION_ENABLED", "").lower() in ("1", "true", "yes"),
             ssh_command=os.getenv("MESH_SSH_COMMAND", "ssh"),
             ssh_identity_file=os.getenv("MESH_SSH_IDENTITY_FILE") or None,

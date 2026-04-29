@@ -47,9 +47,9 @@ export function Inspector(props: InspectorProps) {
             <ResearchCorpusPanel corpus={props.researchCorpus} />
           ) : (
             <p>
-              Select a session under <strong>Autonomous Research</strong> in the left rail. These sessions are produced by{" "}
+              Select a research operation in the left rail. These sessions are produced by{" "}
               <code>run_minimax_research.py</code> and are <strong>not</strong> Mesh pipeline runs, so they do not appear
-              in the Run Queue.
+              as remediation runs.
             </p>
           )}
         </div>
@@ -149,7 +149,7 @@ function ResearchCorpusPanel({
     .map((session) => `${session.session_id}: ${session.off_domain_terms.slice(0, 3).join(", ")}`);
 
   return (
-    <Section title="Research Corpus">
+    <Section title="Research Summary">
       <div className="inspector-field-row">
         <Badge label={`${corpus.sessions_analyzed} analyzed`} color="#41d6b1" />
         <Badge label={`${corpus.drift_sessions.length} drift sessions`} color="#d76c75" />

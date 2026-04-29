@@ -48,6 +48,18 @@ It creates:
 - `memory_items`: relational memory records for facts, summaries, notes, and decisions.
 - `merkle_roots`: persisted audit roots linked to runs/events.
 
+Additional migrations extend the same production store:
+
+- `002_memory_substrate.sql`: canonical observations, claims, relationships,
+  supersessions, retrieval records, and memory packets.
+- `003_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
+  refs, text indexes, and row-to-memory projection refs.
+
+Incident-corpus payloads keep the full JSON row as the compatibility boundary.
+Prefer explicit `labels.coverage` and `training_fact.quality_measurements`
+fields for Breakthrough evidence; legacy payload scanning is retained for older
+rows.
+
 Large artifacts should not be stored directly in Postgres. Store URI/path plus content hash in `artifacts`.
 
 ## Runtime Behavior

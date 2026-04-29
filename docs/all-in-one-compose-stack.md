@@ -4,11 +4,14 @@
 
 Use this stack when you need to validate the whole system contract at once:
 
-- Mesh HTTP API and browser control plane.
+- Mesh HTTP API and native `MeshControl` OS companion.
 - Promptfoo, Goose, and Hermes readiness.
 - Dedicated Hermes sidecar.
 - Embedded k3s cluster with a seeded `semantic-search` Deployment.
+- Additional compose-local k3s clusters labeled as VM and bare-metal substrates for multi-context runs.
+- Compose-local RPC gateway and indexer HTTP targets for live coverage probes.
 - Live Kubernetes execution through the same Mesh rollout path used by production-like runs.
+- Scheduled reversible chaos injection across all compose-local Kubernetes contexts.
 - Optional LatentMAS GPU inference sidecar.
 - Optional Deep Agents proposal fabric.
 
@@ -30,10 +33,16 @@ docker compose -f docker-compose.stack.yml ps
 docker compose -f docker-compose.stack.yml logs -f mesh-smoke
 ```
 
-The browser control plane is published at:
+The Mesh API is published at:
 
 ```text
 http://127.0.0.1:8787
+```
+
+The internal OS companion is published through `mesh-ui` at:
+
+```text
+http://127.0.0.1:3000/?app=MeshControl
 ```
 
 The default stack keeps `MESH_STACK_AGENT_FABRIC_MODE=native`. That is deliberate: the smoke run should validate Mesh and Kubernetes deterministically without requiring model credentials.
@@ -75,22 +84,32 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 | Service | Role | Published port | Persistence |
 | --- | --- | --- | --- |
 | `k3s` | Embedded Kubernetes API used for local live execution | `${MESH_K3S_API_PUBLISH_PORT:-6443}` | `k3s_server_data`, `mesh_kubeconfig` |
+| `k3s-vm` | Second embedded Kubernetes API representing a VM-backed node pool | none | `k3s_vm_server_data`, `mesh_kubeconfig_vm` |
+| `k3s-baremetal` | Third embedded Kubernetes API representing a bare-metal node pool | none | `k3s_baremetal_server_data`, `mesh_kubeconfig_baremetal` |
 | `postgres` | Local Postgres for production-style persistence testing | `${MESH_POSTGRES_PUBLISH_PORT:-5432}` | `mesh_postgres_data` |
+| `rpc-gateway` | Compose-local HTTP RPC gateway target used by the smoke probe | none | none |
+| `indexer` | Compose-local HTTP indexer target used by the smoke probe | none | none |
 | `mesh-kube-bootstrap` | One-shot kubeconfig rewrite, namespace creation, and baseline Deployment seed | none | `mesh_kubeconfig` |
-| `mesh` | Mesh API, UI, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, `mesh_kubeconfig` |
+| `mesh-kube-bootstrap-vm` | One-shot bootstrap for the VM-labeled k3s cluster | none | `mesh_kubeconfig_vm` |
+| `mesh-kube-bootstrap-baremetal` | One-shot bootstrap for the bare-metal-labeled k3s cluster | none | `mesh_kubeconfig_baremetal` |
+| `mesh` | Mesh API, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, all `mesh_kubeconfig*` volumes |
+| `mesh-ui` | Lusis OS shell with native `MeshControl` | `${MESH_UI_PUBLISH_PORT:-3000}` | none |
 | `hermes` | Dedicated Hermes runtime sidecar reached by `MESH_HERMES_COMMAND` through `docker exec` | none | `hermes_home` |
 | `mesh-smoke` | One-shot readiness and live-remediation verifier | none | `mesh_kubeconfig` |
+| `mesh-chaos` | Long-running random chaos injector and Mesh run launcher | none | `.mesh-runtime-state/compose-chaos` |
 | `latentmas` | Optional GPU inference sidecar | `${MESH_LATENTMAS_PUBLISH_PORT:-8791}` | `latentmas_hf_cache` |
 
 ## Boot Sequence
 
 1. Compose builds `mesh-intelligence-stack` and `mesh-intelligence-hermes`.
-2. `k3s` starts a single-node Kubernetes API and writes kubeconfig to the shared `mesh_kubeconfig` volume.
+2. `k3s`, `k3s-vm`, and `k3s-baremetal` start single-node Kubernetes APIs and write kubeconfigs to separate volumes.
 3. `postgres` starts for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
-4. `mesh-kube-bootstrap` waits for k3s health, rewrites the kubeconfig API endpoint to `https://k3s:6443`, creates context `mesh-compose`, creates namespace `search`, and applies a healthy `semantic-search` Deployment.
+4. The bootstrap jobs wait for k3s health, rewrite kubeconfig API endpoints to Compose-reachable service names, assign unique context/cluster/user names, create namespace `search`, and apply healthy `semantic-search` Deployments.
 5. `hermes` must report healthy before `mesh` starts.
-6. `mesh` starts with live Kubernetes execution enabled, `KUBECONFIG=/mesh-kubeconfig/kubeconfig`, allowed context `mesh-compose`, and allowed namespace `search`.
-7. `mesh-smoke` waits for Mesh health, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
+6. `mesh` starts with live Kubernetes execution enabled, a colon-merged `KUBECONFIG`, allowed contexts `mesh-compose,mesh-compose-vm,mesh-compose-baremetal`, and allowed namespace `search`.
+7. `mesh-ui` waits for Mesh health and serves the internal OS companion.
+8. `mesh-smoke` waits for Mesh health, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
+9. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts and launches Mesh runs against the affected target after each injection.
 
 ## Smoke Contract
 
@@ -101,8 +120,10 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 - Deep Agents is required only when `MESH_STACK_AGENT_FABRIC_MODE=deepagents`.
 - LatentMAS is required only when `MESH_STACK_ENABLE_LATENTMAS=1`.
 - Kubernetes context `mesh-compose` is usable inside the container.
+- The kubeconfig API server is not a loopback URL from inside the smoke container.
+- `rpc-gateway` and `indexer` answer real HTTP health probes and emit Mesh-shaped OTel coverage signals through `scripts/compose_target_probe.py`.
 - `scripts/e2e_seed_failure.sh crashloop` can mutate the local `semantic-search` Deployment.
-- `scripts/e2e_run_mesh.sh` can launch a live Mesh run and receive a completed bounded recovery.
+- `scripts/e2e_run_mesh.sh` can launch a live Mesh run and reach either completed bounded recovery or an explicit operator gate when policy blocks actuation. The default terminal wait is 600 seconds because native agent fanout, evaluation, and reconciliation can take several minutes before the run lands at the operator gate.
 
 Inspect the result:
 
@@ -127,12 +148,12 @@ Defaults:
 
 | Setting | Default |
 | --- | --- |
-| Kube context | `mesh-compose` |
+| Kube contexts | `mesh-compose`, `mesh-compose-vm`, `mesh-compose-baremetal` |
 | Namespace | `search` |
 | Deployment | `semantic-search` |
-| API endpoint inside Compose | `https://k3s:6443` |
+| API endpoints inside Compose | `https://k3s:6443`, `https://k3s-vm:6443`, `https://k3s-baremetal:6443` |
 | Published host API port | `6443` |
-| Mesh kubeconfig path | `/mesh-kubeconfig/kubeconfig` |
+| Mesh kubeconfig path | `/mesh-kubeconfig/kubeconfig:/mesh-kubeconfig-vm/kubeconfig:/mesh-kubeconfig-baremetal/kubeconfig` |
 
 The bootstrap job rewrites the kubeconfig because a server URL like `https://127.0.0.1:6443` would point at the calling container, not the k3s container. Production deployments must use a routable Kubernetes API endpoint or in-cluster service DNS instead.
 
@@ -140,7 +161,7 @@ Live actions are still bounded by:
 
 ```text
 MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=1
-MESH_KUBERNETES_ALLOWED_CONTEXTS=mesh-compose
+MESH_KUBERNETES_ALLOWED_CONTEXTS=mesh-compose,mesh-compose-vm,mesh-compose-baremetal
 MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 ```
 
@@ -159,16 +180,42 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_KUBE_CONTEXT` | `mesh-compose` | Normalized kube context in the shared kubeconfig |
 | `MESH_STACK_NAMESPACE` | `search` | Seeded namespace and Mesh allowlist |
 | `MESH_STACK_DEPLOYMENT` | `semantic-search` | Seeded Deployment and smoke target |
-| `MESH_STACK_ALLOWED_CONTEXTS` | `mesh-compose` | Runtime context allowlist |
+| `MESH_STACK_MULTI_ALLOWED_CONTEXTS` | `mesh-compose,mesh-compose-vm,mesh-compose-baremetal` | Runtime context allowlist for the multi-cluster stack |
 | `MESH_STACK_ALLOWED_NAMESPACES` | `search` | Runtime namespace allowlist |
+| `MESH_STACK_CHAOS_TARGETS` | `mesh-compose:search:semantic-search:container,mesh-compose-vm:search:semantic-search:vm,mesh-compose-baremetal:search:semantic-search:baremetal` | Chaos target list as `context:namespace:deployment:substrate` entries |
+| `MESH_STACK_CHAOS_DURATION_SECONDS` | `259200` | Long-running chaos duration; default is 3 days |
+| `MESH_STACK_CHAOS_MIN_SLEEP_SECONDS` | `45` | Minimum delay between chaos cycles |
+| `MESH_STACK_CHAOS_MAX_SLEEP_SECONDS` | `180` | Maximum delay between chaos cycles |
+| `MESH_STACK_CHAOS_HOLD_SECONDS` | `30` | Fault dwell time before launching the Mesh run and reverting |
+| `MESH_STACK_CHAOS_SEED` | `20260428` | Deterministic replay seed for chaos selection |
+| `MESH_STACK_CHAOS_RUN_WAIT_SECONDS` | `600` | Base timeout for a post-injection Mesh run to reach a terminal stage |
+| `MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra wait granted after each observed run stage or status transition |
+| `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |
+| `MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one post-injection Mesh run wait, even when progress is observed |
+| `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `native` | `native` or `deepagents` proposal fabric |
+| `MESH_REASONING_BANK_ENABLED` | `1` | Enables pre-decision retrieval and post-run distillation of strategy memory |
+| `MESH_REASONING_BANK_MAX_STRATEGIES` | `8` | Maximum advisory strategy memories attached to a run |
+| `MESH_REASONING_BANK_SCALING_MODE` | `sequential` | ReasoningBank retrieval/scaling mode |
+| `MESH_CORPUS_MEMORY_ENABLED` | `1` | Projects the incident corpus database into canonical runtime memory at Mesh startup |
+| `MESH_CORPUS_DATABASE_PATH` | `/workspace/mesh-intel/.mesh-runtime-state/corpus/incident_corpus.sqlite` | SQLite incident corpus imported into live memory |
+| `MESH_CORPUS_MEMORY_PROJECTION_LIMIT` | `5000` | Maximum corpus rows projected on startup |
+| `MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between non-terminal vault bundle rewrites for the same run |
 | `MESH_STACK_ENABLE_LATENTMAS` | `0` | Enables Mesh readiness expectation for LatentMAS |
 | `MESH_STACK_LATENTMAS_URL` | `http://latentmas:8791` | Mesh-to-sidecar LatentMAS URL |
-| `MESH_STACK_HERMES_COMMAND` | `docker exec ... mesh-intelligence-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
+| `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/mesh-intel ... mesh-intel-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
 | `MESH_STACK_GITNEXUS_URL` | empty | Optional external GitNexus sidecar URL |
 | `MESH_STACK_SMOKE_EVALUATION_MODE` | `native` | Smoke run evaluation mode |
 | `MESH_STACK_SMOKE_ORCHESTRATION_MODE` | `native` | Smoke run orchestration mode |
 | `MESH_STACK_SMOKE_STEERING_MODE` | `interruptible_auto` | Smoke run steering mode |
+| `MESH_STACK_RPC_GATEWAY_URL` | `http://rpc-gateway:8080/health` | Smoke probe URL for the Compose-local RPC gateway target |
+| `MESH_STACK_INDEXER_URL` | `http://indexer:8080/health` | Smoke probe URL for the Compose-local indexer target |
+| `E2E_RUN_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for smoke run launch and polling calls |
+| `E2E_RUN_TERMINAL_WAIT_SECONDS` | `600` | Smoke run wait for `completed`, `failed`, `cancelled`, `no_trigger`, or accepted `awaiting_operator` |
+| `E2E_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra smoke wait granted after each observed run stage or status transition |
+| `E2E_RUN_STAGE_GRACE_SECONDS` | `600` | Extra smoke wait granted after `scenario_analysis_ready` or `evaluation_ready` |
+| `E2E_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one smoke run wait, even when progress is observed |
+| `E2E_ACCEPT_AWAITING_OPERATOR` | `1` in stack smoke | Treat an explicit operator gate as a valid smoke outcome |
 | `MESH_DOCKER_SOCKET_HOST_PATH` | `/var/run/docker.sock` | Docker socket mount used for Hermes sidecar invocation |
 | `HERMES_AGENT_REF` | `1525624904159e7c2d6ac3feef951e27ad0d23bb` | Pinned Hermes Agent git ref used by mesh and Hermes images |
 | `UV_VERSION` | `0.11.6` | Pinned uv installer version used by mesh and Hermes images |
@@ -182,7 +229,11 @@ Provider variables such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MESH_COMPOSE_GO
 | --- | --- |
 | `mesh_runtime_state` | Runs, goals, vault, Merkle proofs, readiness snapshots, research sessions, Deep Agents sandboxes |
 | `mesh_kubeconfig` | k3s-generated kubeconfig rewritten for the Compose network |
+| `mesh_kubeconfig_vm` | VM-labeled k3s kubeconfig rewritten for the Compose network |
+| `mesh_kubeconfig_baremetal` | Bare-metal-labeled k3s kubeconfig rewritten for the Compose network |
 | `k3s_server_data` | k3s server state |
+| `k3s_vm_server_data` | VM-labeled k3s server state |
+| `k3s_baremetal_server_data` | Bare-metal-labeled k3s server state |
 | `mesh_postgres_data` | Local Postgres data for `MESH_STATE_BACKEND=postgres` tests |
 | `goose_config` | Goose config inside the Mesh container |
 | `hermes_home` | Hermes sidecar config, sessions, logs, memories, and skills |
@@ -235,7 +286,9 @@ Common failure modes:
 
 - `k3s` never becomes healthy: Docker must support privileged containers. Docker Desktop must have enough CPU and memory for k3s plus the Mesh image.
 - Bootstrap cannot reach Kubernetes: the kubeconfig volume may contain stale data. Run `docker compose -f docker-compose.stack.yml down -v` and start again.
-- `hermes` is unavailable: verify `mesh-intelligence-hermes-stack` is healthy and the Mesh container can access the mounted Docker socket.
+- Smoke reports a loopback Kubernetes server URL: the shared kubeconfig was not rewritten to `https://k3s:6443`. Inspect `mesh-kube-bootstrap` logs and recreate the stack volume.
+- Smoke reports `rpc_gateway` or `indexer` unavailable: inspect `rpc-gateway` and `indexer` logs; the smoke run will not count those as covered until their HTTP probes succeed.
+- `hermes` is unavailable: verify the `hermes` service is healthy for the active Compose project and the Mesh container can access the mounted Docker socket.
 - GitNexus is unavailable: the stack does not start GitNexus by default. Start it externally and set `MESH_STACK_GITNEXUS_URL` if repository-context inspection is required.
 - Deep Agents readiness fails: provide the provider API key for the selected `MESH_DEEPAGENTS_MODEL`, or run the default native fabric.
 - LatentMAS readiness fails: use the `latentmas` profile, provide GPU-capable Docker runtime if `MESH_LATENTMAS_DEVICE=cuda`, or keep `MESH_STACK_ENABLE_LATENTMAS=0`.

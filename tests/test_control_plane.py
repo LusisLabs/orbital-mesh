@@ -41,6 +41,13 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.temp_dir.cleanup()
 
+    def test_scenarios_api_lists_non_latency_fixtures(self) -> None:
+        payload = self._request("GET", "/api/scenarios")
+        scenario_keys = {scenario["key"] for scenario in payload["scenarios"]}
+
+        self.assertIn("reth_peer_starvation", scenario_keys)
+        self.assertIn("reth_sync_stalled_disk_pressure", scenario_keys)
+
     def test_research_sessions_api_lists_manifest_sessions(self) -> None:
         empty = self._request("GET", "/api/research-sessions")
         self.assertEqual(empty["sessions"], [])

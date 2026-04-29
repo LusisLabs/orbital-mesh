@@ -7,9 +7,10 @@ use serde::Serialize;
 use crate::{
     agents::default_agents,
     briefing::plan_task_guided_compaction,
-    context::{trim_to_estimated_token_budget, RetentionSide},
+    context::RetentionSide,
     data::load_examples,
     prompts::{build_prompt, PromptMode},
+    tokenizer::{MeshTokenizer, TokenizerBackend},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -40,6 +41,10 @@ pub struct Cli {
     #[arg(long, default_value_t = 2048)]
     pub context_token_budget: usize,
     #[arg(long)]
+    pub tokenizer_json: Option<PathBuf>,
+    #[arg(long)]
+    pub sentencepiece_model: Option<PathBuf>,
+    #[arg(long)]
     pub python_backend: bool,
     #[arg(last = true)]
     pub backend_args: Vec<String>,
@@ -54,6 +59,7 @@ pub struct DryRunSummary {
     pub agents: Vec<&'static str>,
     pub compaction_threshold: f32,
     pub context_token_budget: usize,
+    pub tokenizer_backend: TokenizerBackend,
     pub sample_prompt_messages: usize,
     pub sample_context_truncated: bool,
 }
@@ -67,6 +73,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(path) => load_examples(path)?,
         None => Vec::new(),
     };
+    let tokenizer = load_tokenizer(&cli)?;
     let mode = match cli.prompt.as_str() {
         "hierarchical" => PromptMode::Hierarchical,
         _ => PromptMode::Sequential,
@@ -74,32 +81,39 @@ pub fn run(cli: Cli) -> Result<()> {
     let sample_prompt_messages = examples
         .first()
         .map(|example| {
-            let context = trim_to_estimated_token_budget(
-                &example.solution,
-                Some(cli.context_token_budget),
-                RetentionSide::Tail,
-            );
-            build_prompt(
-                mode,
-                default_agents()[0].role,
-                &cli.task,
-                &example.question,
-                &context.text,
-                matches!(cli.method, Method::LatentMas | Method::LatentBriefing),
+            let context = tokenizer
+                .trim_to_token_budget(
+                    &example.solution,
+                    Some(cli.context_token_budget),
+                    RetentionSide::Tail,
+                )
+                .context("failed to trim sample context")?;
+            Ok::<usize, anyhow::Error>(
+                build_prompt(
+                    mode,
+                    default_agents()[0].role,
+                    &cli.task,
+                    &example.question,
+                    &context.text,
+                    matches!(cli.method, Method::LatentMas | Method::LatentBriefing),
+                )
+                .len(),
             )
-            .len()
         })
+        .transpose()?
         .unwrap_or(0);
     let sample_context_truncated = examples
         .first()
         .map(|example| {
-            trim_to_estimated_token_budget(
-                &example.solution,
-                Some(cli.context_token_budget),
-                RetentionSide::Tail,
-            )
-            .truncated
+            tokenizer
+                .trim_to_token_budget(
+                    &example.solution,
+                    Some(cli.context_token_budget),
+                    RetentionSide::Tail,
+                )
+                .map(|window| window.truncated)
         })
+        .transpose()?
         .unwrap_or(false);
 
     let _validated_plan =
@@ -114,11 +128,25 @@ pub fn run(cli: Cli) -> Result<()> {
         agents: default_agents().iter().map(|agent| agent.name).collect(),
         compaction_threshold: cli.briefing_threshold,
         context_token_budget: cli.context_token_budget,
+        tokenizer_backend: tokenizer.backend(),
         sample_prompt_messages,
         sample_context_truncated,
     };
     println!("{}", serde_json::to_string_pretty(&summary)?);
     Ok(())
+}
+
+fn load_tokenizer(cli: &Cli) -> Result<MeshTokenizer> {
+    match (&cli.tokenizer_json, &cli.sentencepiece_model) {
+        (Some(_), Some(_)) => {
+            anyhow::bail!("choose either --tokenizer-json or --sentencepiece-model, not both")
+        }
+        (Some(path), None) => MeshTokenizer::from_huggingface_file(path)
+            .context("failed to initialize Hugging Face tokenizer"),
+        (None, Some(path)) => MeshTokenizer::from_sentencepiece_file(path)
+            .context("failed to initialize SentencePiece tokenizer"),
+        (None, None) => Ok(MeshTokenizer::heuristic()),
+    }
 }
 
 fn run_python_backend(cli: &Cli) -> Result<()> {

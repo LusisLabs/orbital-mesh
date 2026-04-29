@@ -57,6 +57,47 @@ class MeshStateStoreTests(unittest.TestCase):
             self.assertEqual(store.get_historical_success_rate("rollback_deployment", "search"), 1.0)
             self.assertEqual(store.get_recovery_patterns("search")["rollback_restores_search"], 1)
 
+    def test_file_store_debounces_running_vault_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
+            goal = store.ensure_default_goal()
+            with patch.object(store.vault, "write_run_bundle") as write_run_bundle:
+                session = store.create_run_session(
+                    goal_id=goal.goal_id,
+                    scenario_key="scenario_test",
+                    steering_mode="approval_gate",
+                    auto_mode=False,
+                    pause_points=["evaluation_ready"],
+                    evaluation_mode="native",
+                    orchestration_mode="native",
+                    artifacts={"input_signal": {"service": "search"}},
+                )
+                self.assertEqual(write_run_bundle.call_count, 1)
+
+                store.append_run_event(
+                    session.run_id,
+                    stage="scenario_analysis_ready",
+                    event_type="subdecision_recorded",
+                    payload={"ok": True},
+                    status="recorded",
+                )
+                store.append_run_event(
+                    session.run_id,
+                    stage="scenario_analysis_ready",
+                    event_type="subdecision_recorded",
+                    payload={"ok": True},
+                    status="recorded",
+                )
+                self.assertEqual(write_run_bundle.call_count, 1)
+
+                updated = store.get_run_session(session.run_id)
+                self.assertIsNotNone(updated)
+                assert updated is not None
+                updated.stage = "awaiting_operator"
+                updated.status = "awaiting_operator"
+                store.save_run_session(updated)
+                self.assertEqual(write_run_bundle.call_count, 2)
+
     def test_locked_json_file_read_only_access_does_not_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"

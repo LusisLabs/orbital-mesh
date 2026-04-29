@@ -13,7 +13,7 @@ _BLOCKER_CLASSES = {
     "approval required before execution": "approval_gate",
     "confidence below minimum threshold": "confidence",
     "decision routes to human review": "human_review",
-    "promptfoo quality gate did not pass": "evaluator_quality",
+    "trajectory quality gate did not pass": "evaluator_quality",
     "risk level is high": "risk",
 }
 

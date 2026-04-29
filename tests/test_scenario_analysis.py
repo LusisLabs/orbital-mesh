@@ -46,6 +46,15 @@ class ScenarioAnalysisTests(unittest.TestCase):
         self.assertEqual(decision.decision_type, "disable_flag")
         self.assertGreater(decision.confidence, 0.74)
 
+    def test_explicit_retrieval_lift_is_recorded_as_quality_measurement(self) -> None:
+        trigger = _feature_flag_trigger()
+        trigger.related_context["retrieval_improved_decision"] = True
+
+        analysis, _ = ScenarioAnalysisService().analyze(trigger)
+
+        self.assertIsNotNone(analysis.quality_measurements)
+        self.assertTrue(analysis.quality_measurements["retrieval_improved_decision"])
+
     def test_memory_compaction_keeps_active_context_separate_from_run_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))

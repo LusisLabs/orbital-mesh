@@ -11,7 +11,9 @@ from pathlib import Path
 
 from services.actuators.service import KubernetesAdapter
 from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
+from services.ingest.service import IngestService
 from services.pipeline import FirstSlicePipeline
+from services.trigger.service import TriggerService
 from shared.mesh_runtime import RuntimeConfig
 
 
@@ -124,6 +126,32 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
                 namespace="search",
                 kubectl_command="definitely-missing-kubectl-for-mesh",
             )
+
+    def test_scale_to_zero_signal_normalizes_without_trigger(self) -> None:
+        signal = _raw_kubernetes_signal()
+        signal["signal_id"] = "sig_k8s_scale_zero"
+        signal["deployment"] = {
+            **signal["deployment"],
+            "rollout_status": "healthy",
+            "desired_replicas": 0,
+            "updated_replicas": 0,
+            "available_replicas": 0,
+        }
+        signal["pods"] = []
+        signal["events"] = [
+            {
+                "reason": "ScalingReplicaSet",
+                "message": "Scaled down replica set semantic-search to 0 from 3",
+                "count": 1,
+                "type": "Normal",
+            }
+        ]
+        signal["logs"] = []
+
+        envelope = IngestService().normalize_signal(signal)
+        self.assertEqual(envelope.payload["pods"], [])
+        self.assertEqual(envelope.payload["deployment"]["desired_replicas"], 0)
+        self.assertIsNone(TriggerService().detect(envelope))
 
     def test_pipeline_uses_live_snapshot_for_kubernetes_feedback(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

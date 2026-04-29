@@ -226,7 +226,7 @@ class AiSrePlatformSliceTests(unittest.TestCase):
                 "decision": {"decision_type": "scale_deployment"},
                 "evaluation": {
                     "final_recommendation": "needs_review",
-                    "blocking_reasons": ["promptfoo quality gate did not pass"],
+                    "blocking_reasons": ["trajectory quality gate did not pass"],
                 },
                 "feedback": {"outcome": "successful"},
                 "agent_tasks": [],

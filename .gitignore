@@ -16,6 +16,7 @@ __pycache__/
 # Runtime state (local / Compose volume; do not commit)
 .mesh-runtime-state/
 .hermes-local/
+kurtosis/
 
 # Secrets
 .env
@@ -36,6 +37,12 @@ jwt-demo.hex
 .idea/
 .vscode/
 
+# Local bundles / generated exports
+*.zip
+lusisOS-main/
+
 # E2E harness output — scenario reports and server logs are per-run artifacts,
 # not source. Keep them local to the operator who ran the scenario.
 e2e-reports/
+web/test-results/
+web/playwright-report/

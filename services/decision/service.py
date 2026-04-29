@@ -79,6 +79,7 @@ class DecisionService:
         trigger: Trigger,
         scenario_analysis: ScenarioAnalysis | dict | None = None,
         evidence_pack: dict | None = None,
+        reasoning_bank_packet: dict | None = None,
     ) -> Decision:
         # Log the branch up front. Readers scanning a server log for
         # "why did Mesh propose X" need to know which decision path ran
@@ -91,6 +92,7 @@ class DecisionService:
         )
         if trigger.trigger_type == "otel_metric_regression":
             decision = self._decide_otel_metric(trigger)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -101,6 +103,7 @@ class DecisionService:
             return decision
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -111,6 +114,7 @@ class DecisionService:
             return decision
         if trigger.trigger_type == "reth_node_degraded":
             decision = self._decide_reth_node(trigger, evidence_pack=evidence_pack)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -293,6 +297,7 @@ class DecisionService:
             execution_plan=execution_plan,
         )
         decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
+        _attach_reasoning_bank_context(decision, reasoning_bank_packet)
         decision.validate()
         return decision
 
@@ -1453,6 +1458,37 @@ def _apply_scenario_analysis(
             "scenario analysis requires review: " + "; ".join(review_reasons)
         )
     return decision
+
+
+def _attach_reasoning_bank_context(decision: Decision, reasoning_bank_packet: dict | None) -> None:
+    if not isinstance(reasoning_bank_packet, dict) or not reasoning_bank_packet:
+        return
+    claims = list(reasoning_bank_packet.get("claims", []))
+    procedures = list(reasoning_bank_packet.get("procedures", []))
+    contradictions = list(reasoning_bank_packet.get("contradictions", []))
+    context = {
+        "packet_id": reasoning_bank_packet.get("packet_id"),
+        "strategy_claim_count": len(claims),
+        "strategy_procedure_count": len(procedures),
+        "contradiction_count": len(contradictions),
+        "strategies": [
+            {
+                "claim_id": item.get("claim_id"),
+                "tier": item.get("tier"),
+                "statement": item.get("statement"),
+                "confidence": item.get("confidence"),
+            }
+            for item in (procedures + claims)[:5]
+            if isinstance(item, dict)
+        ],
+        "advisory_only": True,
+    }
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["reasoning_bank"] = context
+    if context["strategies"]:
+        decision.reasoning.setdefault("evidence", []).append(
+            "ReasoningBank retrieved advisory strategies; live evidence and policy gates remain authoritative."
+        )
 
 
 def _build_signal_view_from_trigger(trigger: Trigger) -> dict:

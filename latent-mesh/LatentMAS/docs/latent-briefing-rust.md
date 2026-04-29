@@ -42,6 +42,13 @@ Rust dry run:
 cargo run -- --method latent-briefing --task gsm8k --context-token-budget 2048
 ```
 
+Use an exact tokenizer when evaluating context budgets:
+
+```bash
+cargo run -- --method latent-briefing --task gsm8k --context-token-budget 2048 --tokenizer-json /path/to/tokenizer.json
+cargo run -- --method latent-briefing --task gsm8k --context-token-budget 2048 --sentencepiece-model /path/to/tokenizer.model
+```
+
 Run through the existing Python backend:
 
 ```bash
@@ -53,6 +60,19 @@ The arguments after `--` are passed directly to `run.py`.
 ## Context Token Budgeting
 
 TextMAS previously exposed `--text_mas_context_length`, but prompt construction sliced characters directly and `-1` dropped the final character. The runtime now applies tokenizer-aware context trimming before prompt construction.
+
+The Rust boundary is `latentmas::tokenizer::MeshTokenizer`. It supports:
+
+- Hugging Face `tokenizer.json` files through the Rust `tokenizers` crate.
+- SentencePiece `.model` files through the Rust `sentencepiece` binding.
+- The legacy four-characters-per-token estimate as an explicit fallback when no tokenizer model is configured.
+
+Budget trimming uses binary search over UTF-8 character boundaries and re-tokenizes candidates with the configured backend. That keeps retained text valid while enforcing model-specific token counts for both head and tail retention.
+
+Mesh packages this boundary through `services.evaluation.mesh_eval`. Native
+trajectory artifacts include a `mesh_eval` section that records the LatentMAS
+crate path, context token budget, tokenizer backend, and Rust CLI arguments used
+to reproduce the same token-budget policy.
 
 Use:
 
@@ -75,5 +95,6 @@ Important public modules:
 - `latentmas::eval`
 - `latentmas::prompts`
 - `latentmas::run`
+- `latentmas::tokenizer`
 
 Behavior-changing utilities should be documented here when extended.

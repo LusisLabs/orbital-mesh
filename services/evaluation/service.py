@@ -1,4 +1,4 @@
-"""Evaluate remediation plans through policy checks and a Promptfoo adapter."""
+"""Evaluate remediation plans through deterministic contracts and trajectory scoring."""
 
 from __future__ import annotations
 
@@ -12,14 +12,15 @@ from shared.mesh_runtime import (
     RuntimeStateStore,
     SchemaValidationError,
     Trigger,
-    build_readiness,
     log_runtime_event,
     load_policy,
-    resolve_integrations_config,
 )
 from shared.mesh_runtime.review_blockers import classify_blocking_reasons
+from shared.mesh_runtime.remediation_safety import evaluate_remediation_safety, safety_blocking_reason
+from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 
-from .promptfoo_adapter import NativePromptfooAdapter, PromptfooAdapter, PromptfooCliAdapter
+from .mesh_eval import MeshEvalConfig
+from .mesh_evaluator import BehavioralScorer, ContractCheckAdapter, TrajectoryEvaluator, Verifier, temperature_policy_for_trace
 
 
 _LOG = logging.getLogger("mesh.evaluation")
@@ -28,41 +29,25 @@ _LOG = logging.getLogger("mesh.evaluation")
 class EvaluationService:
     def __init__(
         self,
-        adapter: PromptfooAdapter | None = None,
         config: RuntimeConfig | None = None,
         state_store: RuntimeStateStore | None = None,
     ):
         self.config = config or RuntimeConfig.from_env()
-        self.adapter = adapter or self._build_adapter()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
-
-    def _build_adapter(self) -> PromptfooAdapter:
-        mode = (self.config.evaluation_mode or "auto").lower()
-        if mode == "native":
-            return NativePromptfooAdapter()
-        if mode == "promptfoo":
-            resolved = resolve_integrations_config(self.config)
-            return PromptfooCliAdapter(command=resolved.promptfoo_command)
-        # auto: prefer Promptfoo when it can actually run, otherwise fall back
-        # to the in-process heuristic so offline/dev setups still work.
-        readiness = build_readiness(self.config)
-        if readiness.promptfoo.ready:
-            resolved = resolve_integrations_config(self.config)
-            log_runtime_event("evaluation_adapter_selected", adapter="promptfoo", reason="auto_ready")
-            return PromptfooCliAdapter(command=resolved.promptfoo_command)
-        log_runtime_event(
-            "evaluation_adapter_selected",
-            adapter="native",
-            reason="auto_fallback",
-            detail=readiness.promptfoo.detail,
-        )
-        return NativePromptfooAdapter()
+        self.contracts = ContractCheckAdapter()
+        self.trajectory = TrajectoryEvaluator()
+        self.scorer = BehavioralScorer()
+        self.verifier = Verifier()
+        self.mesh_eval_config = MeshEvalConfig.from_env()
 
     def evaluate(
         self,
         trigger: Trigger,
         decision: Decision,
         allow_rereevaluation: bool = False,
+        run_id: str | None = None,
+        run_events: list[object] | None = None,
+        artifacts: dict[str, object] | None = None,
     ) -> EvaluationResult:
         autonomy_policy = load_policy("autonomy.policy.json")
         protected_scope_policy = load_policy("protected-scope.policy.json")
@@ -120,10 +105,6 @@ class EvaluationService:
             business_notes.append("decision routes to human review")
             blocking_reasons.append("decision routes to human review")
 
-        promptfoo_result = self.adapter.evaluate_decision(trigger, decision)
-        if not promptfoo_result.passed:
-            blocking_reasons.append("promptfoo quality gate did not pass")
-
         rollback_required = decision.decision_type in rollback_policy["require_rollback_plan_for_decision_types"]
         rollback_present = bool(decision.execution_plan.get("rollback_plan"))
         credentials_available = self._credentials_available(trigger, system)
@@ -152,6 +133,78 @@ class EvaluationService:
             readiness_notes.extend(systemd_notes)
             blocking_reasons.extend(systemd_notes)
 
+        policy_passed = decision_allowed and system_allowed and action_allowed and (allow_rereevaluation or not duplicate_trigger)
+        readiness_passed = (
+            credentials_available
+            and (not rollback_required or rollback_present)
+            and idempotent
+            and decision.confidence >= rollback_policy["minimum_confidence"]
+            and decision.risk["level"] != "high"
+            and repo_patch_ready
+            and systemd_ready
+        )
+        safety_case = evaluate_remediation_safety(
+            trigger,
+            decision,
+            state_store=self.state_store,
+            prior_blocking_reasons=blocking_reasons,
+            promptfoo_passed=True,
+            schema_passed=bool(schema_validation["passed"]),
+            policy_passed=policy_passed,
+            readiness_passed=readiness_passed,
+        )
+        safety_reason = safety_blocking_reason(safety_case)
+        if safety_reason is not None:
+            blocking_reasons.append(safety_reason)
+
+        business_rules = {
+            "passed": not business_notes,
+            "notes": business_notes or ["single-service scope", "no cooldown conflict"],
+        }
+        execution_readiness = {
+            "passed": readiness_passed,
+            "notes": readiness_notes
+            or [
+                (
+                    "feature flag credentials available"
+                    if system == "feature_flag_service"
+                    else (
+                        "incident credentials available"
+                        if system == "incident_service"
+                        else "audit logging available"
+                    )
+                ),
+                "rollback value present",
+            ],
+        }
+        policy_validation = {
+            "passed": policy_passed,
+            "notes": policy_notes,
+        }
+        contract_checks = self.contracts.summarize(
+            schema_validation=schema_validation,
+            policy_validation=policy_validation,
+            business_rules=business_rules,
+            execution_readiness=execution_readiness,
+            remediation_safety=safety_case.to_dict(),
+        )
+        artifact_payload = dict(artifacts or {})
+        artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+        if run_id is not None:
+            artifact_payload.update(_artifacts_for_run(self.state_store, run_id))
+            artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+        trace = self.trajectory.build_trace(
+            trigger=trigger,
+            decision=decision,
+            run_events=run_events or _events_for_run(self.state_store, run_id),
+            artifacts=artifact_payload,
+        )
+        trace["temperature_policy"] = temperature_policy_for_trace(trace)
+        trajectory_score = self.scorer.score(trace)
+        verifier_output = self.verifier.verify(trace)
+        if not trajectory_score.passed:
+            blocking_reasons.append("trajectory quality gate did not pass")
+
         scenario_review_reasons = _scenario_review_reasons(decision)
         blocker_analysis = classify_blocking_reasons(
             blocking_reasons,
@@ -174,48 +227,19 @@ class EvaluationService:
             final_recommendation="reject" if reject else ("execute" if passed else "human_review"),
             stage_results={
                 "schema_validation": schema_validation,
-                "policy_validation": {
-                    "passed": decision_allowed
-                    and system_allowed
-                    and action_allowed
-                    and (allow_rereevaluation or not duplicate_trigger),
-                    "notes": policy_notes,
+                "policy_validation": policy_validation,
+                "contract_checks": contract_checks,
+                "trajectory_quality": {
+                    "passed": trajectory_score.passed,
+                    "score": trajectory_score.score,
+                    "notes": trajectory_score.notes,
+                    "artifacts": trajectory_score.artifacts,
                 },
-                "promptfoo_quality": {
-                    "passed": promptfoo_result.passed,
-                    "score": promptfoo_result.score,
-                    "notes": promptfoo_result.notes,
-                    "mode": promptfoo_result.mode,
-                    "artifacts": promptfoo_result.artifacts,
-                },
-                "business_rules": {
-                    "passed": not business_notes,
-                    "notes": business_notes or ["single-service scope", "no cooldown conflict"],
-                },
-                "execution_readiness": {
-                    "passed": (
-                        credentials_available
-                        and (not rollback_required or rollback_present)
-                        and idempotent
-                        and decision.confidence >= rollback_policy["minimum_confidence"]
-                        and decision.risk["level"] != "high"
-                        and repo_patch_ready
-                        and systemd_ready
-                    ),
-                    "notes": readiness_notes
-                    or [
-                        (
-                            "feature flag credentials available"
-                            if system == "feature_flag_service"
-                            else (
-                                "incident credentials available"
-                                if system == "incident_service"
-                                else "audit logging available"
-                            )
-                        ),
-                        "rollback value present",
-                    ],
-                },
+                "behavioral_scores": trajectory_score.artifacts,
+                "verifier": verifier_output,
+                "business_rules": business_rules,
+                "execution_readiness": execution_readiness,
+                "remediation_safety": safety_case.to_dict(),
                 "blocker_analysis": blocker_analysis,
             },
             blocking_reasons=blocking_reasons,
@@ -233,6 +257,43 @@ class EvaluationService:
             evaluation.blocking_reasons,
         )
         return evaluation
+
+    def evaluate_trace(
+        self,
+        *,
+        trigger: Trigger | dict[str, object] | None,
+        decision: Decision | dict[str, object] | None,
+        evaluation: dict[str, object] | None = None,
+        execution: dict[str, object] | None = None,
+        feedback: dict[str, object] | None = None,
+        run_events: list[object] | None = None,
+        artifacts: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        artifact_payload = dict(artifacts or {})
+        artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+        trace = self.trajectory.build_trace(
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+            execution=execution,
+            feedback=feedback,
+            run_events=run_events,
+            artifacts=artifact_payload,
+        )
+        trace["temperature_policy"] = temperature_policy_for_trace(trace)
+        trajectory_score = self.scorer.score(trace)
+        verifier_output = self.verifier.verify(trace)
+        return {
+            "task_trace": trace,
+            "trajectory_score": {
+                "passed": trajectory_score.passed,
+                "score": trajectory_score.score,
+                "notes": trajectory_score.notes,
+                "artifacts": trajectory_score.artifacts,
+            },
+            "verifier_output": verifier_output,
+            "phoenix_spans": build_phoenix_spans(trace),
+        }
 
     def _credentials_available(self, trigger: Trigger, system: str) -> bool:
         feature_flag_credentials = trigger.related_context.get(
@@ -308,3 +369,26 @@ def _scenario_review_reasons(decision: Decision) -> list[str]:
     scenario_analysis = evidence_pack.get("scenario_analysis", {})
     reasons = scenario_analysis.get("required_review_reasons", [])
     return [str(reason) for reason in reasons] if isinstance(reasons, list) else []
+
+
+def _events_for_run(state_store: object, run_id: str | None) -> list[object]:
+    if run_id is None or not hasattr(state_store, "list_run_events"):
+        return []
+    try:
+        events = state_store.list_run_events(run_id)  # type: ignore[attr-defined]
+    except Exception:
+        _LOG.exception("trajectory event lookup failed for run %s", run_id)
+        return []
+    return list(events) if isinstance(events, list) else []
+
+
+def _artifacts_for_run(state_store: object, run_id: str | None) -> dict[str, object]:
+    if run_id is None or not hasattr(state_store, "get_run_session"):
+        return {}
+    try:
+        session = state_store.get_run_session(run_id)  # type: ignore[attr-defined]
+    except Exception:
+        _LOG.exception("trajectory artifact lookup failed for run %s", run_id)
+        return {}
+    artifacts = getattr(session, "artifacts", None)
+    return dict(artifacts) if isinstance(artifacts, dict) else {}

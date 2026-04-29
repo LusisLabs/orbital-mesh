@@ -354,6 +354,8 @@ def _rollout_status(payload: dict[str, Any]) -> str:
     for condition in status.get("conditions", []):
         if condition.get("type") == "Progressing" and condition.get("reason") == "ProgressDeadlineExceeded":
             return "failed"
+    if desired == 0:
+        return "healthy"
     if desired > 0 and available >= desired and updated >= desired:
         return "healthy"
     if available == 0 and updated < desired:
