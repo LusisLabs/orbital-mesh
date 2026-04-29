@@ -20,6 +20,7 @@ from shared.mesh_runtime.remediation_safety import evaluate_remediation_safety, 
 from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 
 from .mesh_eval import MeshEvalConfig
+from .mesh_eval.runtime import mesh_eval_artifact_with_probe
 from .mesh_evaluator import BehavioralScorer, ContractCheckAdapter, TrajectoryEvaluator, Verifier, temperature_policy_for_trace
 
 
@@ -189,10 +190,18 @@ class EvaluationService:
             remediation_safety=safety_case.to_dict(),
         )
         artifact_payload = dict(artifacts or {})
-        artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+        artifact_payload["mesh_eval"] = mesh_eval_artifact_with_probe(
+            config=self.mesh_eval_config,
+            trigger=trigger,
+            decision=decision,
+        )
         if run_id is not None:
             artifact_payload.update(_artifacts_for_run(self.state_store, run_id))
-            artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+            artifact_payload["mesh_eval"] = mesh_eval_artifact_with_probe(
+                config=self.mesh_eval_config,
+                trigger=trigger,
+                decision=decision,
+            )
         trace = self.trajectory.build_trace(
             trigger=trigger,
             decision=decision,
@@ -270,7 +279,11 @@ class EvaluationService:
         artifacts: dict[str, object] | None = None,
     ) -> dict[str, object]:
         artifact_payload = dict(artifacts or {})
-        artifact_payload["mesh_eval"] = self.mesh_eval_config.to_artifact()
+        artifact_payload["mesh_eval"] = mesh_eval_artifact_with_probe(
+            config=self.mesh_eval_config,
+            trigger=trigger,
+            decision=decision,
+        )
         trace = self.trajectory.build_trace(
             trigger=trigger,
             decision=decision,

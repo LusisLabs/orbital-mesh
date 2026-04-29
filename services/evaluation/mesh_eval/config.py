@@ -18,6 +18,8 @@ class MeshEvalConfig:
     tokenizer_json: str | None = None
     sentencepiece_model: str | None = None
     latentmas_crate: str = "latent-mesh/LatentMAS"
+    latentmas_command: str | None = None
+    latentmas_timeout_seconds: float = 5.0
 
     @classmethod
     def from_env(cls) -> "MeshEvalConfig":
@@ -27,6 +29,8 @@ class MeshEvalConfig:
             tokenizer_json=os.environ.get("MESH_EVAL_TOKENIZER_JSON"),
             sentencepiece_model=os.environ.get("MESH_EVAL_SENTENCEPIECE_MODEL"),
             latentmas_crate=os.environ.get("MESH_EVAL_LATENTMAS_CRATE", "latent-mesh/LatentMAS"),
+            latentmas_command=os.environ.get("MESH_EVAL_LATENTMAS_COMMAND"),
+            latentmas_timeout_seconds=float(os.environ.get("MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS", "5")),
         ).validate()
 
     def validate(self) -> "MeshEvalConfig":
@@ -34,6 +38,8 @@ class MeshEvalConfig:
             raise ValueError("configure either MESH_EVAL_TOKENIZER_JSON or MESH_EVAL_SENTENCEPIECE_MODEL, not both")
         if self.context_token_budget < 0:
             raise ValueError("MESH_EVAL_CONTEXT_TOKEN_BUDGET must be non-negative")
+        if self.latentmas_timeout_seconds <= 0:
+            raise ValueError("MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS must be positive")
         return self
 
     @property
@@ -59,6 +65,8 @@ class MeshEvalConfig:
             "trajectory_source": "services.evaluation.mesh_eval",
             "latent_mesh": {
                 "crate": self.latentmas_crate,
+                "command": self.latentmas_command,
+                "timeout_seconds": self.latentmas_timeout_seconds,
                 "context_token_budget": self.context_token_budget,
                 "tokenizer_backend": self.tokenizer_backend,
                 "tokenizer_json": _display_path(self.tokenizer_json),

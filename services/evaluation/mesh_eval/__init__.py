@@ -11,7 +11,12 @@ from services.evaluation.mesh_evaluator import (
 )
 
 from .config import MeshEvalConfig
-from .runtime import evaluate_native_mesh, mesh_eval_artifact
+from .runtime import (
+    evaluate_native_mesh,
+    mesh_eval_artifact,
+    mesh_eval_artifact_with_probe,
+    run_latentmas_tokenizer_probe,
+)
 
 __all__ = [
     "BehavioralScorer",
@@ -23,5 +28,7 @@ __all__ = [
     "evaluate_native_mesh",
     "evaluate_trajectory",
     "mesh_eval_artifact",
+    "mesh_eval_artifact_with_probe",
+    "run_latentmas_tokenizer_probe",
     "temperature_policy_for_trace",
 ]

@@ -14,6 +14,21 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RetentionArg {
+    Head,
+    Tail,
+}
+
+impl From<RetentionArg> for RetentionSide {
+    fn from(value: RetentionArg) -> Self {
+        match value {
+            RetentionArg::Head => RetentionSide::Head,
+            RetentionArg::Tail => RetentionSide::Tail,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Method {
     Baseline,
     TextMas,
@@ -45,6 +60,10 @@ pub struct Cli {
     #[arg(long)]
     pub sentencepiece_model: Option<PathBuf>,
     #[arg(long)]
+    pub tokenize_text: Option<String>,
+    #[arg(long, value_enum, default_value = "tail")]
+    pub tokenize_keep: RetentionArg,
+    #[arg(long)]
     pub python_backend: bool,
     #[arg(last = true)]
     pub backend_args: Vec<String>,
@@ -64,16 +83,48 @@ pub struct DryRunSummary {
     pub sample_context_truncated: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct TokenizeSummary {
+    pub tokenizer_backend: TokenizerBackend,
+    pub context_token_budget: usize,
+    pub retained_text: String,
+    pub original_chars: usize,
+    pub retained_chars: usize,
+    pub token_count: usize,
+    pub truncated: bool,
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     if cli.python_backend {
         return run_python_backend(&cli);
+    }
+    let tokenizer = load_tokenizer(&cli)?;
+
+    if let Some(text) = &cli.tokenize_text {
+        let window = tokenizer
+            .trim_to_token_budget(
+                text,
+                Some(cli.context_token_budget),
+                cli.tokenize_keep.into(),
+            )
+            .context("failed to tokenize text")?;
+        let summary = TokenizeSummary {
+            tokenizer_backend: tokenizer.backend(),
+            context_token_budget: cli.context_token_budget,
+            retained_text: window.text,
+            original_chars: window.original_chars,
+            retained_chars: window.retained_chars,
+            token_count: window.estimated_tokens,
+            truncated: window.truncated,
+        };
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
     }
 
     let examples = match &cli.dataset {
         Some(path) => load_examples(path)?,
         None => Vec::new(),
     };
-    let tokenizer = load_tokenizer(&cli)?;
     let mode = match cli.prompt.as_str() {
         "hierarchical" => PromptMode::Hierarchical,
         _ => PromptMode::Sequential,

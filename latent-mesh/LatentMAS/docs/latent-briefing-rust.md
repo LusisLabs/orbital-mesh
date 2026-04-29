@@ -49,6 +49,12 @@ cargo run -- --method latent-briefing --task gsm8k --context-token-budget 2048 -
 cargo run -- --method latent-briefing --task gsm8k --context-token-budget 2048 --sentencepiece-model /path/to/tokenizer.model
 ```
 
+Tokenize and trim one text payload through the same Rust boundary:
+
+```bash
+cargo run -- --context-token-budget 512 --tokenize-text "feature flag regression search /query" --tokenize-keep tail
+```
+
 Run through the existing Python backend:
 
 ```bash

@@ -38,6 +38,8 @@ inspection and never blocks execution.
 - `MESH_EVAL_TOKENIZER_JSON`
 - `MESH_EVAL_SENTENCEPIECE_MODEL`
 - `MESH_EVAL_LATENTMAS_CRATE`
+- `MESH_EVAL_LATENTMAS_COMMAND`
+- `MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS`
 - `MESH_AGENT_FABRIC_MODE`
 - `MESH_DEEPAGENTS_MODEL`
 - `MESH_DEEPAGENTS_TIMEOUT_SECONDS`
@@ -56,6 +58,16 @@ task trace records the context-budget basis used for evaluation.
 
 Set either `MESH_EVAL_TOKENIZER_JSON` or `MESH_EVAL_SENTENCEPIECE_MODEL`, not
 both. If neither is set, `mesh_eval` records the explicit heuristic fallback.
+Set `MESH_EVAL_LATENTMAS_COMMAND` to a Rust LatentMAS command, for example:
+
+```bash
+MESH_EVAL_LATENTMAS_COMMAND="cargo run --quiet --manifest-path latent-mesh/LatentMAS/Cargo.toml --"
+```
+
+When configured, Mesh runs a best-effort Rust tokenizer probe for the evaluated
+task and embeds the result under `task_trace.mesh_eval.latent_mesh.tokenizer_probe`.
+Probe failure records an error artifact and never replaces deterministic
+contract, verifier, or trajectory gates.
 
 ## Docker Compose defaults
 
