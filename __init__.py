@@ -73,6 +73,12 @@ from .model_management import (
     build_model_management_e2e,
     deterministic_alias,
 )
+from .model_client import (
+    DeterministicMeshBrainModelClient,
+    MeshBrainModelClient,
+    MeshBrainModelClientResult,
+    OpenAICompatibleMeshBrainModelClient,
+)
 from .mvp import (
     MeshBrainMVPResult,
     run_private_crops_mvp_e2e,
@@ -133,6 +139,7 @@ from .runtime import (
 from .serving import (
     MeshBrainServingFabric,
     OpenAIChatRequest,
+    ServingExecution,
     ServingPlan,
     ServingPool,
     TenantQuota,
