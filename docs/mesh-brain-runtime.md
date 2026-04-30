@@ -172,10 +172,18 @@ The registry currently covers:
 
 `mesh_brain.serving` plans OpenAI-compatible chat requests against healthy serving pools, tenant quotas, artifact state, canary weight, and backend capability requirements. It does not start the underlying engine; it produces deterministic serving plans and request traces that can later wrap SGLang, vLLM, Dynamo, TensorRT-LLM, llama.cpp, MLX, or vllm-mlx.
 
+`mesh_brain.model_client` adds the model-call boundary for that plan:
+
+- `MeshBrainModelClient` defines the chat-completion interface;
+- `DeterministicMeshBrainModelClient` returns stable local completions for tests and replay;
+- `OpenAICompatibleMeshBrainModelClient` posts `/v1/chat/completions` requests to an OpenAI-compatible backend and normalizes the response;
+- `MeshBrainServingFabric.execute_chat_completion()` plans the route, calls the injected client, and returns a `ServingExecution` trace.
+
 `build_serving_fabric_e2e()` proves:
 
 - high-risk requests route through verification mode and constrained decoding;
 - streaming and structured-output flags are preserved;
+- serving execution crosses the model-client boundary;
 - tenant adapters are selected by tenant and task;
 - tenant quotas block excess requests;
 - adapter hot-swap and rollback update routing state;

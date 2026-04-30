@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from .inference_catalog import backend_capability_report, default_backend_for_hardware
 from .runtime import InferenceRequestContext, ModelArtifact, ServingRoute, select_serving_route, stable_digest, utc_now
@@ -79,6 +79,29 @@ class ServingPlan:
         return asdict(self)
 
 
+@dataclass
+class ServingExecution:
+    plan: ServingPlan
+    completion: dict[str, Any]
+    trace: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "plan": self.plan.to_dict(),
+            "completion": dict(self.completion),
+            "trace": dict(self.trace),
+        }
+
+
+class ChatCompletionClient(Protocol):
+    def complete_chat(
+        self,
+        *,
+        plan: ServingPlan,
+        request: OpenAIChatRequest,
+    ) -> Any: ...
+
+
 class MeshBrainServingFabric:
     def __init__(
         self,
@@ -139,6 +162,27 @@ class MeshBrainServingFabric:
             streaming=request.stream,
             structured_output=structured_output,
             trace=trace,
+        )
+
+    def execute_chat_completion(
+        self,
+        request: OpenAIChatRequest,
+        *,
+        client: ChatCompletionClient,
+    ) -> ServingExecution:
+        plan = self.plan_chat_completion(request)
+        completion = client.complete_chat(plan=plan, request=request)
+        completion_payload = completion.to_dict() if hasattr(completion, "to_dict") else dict(completion)
+        return ServingExecution(
+            plan=plan,
+            completion=completion_payload,
+            trace={
+                **dict(plan.trace),
+                "completion_id": completion_payload.get("completion_id"),
+                "finish_reason": completion_payload.get("finish_reason"),
+                "client_boundary": client.__class__.__name__,
+                "completed_at": utc_now(),
+            },
         )
 
     def hot_swap_adapter(self, artifact: ModelArtifact) -> None:
