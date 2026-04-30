@@ -76,7 +76,7 @@ Disable LatentMAS sidecar expectations while keeping the service present:
 MESH_STACK_ENABLE_LATENTMAS=0 docker compose -f docker-compose.stack.yml up --build
 ```
 
-Deep Agents remains proposal-only. It does not receive direct Kubernetes credentials, does not edit the real checkout, and does not execute Mesh actuation. LatentMAS is advisory. Mesh policy, evaluation, approval behavior, audit, and Kubernetes allowlists remain authoritative.
+Deep Agents remains proposal-only. It does not receive direct Kubernetes credentials, does not edit the real checkout, and does not execute Mesh actuation. LatentMAS is advisory. `mesh-agent-operator` can run the evaluation gate without a human by posting audited Mesh steering commands. Mesh policy, deterministic evaluation, audit, and Kubernetes allowlists remain authoritative.
 
 ## Topology
 
@@ -94,6 +94,7 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 | `mesh` | Mesh API, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, all `mesh_kubeconfig*` volumes |
 | `mesh-ui` | Lusis OS shell with native `MeshControl` | `${MESH_UI_PUBLISH_PORT:-3000}` | none |
 | `hermes` | Dedicated Hermes runtime sidecar reached by `MESH_HERMES_COMMAND` through `docker exec` | none | `hermes_home` |
+| `mesh-agent-operator` | Non-human operator loop that resolves eligible evaluation gates through audited steering commands | none | none |
 | `mesh-smoke` | One-shot readiness and live-remediation verifier | none | `mesh_kubeconfig` |
 | `mesh-chaos` | Long-running random chaos injector and Mesh run launcher | none | `.mesh-runtime-state/compose-chaos` |
 | `latentmas` | Optional GPU inference sidecar | `${MESH_LATENTMAS_PUBLISH_PORT:-8791}` | `latentmas_hf_cache` |
@@ -107,8 +108,9 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 5. `hermes` must report healthy before `mesh` starts.
 6. `mesh` starts with live Kubernetes execution enabled, a colon-merged `KUBECONFIG`, allowed contexts `mesh-compose,mesh-compose-vm,mesh-compose-baremetal`, and allowed namespace `search`.
 7. `mesh-ui` waits for Mesh health and serves the internal OS companion.
-8. `mesh-smoke` waits for Mesh health, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
-9. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts and launches Mesh runs against the affected target after each injection.
+8. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
+9. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
+10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts and launches Mesh runs against the affected target after each injection.
 
 ## Smoke Contract
 
@@ -122,7 +124,7 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 - The kubeconfig API server is not a loopback URL from inside the smoke container.
 - `rpc-gateway` and `indexer` answer real HTTP health probes and emit Mesh-shaped OTel coverage signals through `scripts/compose_target_probe.py`.
 - `scripts/e2e_seed_failure.sh crashloop` can mutate the local `semantic-search` Deployment.
-- `scripts/e2e_run_mesh.sh` can launch a live Mesh run and reach either completed bounded recovery or an explicit operator gate when policy blocks actuation. The default terminal wait is 600 seconds because native agent fanout, evaluation, and reconciliation can take several minutes before the run lands at the operator gate.
+- `scripts/e2e_run_mesh.sh` can launch a live Mesh run and reach completed bounded recovery. The stack default rejects `awaiting_operator` as a smoke success because `mesh-agent-operator` is expected to resolve eligible gates without a human.
 
 Inspect the result:
 
@@ -193,6 +195,11 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one post-injection Mesh run wait, even when progress is observed |
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
+| `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
+| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,evo,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR` | `0.86` | Minimum confidence stamped onto an eligible full-auto override |
+| `MESH_AGENT_OPERATOR_AUTONOMY_TIER` | `escalated` | Decision autonomy tier used by the agent operator override |
+| `MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS` | `3600` | Maximum age for existing paused runs that the operator will pick up after startup |
 | `MESH_AGENT_TASK_TIMEOUT_SECONDS` | `180` | Overall proposal-lane collection budget for DeepAgents and LatentMAS attempts |
 | `MESH_REASONING_BANK_ENABLED` | `1` | Enables pre-decision retrieval and post-run distillation of strategy memory |
 | `MESH_REASONING_BANK_MAX_STRATEGIES` | `8` | Maximum advisory strategy memories attached to a run |
@@ -219,11 +226,11 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_RPC_GATEWAY_URL` | `http://rpc-gateway:8080/health` | Smoke probe URL for the Compose-local RPC gateway target |
 | `MESH_STACK_INDEXER_URL` | `http://indexer:8080/health` | Smoke probe URL for the Compose-local indexer target |
 | `E2E_RUN_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for smoke run launch and polling calls |
-| `E2E_RUN_TERMINAL_WAIT_SECONDS` | `600` | Smoke run wait for `completed`, `failed`, `cancelled`, `no_trigger`, or accepted `awaiting_operator` |
+| `E2E_RUN_TERMINAL_WAIT_SECONDS` | `600` | Smoke run wait for `completed`, `failed`, `cancelled`, or `no_trigger` |
 | `E2E_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra smoke wait granted after each observed run stage or status transition |
 | `E2E_RUN_STAGE_GRACE_SECONDS` | `600` | Extra smoke wait granted after `scenario_analysis_ready` or `evaluation_ready` |
 | `E2E_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one smoke run wait, even when progress is observed |
-| `E2E_ACCEPT_AWAITING_OPERATOR` | `1` in stack smoke | Treat an explicit operator gate as a valid smoke outcome |
+| `E2E_ACCEPT_AWAITING_OPERATOR` | `0` in stack smoke | Set to `1` only when intentionally testing manual operator gates |
 | `MESH_DOCKER_SOCKET_HOST_PATH` | `/var/run/docker.sock` | Docker socket mount used for Hermes sidecar invocation |
 | `HERMES_AGENT_REF` | `1525624904159e7c2d6ac3feef951e27ad0d23bb` | Pinned Hermes Agent git ref used by mesh and Hermes images |
 | `UV_VERSION` | `0.11.6` | Pinned uv installer version used by mesh and Hermes images |

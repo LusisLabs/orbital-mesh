@@ -428,6 +428,44 @@ services:
       retries: 3
       start_period: 20s
 
+  mesh-agent-operator:
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-agent-operator
+    depends_on:
+      mesh:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /workspace/mesh-intel
+      BASE_URL: "${MESH_STACK_BASE_URL:-http://mesh:8787}"
+      MESH_AGENT_OPERATOR_ENABLED: "${MESH_STACK_AGENT_OPERATOR_ENABLED:-1}"
+      MESH_AGENT_OPERATOR_PRIORITY: "${MESH_AGENT_OPERATOR_PRIORITY:-hermes,goose,codex,claudecode,openclaw,evo,latentmas}"
+      MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR: "${MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR:-0.86}"
+      MESH_AGENT_OPERATOR_AUTONOMY_TIER: "${MESH_AGENT_OPERATOR_AUTONOMY_TIER:-escalated}"
+      MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS: "${MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS:-3600}"
+      MESH_AGENT_OPERATOR_INTERVAL_SECONDS: "${MESH_AGENT_OPERATOR_INTERVAL_SECONDS:-3}"
+      MESH_AGENT_OPERATOR_REQUEST_TIMEOUT_SECONDS: "${MESH_AGENT_OPERATOR_REQUEST_TIMEOUT_SECONDS:-10}"
+    command:
+      - python3
+      - /workspace/mesh-intel/scripts/mesh_agent_operator.py
+    volumes:
+      - ./:/workspace/mesh-intel
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      disable: true
+
   mesh-smoke:
     build:
       context: .
@@ -442,6 +480,8 @@ services:
     depends_on:
       mesh:
         condition: service_healthy
+      mesh-agent-operator:
+        condition: service_started
       rpc-gateway:
         condition: service_healthy
       indexer:
@@ -460,6 +500,7 @@ services:
       E2E_RUN_PROGRESS_GRACE_SECONDS: "${E2E_RUN_PROGRESS_GRACE_SECONDS:-120}"
       E2E_RUN_STAGE_GRACE_SECONDS: "${E2E_RUN_STAGE_GRACE_SECONDS:-600}"
       E2E_RUN_MAX_WAIT_SECONDS: "${E2E_RUN_MAX_WAIT_SECONDS:-1800}"
+      E2E_ACCEPT_AWAITING_OPERATOR: "${E2E_ACCEPT_AWAITING_OPERATOR:-0}"
       MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-deepagents}"
       MESH_EXPECT_LATENTMAS: "${MESH_STACK_ENABLE_LATENTMAS:-1}"
       MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE: "${MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE:-1}"

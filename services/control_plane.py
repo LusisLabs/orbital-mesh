@@ -968,7 +968,7 @@ class RunCoordinator:
                     summary={"status": "completed"},
                     status="completed",
                 )
-                self._update_session(run_id, stage="no_trigger", status="completed")
+                self._update_session(run_id, stage="no_trigger", status="completed", pending_pause_stage=None)
                 self._record_benchmark_if_simulation(run_id)
                 return
 
@@ -996,7 +996,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if trigger_wait["action"] == "override":
                     self.state_store.append_run_event(
@@ -1107,7 +1107,7 @@ class RunCoordinator:
                     summary={"status": "deferred"},
                     status="deferred",
                 )
-                self._update_session(run_id, stage="completed", status="completed")
+                self._update_session(run_id, stage="completed", status="completed", pending_pause_stage=None)
                 return
 
             while True:
@@ -1123,7 +1123,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if outcome["action"] == "override":
                     original_decision = decision
@@ -1141,7 +1141,7 @@ class RunCoordinator:
                     )
                     continue
 
-            self._update_session(run_id, stage="executing", status="running")
+            self._update_session(run_id, stage="executing", status="running", pending_pause_stage=None)
             execution = engine.orchestrator.execute(decision, evaluation)
             self._set_artifact(run_id, "execution", execution.to_dict())
             self.state_store.append_run_event(
@@ -1171,7 +1171,7 @@ class RunCoordinator:
 
             feedback = engine.feedback.record(trigger, decision, execution, normalized_event)
             self._set_artifact(run_id, "feedback", feedback.to_dict())
-            self._update_session(run_id, stage="feedback_ready", status="running")
+            self._update_session(run_id, stage="feedback_ready", status="running", pending_pause_stage=None)
             self.state_store.append_run_event(
                 run_id,
                 stage="feedback_ready",
@@ -1207,7 +1207,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if wait_feedback["action"] == "override":
                     self.state_store.append_run_event(
@@ -1234,7 +1234,7 @@ class RunCoordinator:
                 summary={"status": "completed"},
                 status="completed",
             )
-            self._update_session(run_id, stage="completed", status="completed")
+            self._update_session(run_id, stage="completed", status="completed", pending_pause_stage=None)
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
             self._record_benchmark_if_simulation(run_id)
@@ -1262,7 +1262,7 @@ class RunCoordinator:
                     run_id,
                 )
             try:
-                self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+                self._update_session(run_id, stage="failed", status="failed", pending_pause_stage=None, error=str(exc))
             except Exception:
                 _LOG.exception(
                     "control_plane: failed to persist terminal failed-session for run %s "
@@ -1835,6 +1835,18 @@ class RunCoordinator:
             status=evaluation.final_recommendation,
         )
         self._record_trajectory_artifacts(run_id, engine, trigger=trigger, decision=decision, evaluation=evaluation)
+        if allow_rereevaluation:
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload={"reason": "operator_override_rereevaluation", "agent_tasks_reused": True},
+                summary={"agent_tasks_reused": True},
+                artifact_key="agent_tasks",
+                integration_name="agent_mesh",
+                status="reused",
+            )
+            return evaluation
         session = self.state_store.get_run_session(run_id)
         service_agent = session.artifacts.get("service_agent") if session is not None else None
         tasks = self.agent_mesh.build_tasks(
