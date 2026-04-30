@@ -144,7 +144,7 @@ test("submits operator note and Hermes chat through steering", async ({ page }) 
   await page.goto(`${webUrl.origin}/?server=${apiUrl}&run=${run.run_id}`);
 
   await page.getByRole("button", { name: "Context", exact: true }).click();
-  await page.getByRole("button", { name: "Steering" }).click();
+  await page.getByTestId("mesh-context-drawer").getByRole("button", { name: "Steering" }).click();
   await expect(page.getByText("Steering Context")).toBeVisible();
   await page.getByPlaceholder(/operator note|note for/i).fill("E2E operator note from professional console");
   const noteResponse = page.waitForResponse((response) =>

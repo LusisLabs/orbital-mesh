@@ -36,7 +36,7 @@ export function buildLabyrinthJourneys({
     summary: `${humanize(run.stage)} - ${run.latest_event_sequence} events`,
     updated_at: run.updated_at,
     event_count: run.latest_event_sequence,
-    risk_level: riskFromArtifacts(run.artifacts),
+    risk_level: riskFromArtifacts(run.artifacts ?? {}),
     selected: run.run_id === activeRunId,
   }));
 
@@ -317,7 +317,8 @@ function evidenceRefsForNode(graph: EvidenceGraph, nodeId: string): string[] {
     .filter((id) => id !== nodeId);
 }
 
-function riskFromArtifacts(artifacts: Record<string, any>): string | null {
+function riskFromArtifacts(artifacts: Record<string, any> | null | undefined): string | null {
+  if (!artifacts) return null;
   const scenario = artifacts.scenario_analysis;
   if (scenario && typeof scenario === "object" && typeof scenario.risk_level === "string") return scenario.risk_level;
   const decision = artifacts.decision;

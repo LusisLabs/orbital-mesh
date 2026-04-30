@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildAsciiSignalFrame } from "./asciiSignal";
-import { buildLabyrinthCrossings, buildLabyrinthGuideposts, crossingFromEvent } from "./labyrinth";
+import { buildLabyrinthCrossings, buildLabyrinthGuideposts, buildLabyrinthJourneys, crossingFromEvent } from "./labyrinth";
 import type { EvidenceGraph, RunDetail, ScenarioAnalysis, WatcherStatus } from "../types";
 
 const baseRun: RunDetail = {
@@ -132,6 +132,20 @@ describe("labyrinth normalization", () => {
     expect(guideposts.some((guidepost) => guidepost.title === "Operator gate is active")).toBe(true);
     expect(guideposts.some((guidepost) => guidepost.detail === "historical success rate is weak")).toBe(true);
     expect(guideposts.some((guidepost) => guidepost.id === "watchers:stopped")).toBe(true);
+  });
+
+  it("handles run summaries without embedded artifacts", () => {
+    const runWithoutArtifacts = { ...baseRun, artifacts: undefined } as unknown as typeof baseRun;
+    const journeys = buildLabyrinthJourneys({
+      runs: [runWithoutArtifacts],
+      researchSessions: [],
+      watchers: null,
+      activeRunId: runWithoutArtifacts.run_id,
+      activeResearchSessionId: "",
+    });
+
+    expect(journeys[0].risk_level).toBeNull();
+    expect(journeys[0].selected).toBe(true);
   });
 
   it("renders stable ASCII frames for healthy, warning, and failed states", () => {
