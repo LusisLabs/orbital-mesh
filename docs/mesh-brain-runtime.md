@@ -128,14 +128,29 @@ The posttraining proof run stores:
 - `mesh_brain_posttraining_training_job`;
 - `mesh_brain_posttraining_backend_result`;
 - `mesh_brain_posttraining_registered_artifact`;
+- `mesh_brain_posttraining_adapter_export`;
+- `mesh_brain_posttraining_eval_job`;
+- `mesh_brain_posttraining_serving_smoke`;
 - `mesh_brain_posttraining_deployment_record`;
 - `mesh_brain_posttraining_proof_record`.
 
-`mesh_brain.posttraining_proof` adds `MeshBrainTrainingBackend`, `DeterministicTrainingBackend`, and `LocalSubprocessTrainingBackend`. The default proof now executes a real local subprocess command, `python -m mesh_brain.local_lora_sft`, against a tiny SFT dataset. The command writes adapter/config files and backend metrics, then Mesh Brain registers the produced adapter, runs the eval job gate, and smoke-serves the resulting artifact through the model-client boundary. Failed training commands block before artifact registration, eval, or serving.
+`mesh_brain.posttraining_proof` adds `MeshBrainTrainingBackend`, `DeterministicTrainingBackend`, and `LocalSubprocessTrainingBackend`. The default proof executes a real local subprocess command, `python -m mesh_brain.local_lora_sft`, against the Mesh Brain data-plane manifest. That manifest now includes the deterministic reference row plus incident-corpus rows from `corpus_database_path` and current control-plane runtime sessions/events when invoked through `POST /api/mesh-brain/posttraining-proof`. The command writes adapter/config files and backend metrics, then Mesh Brain registers the produced adapter, records an Apple Silicon `mlx_lm_lora` adapter export manifest, runs the eval job gate, and smoke-serves the resulting artifact through the model-client boundary. Failed training commands block before artifact registration, adapter export, eval, or serving.
+
+`mesh_brain.hardware_profiles` records backend-specific adapter export manifests. The Apple Silicon target uses `mlx_lm_lora`: training command metadata points at `mlx_lm_lora.train --train-mode sft --train-type lora`, generation command metadata points at `mlx_lm.generate --adapter-path`, and the compatibility record marks `supports_runtime_adapter_load` as false because adapter selection is a process or generation-command boundary for this path.
+
+`mesh_brain.adapter_runtime` verifies adapter file presence, registered hashes, and base-model compatibility before serving. The posttraining proof smoke now loads the trained adapter through that runtime, records adapter readiness, and only reports `smoke_served` after adapter verification, load/readiness, and inference all pass. The OpenAI-compatible adapter runtime supports a fake llama.cpp/MLX-style server contract with `/health`, `/v1/models`, `/v1/adapters/load`, and `/v1/chat/completions`; live MLX/llama.cpp smoke should use that boundary when the backend exposes adapter loading.
+
+Live adapter capability can be recorded through:
+
+```http
+POST /api/mesh-brain/live-adapter-runtime-probe
+```
+
+The probe checks `/v1/models`, runs a base-model `/v1/chat/completions` request, evaluates the response, and probes `/v1/adapters/load`. If adapter loading is unsupported, the run can only report `base_model_pass`; it never counts as trained-adapter serving. It reports `adapter_pass` only when adapter loading succeeds and the loaded adapter appears in `/v1/models`.
 
 ## Data Plane
 
-`mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`.
+`mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`. `build_context_training_data_plane()` is the posttraining ingestion path for mixed context: reference records, incident-corpus rows, runtime run sessions, and runtime run events. Public corpus rows are included for context and eval coverage, but remain audit-only unless their catalog metadata explicitly allows training use.
 
 `build_data_plane_e2e()` is the deterministic reference path for this plane. It proves:
 

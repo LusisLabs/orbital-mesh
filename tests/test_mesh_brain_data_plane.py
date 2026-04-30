@@ -8,10 +8,12 @@ from tempfile import TemporaryDirectory
 from mesh_brain import (
     MeshBrainDataRefinery,
     SourceRecord,
+    build_context_training_data_plane,
     build_data_plane_e2e,
     extract_tool_schema,
     label_outcome,
 )
+from shared.mesh_runtime.monitoring_corpus import build_public_monitoring_corpus_rows
 
 
 class MeshBrainDataRefineryTests(unittest.TestCase):
@@ -80,6 +82,51 @@ class MeshBrainDataRefineryTests(unittest.TestCase):
         self.assertEqual(schema["schema"]["required"], ["attempt", "dry_run", "path"])
         self.assertEqual(label_outcome("approval_required", {}), "needs_review")
         self.assertEqual(label_outcome("regressed", {}), "negative")
+
+    def test_context_training_data_plane_ingests_corpus_and_runtime_context(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            result, summary = build_context_training_data_plane(
+                tenant_id="tenant_a",
+                output_directory=temp_dir,
+                corpus_rows=build_public_monitoring_corpus_rows()[:2],
+                runtime_sessions=[
+                    {
+                        "run_id": "run_live",
+                        "stage": "completed",
+                        "status": "completed",
+                        "scenario_key": "runtime_context",
+                        "created_at": "2026-04-30T00:00:00+00:00",
+                        "updated_at": "2026-04-30T00:00:01+00:00",
+                        "artifacts": {
+                            "decision": {"decision_type": "patch"},
+                            "feedback": {"outcome": "successful"},
+                        },
+                    }
+                ],
+                runtime_events=[
+                    {
+                        "run_id": "run_live",
+                        "event_id": "evt_1",
+                        "sequence": 1,
+                        "stage": "feedback",
+                        "event_type": "feedback_recorded",
+                        "recorded_at": "2026-04-30T00:00:02+00:00",
+                        "payload": {"outcome": "successful"},
+                        "summary": {"outcome": "successful"},
+                        "status": "completed",
+                    }
+                ],
+            )
+            manifest = json.loads((Path(temp_dir) / "dataset_manifest.json").read_text(encoding="utf-8"))
+            sft_rows = _read_jsonl(Path(temp_dir) / "sft.jsonl")
+
+        self.assertEqual(summary.corpus_record_count, 2)
+        self.assertEqual(summary.runtime_session_count, 1)
+        self.assertEqual(summary.runtime_event_count, 1)
+        self.assertEqual(result.report.accepted_records, 5)
+        self.assertGreaterEqual(manifest["output_counts"]["sft.jsonl"], 5)
+        self.assertTrue(any(row["source"] == "runtime:run_event" for row in sft_rows))
+        self.assertTrue(any(row["source"].startswith("corpus:") for row in sft_rows))
 
 
 def _read_jsonl(path: Path) -> list[dict]:

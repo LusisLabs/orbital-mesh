@@ -30,6 +30,10 @@ MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS = (
     "mesh_brain_live_serving_summary",
 )
 
+MESH_BRAIN_LIVE_ADAPTER_RUNTIME_ARTIFACT_KEYS = (
+    "mesh_brain_live_adapter_runtime_probe",
+)
+
 MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS = (
     "mesh_brain_backend_matrix_results",
     "mesh_brain_backend_matrix_summary",
@@ -40,6 +44,7 @@ MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS = (
     "mesh_brain_posttraining_training_job",
     "mesh_brain_posttraining_backend_result",
     "mesh_brain_posttraining_registered_artifact",
+    "mesh_brain_posttraining_adapter_export",
     "mesh_brain_posttraining_eval_job",
     "mesh_brain_posttraining_serving_smoke",
     "mesh_brain_posttraining_deployment_record",

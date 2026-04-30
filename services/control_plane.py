@@ -935,6 +935,113 @@ class RunCoordinator:
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
 
+    def run_mesh_brain_live_adapter_runtime_probe(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_LIVE_ADAPTER_RUNTIME_ARTIFACT_KEYS,
+            mesh_brain_artifact_ref,
+        )
+        from mesh_brain.live_adapter_probe import DEFAULT_OUTPUT_DIRECTORY, run_live_adapter_runtime_probe
+        from mesh_brain.run_live_serving_smoke import DEFAULT_BASE_URL, DEFAULT_MODEL
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / DEFAULT_OUTPUT_DIRECTORY
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain live adapter probe output_directory must stay inside the Mesh state directory")
+        summary = run_live_adapter_runtime_probe(
+            base_url=str(payload.get("base_url") or DEFAULT_BASE_URL),
+            model=str(payload.get("model") or DEFAULT_MODEL),
+            adapter_id=str(payload.get("adapter_id") or "mesh-brain-probe-adapter"),
+            base_model_id=str(payload["base_model_id"]) if payload.get("base_model_id") else None,
+            prompt=str(payload.get("prompt") or (
+                "For a Mesh Brain CROPS smoke, cite evidence, keep remediation bounded, "
+                "and state that operator approval is required before action."
+            )),
+            output_directory=output_directory,
+            timeout_seconds=float(payload.get("timeout_seconds") or 30.0),
+            require_adapter_load=bool(payload.get("require_adapter_load", False)),
+            latency_budget_ms=float(payload.get("latency_budget_ms") or 30_000.0),
+        )
+        artifact_paths = summary.get("artifact_paths", {})
+        artifact_refs = {
+            "mesh_brain_live_adapter_runtime_probe": mesh_brain_artifact_ref(
+                "mesh_brain_live_adapter_runtime_probe",
+                artifact_paths["live_adapter_runtime_probe"],
+            ).to_dict(),
+        }
+        decision = summary["decision"]
+        status_value = str(decision["status"])
+        stage = "completed" if status_value in {"base_model_pass", "adapter_pass"} else "failed"
+        status = "completed" if stage == "completed" else "blocked"
+        run_record = {
+            "tenant_id": tenant_id,
+            "stage": stage,
+            "status": status,
+            "final_decision": status_value,
+            "model": summary["model"],
+            "requested_model": summary["requested_model"],
+            "adapter_id": summary["adapter_id"],
+            "base_model_id": summary["base_model_id"],
+            "latency_ms": summary["latency_ms"],
+            "base_model_passed": decision["base_model_passed"],
+            "adapter_load_supported": decision["adapter_load_supported"],
+            "adapter_serving_passed": decision["adapter_serving_passed"],
+            "reasons": decision["reasons"],
+            "response_eval": summary["response_eval"],
+            "content_preview": summary["content_preview"],
+            "artifact_paths": artifact_paths,
+        }
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_live_adapter_runtime_probe",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_live_adapter_runtime_probe",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_live_adapter_runtime_probe_record": run_record,
+                **artifact_refs,
+            },
+        )
+        run_record["run_id"] = session.run_id
+        session.artifacts["mesh_brain_live_adapter_runtime_probe_record"] = run_record
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_LIVE_ADAPTER_RUNTIME_ARTIFACT_KEYS:
+            ref = artifact_refs[key]
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_live_adapter_runtime_probe",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="mesh_brain_live_adapter_runtime_probe",
+            event_type="mesh_brain_live_adapter_runtime_probe_completed",
+            payload=run_record,
+            summary={
+                "final_decision": status_value,
+                "base_model_passed": decision["base_model_passed"],
+                "adapter_load_supported": decision["adapter_load_supported"],
+                "adapter_serving_passed": decision["adapter_serving_passed"],
+            },
+            integration_name="mesh_brain",
+            status=status,
+        )
+        self._update_session(session.run_id, stage=stage, status=status, pending_pause_stage=None)
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
+
     def run_mesh_brain_backend_matrix(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         from mesh_brain.backend_matrix import BackendMatrixTarget, run_backend_matrix_smoke
         from mesh_brain.control_plane import (
@@ -1076,6 +1183,8 @@ class RunCoordinator:
             raise ValueError("mesh brain posttraining proof output_directory must stay inside the Mesh state directory")
         command = payload.get("command")
         backend = LocalSubprocessTrainingBackend() if isinstance(command, list) and command else None
+        corpus_rows = self._posttraining_corpus_rows(payload)
+        runtime_sessions, runtime_events = self._posttraining_runtime_context(payload)
         result = run_posttraining_proof(
             output_directory=output_directory,
             tenant_id=tenant_id,
@@ -1083,6 +1192,9 @@ class RunCoordinator:
             backend=backend,
             command=[str(part) for part in command] if isinstance(command, list) else None,
             timeout_seconds=float(payload.get("timeout_seconds") or 30.0),
+            corpus_rows=corpus_rows,
+            runtime_sessions=runtime_sessions,
+            runtime_events=runtime_events,
         )
         artifact_paths = result.artifact_paths
         artifact_refs = {
@@ -1101,6 +1213,10 @@ class RunCoordinator:
             "mesh_brain_posttraining_registered_artifact": mesh_brain_artifact_ref(
                 "mesh_brain_posttraining_registered_artifact",
                 artifact_paths["registered_artifact"],
+            ).to_dict(),
+            "mesh_brain_posttraining_adapter_export": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_adapter_export",
+                artifact_paths["posttraining_adapter_export"],
             ).to_dict(),
             "mesh_brain_posttraining_eval_job": mesh_brain_artifact_ref(
                 "mesh_brain_posttraining_eval_job",
@@ -1125,9 +1241,11 @@ class RunCoordinator:
             "method": result.method,
             "backend_result": result.backend_result,
             "registered_artifact": result.registered_artifact,
+            "adapter_export": result.adapter_export,
             "eval_job": result.eval_job,
             "serving_smoke": result.serving_smoke,
             "deployment_record": result.deployment_record,
+            "dataset_context_summary": result.dataset_context_summary,
             "artifact_paths": artifact_paths,
         }
         session = self.state_store.create_run_session(
@@ -1181,6 +1299,27 @@ class RunCoordinator:
         )
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
+
+    def _posttraining_corpus_rows(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if payload.get("include_corpus_context", True) is False:
+            return []
+        limit = max(1, min(int(payload.get("max_corpus_records") or 500), 500))
+        database_path = Path(str(payload.get("corpus_database_path") or self.config.corpus_database_path))
+        database = IncidentCorpusDatabase(database_path)
+        return database.query(CorpusQuery(limit=limit))
+
+    def _posttraining_runtime_context(self, payload: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        if payload.get("include_runtime_context", True) is False:
+            return [], []
+        run_limit = max(1, min(int(payload.get("max_runtime_runs") or 50), 200))
+        event_limit = max(1, min(int(payload.get("max_runtime_events_per_run") or 100), 500))
+        sessions = self.state_store.list_run_sessions(limit=run_limit)
+        session_payloads = [session.to_dict() for session in sessions]
+        event_payloads: list[dict[str, Any]] = []
+        for session in sessions:
+            events = self.state_store.list_run_events(session.run_id)
+            event_payloads.extend(event.to_dict() for event in events[-event_limit:])
+        return session_payloads, event_payloads
 
     def list_simulations(self) -> list[dict[str, Any]]:
         return self.simulation_service.list_scenarios()

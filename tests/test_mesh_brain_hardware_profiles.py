@@ -6,10 +6,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from mesh_brain import (
+    build_adapter_export_manifest,
     build_hardware_serving_profile,
+    build_mlx_lm_lora_export_manifest,
     build_quantization_export_manifest,
     new_model_artifact,
     run_multi_hardware_smoke,
+    write_adapter_export_manifest,
     write_multi_hardware_smoke_result,
 )
 
@@ -76,6 +79,51 @@ class MeshBrainHardwareProfilesTests(unittest.TestCase):
                 target_hardware_tier="apple_silicon",
                 export_format="GGUF-Q4",
                 quality_baseline_eval_report_id="eval_baseline",
+            )
+
+    def test_mlx_lm_lora_adapter_export_manifest_records_train_and_generate_commands(self) -> None:
+        source = new_model_artifact(
+            artifact_type="tenant_adapter",
+            version="adapter-v1",
+            signed_manifest_ref="sha256:adapter-v1",
+            tenant_id="tenant_a",
+            task_type="crops",
+            base_artifact_id="nvidia/nemotron-3-nano-4b",
+        )
+        with TemporaryDirectory() as temp_dir:
+            adapter_file = Path(temp_dir) / "adapter_model.safetensors"
+            adapter_file.write_text("adapter\n", encoding="utf-8")
+            manifest = build_mlx_lm_lora_export_manifest(
+                source_artifact=source,
+                base_model_id="nvidia/nemotron-3-nano-4b",
+                adapter_files=[{"path": str(adapter_file), "sha256": "sha256:adapter"}],
+            )
+            written = write_adapter_export_manifest(manifest=manifest, output_directory=temp_dir)
+            persisted = json.loads(Path(written["adapter_export_manifest.json"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest.target_hardware_tier, "apple_silicon")
+        self.assertEqual(manifest.export_format, "mlx_lm_lora")
+        self.assertEqual(manifest.backend_compatibility["training_entrypoint"], "mlx_lm_lora.train")
+        self.assertEqual(manifest.backend_compatibility["generation_entrypoint"], "mlx_lm.generate")
+        self.assertFalse(manifest.backend_compatibility["supports_runtime_adapter_load"])
+        self.assertIn("--adapter-path", manifest.load_metadata["generate_command"])
+        self.assertIn("--train-mode", manifest.load_metadata["train_command"])
+        self.assertEqual(persisted["export_id"], manifest.export_id)
+
+    def test_adapter_export_rejects_wrong_format_for_hardware(self) -> None:
+        source = new_model_artifact(
+            artifact_type="tenant_adapter",
+            version="adapter-v1",
+            signed_manifest_ref="sha256:adapter-v1",
+        )
+
+        with self.assertRaisesRegex(ValueError, "unsupported adapter export format"):
+            build_adapter_export_manifest(
+                source_artifact=source,
+                base_model_id="base",
+                target_hardware_tier="apple_silicon",
+                export_format="llama_cpp_lora",
+                adapter_files=[{"path": "/tmp/adapter.safetensors"}],
             )
 
 
