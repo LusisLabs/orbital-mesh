@@ -816,6 +816,8 @@ class RunCoordinator:
             prompt=str(payload.get("prompt") or "Return one concise Mesh Brain live smoke response."),
             output_directory=output_directory,
             timeout_seconds=float(payload.get("timeout_seconds") or 60.0),
+            latency_budget_ms=float(payload.get("latency_budget_ms") or 30_000.0),
+            max_total_tokens=int(payload.get("max_total_tokens") or 4096),
         )
         artifact_paths = summary.get("artifact_paths", {})
         artifact_refs = {
@@ -823,15 +825,22 @@ class RunCoordinator:
                 "mesh_brain_live_serving_execution",
                 artifact_paths["live_serving_execution"],
             ).to_dict(),
+            "mesh_brain_live_smoke_gate": mesh_brain_artifact_ref(
+                "mesh_brain_live_smoke_gate",
+                artifact_paths["live_smoke_gate"],
+            ).to_dict(),
             "mesh_brain_live_serving_summary": mesh_brain_artifact_ref(
                 "mesh_brain_live_serving_summary",
                 artifact_paths["live_serving_summary"],
             ).to_dict(),
         }
+        gate = summary["gate"]
+        stage = "completed" if gate["decision"] == "pass" else "failed" if gate["decision"] == "block" else "awaiting_operator"
+        status = "completed" if gate["decision"] == "pass" else "blocked" if gate["decision"] == "block" else "manual_review"
         run_record = {
             "tenant_id": tenant_id,
-            "stage": "completed",
-            "status": "completed",
+            "stage": stage,
+            "status": status,
             "model": summary["model"],
             "requested_model": summary["requested_model"],
             "backend_name": summary["backend_name"],
@@ -840,6 +849,8 @@ class RunCoordinator:
             "completion_id": summary["completion_id"],
             "finish_reason": summary["finish_reason"],
             "usage": summary["usage"],
+            "latency_ms": summary["latency_ms"],
+            "gate": gate,
             "content_preview": summary["content_preview"],
         }
         session = self.state_store.create_run_session(
@@ -880,11 +891,17 @@ class RunCoordinator:
                 "model": run_record["model"],
                 "backend_name": run_record["backend_name"],
                 "completion_id": run_record["completion_id"],
+                "gate": gate["decision"],
             },
             integration_name="mesh_brain",
-            status="completed",
+            status=status,
         )
-        self._update_session(session.run_id, stage="completed", status="completed", pending_pause_stage=None)
+        self._update_session(
+            session.run_id,
+            stage=stage,
+            status=status,
+            pending_pause_stage="evaluation_ready" if gate["decision"] == "manual_review" else None,
+        )
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
 

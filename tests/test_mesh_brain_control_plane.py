@@ -108,13 +108,41 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
             self.assertIn(key, artifacts)
             self.assertTrue(artifacts[key]["exists"])
         record = artifacts["mesh_brain_live_serving_record"]
+        self.assertEqual(record["stage"], "completed")
+        self.assertEqual(record["status"], "completed")
         self.assertEqual(record["model"], "nvidia/nemotron-3-nano-4b")
         self.assertEqual(record["backend_name"], "mlx")
         self.assertEqual(record["completion_id"], "chatcmpl_fake")
         self.assertEqual(record["usage"]["total_tokens"], 18)
+        self.assertEqual(record["gate"]["decision"], "pass")
         self.assertIn("fake OpenAI-compatible response", record["content_preview"])
         event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
         self.assertTrue(set(MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS).issubset(event_keys))
+
+    def test_live_serving_smoke_gate_manual_review_updates_run_status(self) -> None:
+        def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
+            return _FakeUrlopenResponse({**_fake_openai_response(), "model": "nvidia/nemotron-3-nano-4b"})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.model_client.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_live_serving_smoke(
+                    {
+                        "base_url": "http://127.0.0.1:1234",
+                        "model": "nvidia/nemotron-3-nano-4b",
+                        "tenant_id": "tenant_a",
+                        "hardware_tier": "apple_silicon",
+                        "max_total_tokens": 1,
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["stage"], "awaiting_operator")
+        self.assertEqual(run["status"], "manual_review")
+        self.assertEqual(run["pending_pause_stage"], "evaluation_ready")
+        record = detail["artifacts"]["mesh_brain_live_serving_record"]
+        self.assertEqual(record["gate"]["decision"], "manual_review")
+        self.assertIn("token_usage_ceiling_exceeded", record["gate"]["reasons"])
 
 
 if __name__ == "__main__":

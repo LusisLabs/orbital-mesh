@@ -23,6 +23,7 @@ MESH_BRAIN_ARTIFACT_KEYS = (
 
 MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS = (
     "mesh_brain_live_serving_execution",
+    "mesh_brain_live_smoke_gate",
     "mesh_brain_live_serving_summary",
 )
 
