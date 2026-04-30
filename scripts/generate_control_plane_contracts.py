@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import importlib.util
 import json
 import sys
 import types
@@ -13,12 +14,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from shared.mesh_runtime import control_plane_models as models  # noqa: E402
-
 SCHEMA_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "schemas" / "control-plane.schema.json"
 TYPES_PATH = REPO_ROOT / "web" / "src" / "types.ts"
 GENERATED_START = "// <generated-control-plane-contracts>"
 GENERATED_END = "// </generated-control-plane-contracts>"
+
+
+def load_control_plane_models() -> types.ModuleType:
+    module_path = REPO_ROOT / "shared" / "mesh_runtime" / "control_plane_models.py"
+    spec = importlib.util.spec_from_file_location("control_plane_models", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load control-plane models from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+models = load_control_plane_models()
 
 MODEL_CLASSES = (
     models.GoalRecord,

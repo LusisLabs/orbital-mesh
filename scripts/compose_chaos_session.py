@@ -58,6 +58,7 @@ def main() -> int:
     hold_seconds = float(os.environ.get("MESH_STACK_CHAOS_HOLD_SECONDS", "30"))
     seed = int(os.environ.get("MESH_STACK_CHAOS_SEED", "20260428"))
     coverage_first = os.environ.get("MESH_STACK_CHAOS_COVERAGE_FIRST", "1").lower() not in {"0", "false", "no"}
+    stop_on_breakthrough = os.environ.get("MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH", "0").lower() in {"1", "true", "yes"}
     output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/mesh-intel/.mesh-runtime-state/compose-chaos"))
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -68,6 +69,7 @@ def main() -> int:
     started = time.monotonic()
     deadline = started + duration
     events_path = output_root / f"events-{_stamp_compact()}.jsonl"
+    summary_path = events_path.with_name(events_path.name.replace("events-", "summary-").replace(".jsonl", ".json"))
 
     print(json.dumps({
         "event": "session_started",
@@ -98,18 +100,25 @@ def main() -> int:
             "target": target.__dict__,
         }
         try:
+            _wait_for_target_ready(injector, target)
             result = getattr(injector, f"inject_{experiment.name}")(target.deployment, target.namespace)
             event["injection"] = {
                 "mode": result.mode,
                 "injected_at": result.injected_at,
                 "observed_at": result.observed_at,
             }
-            time.sleep(hold_seconds)
+            observation_delay = _observation_delay_seconds(experiment, hold_seconds)
+            event["observation_delay_seconds"] = observation_delay
+            time.sleep(observation_delay)
             event["mesh_run"] = _launch_mesh_run(base_url, target)
         except (ChaosError, URLError, TimeoutError, OSError) as exc:
             event["error"] = repr(exc)
         finally:
             injector.revert_all()
+            try:
+                event["post_revert_ready"] = _wait_for_target_ready(injector, target)
+            except ChaosError as exc:
+                event["post_revert_error"] = repr(exc)
         event["score"] = _score_event(experiment, event)
         history.append(
             Prior(
@@ -123,11 +132,14 @@ def main() -> int:
         )
         _append_jsonl(events_path, event)
         session_events.append(event)
+        summary = _session_summary(events_path, session_events)
+        summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(event, sort_keys=True), flush=True)
+        if stop_on_breakthrough and summary["breakthrough_probe"]["ready"]:
+            break
         time.sleep(rng.uniform(min_sleep, max_sleep))
 
     summary = _session_summary(events_path, session_events)
-    summary_path = events_path.with_name(events_path.name.replace("events-", "summary-").replace(".jsonl", ".json"))
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({
         "event": "session_completed",
@@ -257,6 +269,12 @@ def _covered_axes(history: list[Prior]) -> set[str]:
         for axis in prior.capability_axes
         if prior.passed is not False
     }
+
+
+def _observation_delay_seconds(experiment: ChaosExperiment, hold_seconds: float) -> float:
+    if experiment.observation_delay_seconds is not None:
+        return max(0.0, experiment.observation_delay_seconds)
+    return max(0.0, hold_seconds)
 
 
 def _score_event(experiment: ChaosExperiment, event: dict[str, Any]) -> dict[str, Any]:
@@ -400,6 +418,76 @@ def _weighted_index(rng: random.Random, weights: list[float]) -> int:
         if cursor <= accumulated:
             return index
     return len(weights) - 1
+
+
+def _wait_for_target_ready(
+    injector: ChaosInjector,
+    target: Target,
+    *,
+    timeout_seconds: int = 180,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout_seconds
+    last_state: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        deployment = injector._kubectl_json(  # noqa: SLF001 - compose driver owns this harness integration.
+            "get",
+            "deployment",
+            target.deployment,
+            "-n",
+            target.namespace,
+            "-o",
+            "json",
+        )
+        pods = injector._list_pods(target.deployment, target.namespace)  # noqa: SLF001
+        spec = deployment.get("spec") or {}
+        status = deployment.get("status") or {}
+        desired = int(spec.get("replicas", 0) or 0)
+        total = int(status.get("replicas", 0) or 0)
+        updated = int(status.get("updatedReplicas", 0) or 0)
+        ready = int(status.get("readyReplicas", 0) or 0)
+        available = int(status.get("availableReplicas", 0) or 0)
+        running_ready = [
+            pod
+            for pod in pods
+            if pod.get("phase") == "Running" and _pod_ready(pod)
+        ]
+        last_state = {
+            "desired_replicas": desired,
+            "total_replicas": total,
+            "updated_replicas": updated,
+            "ready_replicas": ready,
+            "available_replicas": available,
+            "running_ready_pods": len(running_ready),
+            "pods": [
+                {
+                    "name": pod.get("name"),
+                    "phase": pod.get("phase"),
+                    "ready": _pod_ready(pod),
+                }
+                for pod in pods
+            ],
+        }
+        if (
+            desired > 0
+            and total == desired
+            and updated >= desired
+            and ready >= desired
+            and available >= desired
+            and len(running_ready) == desired
+        ):
+            return last_state
+        time.sleep(2)
+    raise ChaosError(
+        f"target {target.context}/{target.namespace}/{target.deployment} did not become ready "
+        f"within {timeout_seconds}s: {last_state}"
+    )
+
+
+def _pod_ready(pod: dict[str, Any]) -> bool:
+    for condition in pod.get("conditions", []):
+        if condition.get("type") == "Ready":
+            return condition.get("status") == "True"
+    return False
 
 
 def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:

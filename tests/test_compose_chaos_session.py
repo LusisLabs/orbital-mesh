@@ -262,6 +262,164 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertIsNotNone(pick)
         self.assertEqual(pick[0].name, "covered")
 
+    def test_observation_delay_uses_primitive_override_for_transients(self) -> None:
+        defaulted = compose_chaos_session.ChaosExperiment(
+            name="defaulted",
+            description="",
+            weight=1.0,
+            severity="high",
+            expected_decisions=frozenset(),
+        )
+        transient = compose_chaos_session.ChaosExperiment(
+            name="transient",
+            description="",
+            weight=1.0,
+            severity="high",
+            expected_decisions=frozenset(),
+            observation_delay_seconds=0.0,
+        )
+
+        self.assertEqual(compose_chaos_session._observation_delay_seconds(defaulted, 30.0), 30.0)
+        self.assertEqual(compose_chaos_session._observation_delay_seconds(transient, 30.0), 0.0)
+
+    def test_session_summary_breakthrough_ready_when_all_thresholds_pass(self) -> None:
+        path = compose_chaos_session.Path("/tmp/events.jsonl")
+        events = []
+        for experiment in compose_chaos_session.DEFAULT_PORTFOLIO:
+            trigger_expected = (
+                "false_positive_probe" not in experiment.tags
+                and "no_action" not in experiment.expected_decisions
+            )
+            decision_type = (
+                next(iter(sorted(experiment.expected_decisions - {"escalate"})))
+                if experiment.expected_decisions and trigger_expected
+                else None
+            )
+            events.append(
+                {
+                    "experiment": experiment.name,
+                    "tags": sorted(experiment.tags),
+                    "capability_axes": sorted(experiment.capability_axes),
+                    "expected_decisions": sorted(experiment.expected_decisions),
+                    "mesh_run": {
+                        "stage": "awaiting_operator" if trigger_expected else "no_trigger",
+                        "timed_out": False,
+                    },
+                    "score": {
+                        "passed": True,
+                        "trigger_fired": trigger_expected,
+                        "decision_type": decision_type,
+                    },
+                }
+            )
+
+        summary = compose_chaos_session._session_summary(path, events)
+
+        self.assertTrue(summary["breakthrough_probe"]["ready"])
+        self.assertEqual(summary["breakthrough_probe"]["status"], "breakthrough_signal")
+
+    def test_wait_for_target_ready_requires_desired_running_ready_pods(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+
+        class FakeInjector:
+            def _kubectl_json(self, *args: str) -> dict[str, object]:
+                return {
+                    "spec": {"replicas": 2},
+                    "status": {
+                        "replicas": 2,
+                        "updatedReplicas": 2,
+                        "readyReplicas": 2,
+                        "availableReplicas": 2,
+                    },
+                }
+
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+                return [
+                    {
+                        "name": "p1",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                    {
+                        "name": "p2",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    },
+                ]
+
+        result = compose_chaos_session._wait_for_target_ready(FakeInjector(), target, timeout_seconds=1)
+
+        self.assertEqual(result["desired_replicas"], 2)
+        self.assertEqual(result["updated_replicas"], 2)
+        self.assertEqual(result["running_ready_pods"], 2)
+
+    def test_wait_for_target_ready_rejects_dirty_rollout_with_ready_old_pods(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+
+        class FakeInjector:
+            def _kubectl_json(self, *args: str) -> dict[str, object]:
+                return {
+                    "spec": {"replicas": 3},
+                    "status": {
+                        "replicas": 4,
+                        "updatedReplicas": 1,
+                        "readyReplicas": 3,
+                        "availableReplicas": 3,
+                    },
+                }
+
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+                return [
+                    {
+                        "name": f"old-{index}",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    }
+                    for index in range(3)
+                ] + [
+                    {
+                        "name": "new-broken",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "False"}],
+                    }
+                ]
+
+        with mock.patch.object(compose_chaos_session.time, "sleep", return_value=None):
+            with mock.patch.object(compose_chaos_session.time, "monotonic", side_effect=[0.0, 2.0]):
+                with self.assertRaises(compose_chaos_session.ChaosError):
+                    compose_chaos_session._wait_for_target_ready(
+                        FakeInjector(),
+                        target,
+                        timeout_seconds=1,
+                    )
+
+    def test_wait_for_target_ready_rejects_zero_running_pods(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+
+        class FakeInjector:
+            def _kubectl_json(self, *args: str) -> dict[str, object]:
+                return {
+                    "spec": {"replicas": 3},
+                    "status": {
+                        "replicas": 3,
+                        "updatedReplicas": 3,
+                        "readyReplicas": 0,
+                        "availableReplicas": 0,
+                    },
+                }
+
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+                return []
+
+        with mock.patch.object(compose_chaos_session.time, "sleep", return_value=None):
+            with mock.patch.object(compose_chaos_session.time, "monotonic", side_effect=[0.0, 2.0]):
+                with self.assertRaises(compose_chaos_session.ChaosError):
+                    compose_chaos_session._wait_for_target_ready(
+                        FakeInjector(),
+                        target,
+                        timeout_seconds=1,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

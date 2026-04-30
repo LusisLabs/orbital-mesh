@@ -21,6 +21,7 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
   && python -m pip install --no-cache-dir transformers accelerate datasets tqdm numpy
 
 COPY shared ./shared
+COPY mesh_brain ./mesh_brain
 COPY services ./services
 COPY latent-mesh ./latent-mesh
 

@@ -18,6 +18,7 @@ deepagents = { path = "deepagents/libs/deepagents", editable = true }
 
 [tool.setuptools]
 packages = [
+  "mesh_brain",
   "shared",
   "shared.mesh_runtime",
   "services",

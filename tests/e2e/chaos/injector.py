@@ -192,11 +192,11 @@ class ChaosInjector:
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected bad_image (%s) into %s/%s", bad_image, namespace, deployment)
 
-        observed_at = self._wait_for_pod_reason(
+        observed_at = self._wait_for_pod_reason_or_rollout_degraded(
             deployment,
             namespace,
             reasons=("ImagePullBackOff", "ErrImagePull"),
-            timeout_seconds=60,
+            timeout_seconds=120,
         )
         return InjectionResult(
             deployment=deployment,
@@ -604,6 +604,49 @@ class ChaosInjector:
         raise ChaosError(
             f"no pod for {namespace}/{deployment} reached any of {reasons!r} "
             f"within {timeout_seconds}s"
+        )
+
+    def _wait_for_pod_reason_or_rollout_degraded(
+        self,
+        deployment: str,
+        namespace: str,
+        reasons: tuple[str, ...],
+        timeout_seconds: int,
+    ) -> float:
+        """Block until pod status or rollout status proves the injected fault."""
+        deadline = time.monotonic() + timeout_seconds
+        while time.monotonic() < deadline:
+            pods = self._list_pods(deployment, namespace)
+            for pod in pods:
+                for container_status in pod.get("containerStatuses", []):
+                    waiting = container_status.get("state", {}).get("waiting") or {}
+                    terminated = container_status.get("state", {}).get("terminated") or {}
+                    last_terminated = container_status.get("lastState", {}).get("terminated") or {}
+                    if waiting.get("reason") in reasons:
+                        return time.monotonic()
+                    if terminated.get("reason") in reasons:
+                        return time.monotonic()
+                    if last_terminated.get("reason") in reasons:
+                        return time.monotonic()
+
+            raw = self._kubectl_json(
+                "get", "deployment", deployment, "-n", namespace, "-o", "json",
+            )
+            status = raw.get("status") or {}
+            spec = raw.get("spec") or {}
+            updated = int(status.get("updatedReplicas", 0) or 0)
+            unavailable = int(status.get("unavailableReplicas", 0) or 0)
+            ready = int(status.get("readyReplicas", 0) or 0)
+            available = int(status.get("availableReplicas", 0) or 0)
+            desired = int(spec.get("replicas", 0) or 0)
+            if updated > 0 and unavailable > 0:
+                return time.monotonic()
+            if updated > 0 and desired > 0 and (ready < desired or available < desired):
+                return time.monotonic()
+            time.sleep(1.0)
+        raise ChaosError(
+            f"no pod for {namespace}/{deployment} reached any of {reasons!r} "
+            f"and rollout did not degrade within {timeout_seconds}s"
         )
 
     def _wait_for_ready_replicas_below(

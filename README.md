@@ -938,7 +938,7 @@ scripts/run_chaos_session.sh --keep-cluster
 | `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
 | `config_drift` | medium | 0.5 | `escalate` / `no_action` |
 
-All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Compose-native runs use the global hold time for durable faults, but transient primitives such as `pod_kill_all` can launch Mesh observation immediately so short-lived outage signals are measured while live. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
 
 ### Hypothesis thresholds
 

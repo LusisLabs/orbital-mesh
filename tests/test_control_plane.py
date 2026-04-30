@@ -212,6 +212,44 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertIn("AI Run Insight", insights["content"])
         self.assertIn("```mermaid", visualization["content"])
 
+    def test_create_run_returns_compact_payload_before_worker_completion(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+
+        self.assertIn("run_id", run)
+        self.assertEqual(run["stage"], "queued")
+        self.assertNotIn("events", run)
+        self.assertNotIn("merkle", run)
+        self.assertNotIn("artifacts", run)
+
+    def test_runs_summary_api_does_not_expand_artifacts(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+
+        listing = self._request("GET", "/api/runs?summary=1")
+        matching = [item for item in listing["runs"] if item["run_id"] == run["run_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertNotIn("artifacts", matching[0])
+        self.assertNotIn("events", matching[0])
+        self.assertNotIn("merkle", matching[0])
+
     def test_interruptible_auto_executes_without_operator_pause(self) -> None:
         run = self._request(
             "POST",

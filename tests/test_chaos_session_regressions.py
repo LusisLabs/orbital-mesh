@@ -412,6 +412,36 @@ class ReadinessFailureObservationTests(unittest.TestCase):
         )
         self.assertIsInstance(observed_at, float)
 
+    def test_bad_image_observation_accepts_degraded_rollout_without_pod_reason(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._list_pods = lambda *args: [  # type: ignore[method-assign]
+            {
+                "containerStatuses": [
+                    {"state": {"waiting": {"reason": "ContainerCreating"}}}
+                ]
+            }
+        ]
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 3},
+            "status": {
+                "updatedReplicas": 1,
+                "unavailableReplicas": 1,
+                "readyReplicas": 3,
+                "availableReplicas": 3,
+            },
+        }
+
+        observed_at = injector._wait_for_pod_reason_or_rollout_degraded(
+            "semantic-search",
+            "search",
+            reasons=("ImagePullBackOff", "ErrImagePull"),
+            timeout_seconds=1,
+        )
+
+        self.assertIsInstance(observed_at, float)
+
 
 # --------------------------------------------------------- Bug 10: baseline-failure fast-trip
 

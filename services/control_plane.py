@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -109,6 +110,31 @@ _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_executio
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
 _LOG = logging.getLogger("mesh.control_plane")
+
+
+def _run_session_summary(session: RunSession) -> dict[str, Any]:
+    return {
+        "auto_mode": session.auto_mode,
+        "created_at": session.created_at,
+        "error": session.error,
+        "evaluation_mode": session.evaluation_mode,
+        "goal_id": session.goal_id,
+        "latest_event_id": session.latest_event_id,
+        "latest_event_sequence": session.latest_event_sequence,
+        "latest_merkle_root": session.latest_merkle_root,
+        "orchestration_mode": session.orchestration_mode,
+        "pending_pause_stage": session.pending_pause_stage,
+        "run_id": session.run_id,
+        "scenario_key": session.scenario_key,
+        "stage": session.stage,
+        "status": session.status,
+        "steering_mode": session.steering_mode,
+        "updated_at": session.updated_at,
+    }
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "unknown"
 
 
 def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
@@ -657,6 +683,9 @@ class RunCoordinator:
     def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         return [session.to_dict() for session in self.state_store.list_run_sessions(limit=limit)]
 
+    def list_run_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [_run_session_summary(session) for session in self.state_store.list_run_sessions(limit=limit)]
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -799,8 +828,7 @@ class RunCoordinator:
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
-        readiness_snapshot = build_readiness(run_config).to_dict()
-        artifacts = {"input_signal": signal_payload, "integration_readiness": readiness_snapshot}
+        artifacts = {"input_signal": signal_payload}
         if payload.get("correlation_key"):
             artifacts["correlation_key"] = payload["correlation_key"]
         if isinstance(payload.get("simulation_context"), dict):
@@ -817,32 +845,6 @@ class RunCoordinator:
         )
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
-        self.state_store.append_run_event(
-            session.run_id,
-            stage="queued",
-            event_type=RUN_QUEUED,
-            payload={
-                "scenario_key": scenario_key,
-                "goal_id": goal_id,
-                "steering_mode": steering_mode,
-                "pause_points": pause_points,
-            },
-            summary={"status": "queued"},
-            status="queued",
-        )
-        self.state_store.append_run_event(
-            session.run_id,
-            stage="queued",
-            event_type=INTEGRATION_READINESS_RECORDED,
-            payload=readiness_snapshot,
-            summary={
-                "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
-                "goose_ready": readiness_snapshot["goose"]["ready"],
-                "evo_ready": readiness_snapshot["evo"]["ready"],
-            },
-            artifact_key="integration_readiness",
-            status="captured",
-        )
         worker = threading.Thread(
             target=self._execute_run,
             args=(session.run_id, run_config, signal_payload, scenario_key),
@@ -851,7 +853,7 @@ class RunCoordinator:
         with self._lock:
             self._threads[session.run_id] = worker
         worker.start()
-        return self.get_run(session.run_id) or session.to_dict()
+        return _run_session_summary(session)
 
     def steer_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         command_type = payload.get("command")
@@ -945,7 +947,39 @@ class RunCoordinator:
             alert_store=self.alert_store,
         )
         try:
+            readiness_snapshot = build_readiness(run_config).to_dict()
+            self._set_artifact(run_id, "integration_readiness", readiness_snapshot)
+            self.state_store.append_run_event(
+                run_id,
+                stage="queued",
+                event_type=RUN_QUEUED,
+                payload={
+                    "scenario_key": scenario_key,
+                    "goal_id": session.goal_id,
+                    "steering_mode": session.steering_mode,
+                    "pause_points": session.pause_points,
+                },
+                summary={"status": "queued"},
+                status="queued",
+            )
+            self.state_store.append_run_event(
+                run_id,
+                stage="queued",
+                event_type=INTEGRATION_READINESS_RECORDED,
+                payload=readiness_snapshot,
+                summary={
+                    "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
+                    "goose_ready": readiness_snapshot["goose"]["ready"],
+                    "evo_ready": readiness_snapshot["evo"]["ready"],
+                },
+                artifact_key="integration_readiness",
+                status="captured",
+            )
             self._update_session(run_id, stage="ingesting", status="running")
+            deferred_live_signal = signal_payload.get("__deferred_live_signal")
+            if isinstance(deferred_live_signal, dict) and deferred_live_signal.get("source") == "kubernetes":
+                signal_payload = self._collect_live_kubernetes_signal(deferred_live_signal, {})
+                self._set_artifact(run_id, "input_signal", signal_payload)
             normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
             self._set_artifact(run_id, "normalized_event", normalized_event.to_dict())
             self.state_store.append_run_event(
@@ -2591,7 +2625,7 @@ class RunCoordinator:
             return self._build_signal_from_otlp(otlp_payload, payload)
         live_signal = payload.get("live_signal")
         if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
-            return self._collect_live_kubernetes_signal(live_signal, payload)
+            return self._defer_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
         if isinstance(scenario_key, str) and scenario_key.startswith("live_kubernetes:"):
             remainder = scenario_key[len("live_kubernetes:") :].strip()
@@ -2622,7 +2656,7 @@ class RunCoordinator:
                     '(e.g. \"kube_context\": \"k3d-mesh-e2e\" or '
                     '\"live_kubernetes\": {\"kube_context\": \"...\"})'
                 )
-            return self._collect_live_kubernetes_signal(
+            return self._defer_live_kubernetes_signal(
                 {
                     "source": "kubernetes",
                     "deployment_name": deployment_name,
@@ -2691,6 +2725,29 @@ class RunCoordinator:
                 if key in live_signal:
                     related[key] = copy.deepcopy(live_signal[key])
         return signal
+
+    def _defer_live_kubernetes_signal(self, live_signal: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        ns = live_signal.get("namespace", "default")
+        name = live_signal["deployment_name"]
+        payload["scenario_key"] = f"live_kubernetes:{ns}/{name}"
+        related = {
+            "kube_context": live_signal.get("kube_context"),
+            "cluster_access_available": True,
+            "deferred_collection": True,
+        }
+        for key in ("correlation", "correlation_key", "co_signatures"):
+            if key in live_signal:
+                related[key] = copy.deepcopy(live_signal[key])
+        return {
+            "signal_type": "deferred_live_kubernetes_signal",
+            "signal_id": f"sig_k8s_deferred_{_slugify(str(ns))}_{_slugify(str(name))}_{uuid4().hex[:10]}",
+            "observed_at": _timestamp(),
+            "environment": live_signal.get("environment", "local"),
+            "service": name,
+            "namespace": ns,
+            "related_context": related,
+            "__deferred_live_signal": copy.deepcopy(live_signal),
+        }
 
     def _maybe_attach_to_correlated_run(
         self,

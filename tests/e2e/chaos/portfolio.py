@@ -115,6 +115,11 @@ class ChaosExperiment:
     # while leaving other decision surfaces untouched.
     capability_axes: frozenset[str] = field(default_factory=frozenset)
 
+    # Optional per-primitive delay before launching the Mesh observation run.
+    # Durable faults use the session-wide hold. Transient faults can override
+    # this so Mesh observes the failure while the signal still exists.
+    observation_delay_seconds: float | None = None
+
 
 # The default portfolio. Tuned for a 60-minute session on a 2-worker
 # kind cluster; adjust weights if your session duration, cluster size,
@@ -196,6 +201,7 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
             "separate_transient_from_service_outage",
             "choose_restart_or_rollback",
         }),
+        observation_delay_seconds=0.0,
     ),
     ChaosExperiment(
         name="memory_pressure",

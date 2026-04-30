@@ -66,7 +66,8 @@ class MeshControlPlaneServer(ThreadingHTTPServer):
         self.coordinator = RunCoordinator(config)
 
     def server_close(self) -> None:
-        self.coordinator.stop_background_workers()
+        if hasattr(self, "coordinator"):
+            self.coordinator.stop_background_workers()
         super().server_close()
 
 
@@ -155,9 +156,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"goals": self.server.coordinator.list_goals()})
             return
         if path == "/api/runs":
-            runs = self.server.coordinator.list_runs()
             if parse_qs(parsed.query).get("summary", ["0"])[0] in {"1", "true"}:
-                runs = [_run_summary(run) for run in runs]
+                runs = self.server.coordinator.list_run_summaries()
+            else:
+                runs = self.server.coordinator.list_runs()
             self._send_json({"runs": runs})
             return
         if path == "/api/memory/active":
