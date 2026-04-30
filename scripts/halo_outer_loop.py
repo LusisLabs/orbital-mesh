@@ -43,6 +43,10 @@ def main() -> int:
         default="Diagnose recurring Mesh harness failure modes and suggest bounded fixes.",
         help="Prompt passed to HALO.",
     )
+    run_parser.add_argument("--model", default=None, help="HALO model override.")
+    run_parser.add_argument("--max-depth", type=int, default=None, help="HALO max-depth override.")
+    run_parser.add_argument("--max-turns", type=int, default=None, help="HALO max-turns override.")
+    run_parser.add_argument("--max-parallel", type=int, default=None, help="HALO max-parallel override.")
     run_parser.add_argument("--report-path", default=None, help="Optional path to write HALO stdout.")
     run_parser.add_argument("--timeout-seconds", type=float, default=900.0)
 
@@ -75,6 +79,10 @@ def main() -> int:
             args.output,
             halo_command=args.halo_command,
             prompt=args.prompt,
+            model=args.model,
+            max_depth=args.max_depth,
+            max_turns=args.max_turns,
+            max_parallel=args.max_parallel,
             limit=args.limit,
             report_path=args.report_path,
             timeout_seconds=args.timeout_seconds,
@@ -144,7 +152,7 @@ def _read_trace_run_ids(path: str) -> list[str]:
                 continue
             row = json.loads(line)
             run_id = row.get("trace_id") or row.get("run", {}).get("run_id")
-            if isinstance(run_id, str):
+            if isinstance(run_id, str) and run_id not in run_ids:
                 run_ids.append(run_id)
     return run_ids
 

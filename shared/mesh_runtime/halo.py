@@ -77,11 +77,72 @@ def export_halo_traces(
         for session in sessions:
             events = state_store.list_run_events(session.run_id)
             merkle = state_store.get_merkle_snapshot(session.run_id)
-            record = build_halo_trace_record(session, events, merkle.to_dict())
-            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            for record in build_halo_span_records(session, events, merkle.to_dict()):
+                fh.write(json.dumps(record, sort_keys=True) + "\n")
             run_ids.append(session.run_id)
 
     return HaloExportResult(trace_count=len(run_ids), output_path=str(path), run_ids=run_ids)
+
+
+def build_halo_span_records(session: RunSession, events: Iterable[RunEvent], merkle: dict[str, Any]) -> list[dict[str, Any]]:
+    event_dicts = [event.to_dict() for event in events]
+    artifacts = _redact(session.artifacts)
+    root_start = session.created_at or _timestamp()
+    root_end = session.updated_at or root_start
+    spans = [
+        _span_record(
+            trace_id=session.run_id,
+            span_id=_span_id(session.run_id, "run", 0),
+            parent_span_id="",
+            name="mesh.run",
+            kind="SPAN_KIND_INTERNAL",
+            start_time=root_start,
+            end_time=root_end,
+            status_code=_status_code(session.status, session.error),
+            status_message=session.error or str(session.status),
+            attributes={
+                "mesh.trace_format": TRACE_FORMAT,
+                "mesh.project": "mesh-intelligence",
+                "mesh.source": "mesh-run-history",
+                "mesh.run": _run_summary(session),
+                "mesh.harness": {
+                    "evaluation_mode": session.evaluation_mode,
+                    "orchestration_mode": session.orchestration_mode,
+                    "steering_mode": session.steering_mode,
+                    "auto_mode": session.auto_mode,
+                    "pause_points": list(session.pause_points),
+                },
+                "mesh.artifacts": _artifact_context(artifacts),
+                "mesh.failure": _failure_context(session, artifacts),
+                "mesh.merkle": _redact(merkle),
+            },
+        )
+    ]
+    parent_span_id = spans[0]["span_id"]
+    for index, event in enumerate(event_dicts, start=1):
+        spans.append(
+            _span_record(
+                trace_id=session.run_id,
+                span_id=_span_id(session.run_id, str(event.get("event_id") or "event"), index),
+                parent_span_id=parent_span_id,
+                name=str(event.get("event_type") or event.get("stage") or "mesh.event"),
+                kind=_span_kind_for_event(event),
+                start_time=str(event.get("recorded_at") or root_start),
+                end_time=str(event.get("recorded_at") or root_start),
+                status_code=_status_code(str(event.get("status") or session.status), None),
+                status_message=str(event.get("status") or ""),
+                attributes={
+                    "mesh.trace_format": TRACE_FORMAT,
+                    "mesh.run_id": session.run_id,
+                    "mesh.stage": event.get("stage"),
+                    "mesh.event_type": event.get("event_type"),
+                    "mesh.artifact_key": event.get("artifact_key"),
+                    "mesh.integration_name": event.get("integration_name"),
+                    "mesh.event": _event_summary(event),
+                },
+            )
+        )
+    return spans
 
 
 def build_halo_trace_record(session: RunSession, events: Iterable[RunEvent], merkle: dict[str, Any]) -> dict[str, Any]:
@@ -112,12 +173,79 @@ def build_halo_trace_record(session: RunSession, events: Iterable[RunEvent], mer
     }
 
 
+def _span_record(
+    *,
+    trace_id: str,
+    span_id: str,
+    parent_span_id: str,
+    name: str,
+    kind: str,
+    start_time: str,
+    end_time: str,
+    status_code: str,
+    status_message: str,
+    attributes: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "trace_id": trace_id,
+        "span_id": span_id,
+        "parent_span_id": parent_span_id,
+        "name": name,
+        "kind": kind,
+        "start_time": start_time,
+        "end_time": end_time,
+        "status": {
+            "code": status_code,
+            "message": status_message,
+        },
+        "resource": {
+            "attributes": {
+                "service.name": "mesh-intelligence",
+                "deployment.environment": "mesh",
+            }
+        },
+        "scope": {
+            "name": "mesh.halo.exporter",
+            "version": TRACE_FORMAT,
+        },
+        "attributes": _redact(attributes),
+    }
+
+
+def _span_id(seed: str, label: str, index: int) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"{seed}:{label}:{index}".encode("utf-8")).hexdigest()[:16]
+
+
+def _span_kind_for_event(event: dict[str, Any]) -> str:
+    event_type = str(event.get("event_type") or "")
+    if event_type in {"evidence_pack_ready", "reasoning_bank_packet"}:
+        return "SPAN_KIND_CLIENT"
+    if event_type in {"decision_ready", "evaluation_ready", "scenario_analysis_ready"}:
+        return "SPAN_KIND_INTERNAL"
+    if event_type in {"execution_recorded", "feedback_recorded"}:
+        return "SPAN_KIND_PRODUCER"
+    return "SPAN_KIND_INTERNAL"
+
+
+def _status_code(status: str | None, error: str | None) -> str:
+    normalized = (status or "").lower()
+    if error or normalized in {"failed", "error", "blocked"}:
+        return "STATUS_CODE_ERROR"
+    return "STATUS_CODE_OK"
+
+
 def run_halo_engine(
     state_store: MeshStateStore,
     output_path: str | Path,
     *,
     halo_command: str = "halo",
     prompt: str = "Diagnose recurring Mesh harness failure modes and suggest bounded fixes.",
+    model: str | None = None,
+    max_depth: int | None = None,
+    max_turns: int | None = None,
+    max_parallel: int | None = None,
     limit: int = 100,
     report_path: str | Path | None = None,
     timeout_seconds: float = 900.0,
@@ -134,6 +262,14 @@ def run_halo_engine(
         goal_id=goal_id,
     )
     command = [halo_command, export.output_path, "-p", prompt]
+    if model:
+        command.extend(["--model", model])
+    if max_depth is not None:
+        command.extend(["--max-depth", str(max_depth)])
+    if max_turns is not None:
+        command.extend(["--max-turns", str(max_turns)])
+    if max_parallel is not None:
+        command.extend(["--max-parallel", str(max_parallel)])
     try:
         completed = subprocess.run(
             command,

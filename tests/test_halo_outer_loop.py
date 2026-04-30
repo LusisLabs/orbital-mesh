@@ -29,13 +29,18 @@ class HaloOuterLoopTests(unittest.TestCase):
             self.assertEqual(result.trace_count, 1)
             self.assertEqual(result.run_ids, [run_id])
             rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(rows[0]["trace_format"], TRACE_FORMAT)
             self.assertEqual(rows[0]["trace_id"], run_id)
-            self.assertEqual(rows[0]["harness"]["evaluation_mode"], "native")
-            self.assertEqual(rows[0]["artifacts"]["decision"]["decision_type"], "rollback_deployment")
-            self.assertEqual(rows[0]["failure"]["blocking_reasons"], ["verifier_failed"])
-            self.assertEqual(rows[0]["artifacts"]["input_signal"]["api_key"], "[REDACTED]")
-            self.assertGreaterEqual(len(rows[0]["otel"]["spans"]), 1)
+            self.assertEqual(rows[0]["name"], "mesh.run")
+            self.assertEqual(rows[0]["kind"], "SPAN_KIND_INTERNAL")
+            self.assertIn("span_id", rows[0])
+            self.assertEqual(rows[0]["status"]["code"], "STATUS_CODE_ERROR")
+            self.assertEqual(rows[0]["scope"]["version"], TRACE_FORMAT)
+            self.assertEqual(rows[0]["attributes"]["mesh.harness"]["evaluation_mode"], "native")
+            self.assertEqual(rows[0]["attributes"]["mesh.artifacts"]["decision"]["decision_type"], "rollback_deployment")
+            self.assertEqual(rows[0]["attributes"]["mesh.failure"]["blocking_reasons"], ["verifier_failed"])
+            self.assertEqual(rows[0]["attributes"]["mesh.artifacts"]["input_signal"]["api_key"], "[REDACTED]")
+            self.assertEqual(rows[1]["parent_span_id"], rows[0]["span_id"])
+            self.assertEqual(rows[1]["name"], "evaluation_ready")
 
     def test_records_halo_report_as_bounded_patch_task_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -78,11 +83,17 @@ class HaloOuterLoopTests(unittest.TestCase):
                 store,
                 Path(tmp) / "traces.jsonl",
                 halo_command="definitely-not-a-real-halo-binary",
+                model="gpt-test",
+                max_depth=1,
+                max_turns=2,
+                max_parallel=1,
                 timeout_seconds=1,
             )
 
             self.assertEqual(result.returncode, 127)
             self.assertEqual(result.export.trace_count, 1)
+            self.assertIn("--model", result.command)
+            self.assertIn("gpt-test", result.command)
             self.assertIn("definitely-not-a-real-halo-binary", result.stderr)
 
 

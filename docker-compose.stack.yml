@@ -591,8 +591,6 @@ services:
         condition: service_healthy
       mesh-agent-operator:
         condition: service_started
-      mesh-smoke:
-        condition: service_completed_successfully
     environment:
       PYTHONPATH: /workspace/mesh-intel
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
@@ -600,6 +598,10 @@ services:
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
       MESH_HALO_COMMAND: "${MESH_HALO_COMMAND:-halo}"
+      MESH_HALO_MODEL: "${MESH_HALO_MODEL:-${OPENAI_MODEL:-gpt-5.4-mini}}"
+      MESH_HALO_MAX_DEPTH: "${MESH_HALO_MAX_DEPTH:-1}"
+      MESH_HALO_MAX_TURNS: "${MESH_HALO_MAX_TURNS:-8}"
+      MESH_HALO_MAX_PARALLEL: "${MESH_HALO_MAX_PARALLEL:-2}"
       MESH_HALO_TRACE_LIMIT: "${MESH_HALO_TRACE_LIMIT:-100}"
       MESH_HALO_PROMPT: "${MESH_HALO_PROMPT:-Diagnose recurring Mesh harness failure modes across remediation, evaluation, agent-task, and verifier traces. Suggest bounded harness fixes only; do not propose direct production actuation.}"
       MESH_HALO_TRACE_PATH: "${MESH_HALO_TRACE_PATH:-/app/.mesh-runtime-state/halo/traces.jsonl}"
@@ -619,6 +621,10 @@ services:
           --output "$${MESH_HALO_TRACE_PATH}" \
           --report-path "$${MESH_HALO_REPORT_PATH}" \
           --halo-command "$${MESH_HALO_COMMAND}" \
+          --model "$${MESH_HALO_MODEL}" \
+          --max-depth "$${MESH_HALO_MAX_DEPTH}" \
+          --max-turns "$${MESH_HALO_MAX_TURNS}" \
+          --max-parallel "$${MESH_HALO_MAX_PARALLEL}" \
           --limit "$${MESH_HALO_TRACE_LIMIT}" \
           --prompt "$${MESH_HALO_PROMPT}";
         status="$$?";
