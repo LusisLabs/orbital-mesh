@@ -9,6 +9,13 @@ from .agent_runtime import (
     ToolDefinition,
     build_agent_runtime_e2e,
 )
+from .backend_matrix import (
+    BackendMatrixResult,
+    BackendMatrixSummary,
+    BackendMatrixTarget,
+    run_backend_matrix_smoke,
+    write_backend_matrix_summary,
+)
 from .data_plane import (
     DataRefineryReport,
     DataRefineryResult,
@@ -63,6 +70,13 @@ from .inference_catalog import (
     get_backend,
     list_backends,
 )
+from .judge_client import (
+    DeterministicMeshBrainJudgeClient,
+    JudgeClientRequest,
+    JudgeClientResult,
+    MeshBrainJudgeClient,
+    OpenAICompatibleMeshBrainJudgeClient,
+)
 from .model_management import (
     ArtifactAlias,
     ArtifactLineage,
@@ -112,6 +126,12 @@ from .research_registry import (
     list_research_influences,
     research_adoption_plan,
     research_capability_report,
+)
+from .readiness_gaps import (
+    ReadinessGap,
+    ReadinessGapReport,
+    build_readiness_gap_report,
+    write_readiness_gap_report,
 )
 from .runtime import (
     DatasetBundle,

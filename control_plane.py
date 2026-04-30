@@ -30,6 +30,11 @@ MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS = (
     "mesh_brain_live_serving_summary",
 )
 
+MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS = (
+    "mesh_brain_backend_matrix_results",
+    "mesh_brain_backend_matrix_summary",
+)
+
 
 @dataclass(frozen=True)
 class MeshBrainArtifactRef:
