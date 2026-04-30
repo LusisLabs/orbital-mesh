@@ -9,6 +9,7 @@ description = "Python multi-service closed-loop platform scaffold"
 requires-python = ">=3.11"
 dependencies = [
   "deepagents",
+  "halo-engine",
   "langchain-openai>=1.0.0,<2.0.0",
   "psycopg[binary]>=3.2,<4",
 ]

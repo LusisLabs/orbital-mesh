@@ -573,6 +573,77 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  mesh-halo-optimizer:
+    profiles:
+      - halo
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-halo-optimizer
+    depends_on:
+      mesh:
+        condition: service_healthy
+      mesh-agent-operator:
+        condition: service_started
+      mesh-smoke:
+        condition: service_completed_successfully
+    environment:
+      PYTHONPATH: /workspace/mesh-intel
+      MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
+      MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
+      MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
+      MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
+      MESH_HALO_COMMAND: "${MESH_HALO_COMMAND:-halo}"
+      MESH_HALO_TRACE_LIMIT: "${MESH_HALO_TRACE_LIMIT:-100}"
+      MESH_HALO_PROMPT: "${MESH_HALO_PROMPT:-Diagnose recurring Mesh harness failure modes across remediation, evaluation, agent-task, and verifier traces. Suggest bounded harness fixes only; do not propose direct production actuation.}"
+      MESH_HALO_TRACE_PATH: "${MESH_HALO_TRACE_PATH:-/app/.mesh-runtime-state/halo/traces.jsonl}"
+      MESH_HALO_REPORT_PATH: "${MESH_HALO_REPORT_PATH:-/app/.mesh-runtime-state/halo/report.md}"
+      MESH_HALO_RECORD_TASK_ON_FAILURE: "${MESH_HALO_RECORD_TASK_ON_FAILURE:-0}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p "$$(dirname "$${MESH_HALO_TRACE_PATH}")" "$$(dirname "$${MESH_HALO_REPORT_PATH}")";
+        python3 /workspace/mesh-intel/scripts/halo_outer_loop.py \
+          --state-directory "$${MESH_STATE_DIRECTORY}" \
+          --vault-path "$${MESH_VAULT_PATH}" \
+          run \
+          --output "$${MESH_HALO_TRACE_PATH}" \
+          --report-path "$${MESH_HALO_REPORT_PATH}" \
+          --halo-command "$${MESH_HALO_COMMAND}" \
+          --limit "$${MESH_HALO_TRACE_LIMIT}" \
+          --prompt "$${MESH_HALO_PROMPT}";
+        status="$$?";
+        if [ "$${status}" = "0" ] || [ "$${MESH_HALO_RECORD_TASK_ON_FAILURE}" = "1" ]; then
+          python3 /workspace/mesh-intel/scripts/halo_outer_loop.py \
+            --state-directory "$${MESH_STATE_DIRECTORY}" \
+            --vault-path "$${MESH_VAULT_PATH}" \
+            task \
+            --trace-jsonl "$${MESH_HALO_TRACE_PATH}" \
+            --report "$${MESH_HALO_REPORT_PATH}" \
+            --print-json;
+        fi;
+        exit "$${status}"
+    healthcheck:
+      disable: true
+    volumes:
+      - ./:/workspace/mesh-intel
+      - mesh_runtime_state:/app/.mesh-runtime-state
+    restart: "no"
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   mesh-ui:
     build:
       context: ./purnaOS-main

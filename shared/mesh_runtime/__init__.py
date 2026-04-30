@@ -193,6 +193,20 @@ from .integrations import (
     save_integrations_config,
 )
 from .logging import log_runtime_event
+from .halo import (
+    DEFAULT_HARNESS_ALLOWED_PATHS,
+    DEFAULT_HARNESS_TEST_COMMANDS,
+    OPTIMIZATION_ARTIFACT_KEY,
+    TRACE_FORMAT,
+    HaloExportResult,
+    HaloRunResult,
+    build_halo_patch_task,
+    build_halo_trace_record,
+    export_halo_traces,
+    load_halo_report,
+    record_halo_optimization_cycle,
+    run_halo_engine,
+)
 from .merkle import build_merkle_proof, build_merkle_snapshot, verify_merkle_proof
 from .policies import load_policy
 from .phoenix_trace import build_phoenix_spans
