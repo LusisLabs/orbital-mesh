@@ -123,6 +123,7 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["usage"]["total_tokens"], 18)
         self.assertEqual(record["gate"]["decision"], "pass")
         self.assertEqual(record["response_eval"]["decision"], "pass")
+        self.assertEqual(record["judge_eval"]["decision"], "pass")
         self.assertEqual(record["release_gate"]["decision"], "promote")
         self.assertEqual(record["deployment_record"]["status"], "eligible_for_promote")
         self.assertIn("bounded", record["content_preview"])
@@ -180,6 +181,7 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         record = detail["artifacts"]["mesh_brain_live_serving_record"]
         self.assertEqual(record["gate"]["decision"], "pass")
         self.assertEqual(record["response_eval"]["decision"], "block")
+        self.assertEqual(record["judge_eval"]["decision"], "block")
         self.assertEqual(record["final_decision"], "block")
         self.assertEqual(record["release_gate"]["decision"], "block")
         self.assertEqual(record["deployment_record"]["status"], "blocked")

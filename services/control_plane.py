@@ -819,6 +819,7 @@ class RunCoordinator:
             latency_budget_ms=float(payload.get("latency_budget_ms") or 30_000.0),
             max_total_tokens=int(payload.get("max_total_tokens") or 4096),
             response_eval_min_score=float(payload.get("response_eval_min_score") or 0.8),
+            judge_enabled=bool(payload.get("judge_enabled", True)),
             deterministic_release_decision=str(payload.get("deterministic_release_decision") or "promote"),
         )
         artifact_paths = summary.get("artifact_paths", {})
@@ -835,6 +836,10 @@ class RunCoordinator:
                 "mesh_brain_live_response_eval",
                 artifact_paths["live_response_eval"],
             ).to_dict(),
+            "mesh_brain_live_judge_eval": mesh_brain_artifact_ref(
+                "mesh_brain_live_judge_eval",
+                artifact_paths["live_judge_eval"],
+            ).to_dict(),
             "mesh_brain_live_release_gate": mesh_brain_artifact_ref(
                 "mesh_brain_live_release_gate",
                 artifact_paths["live_release_gate"],
@@ -846,6 +851,7 @@ class RunCoordinator:
         }
         gate = summary["gate"]
         response_eval = summary["response_eval"]
+        judge_eval = summary["judge_eval"]
         release_gate = summary["release_gate"]
         release_decision = release_gate["decision"]
         stage = "completed" if release_decision in {"canary", "promote"} else "failed" if release_decision == "block" else "awaiting_operator"
@@ -866,6 +872,7 @@ class RunCoordinator:
             "latency_ms": summary["latency_ms"],
             "gate": gate,
             "response_eval": response_eval,
+            "judge_eval": judge_eval,
             "release_gate": release_gate,
             "deployment_record": summary["deployment_record"],
             "content_preview": summary["content_preview"],
@@ -910,6 +917,7 @@ class RunCoordinator:
                 "completion_id": run_record["completion_id"],
                 "gate": gate["decision"],
                 "response_eval": response_eval["decision"],
+                "judge_eval": judge_eval["decision"],
                 "release_gate": release_decision,
                 "deployment_status": summary["deployment_record"]["status"],
             },
