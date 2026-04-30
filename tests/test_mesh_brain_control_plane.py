@@ -116,13 +116,15 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         record = artifacts["mesh_brain_live_serving_record"]
         self.assertEqual(record["stage"], "completed")
         self.assertEqual(record["status"], "completed")
+        self.assertEqual(record["final_decision"], "promote")
         self.assertEqual(record["model"], "nvidia/nemotron-3-nano-4b")
         self.assertEqual(record["backend_name"], "mlx")
         self.assertEqual(record["completion_id"], "chatcmpl_fake")
         self.assertEqual(record["usage"]["total_tokens"], 18)
         self.assertEqual(record["gate"]["decision"], "pass")
         self.assertEqual(record["response_eval"]["decision"], "pass")
-        self.assertEqual(record["final_decision"], "pass")
+        self.assertEqual(record["release_gate"]["decision"], "promote")
+        self.assertEqual(record["deployment_record"]["status"], "eligible_for_promote")
         self.assertIn("bounded", record["content_preview"])
         event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
         self.assertTrue(set(MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS).issubset(event_keys))
@@ -150,6 +152,7 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(run["pending_pause_stage"], "evaluation_ready")
         record = detail["artifacts"]["mesh_brain_live_serving_record"]
         self.assertEqual(record["gate"]["decision"], "manual_review")
+        self.assertEqual(record["release_gate"]["decision"], "manual_review")
         self.assertIn("token_usage_ceiling_exceeded", record["gate"]["reasons"])
 
     def test_live_serving_response_eval_block_updates_run_status(self) -> None:
@@ -178,6 +181,8 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["gate"]["decision"], "pass")
         self.assertEqual(record["response_eval"]["decision"], "block")
         self.assertEqual(record["final_decision"], "block")
+        self.assertEqual(record["release_gate"]["decision"], "block")
+        self.assertEqual(record["deployment_record"]["status"], "blocked")
         self.assertIn("unsupported_tool_execution_claim", record["response_eval"]["reasons"])
 
 

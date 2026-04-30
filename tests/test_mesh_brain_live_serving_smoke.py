@@ -11,6 +11,7 @@ from mesh_brain.run_live_serving_smoke import (
     LiveResponseEvalPolicy,
     LiveSmokeGatePolicy,
     combine_live_decisions,
+    evaluate_live_release_gate,
     evaluate_live_response,
     evaluate_live_smoke_gate,
     run_live_serving_smoke,
@@ -38,10 +39,12 @@ class MeshBrainLiveServingSmokeTests(unittest.TestCase):
             execution = json.loads((Path(temp_dir) / "live_serving_execution.json").read_text(encoding="utf-8"))
             gate = json.loads((Path(temp_dir) / "live_smoke_gate.json").read_text(encoding="utf-8"))
             response_eval = json.loads((Path(temp_dir) / "live_response_eval.json").read_text(encoding="utf-8"))
+            release_gate = json.loads((Path(temp_dir) / "live_release_gate.json").read_text(encoding="utf-8"))
 
         self.assertEqual(summary["status"], "manual_review")
         self.assertEqual(summary["gate"]["decision"], "pass")
         self.assertEqual(summary["response_eval"]["decision"], "manual_review")
+        self.assertEqual(summary["release_gate"]["decision"], "manual_review")
         self.assertEqual(summary["model"], "nvidia/nemotron-3-nano-4b")
         self.assertEqual(captured["url"], "http://127.0.0.1:1234/v1/chat/completions")
         self.assertEqual(captured["payload"]["model"], "nvidia/nemotron-3-nano-4b")
@@ -49,6 +52,7 @@ class MeshBrainLiveServingSmokeTests(unittest.TestCase):
         self.assertEqual(execution["completion"]["model"], "nvidia/nemotron-3-nano-4b")
         self.assertEqual(gate["decision"], "pass")
         self.assertEqual(response_eval["decision"], "manual_review")
+        self.assertEqual(release_gate["decision"], "manual_review")
         self.assertIn("latency_ms", summary)
 
     def test_live_smoke_gate_blocks_model_mismatch_and_empty_response(self) -> None:
@@ -124,6 +128,68 @@ class MeshBrainLiveServingSmokeTests(unittest.TestCase):
         self.assertEqual(combine_live_decisions("pass", "pass"), "pass")
         self.assertEqual(combine_live_decisions("pass", "manual_review"), "manual_review")
         self.assertEqual(combine_live_decisions("manual_review", "block"), "block")
+
+    def test_live_release_gate_promotes_when_deterministic_and_live_pass(self) -> None:
+        gate = evaluate_live_release_gate(
+            deterministic_release_decision="promote",
+            smoke_gate={"decision": "pass"},
+            response_eval={"decision": "pass", "score": 1.0},
+            summary=_release_summary(),
+        )
+
+        self.assertEqual(gate.decision, "promote")
+        self.assertTrue(gate.passed)
+        self.assertEqual(gate.deployment_record["status"], "eligible_for_promote")
+
+    def test_live_release_gate_canaries_when_deterministic_canary_and_live_pass(self) -> None:
+        gate = evaluate_live_release_gate(
+            deterministic_release_decision="canary",
+            smoke_gate={"decision": "pass"},
+            response_eval={"decision": "pass", "score": 1.0},
+            summary=_release_summary(),
+        )
+
+        self.assertEqual(gate.decision, "canary")
+        self.assertTrue(gate.passed)
+        self.assertEqual(gate.deployment_record["status"], "eligible_for_canary")
+
+    def test_live_release_gate_blocks_on_live_block(self) -> None:
+        gate = evaluate_live_release_gate(
+            deterministic_release_decision="promote",
+            smoke_gate={"decision": "pass"},
+            response_eval={"decision": "block", "score": 0.2},
+            summary=_release_summary(),
+        )
+
+        self.assertEqual(gate.decision, "block")
+        self.assertFalse(gate.passed)
+        self.assertIn("live_response_eval_blocked", gate.reasons)
+        self.assertEqual(gate.deployment_record["status"], "blocked")
+
+    def test_live_release_gate_manual_reviews_on_any_manual_review(self) -> None:
+        gate = evaluate_live_release_gate(
+            deterministic_release_decision="promote",
+            smoke_gate={"decision": "manual_review"},
+            response_eval={"decision": "pass", "score": 1.0},
+            summary=_release_summary(),
+        )
+
+        self.assertEqual(gate.decision, "manual_review")
+        self.assertFalse(gate.passed)
+        self.assertIn("live_smoke_gate_manual_review", gate.reasons)
+
+
+def _release_summary() -> dict[str, Any]:
+    return {
+        "model": "nvidia/nemotron-3-nano-4b",
+        "requested_model": "nvidia/nemotron-3-nano-4b",
+        "backend_name": "mlx",
+        "hardware_tier": "apple_silicon",
+        "request_id": "mb_req_test",
+        "completion_id": "chatcmpl_test",
+        "usage": {"total_tokens": 10},
+        "latency_ms": 1.0,
+    }
 
 
 if __name__ == "__main__":
