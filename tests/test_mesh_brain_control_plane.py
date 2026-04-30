@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import json
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
-from mesh_brain.control_plane import MESH_BRAIN_ARTIFACT_KEYS
+from mesh_brain.control_plane import MESH_BRAIN_ARTIFACT_KEYS, MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import RuntimeConfig
+from tests.test_mesh_brain_model_client import _FakeUrlopenResponse, _fake_openai_response
 
 
 def _config(state_dir: str) -> RuntimeConfig:
@@ -71,6 +75,46 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertFalse(deployment["deployed"])
         self.assertEqual(deployment["release_decision"], "block")
         self.assertIsNone(deployment["serving_backend"])
+
+    def test_live_serving_smoke_records_mesh_run_artifacts_and_completion(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
+            captured["url"] = request.full_url
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return _FakeUrlopenResponse({**_fake_openai_response(), "model": "nvidia/nemotron-3-nano-4b"})
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.model_client.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_live_serving_smoke(
+                    {
+                        "base_url": "http://127.0.0.1:1234",
+                        "model": "nvidia/nemotron-3-nano-4b",
+                        "tenant_id": "tenant_a",
+                        "hardware_tier": "apple_silicon",
+                        "prompt": "Smoke test.",
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["scenario_key"], "mesh_brain_live_serving_smoke")
+        self.assertEqual(run["stage"], "completed")
+        self.assertEqual(run["status"], "completed")
+        self.assertEqual(captured["url"], "http://127.0.0.1:1234/v1/chat/completions")
+        self.assertEqual(captured["payload"]["model"], "nvidia/nemotron-3-nano-4b")
+        artifacts = detail["artifacts"]
+        for key in MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS:
+            self.assertIn(key, artifacts)
+            self.assertTrue(artifacts[key]["exists"])
+        record = artifacts["mesh_brain_live_serving_record"]
+        self.assertEqual(record["model"], "nvidia/nemotron-3-nano-4b")
+        self.assertEqual(record["backend_name"], "mlx")
+        self.assertEqual(record["completion_id"], "chatcmpl_fake")
+        self.assertEqual(record["usage"]["total_tokens"], 18)
+        self.assertIn("fake OpenAI-compatible response", record["content_preview"])
+        event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
+        self.assertTrue(set(MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS).issubset(event_keys))
 
 
 if __name__ == "__main__":

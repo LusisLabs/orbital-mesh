@@ -84,6 +84,20 @@ The run session stores these normalized artifact keys:
 
 The session also stores `mesh_brain_run_record`, which includes run id, tenant id, stage/status, artifact refs, audit events, policy events, summary metrics, and final release decision. A blocked eval marks the deployment record as blocked and non-deployed. `/metrics` appends the latest Mesh Brain Prometheus samples from recorded Mesh Brain runs.
 
+Live model-call smoke can be recorded as a Mesh run with:
+
+```http
+POST /api/mesh-brain/live-serving-smoke
+```
+
+The live serving run stores:
+
+- `mesh_brain_live_serving_execution`;
+- `mesh_brain_live_serving_summary`;
+- `mesh_brain_live_serving_record`.
+
+That record preserves the served model id, backend, hardware tier, request id, completion id, token usage, finish reason, and content preview.
+
 ## Data Plane
 
 `mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`.

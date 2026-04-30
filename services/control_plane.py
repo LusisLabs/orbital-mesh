@@ -783,6 +783,111 @@ class RunCoordinator:
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
 
+    def run_mesh_brain_live_serving_smoke(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
+            mesh_brain_artifact_ref,
+        )
+        from mesh_brain.run_live_serving_smoke import (
+            DEFAULT_BASE_URL,
+            DEFAULT_MODEL,
+            DEFAULT_OUTPUT_DIRECTORY,
+            run_live_serving_smoke,
+        )
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        model = str(payload.get("model") or DEFAULT_MODEL)
+        hardware_tier = str(payload.get("hardware_tier") or "apple_silicon")
+        base_url = str(payload.get("base_url") or DEFAULT_BASE_URL)
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / DEFAULT_OUTPUT_DIRECTORY
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain live smoke output_directory must stay inside the Mesh state directory")
+        summary = run_live_serving_smoke(
+            base_url=base_url,
+            model=model,
+            tenant_id=tenant_id,
+            hardware_tier=hardware_tier,
+            task_type=str(payload.get("task_type") or "crops"),
+            prompt=str(payload.get("prompt") or "Return one concise Mesh Brain live smoke response."),
+            output_directory=output_directory,
+            timeout_seconds=float(payload.get("timeout_seconds") or 60.0),
+        )
+        artifact_paths = summary.get("artifact_paths", {})
+        artifact_refs = {
+            "mesh_brain_live_serving_execution": mesh_brain_artifact_ref(
+                "mesh_brain_live_serving_execution",
+                artifact_paths["live_serving_execution"],
+            ).to_dict(),
+            "mesh_brain_live_serving_summary": mesh_brain_artifact_ref(
+                "mesh_brain_live_serving_summary",
+                artifact_paths["live_serving_summary"],
+            ).to_dict(),
+        }
+        run_record = {
+            "tenant_id": tenant_id,
+            "stage": "completed",
+            "status": "completed",
+            "model": summary["model"],
+            "requested_model": summary["requested_model"],
+            "backend_name": summary["backend_name"],
+            "hardware_tier": summary["hardware_tier"],
+            "request_id": summary["request_id"],
+            "completion_id": summary["completion_id"],
+            "finish_reason": summary["finish_reason"],
+            "usage": summary["usage"],
+            "content_preview": summary["content_preview"],
+        }
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_live_serving_smoke",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_live_smoke",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_live_serving_record": run_record,
+                **artifact_refs,
+            },
+        )
+        run_record["run_id"] = session.run_id
+        session.artifacts["mesh_brain_live_serving_record"] = run_record
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS:
+            ref = artifact_refs[key]
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_live_serving",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="mesh_brain_live_serving",
+            event_type="mesh_brain_live_serving_completed",
+            payload=run_record,
+            summary={
+                "model": run_record["model"],
+                "backend_name": run_record["backend_name"],
+                "completion_id": run_record["completion_id"],
+            },
+            integration_name="mesh_brain",
+            status="completed",
+        )
+        self._update_session(session.run_id, stage="completed", status="completed", pending_pause_stage=None)
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
+
     def list_simulations(self) -> list[dict[str, Any]]:
         return self.simulation_service.list_scenarios()
 
