@@ -8,10 +8,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from .data_plane import build_data_plane_e2e
+from .adapter_runtime import AdapterRuntimeRequest, DeterministicAdapterRuntime
+from .data_plane import build_context_training_data_plane
 from .eval_jobs import EvalJobRequest, run_eval_job, write_eval_job_result
+from .hardware_profiles import build_mlx_lm_lora_export_manifest, write_adapter_export_manifest
 from .model_management import MeshBrainModelCatalog
-from .model_client import DeterministicMeshBrainModelClient
 from .runtime import ModelArtifact, ReleaseGatePolicy, stable_digest, utc_now
 from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPool, TenantQuota
 from .training_jobs import TrainingJobRequest, launch_mesh_brain_training_job, write_training_job_result
@@ -150,9 +151,11 @@ class PosttrainingProofResult:
     training_job: dict[str, Any]
     backend_result: dict[str, Any]
     registered_artifact: dict[str, Any] | None
+    adapter_export: dict[str, Any] | None
     eval_job: dict[str, Any] | None
     serving_smoke: dict[str, Any] | None
     deployment_record: dict[str, Any]
+    dataset_context_summary: dict[str, Any]
     artifact_paths: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -167,13 +170,22 @@ def run_posttraining_proof(
     backend: MeshBrainTrainingBackend | None = None,
     command: list[str] | None = None,
     timeout_seconds: float = 30.0,
+    corpus_rows: list[dict[str, Any]] | None = None,
+    runtime_sessions: list[dict[str, Any]] | None = None,
+    runtime_events: list[dict[str, Any]] | None = None,
 ) -> PosttrainingProofResult:
-    output_path = Path(output_directory)
+    output_path = Path(output_directory).resolve()
     data_path = output_path / "data"
     job_path = output_path / "training_job"
     backend_path = output_path / "backend"
     output_path.mkdir(parents=True, exist_ok=True)
-    data_result = build_data_plane_e2e(tenant_id=tenant_id, output_directory=data_path)
+    data_result, context_summary = build_context_training_data_plane(
+        tenant_id=tenant_id,
+        output_directory=data_path,
+        corpus_rows=corpus_rows,
+        runtime_sessions=runtime_sessions,
+        runtime_events=runtime_events,
+    )
     request = TrainingJobRequest(
         method=method,
         tenant_id=tenant_id,
@@ -193,6 +205,7 @@ def run_posttraining_proof(
         output_directory=str(backend_path),
         command=list(command or []),
         timeout_seconds=timeout_seconds,
+        metadata={"dataset_context_summary": context_summary.to_dict()},
     )
     if backend is None and not command:
         command = _tiny_lora_sft_command(backend_request)
@@ -207,6 +220,8 @@ def run_posttraining_proof(
         )
     backend_result = (backend or LocalSubprocessTrainingBackend()).run(backend_request)
     registered_artifact = None
+    adapter_export = None
+    adapter_export_paths: dict[str, str] = {}
     eval_job = None
     eval_paths: dict[str, str] = {}
     serving_smoke = None
@@ -218,9 +233,23 @@ def run_posttraining_proof(
             {
                 "posttraining_proof_backend": backend_result.backend_name,
                 "posttraining_proof_outputs": backend_result.output_manifest.get("outputs", []),
+                "dataset_context_summary": context_summary.to_dict(),
                 "training_command": list(backend_request.command),
             }
         )
+        adapter_files = _adapter_output_files(backend_result)
+        if adapter_files:
+            export_manifest = build_mlx_lm_lora_export_manifest(
+                source_artifact=registered,
+                base_model_id=registered.base_artifact_id or "qwen-27b-base",
+                adapter_files=adapter_files,
+            )
+            adapter_export = export_manifest.to_dict()
+            adapter_export_paths = write_adapter_export_manifest(
+                manifest=export_manifest,
+                output_directory=output_path / "adapter_exports" / "mlx_lm_lora",
+            )
+            registered.metadata["adapter_exports"] = [adapter_export]
         eval_job_result = run_eval_job(
             EvalJobRequest(
                 candidate_artifact=registered,
@@ -245,6 +274,7 @@ def run_posttraining_proof(
         "deployed": False,
         "release_decision": release_decision,
         "registered_artifact_id": registered_artifact["artifact_id"] if registered_artifact else None,
+        "adapter_export_id": adapter_export["export_id"] if adapter_export else None,
         "eval_job_id": eval_job["eval_job_id"] if eval_job else None,
         "serving_smoke_status": serving_smoke["status"] if serving_smoke else None,
         "backend_status": backend_result.status,
@@ -256,10 +286,12 @@ def run_posttraining_proof(
         training_paths=training_paths,
         backend_result=backend_result,
         registered_artifact=registered_artifact,
+        adapter_export=adapter_export,
         eval_job=eval_job,
         serving_smoke=serving_smoke,
         deployment_record=deployment_record,
         eval_paths=eval_paths,
+        adapter_export_paths=adapter_export_paths,
         serving_path=serving_path,
     )
     proof_id = f"mesh_brain_real_training_proof_{stable_digest({'job_id': training_job.job_id, 'backend': backend_result.to_dict(), 'eval': eval_job})[:12]}"
@@ -271,9 +303,11 @@ def run_posttraining_proof(
         training_job=training_job.to_dict(),
         backend_result=backend_result.to_dict(),
         registered_artifact=registered_artifact,
+        adapter_export=adapter_export,
         eval_job=eval_job,
         serving_smoke=serving_smoke,
         deployment_record=deployment_record,
+        dataset_context_summary=context_summary.to_dict(),
         artifact_paths=artifact_paths,
     )
 
@@ -285,15 +319,18 @@ def _write_posttraining_proof_artifacts(
     training_paths: dict[str, str],
     backend_result: TrainingBackendResult,
     registered_artifact: dict[str, Any] | None,
+    adapter_export: dict[str, Any] | None,
     eval_job: dict[str, Any] | None,
     serving_smoke: dict[str, Any] | None,
     deployment_record: dict[str, Any],
     eval_paths: dict[str, str],
+    adapter_export_paths: dict[str, str],
     serving_path: Path | None,
 ) -> dict[str, str]:
     artifacts = {
         "posttraining_backend_result.json": backend_result.to_dict(),
         "registered_artifact.json": registered_artifact or {},
+        "posttraining_adapter_export.json": adapter_export or {},
         "posttraining_eval_job.json": eval_job or {},
         "posttraining_serving_smoke.json": serving_smoke or {},
         "posttraining_deployment_record.json": deployment_record,
@@ -305,6 +342,8 @@ def _write_posttraining_proof_artifacts(
     }
     if "eval_job.json" in eval_paths:
         paths["posttraining_eval_job"] = eval_paths["eval_job.json"]
+    if "adapter_export_manifest.json" in adapter_export_paths:
+        paths["posttraining_adapter_export_manifest"] = adapter_export_paths["adapter_export_manifest.json"]
     if serving_path is not None:
         paths["posttraining_serving_smoke"] = str(serving_path)
     for name, payload in artifacts.items():
@@ -312,6 +351,17 @@ def _write_posttraining_proof_artifacts(
         path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
         paths[name.removesuffix(".json")] = str(path)
     return paths
+
+
+def _adapter_output_files(backend_result: TrainingBackendResult) -> list[dict[str, Any]]:
+    outputs = backend_result.output_manifest.get("outputs", [])
+    if not isinstance(outputs, list):
+        return []
+    return [
+        output
+        for output in outputs
+        if isinstance(output, dict) and str(output.get("path") or "").strip()
+    ]
 
 
 def _discover_backend_outputs(output_path: Path) -> dict[str, Any]:
@@ -371,12 +421,20 @@ def _run_serving_smoke(artifact: ModelArtifact, *, tenant_id: str) -> dict[str, 
             model="mesh-brain-posttraining-proof",
             metadata={"served_model": artifact.artifact_id},
         ),
-        client=DeterministicMeshBrainModelClient(content="Tiny LoRA/SFT adapter smoke response."),
+        client=_AdapterRuntimeClient(
+            AdapterRuntimeRequest(
+                adapter_artifact=artifact,
+                base_model_id=artifact.base_artifact_id or "qwen-27b-base",
+                serving_backend="llama.cpp",
+            )
+        ),
     )
     payload = execution.to_dict()
+    adapter_runtime = payload["completion"]["raw_response"]["adapter_runtime"]
     return {
-        "status": "passed" if payload["completion"].get("content") else "failed",
+        "status": "passed" if payload["completion"].get("content") and adapter_runtime["status"] == "ready" else "failed",
         "artifact_id": artifact.artifact_id,
+        "adapter_runtime": adapter_runtime,
         "execution": payload,
     }
 
@@ -387,3 +445,12 @@ def _deployment_status(release_decision: str, serving_smoke: dict[str, Any] | No
     if serving_smoke and serving_smoke.get("status") == "passed":
         return "smoke_served"
     return "eval_passed"
+
+
+class _AdapterRuntimeClient:
+    def __init__(self, request: AdapterRuntimeRequest) -> None:
+        self._request = request
+        self._runtime = DeterministicAdapterRuntime()
+
+    def complete_chat(self, *, plan: Any, request: OpenAIChatRequest) -> Any:
+        return self._runtime.infer(request=self._request, plan=plan, chat_request=request)

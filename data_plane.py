@@ -64,6 +64,19 @@ class DataRefineryResult:
     report: DataRefineryReport
 
 
+@dataclass(frozen=True)
+class ContextIngestionSummary:
+    tenant_id: str
+    reference_record_count: int
+    corpus_record_count: int
+    runtime_session_count: int
+    runtime_event_count: int
+    source_record_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class MeshBrainDataRefinery:
     def __init__(self, *, tenant_id: str, chunk_chars: int = 1200):
         if chunk_chars <= 0:
@@ -257,6 +270,159 @@ def build_data_plane_e2e(
     )
 
 
+def build_context_training_data_plane(
+    *,
+    tenant_id: str,
+    output_directory: str | Path,
+    corpus_rows: list[dict[str, Any]] | None = None,
+    runtime_sessions: list[dict[str, Any]] | None = None,
+    runtime_events: list[dict[str, Any]] | None = None,
+) -> tuple[DataRefineryResult, ContextIngestionSummary]:
+    reference_records = _reference_source_records(tenant_id)
+    corpus_records = source_records_from_corpus_rows(tenant_id=tenant_id, rows=corpus_rows or [])
+    runtime_session_records = source_records_from_runtime_sessions(tenant_id=tenant_id, sessions=runtime_sessions or [])
+    runtime_event_records = source_records_from_runtime_events(tenant_id=tenant_id, events=runtime_events or [])
+    records = [
+        *reference_records,
+        *corpus_records,
+        *runtime_session_records,
+        *runtime_event_records,
+    ]
+    summary = ContextIngestionSummary(
+        tenant_id=tenant_id,
+        reference_record_count=len(reference_records),
+        corpus_record_count=len(corpus_records),
+        runtime_session_count=len(runtime_session_records),
+        runtime_event_count=len(runtime_event_records),
+        source_record_count=len(records),
+    )
+    refinery = MeshBrainDataRefinery(tenant_id=tenant_id, chunk_chars=256)
+    return (
+        refinery.build(
+            source_manifest_id=_context_source_manifest_id(records),
+            output_directory=output_directory,
+            records=records,
+        ),
+        summary,
+    )
+
+
+def source_records_from_corpus_rows(*, tenant_id: str, rows: list[dict[str, Any]]) -> list[SourceRecord]:
+    records: list[SourceRecord] = []
+    for row in rows:
+        source = dict(row.get("source") or {})
+        labels = dict(row.get("labels") or {})
+        fact = dict(row.get("training_fact") or {})
+        envelope = dict(row.get("evidence_envelope") or {})
+        source_kind = str(source.get("kind") or labels.get("source_kind") or "incident_corpus")
+        mesh_use = _string_list(labels.get("mesh_use"))
+        records.append(
+            SourceRecord(
+                tenant_id=tenant_id,
+                source=f"corpus:{source_kind}",
+                content=_compact_json(
+                    {
+                        "service": row.get("service"),
+                        "target_class": row.get("target_class"),
+                        "environment": row.get("environment"),
+                        "labels": labels,
+                        "evidence_envelope": envelope,
+                        "training_fact": fact,
+                    }
+                ),
+                provenance_pointer=f"corpus://{row.get('row_id') or source.get('run_id') or len(records)}",
+                timestamp=str(row.get("created_at") or utc_now()),
+                license_usage_class="public_bootstrap" if source_kind.startswith("public_") else "internal_enterprise",
+                metadata={
+                    "row_id": row.get("row_id"),
+                    "source_kind": source_kind,
+                    "service": row.get("service"),
+                    "target_class": row.get("target_class"),
+                    "promotion_candidate": bool(fact.get("promotion_candidate")),
+                    "mesh_use": mesh_use,
+                },
+                outcome=str(fact.get("feedback_outcome") or fact.get("outcome") or labels.get("outcome") or "unknown"),
+                audit_only=source_kind.startswith("public_") and "training" not in mesh_use,
+            )
+        )
+    return records
+
+
+def source_records_from_runtime_sessions(*, tenant_id: str, sessions: list[dict[str, Any]]) -> list[SourceRecord]:
+    records: list[SourceRecord] = []
+    for session in sessions:
+        run_id = str(session.get("run_id") or f"session_{len(records)}")
+        artifacts = dict(session.get("artifacts") or {})
+        records.append(
+            SourceRecord(
+                tenant_id=tenant_id,
+                source="runtime:run_session",
+                content=_compact_json(
+                    {
+                        "run_id": run_id,
+                        "stage": session.get("stage"),
+                        "status": session.get("status"),
+                        "scenario_key": session.get("scenario_key"),
+                        "evaluation_mode": session.get("evaluation_mode"),
+                        "orchestration_mode": session.get("orchestration_mode"),
+                        "artifacts": _runtime_artifact_context(artifacts),
+                        "error": session.get("error"),
+                    }
+                ),
+                provenance_pointer=f"runtime://runs/{run_id}",
+                timestamp=str(session.get("updated_at") or session.get("created_at") or utc_now()),
+                metadata={
+                    "run_id": run_id,
+                    "stage": session.get("stage"),
+                    "status": session.get("status"),
+                    "scenario_key": session.get("scenario_key"),
+                },
+                outcome=_runtime_outcome(session),
+                audit_only=False,
+            )
+        )
+    return records
+
+
+def source_records_from_runtime_events(*, tenant_id: str, events: list[dict[str, Any]]) -> list[SourceRecord]:
+    records: list[SourceRecord] = []
+    for event in events:
+        run_id = str(event.get("run_id") or "unknown")
+        event_id = str(event.get("event_id") or f"event_{len(records)}")
+        records.append(
+            SourceRecord(
+                tenant_id=tenant_id,
+                source="runtime:run_event",
+                content=_compact_json(
+                    {
+                        "run_id": run_id,
+                        "event_id": event_id,
+                        "sequence": event.get("sequence"),
+                        "stage": event.get("stage"),
+                        "event_type": event.get("event_type"),
+                        "summary": event.get("summary"),
+                        "payload": event.get("payload"),
+                        "artifact_key": event.get("artifact_key"),
+                        "integration_name": event.get("integration_name"),
+                        "status": event.get("status"),
+                    }
+                ),
+                provenance_pointer=f"runtime://runs/{run_id}/events/{event_id}",
+                timestamp=str(event.get("recorded_at") or utc_now()),
+                metadata={
+                    "run_id": run_id,
+                    "event_id": event_id,
+                    "stage": event.get("stage"),
+                    "event_type": event.get("event_type"),
+                    "status": event.get("status"),
+                },
+                outcome=_runtime_outcome(event),
+                audit_only=False,
+            )
+        )
+    return records
+
+
 def _payload_for_record(
     *,
     row_type: str,
@@ -333,6 +499,75 @@ def _coerce_source_record(record: SourceRecord | dict[str, Any], *, default_time
         outcome=record.get("outcome"),
         audit_only=bool(record.get("audit_only", False)),
     )
+
+
+def _reference_source_records(tenant_id: str) -> list[SourceRecord]:
+    return [
+        SourceRecord(
+            tenant_id=tenant_id,
+            source="incident_report",
+            content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",
+            provenance_pointer="incident://search-latency-1",
+            timestamp="2026-04-30T00:00:00+00:00",
+            tool_calls=[{"name": "kubernetes.get_deployment", "arguments": {"deployment": "search", "namespace": "prod"}}],
+            outcome="escalated",
+        ),
+    ]
+
+
+def _context_source_manifest_id(records: list[SourceRecord]) -> str:
+    return f"mesh_brain_context_training_{stable_digest({'sources': [_source_record_ref(record) for record in records]})[:12]}"
+
+
+def _source_record_ref(record: SourceRecord) -> dict[str, Any]:
+    return {
+        "tenant_id": record.tenant_id,
+        "source": record.source,
+        "provenance_pointer": record.provenance_pointer,
+        "timestamp": record.timestamp,
+        "content_sha256": stable_digest({"content": record.content}),
+        "audit_only": record.audit_only,
+    }
+
+
+def _compact_json(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value]
+    return []
+
+
+def _runtime_artifact_context(artifacts: dict[str, Any]) -> dict[str, Any]:
+    keys = (
+        "normalized_event",
+        "trigger",
+        "evidence_pack",
+        "scenario_analysis",
+        "decision",
+        "evaluation",
+        "execution",
+        "feedback",
+        "reasoning_bank",
+        "memory_crystallization",
+    )
+    return {key: artifacts[key] for key in keys if key in artifacts}
+
+
+def _runtime_outcome(record: dict[str, Any]) -> str:
+    status = str(record.get("status") or "").lower()
+    stage = str(record.get("stage") or "").lower()
+    if status in {"completed", "passed", "success", "successful", "succeeded"} or stage == "completed":
+        return "successful"
+    if status in {"failed", "blocked", "cancelled", "error"} or stage in {"failed", "cancelled"}:
+        return "failed"
+    if status in {"manual_review", "approval_required"} or stage in {"awaiting_operator", "evaluation_ready"}:
+        return "approval_required"
+    return "unknown"
 
 
 def _json_type(value: Any) -> str:

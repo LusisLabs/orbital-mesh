@@ -19,7 +19,7 @@ def run_tiny_lora_sft(
     output_path = Path(output_directory)
     output_path.mkdir(parents=True, exist_ok=True)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    sft_rows = _read_jsonl(manifest_path.with_name("sft.jsonl"))
+    sft_rows = [row for row in _read_jsonl(manifest_path.with_name("sft.jsonl")) if not row.get("excluded_from_training")]
     if not sft_rows:
         raise ValueError("tiny LoRA/SFT training requires at least one SFT row")
 

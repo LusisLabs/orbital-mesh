@@ -16,15 +16,28 @@ from .backend_matrix import (
     run_backend_matrix_smoke,
     write_backend_matrix_summary,
 )
+from .adapter_runtime import (
+    AdapterRuntimeRequest,
+    AdapterRuntimeResult,
+    DeterministicAdapterRuntime,
+    FilesystemAdapterRuntime,
+    MeshBrainAdapterRuntime,
+    OpenAICompatibleAdapterRuntime,
+)
 from .data_plane import (
+    ContextIngestionSummary,
     DataRefineryReport,
     DataRefineryResult,
     MeshBrainDataRefinery,
     NormalizedRecord,
     SourceRecord,
+    build_context_training_data_plane,
     build_data_plane_e2e,
     extract_tool_schema,
     label_outcome,
+    source_records_from_corpus_rows,
+    source_records_from_runtime_events,
+    source_records_from_runtime_sessions,
     write_dataset_outputs,
 )
 from .eval_plane import (
@@ -52,14 +65,19 @@ from .eval_jobs import (
     write_eval_job_result,
 )
 from .hardware_profiles import (
+    ADAPTER_EXPORT_FORMATS,
     HARDWARE_REQUIRED_TECHNIQUES,
     QUANTIZATION_EXPORT_FORMATS,
+    AdapterExportManifest,
     HardwareServingProfile,
     MultiHardwareSmokeResult,
     QuantizationExportManifest,
+    build_adapter_export_manifest,
     build_hardware_serving_profile,
+    build_mlx_lm_lora_export_manifest,
     build_quantization_export_manifest,
     run_multi_hardware_smoke,
+    write_adapter_export_manifest,
     write_multi_hardware_smoke_result,
 )
 from .inference_catalog import (
@@ -76,6 +94,12 @@ from .judge_client import (
     JudgeClientResult,
     MeshBrainJudgeClient,
     OpenAICompatibleMeshBrainJudgeClient,
+)
+from .live_adapter_probe import (
+    HttpProbeResult,
+    LiveAdapterProbePolicy,
+    run_live_adapter_runtime_probe,
+    write_live_adapter_runtime_probe,
 )
 from .model_management import (
     ArtifactAlias,
