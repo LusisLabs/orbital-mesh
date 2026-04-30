@@ -112,6 +112,14 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 9. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
 10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON.
 
+Non-Kubernetes production-node breakthrough probes run outside the long-lived `mesh-chaos` container:
+
+```bash
+PYTHONPATH=. python3 scripts/production_node_breakthrough_session.py
+```
+
+The script covers production-shaped Reth/systemd and OTel node signals and writes proof artifacts under `.mesh-runtime-state/node-breakthrough/`.
+
 ## Smoke Contract
 
 `mesh-smoke` validates the minimum whole-system contract:

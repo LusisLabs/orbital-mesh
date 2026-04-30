@@ -1102,13 +1102,21 @@ class RunCoordinator:
                 "mesh_brain_posttraining_registered_artifact",
                 artifact_paths["registered_artifact"],
             ).to_dict(),
+            "mesh_brain_posttraining_eval_job": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_eval_job",
+                artifact_paths["posttraining_eval_job"],
+            ).to_dict(),
+            "mesh_brain_posttraining_serving_smoke": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_serving_smoke",
+                artifact_paths["posttraining_serving_smoke"],
+            ).to_dict(),
             "mesh_brain_posttraining_deployment_record": mesh_brain_artifact_ref(
                 "mesh_brain_posttraining_deployment_record",
                 artifact_paths["posttraining_deployment_record"],
             ).to_dict(),
         }
         stage = "completed" if result.status == "completed" else "failed"
-        status = "manual_review" if result.status == "completed" else "blocked"
+        status = "completed" if result.status == "completed" else "blocked"
         run_record = {
             "tenant_id": tenant_id,
             "stage": stage,
@@ -1117,6 +1125,8 @@ class RunCoordinator:
             "method": result.method,
             "backend_result": result.backend_result,
             "registered_artifact": result.registered_artifact,
+            "eval_job": result.eval_job,
+            "serving_smoke": result.serving_smoke,
             "deployment_record": result.deployment_record,
             "artifact_paths": artifact_paths,
         }
@@ -1167,7 +1177,7 @@ class RunCoordinator:
             session.run_id,
             stage=stage,
             status=status,
-            pending_pause_stage="evaluation_ready" if result.status == "completed" else None,
+            pending_pause_stage=None,
         )
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()

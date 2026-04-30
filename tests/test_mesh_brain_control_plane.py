@@ -242,8 +242,8 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(run["scenario_key"], "mesh_brain_posttraining_proof")
         self.assertEqual(run["stage"], "completed")
-        self.assertEqual(run["status"], "manual_review")
-        self.assertEqual(run["pending_pause_stage"], "evaluation_ready")
+        self.assertEqual(run["status"], "completed")
+        self.assertIsNone(run["pending_pause_stage"])
         artifacts = detail["artifacts"]
         for key in MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS:
             self.assertIn(key, artifacts)
@@ -251,7 +251,9 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         record = artifacts["mesh_brain_posttraining_proof_record"]
         self.assertEqual(record["backend_result"]["status"], "completed")
         self.assertIsNotNone(record["registered_artifact"])
-        self.assertEqual(record["deployment_record"]["status"], "eval_required")
+        self.assertEqual(record["eval_job"]["release_decision"], "promote")
+        self.assertEqual(record["serving_smoke"]["status"], "passed")
+        self.assertEqual(record["deployment_record"]["status"], "smoke_served")
         self.assertFalse(record["deployment_record"]["deployed"])
 
 

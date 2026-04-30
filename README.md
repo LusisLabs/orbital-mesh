@@ -968,6 +968,14 @@ Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
 
 Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold.
 
+For non-Kubernetes production-node coverage, run:
+
+```bash
+PYTHONPATH=. python3 scripts/production_node_breakthrough_session.py
+```
+
+That harness replays production-shaped Reth/systemd and OTel node signals through Mesh ingest, trigger, and decision logic. It writes `.mesh-runtime-state/node-breakthrough/events-<timestamp>.jsonl` and `summary-<timestamp>.json`, including `mesh.production_node_breakthrough_probe.v1`.
+
 ## Development Commands
 
 ### Python

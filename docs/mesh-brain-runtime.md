@@ -131,7 +131,7 @@ The posttraining proof run stores:
 - `mesh_brain_posttraining_deployment_record`;
 - `mesh_brain_posttraining_proof_record`.
 
-`mesh_brain.posttraining_proof` adds `MeshBrainTrainingBackend`, `DeterministicTrainingBackend`, and `LocalSubprocessTrainingBackend`. The proof builds a tiny Mesh Brain dataset, plans the signed training job, executes the selected backend, captures logs and metrics, registers the artifact only when backend execution succeeds, and still marks the deployment as `eval_required` rather than deployed.
+`mesh_brain.posttraining_proof` adds `MeshBrainTrainingBackend`, `DeterministicTrainingBackend`, and `LocalSubprocessTrainingBackend`. The default proof now executes a real local subprocess command, `python -m mesh_brain.local_lora_sft`, against a tiny SFT dataset. The command writes adapter/config files and backend metrics, then Mesh Brain registers the produced adapter, runs the eval job gate, and smoke-serves the resulting artifact through the model-client boundary. Failed training commands block before artifact registration, eval, or serving.
 
 ## Data Plane
 
