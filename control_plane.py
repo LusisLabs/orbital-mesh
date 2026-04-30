@@ -21,6 +21,11 @@ MESH_BRAIN_ARTIFACT_KEYS = (
     "mesh_brain_catalog_snapshot",
 )
 
+MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS = (
+    "mesh_brain_live_serving_execution",
+    "mesh_brain_live_serving_summary",
+)
+
 
 @dataclass(frozen=True)
 class MeshBrainArtifactRef:
@@ -143,6 +148,10 @@ def _artifact_ref(artifact_key: str, path: Path) -> MeshBrainArtifactRef:
         sha256=_sha256(path) if exists else None,
         content_type="text/plain" if path.suffix == ".prom" else "application/json",
     )
+
+
+def mesh_brain_artifact_ref(artifact_key: str, path: str | Path) -> MeshBrainArtifactRef:
+    return _artifact_ref(artifact_key, Path(path))
 
 
 def _sha256(path: Path) -> str:
