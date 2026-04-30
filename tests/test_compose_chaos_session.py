@@ -262,6 +262,105 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertIsNotNone(pick)
         self.assertEqual(pick[0].name, "covered")
 
+    def test_coverage_frontier_can_bypass_high_severity_spacing_for_unproven_axes(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+        first_high = compose_chaos_session.ChaosExperiment(
+            name="first_high",
+            description="",
+            weight=1.0,
+            severity="high",
+            expected_decisions=frozenset({"restart_deployment"}),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_a"}),
+        )
+        second_high = compose_chaos_session.ChaosExperiment(
+            name="second_high",
+            description="",
+            weight=1.0,
+            severity="high",
+            expected_decisions=frozenset({"rollback_deployment"}),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_b"}),
+        )
+        history = [
+            compose_chaos_session.Prior(
+                "first_high",
+                compose_chaos_session._target_key(target),
+                "high",
+                0.0,
+                frozenset({"axis_a"}),
+                True,
+            )
+        ]
+
+        with mock.patch.object(compose_chaos_session, "DEFAULT_PORTFOLIO", (first_high, second_high)):
+            pick = compose_chaos_session._pick(
+                compose_chaos_session.random.Random(0),
+                [target],
+                history,
+                now=10.0,
+                coverage_first=True,
+            )
+
+        self.assertIsNotNone(pick)
+        self.assertEqual(pick[0].name, "second_high")
+
+    def test_high_severity_spacing_still_blocks_repeats_after_axes_are_proven(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+        high = compose_chaos_session.ChaosExperiment(
+            name="high",
+            description="",
+            weight=1.0,
+            severity="high",
+            expected_decisions=frozenset({"restart_deployment"}),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_a"}),
+        )
+        history = [
+            compose_chaos_session.Prior(
+                "high",
+                compose_chaos_session._target_key(target),
+                "high",
+                0.0,
+                frozenset({"axis_a"}),
+                True,
+            )
+        ]
+
+        with mock.patch.object(compose_chaos_session, "DEFAULT_PORTFOLIO", (high,)):
+            pick = compose_chaos_session._pick(
+                compose_chaos_session.random.Random(0),
+                [target],
+                history,
+                now=10.0,
+                coverage_first=True,
+            )
+
+        self.assertIsNone(pick)
+
+    def test_sre_grade_kubernetes_decisions_score_against_updated_portfolio(self) -> None:
+        expectations = {
+            "readiness_failure": "defer_until",
+            "memory_pressure": "patch_resources",
+            "config_drift": "escalate",
+        }
+        by_name = {experiment.name: experiment for experiment in compose_chaos_session.DEFAULT_PORTFOLIO}
+
+        for name, decision_type in expectations.items():
+            with self.subTest(name=name):
+                score = compose_chaos_session._score_event(
+                    by_name[name],
+                    {
+                        "mesh_run": {
+                            "stage": "awaiting_operator",
+                            "timed_out": False,
+                            "decision_type": decision_type,
+                        }
+                    },
+                )
+
+                self.assertTrue(score["passed"])
+
     def test_observation_delay_uses_primitive_override_for_transients(self) -> None:
         defaulted = compose_chaos_session.ChaosExperiment(
             name="defaulted",
@@ -282,6 +381,33 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertEqual(compose_chaos_session._observation_delay_seconds(defaulted, 30.0), 30.0)
         self.assertEqual(compose_chaos_session._observation_delay_seconds(transient, 30.0), 0.0)
 
+    def test_launch_mesh_run_marks_chaos_probe(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self) -> "FakeResponse":
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json.dumps({"run_id": "run-1"}).encode()
+
+        captured: dict[str, object] = {}
+
+        def fake_urlopen(request: object, timeout: float) -> FakeResponse:
+            captured["payload"] = json.loads(request.data.decode("utf-8"))  # type: ignore[attr-defined]
+            raise TimeoutError("stop after launch")
+
+        with mock.patch.object(compose_chaos_session.urllib.request, "urlopen", side_effect=fake_urlopen):
+            with self.assertRaises(TimeoutError):
+                compose_chaos_session._launch_mesh_run("http://mesh:8787", target)
+
+        self.assertTrue(captured["payload"]["chaos_probe"])  # type: ignore[index]
+
     def test_session_summary_breakthrough_ready_when_all_thresholds_pass(self) -> None:
         path = compose_chaos_session.Path("/tmp/events.jsonl")
         events = []
@@ -291,7 +417,7 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                 and "no_action" not in experiment.expected_decisions
             )
             decision_type = (
-                next(iter(sorted(experiment.expected_decisions - {"escalate"})))
+                next(iter(sorted(experiment.expected_decisions - {"escalate"})), "escalate")
                 if experiment.expected_decisions and trigger_expected
                 else None
             )
@@ -379,6 +505,46 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                 ] + [
                     {
                         "name": "new-broken",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "False"}],
+                    }
+                ]
+
+        with mock.patch.object(compose_chaos_session.time, "sleep", return_value=None):
+            with mock.patch.object(compose_chaos_session.time, "monotonic", side_effect=[0.0, 2.0]):
+                with self.assertRaises(compose_chaos_session.ChaosError):
+                    compose_chaos_session._wait_for_target_ready(
+                        FakeInjector(),
+                        target,
+                        timeout_seconds=1,
+                    )
+
+    def test_wait_for_target_ready_rejects_extra_unready_pod_even_when_status_counts_match(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
+
+        class FakeInjector:
+            def _kubectl_json(self, *args: str) -> dict[str, object]:
+                return {
+                    "spec": {"replicas": 3},
+                    "status": {
+                        "replicas": 3,
+                        "updatedReplicas": 3,
+                        "readyReplicas": 3,
+                        "availableReplicas": 3,
+                    },
+                }
+
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+                return [
+                    {
+                        "name": f"ready-{index}",
+                        "phase": "Running",
+                        "conditions": [{"type": "Ready", "status": "True"}],
+                    }
+                    for index in range(3)
+                ] + [
+                    {
+                        "name": "extra-broken",
                         "phase": "Running",
                         "conditions": [{"type": "Ready", "status": "False"}],
                     }

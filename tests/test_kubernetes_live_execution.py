@@ -10,7 +10,12 @@ import unittest
 from pathlib import Path
 
 from services.actuators.service import KubernetesAdapter
-from services.ingest.kubernetes_live_signal import collect_kubernetes_signal
+from services.ingest.kubernetes_live_signal import (
+    collect_kubernetes_signal,
+    _configuration_drift_signals,
+    _parse_memory_quantity,
+    _resource_pressure_signals,
+)
 from services.ingest.service import IngestService
 from services.pipeline import FirstSlicePipeline
 from services.trigger.service import TriggerService
@@ -126,6 +131,54 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
                 namespace="search",
                 kubectl_command="definitely-missing-kubectl-for-mesh",
             )
+
+    def test_configuration_drift_labels_are_exposed_as_weak_signals(self) -> None:
+        deployment = {
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "app": "semantic-search",
+                            "mesh.chaos.config_drift": "true",
+                        }
+                    }
+                }
+            }
+        }
+
+        signals = _configuration_drift_signals(deployment)
+
+        self.assertEqual(
+            signals,
+            [{"field": "labels", "key": "mesh.chaos.config_drift", "value": "true"}],
+        )
+
+    def test_low_memory_limit_is_exposed_as_resource_pressure(self) -> None:
+        deployment = {
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "semantic-search",
+                                "resources": {"limits": {"memory": "8Mi"}},
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+
+        signals = _resource_pressure_signals(deployment)
+
+        self.assertEqual(signals[0]["container"], "semantic-search")
+        self.assertEqual(signals[0]["reason"], "memory_limit_too_low")
+        self.assertEqual(signals[0]["limit_bytes"], 8 * 1024 * 1024)
+
+    def test_memory_quantity_parser_handles_binary_and_decimal_units(self) -> None:
+        self.assertEqual(_parse_memory_quantity("8Mi"), 8 * 1024 * 1024)
+        self.assertEqual(_parse_memory_quantity("16M"), 16 * 1000 * 1000)
+        self.assertIsNone(_parse_memory_quantity("not-a-quantity"))
 
     def test_scale_to_zero_signal_normalizes_without_trigger(self) -> None:
         signal = _raw_kubernetes_signal()

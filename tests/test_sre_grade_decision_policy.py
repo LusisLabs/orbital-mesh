@@ -133,6 +133,24 @@ class OOMKilledPolicyTests(unittest.TestCase):
         self.assertIn("limits", params)
         self.assertIn("memory", params["limits"])
 
+    def test_oom_killed_takes_precedence_over_failed_rollout(self) -> None:
+        svc = DecisionService()
+        trigger = _make_trigger(
+            error_signatures=["oom_killed"],
+            rollout_status="failed",
+        )
+        decision = svc._decide_kubernetes(trigger)
+        self.assertEqual(decision.decision_type, "patch_resources")
+
+    def test_oom_killed_takes_precedence_over_crash_loop(self) -> None:
+        svc = DecisionService()
+        trigger = _make_trigger(
+            error_signatures=["crash_loop", "oom_killed"],
+            seconds_since_deploy=120,
+        )
+        decision = svc._decide_kubernetes(trigger)
+        self.assertEqual(decision.decision_type, "patch_resources")
+
 
 class CrashLoopPolicyTests(unittest.TestCase):
     """Crash loop branches on deploy correlation. With recent deploy →

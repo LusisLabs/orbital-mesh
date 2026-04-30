@@ -125,6 +125,7 @@ class TriggerFailingPodsTests(unittest.TestCase):
         *,
         rollout_status: str = "healthy",
         error_signatures: list[str] | None = None,
+        related_context: dict | None = None,
     ) -> object:
         """Build a minimal k8s signal envelope with the given pod list.
 
@@ -172,7 +173,7 @@ class TriggerFailingPodsTests(unittest.TestCase):
                     "event_reasons": [],
                     "restart_count_total": 0,
                 },
-                "related_context": {},
+                "related_context": related_context or {},
                 "post_action_observations": {},
             },
             summary={"service": "search-api", "endpoint": "deployment/search-api", "deployment": "search-api"},
@@ -260,6 +261,64 @@ class TriggerFailingPodsTests(unittest.TestCase):
         trigger = TriggerService().detect(envelope)
         self.assertIsNone(trigger)
 
+    def test_degraded_running_unready_probe_failure_fires(self) -> None:
+        """A real readiness regression has Running containers that are
+        explicitly unready. That is different from pod startup churn."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": False, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+            ],
+            rollout_status="degraded",
+            error_signatures=["probe_failure"],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+
+    def test_configuration_drift_fires_as_weak_signal(self) -> None:
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": True, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+            ],
+            rollout_status="healthy",
+            error_signatures=[],
+            related_context={
+                "configuration_drift": [
+                    {"field": "labels", "key": "mesh.chaos.config_drift", "value": "true"}
+                ]
+            },
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+        self.assertIn("configuration_drift", trigger.related_context["error_signatures"])
+
+    def test_resource_pressure_context_adds_oom_signature(self) -> None:
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": False, "restarts": 2, "container_status": "RunContainerError",
+                 "phase": "Running", "last_state_reason": "StartError"},
+            ],
+            rollout_status="degraded",
+            error_signatures=["crash_loop"],
+            related_context={
+                "resource_pressure": [
+                    {
+                        "container": "semantic-search",
+                        "limit": "8Mi",
+                        "limit_bytes": 8388608,
+                        "reason": "memory_limit_too_low",
+                    }
+                ]
+            },
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+        self.assertIn("oom_killed", trigger.related_context["error_signatures"])
+
     def test_degraded_rollout_with_crash_loop_fires(self) -> None:
         """Hard signature corroborates the degraded rollout — trigger fires."""
         from services.trigger.service import TriggerService
@@ -335,6 +394,18 @@ class ProbeHandlerRevertTests(unittest.TestCase):
         template = {"spec": {"containers": [{"name": "c", "image": "nginx"}]}}
         normalized = _normalize_probe_handlers_for_revert(template)
         self.assertEqual(normalized, template)
+
+    def test_revert_nulls_out_config_drift_metadata(self) -> None:
+        from tests.e2e.chaos.injector import _normalize_chaos_metadata_for_revert
+        template = {
+            "metadata": {"labels": {"app": "semantic-search"}},
+            "spec": {"containers": [{"name": "c", "image": "nginx"}]},
+        }
+
+        normalized = _normalize_chaos_metadata_for_revert(template)
+
+        self.assertEqual(normalized["metadata"]["labels"]["app"], "semantic-search")
+        self.assertIsNone(normalized["metadata"]["labels"]["mesh.chaos.config_drift"])
 
 
 class ReadinessFailureObservationTests(unittest.TestCase):

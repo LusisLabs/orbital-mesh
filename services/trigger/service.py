@@ -32,8 +32,11 @@ def kubernetes_signal_is_actionable(signal: dict[str, object]) -> bool:
     deployment = signal.get("deployment", {})
     pods = signal.get("pods", [])
     log_summary = signal.get("log_summary", {})
+    related_context = signal.get("related_context", {})
     if not isinstance(deployment, dict) or not isinstance(pods, list):
         return False
+    if isinstance(related_context, dict) and related_context.get("configuration_drift"):
+        return True
     rollout_failed = deployment.get("rollout_status") == "failed"
     rollout_degraded = deployment.get("rollout_status") == "degraded"
     failing_pods = [
@@ -45,7 +48,17 @@ def kubernetes_signal_is_actionable(signal: dict[str, object]) -> bool:
     ]
     hard_signatures = set()
     if isinstance(log_summary, dict):
-        hard_signatures = _HARD_ERROR_SIGNATURES & set(log_summary.get("error_signatures", []))
+        signatures = set(log_summary.get("error_signatures", []))
+        hard_signatures = _HARD_ERROR_SIGNATURES & signatures
+        readiness_degraded = any(
+            isinstance(pod, dict)
+            and pod.get("phase") == "Running"
+            and pod.get("container_status") == "Running"
+            and pod.get("ready") is False
+            for pod in pods
+        )
+        if rollout_degraded and "probe_failure" in signatures and readiness_degraded:
+            return True
     return rollout_failed or bool(failing_pods) or (rollout_degraded and bool(hard_signatures))
 
 
@@ -174,10 +187,15 @@ class TriggerService:
             "deployment": deployment,
             "pods": pods,
             "log_summary": log_summary,
+            "related_context": related_context,
         }):
             return None
 
         trigger_signals = list(log_summary.get("error_signatures", []))
+        if related_context.get("configuration_drift") and "configuration_drift" not in trigger_signals:
+            trigger_signals.append("configuration_drift")
+        if related_context.get("resource_pressure") and "oom_killed" not in trigger_signals:
+            trigger_signals.append("oom_killed")
         trigger = Trigger(
             trigger_id=f"trg_{envelope.object_id}",
             trigger_type="kubernetes_deployment_unhealthy",

@@ -178,10 +178,17 @@ def _pick(
     coverage_first: bool = True,
 ) -> tuple[ChaosExperiment, Target] | None:
     last_high = next((prior.completed_at for prior in reversed(history) if prior.severity in {SEVERITY_HIGH, SEVERITY_SEVERE}), None)
+    covered_axes = _covered_axes(history)
     eligible: list[tuple[ChaosExperiment, Target]] = []
     weights: list[float] = []
     for experiment in DEFAULT_PORTFOLIO:
-        if experiment.severity in {SEVERITY_HIGH, SEVERITY_SEVERE} and last_high is not None and now - last_high < 60:
+        missing_axes = set(experiment.capability_axes) - covered_axes
+        high_severity_spacing_applies = (
+            experiment.severity in {SEVERITY_HIGH, SEVERITY_SEVERE}
+            and last_high is not None
+            and now - last_high < 60
+        )
+        if high_severity_spacing_applies and (not coverage_first or not missing_axes):
             continue
         for target in targets:
             prior = next(
@@ -458,6 +465,7 @@ def _wait_for_target_ready(
             "ready_replicas": ready,
             "available_replicas": available,
             "running_ready_pods": len(running_ready),
+            "pod_count": len(pods),
             "pods": [
                 {
                     "name": pod.get("name"),
@@ -473,6 +481,7 @@ def _wait_for_target_ready(
             and updated >= desired
             and ready >= desired
             and available >= desired
+            and len(pods) == desired
             and len(running_ready) == desired
         ):
             return last_state
@@ -493,6 +502,7 @@ def _pod_ready(pod: dict[str, Any]) -> bool:
 def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
     payload = {
         "goal_id": "goal_default",
+        "chaos_probe": True,
         "evaluation_mode": os.environ.get("MESH_STACK_CHAOS_EVALUATION_MODE", "native"),
         "orchestration_mode": os.environ.get("MESH_STACK_CHAOS_ORCHESTRATION_MODE", "native"),
         "steering_mode": os.environ.get("MESH_STACK_CHAOS_STEERING_MODE", "interruptible_auto"),

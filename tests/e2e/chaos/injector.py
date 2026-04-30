@@ -230,26 +230,7 @@ class ChaosInjector:
         # null out ``httpGet`` so the merged probe has only the bad
         # ``tcpSocket`` handler. Null-in-patch is the strategic-merge way
         # to delete a field.
-        patch = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": deployment,
-                                "readinessProbe": {
-                                    "httpGet": None,
-                                    "tcpSocket": {"port": 9999},
-                                    "initialDelaySeconds": 1,
-                                    "periodSeconds": 2,
-                                    "failureThreshold": 2,
-                                },
-                            }
-                        ]
-                    }
-                }
-            }
-        }
+        patch = _bad_readiness_probe_patch(deployment)
         injected_at = time.monotonic()
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected readiness_failure into %s/%s", namespace, deployment)
@@ -307,15 +288,15 @@ class ChaosInjector:
     def inject_pod_kill_all(self, deployment: str, namespace: str) -> InjectionResult:
         """Delete every pod of the deployment simultaneously.
 
-        Harder than ``pod_kill_one``: until the deployment controller
-        recreates pods, readyReplicas is 0 and the service has zero
-        backends. Mesh should see a "zero ready replicas" signal and
-        propose a remediation. In a well-behaved cluster the deployment
-        recovers on its own within ~10s, so this tests both Mesh's
-        detection speed and its policy for "should I act on a transient
-        zero-replica window?"
+        Harder than ``pod_kill_one``: it removes every currently serving
+        backend, then keeps replacement pods unready with the same bad probe
+        used by ``readiness_failure``. A pure delete recovers too quickly for
+        the asynchronous Mesh worker to observe reliably; this variant creates
+        a durable zero-ready outage while ``pod_kill_one`` remains the transient
+        false-positive control.
         """
         self._snapshot(deployment, namespace)
+        self._kubectl_patch(deployment, namespace, _bad_readiness_probe_patch(deployment))
         pods = self._list_pods(deployment, namespace)
         if not pods:
             raise ChaosError(f"pod_kill_all found no pods in {namespace}/{deployment}")
@@ -331,7 +312,7 @@ class ChaosInjector:
             deployment,
             namespace,
             ready_replicas=1,
-            timeout_seconds=45,
+            timeout_seconds=90,
         )
         return InjectionResult(
             deployment=deployment,
@@ -514,7 +495,12 @@ class ChaosInjector:
         # preprocess the baseline template to explicitly null out
         # every probe handler type the baseline doesn't use, so the
         # merged result has exactly the baseline's one handler.
+        #
+        # The same merge behavior applies to labels/annotations added by
+        # config_drift. A baseline template that lacks the injected key will not
+        # delete it unless the revert patch explicitly sets that key to null.
         template = _normalize_probe_handlers_for_revert(template)
+        template = _normalize_chaos_metadata_for_revert(template)
         patch = {"spec": {"template": template}}
         self._kubectl_patch(deployment, namespace, patch)
         # If scale_to_zero was used, restore the original replica count.
@@ -810,6 +796,29 @@ class ChaosInjector:
 _PROBE_HANDLER_TYPES: tuple[str, ...] = ("httpGet", "tcpSocket", "exec", "grpc")
 
 
+def _bad_readiness_probe_patch(deployment: str) -> dict[str, Any]:
+    return {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": deployment,
+                            "readinessProbe": {
+                                "httpGet": None,
+                                "tcpSocket": {"port": 9999},
+                                "initialDelaySeconds": 1,
+                                "periodSeconds": 2,
+                                "failureThreshold": 2,
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+
 def _normalize_probe_handlers_for_revert(template: dict[str, Any]) -> dict[str, Any]:
     """Rewrite a baseline pod template so revert cleanly deletes injected probe handlers.
 
@@ -842,6 +851,31 @@ def _normalize_probe_handlers_for_revert(template: dict[str, Any]) -> dict[str, 
             for handler in _PROBE_HANDLER_TYPES:
                 if handler not in present_handlers:
                     probe[handler] = None
+    return result
+
+
+_CHAOS_METADATA_KEYS: tuple[str, ...] = ("mesh.chaos.config_drift",)
+
+
+def _normalize_chaos_metadata_for_revert(template: dict[str, Any]) -> dict[str, Any]:
+    """Force strategic merge to delete metadata keys injected by chaos.
+
+    Labels and annotations are maps. Strategic merge preserves map keys absent
+    from a patch, so restoring a baseline template that did not have
+    ``mesh.chaos.config_drift`` would leave the drift label behind. Null values
+    delete the keys server-side while leaving normal baseline metadata intact.
+    """
+    import copy
+    result = copy.deepcopy(template)
+    metadata = result.setdefault("metadata", {})
+    for metadata_field in ("labels", "annotations"):
+        values = metadata.setdefault(metadata_field, {})
+        if not isinstance(values, dict):
+            values = {}
+            metadata[metadata_field] = values
+        for key in _CHAOS_METADATA_KEYS:
+            if key not in values:
+                values[key] = None
     return result
 
 

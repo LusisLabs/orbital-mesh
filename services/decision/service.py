@@ -1189,9 +1189,9 @@ class DecisionService:
         #
         #   investigate_and_patch — explicit code-remediation handoff,
         #     only when the operator pre-supplied repo/test/patch context
+        #   oom_killed            — memory pressure, raise limit BEFORE restart
         #   image_pull_failure   — supply-chain problem, rollback fixes it
         #   rollout_status=failed — definitive controller verdict, rollback
-        #   oom_killed            — memory pressure, raise limit BEFORE restart
         #   crash_loop + recent deploy — rollback (deploy is the cause)
         #   crash_loop + no recent deploy — escalate (code investigation)
         #   probe_failure only    — downstream/dependency, escalate
@@ -1210,6 +1210,20 @@ class DecisionService:
             risk_level = "medium"
             autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_repo_single_file"
+        elif "oom_killed" in error_signatures:
+            # OOMKilled with restart is a band-aid: the new container
+            # fills the same limit and OOMs again within minutes.
+            # ``patch_resources`` raises the memory limit, which gives
+            # the workload room to either run cleanly (limit was tight)
+            # or surface the leak more visibly. Either is more useful
+            # than the restart loop kubelet is already running.
+            decision_type = "patch_resources"
+            confidence = 0.74
+            risk_level = "medium"
+            # Always require approval — bumping resource limits has
+            # cluster-wide cost implications. An SRE should sign off.
+            autonomy_tier = "approval_required"
+            blast_radius = "single_deployment"
         elif "image_pull_failure" in error_signatures:
             # Image pull failure is the cleanest "rollback fixes it" case.
             # The new image can't be pulled; the prior revision had a
@@ -1234,20 +1248,6 @@ class DecisionService:
                 confidence = 0.85
                 risk_level = "medium"
                 autonomy_tier = "autonomous"
-            blast_radius = "single_deployment"
-        elif "oom_killed" in error_signatures:
-            # OOMKilled with restart is a band-aid: the new container
-            # fills the same limit and OOMs again within minutes.
-            # ``patch_resources`` raises the memory limit, which gives
-            # the workload room to either run cleanly (limit was tight)
-            # or surface the leak more visibly. Either is more useful
-            # than the restart loop kubelet is already running.
-            decision_type = "patch_resources"
-            confidence = 0.74
-            risk_level = "medium"
-            # Always require approval — bumping resource limits has
-            # cluster-wide cost implications. An SRE should sign off.
-            autonomy_tier = "approval_required"
             blast_radius = "single_deployment"
         elif "crash_loop" in error_signatures and deploy_correlated:
             # Recent deploy + crash loop = the deploy is almost certainly
@@ -1279,6 +1279,12 @@ class DecisionService:
             confidence = 0.70
             risk_level = "low"
             autonomy_tier = "autonomous"
+            blast_radius = "single_deployment"
+        elif "configuration_drift" in error_signatures:
+            decision_type = "escalate"
+            confidence = 0.64
+            risk_level = "medium"
+            autonomy_tier = "escalated"
             blast_radius = "single_deployment"
         else:
             # Catch-all: when we can't narrow the cause, escalate

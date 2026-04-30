@@ -1188,6 +1188,8 @@ class RunCoordinator:
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
         artifacts = {"input_signal": signal_payload}
+        if payload.get("chaos_probe") is True:
+            artifacts["chaos_probe"] = True
         if payload.get("correlation_key"):
             artifacts["correlation_key"] = payload["correlation_key"]
         if isinstance(payload.get("simulation_context"), dict):
@@ -1205,7 +1207,7 @@ class RunCoordinator:
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
         worker = threading.Thread(
-            target=self._execute_run,
+            target=self._execute_chaos_probe_run if payload.get("chaos_probe") is True else self._execute_run,
             args=(session.run_id, run_config, signal_payload, scenario_key),
             daemon=True,
         )
@@ -1409,54 +1411,85 @@ class RunCoordinator:
                     continue
                 break
 
+            chaos_probe = self._is_chaos_probe_run(run_id)
             evidence_pack: EvidencePack | None = None
-            try:
-                evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
-            except Exception as exc:
-                # Evidence stage failure is non-fatal: the pipeline falls
-                # back to reading the inbound signal directly. The run log
-                # carries the error event so operators can see why the
-                # pack is missing.
+            if chaos_probe:
+                self._update_session(run_id, stage="evidence_pack_ready", status="running")
                 self.state_store.append_run_event(
                     run_id,
                     stage="evidence_pack_ready",
                     event_type=EVIDENCE_PACK_READY,
-                    payload={"error": str(exc), "fallback": "inline_signal"},
-                    summary={"status": "failed"},
+                    payload={
+                        "source": "chaos_probe_fast_path",
+                        "trigger_id": trigger.trigger_id,
+                        "signal_type": signal_payload.get("signal_type"),
+                    },
+                    summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
                     artifact_key="evidence_pack",
-                    status="failed",
+                    status="skipped",
                 )
-                _LOG.exception("Evidence pack assembly failed for run %s", run_id)
+            else:
+                try:
+                    evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
+                except Exception as exc:
+                    # Evidence stage failure is non-fatal: the pipeline falls
+                    # back to reading the inbound signal directly. The run log
+                    # carries the error event so operators can see why the
+                    # pack is missing.
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="evidence_pack_ready",
+                        event_type=EVIDENCE_PACK_READY,
+                        payload={"error": str(exc), "fallback": "inline_signal"},
+                        summary={"status": "failed"},
+                        artifact_key="evidence_pack",
+                        status="failed",
+                    )
+                    _LOG.exception("Evidence pack assembly failed for run %s", run_id)
 
-            reasoning_bank_artifact = self._record_reasoning_bank_retrieval(
-                run_id,
-                trigger,
-                evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
-            )
-            reasoning_bank_packet = (
-                reasoning_bank_artifact.get("packet")
-                if isinstance(reasoning_bank_artifact, dict) and reasoning_bank_artifact.get("enabled")
-                else None
-            )
-
+            reasoning_bank_packet = None
             scenario_analysis = None
-            try:
-                scenario_analysis = self._record_scenario_analysis(
-                    run_id,
-                    trigger,
-                    reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
-                )
-            except Exception as exc:
+            if chaos_probe:
                 self.state_store.append_run_event(
                     run_id,
-                    stage="scenario_analysis_ready",
-                    event_type=SCENARIO_ANALYSIS_READY,
-                    payload={"error": str(exc), "fallback": "existing_decision_service"},
-                    summary={"status": "failed"},
-                    artifact_key="scenario_analysis",
-                    status="failed",
+                    stage="evidence_pack_ready",
+                    event_type=INTEGRATION_ARTIFACT_RECORDED,
+                    payload={
+                        "reason": "chaos_probe_fast_path",
+                        "skipped": ["reasoning_bank", "scenario_analysis"],
+                    },
+                    summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
+                    artifact_key="chaos_probe_fast_path",
+                    status="skipped",
                 )
-                _LOG.exception("Scenario analysis failed for run %s", run_id)
+            else:
+                reasoning_bank_artifact = self._record_reasoning_bank_retrieval(
+                    run_id,
+                    trigger,
+                    evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+                )
+                reasoning_bank_packet = (
+                    reasoning_bank_artifact.get("packet")
+                    if isinstance(reasoning_bank_artifact, dict) and reasoning_bank_artifact.get("enabled")
+                    else None
+                )
+                try:
+                    scenario_analysis = self._record_scenario_analysis(
+                        run_id,
+                        trigger,
+                        reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
+                    )
+                except Exception as exc:
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="scenario_analysis_ready",
+                        event_type=SCENARIO_ANALYSIS_READY,
+                        payload={"error": str(exc), "fallback": "existing_decision_service"},
+                        summary={"status": "failed"},
+                        artifact_key="scenario_analysis",
+                        status="failed",
+                    )
+                    _LOG.exception("Scenario analysis failed for run %s", run_id)
 
             service_agent = self.service_agents.route(trigger.to_dict())
             self._set_artifact(run_id, "service_agent", service_agent)
@@ -1664,6 +1697,50 @@ class RunCoordinator:
                 )
         finally:
             # Always reach this block — it owns the in-memory leak fix.
+            self._finalize_run(run_id)
+
+    def _execute_chaos_probe_run(
+        self,
+        run_id: str,
+        run_config: RuntimeConfig,
+        signal_payload: dict[str, Any],
+        scenario_key: str | None,
+    ) -> None:
+        engine = MeshRuntimeEngine(
+            config=run_config,
+            state_store=self.state_store.runtime_store,
+            learning_store=self.learning_store,
+            context_store=self.context_store,
+            infra_graph=self.infra_graph,
+            alert_store=self.alert_store,
+        )
+        try:
+            self._update_session(run_id, stage="ingesting", status="running")
+            deferred_live_signal = signal_payload.get("__deferred_live_signal")
+            if isinstance(deferred_live_signal, dict) and deferred_live_signal.get("source") == "kubernetes":
+                signal_payload = self._collect_live_kubernetes_signal(deferred_live_signal, {})
+                self._set_artifact(run_id, "input_signal", signal_payload)
+
+            normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
+            self._set_artifact(run_id, "normalized_event", normalized_event.to_dict())
+            trigger = engine.trigger.detect(normalized_event)
+            if trigger is None:
+                self._update_session(run_id, stage="no_trigger", status="completed", pending_pause_stage=None)
+                return
+
+            self._set_artifact(run_id, "trigger", trigger.to_dict())
+            decision = engine.decision.decide(trigger)
+            self._set_artifact(run_id, "decision", decision.to_dict())
+            self._update_session(
+                run_id,
+                stage="awaiting_operator",
+                status="awaiting_operator",
+                pending_pause_stage="evaluation_ready",
+            )
+        except Exception as exc:
+            _LOG.exception("Chaos probe run failed for run %s", run_id)
+            self._update_session(run_id, stage="failed", status="failed", pending_pause_stage=None, error=str(exc))
+        finally:
             self._finalize_run(run_id)
 
     def _finalize_run(self, run_id: str) -> None:
@@ -2240,6 +2317,21 @@ class RunCoordinator:
                 status="reused",
             )
             return evaluation
+        if self._is_chaos_probe_run(run_id):
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload={
+                    "reason": "chaos_probe_fast_path",
+                    "skipped": ["agent_tasks", "agent_reconciliation"],
+                },
+                summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
+                artifact_key="agent_tasks",
+                integration_name="agent_mesh",
+                status="skipped",
+            )
+            return evaluation
         session = self.state_store.get_run_session(run_id)
         service_agent = session.artifacts.get("service_agent") if session is not None else None
         tasks = self.agent_mesh.build_tasks(
@@ -2289,6 +2381,10 @@ class RunCoordinator:
                 status="recorded",
         )
         return evaluation
+
+    def _is_chaos_probe_run(self, run_id: str) -> bool:
+        session = self.state_store.get_run_session(run_id)
+        return bool(session is not None and session.artifacts.get("chaos_probe") is True)
 
     def _record_trajectory_artifacts(
         self,

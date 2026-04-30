@@ -165,7 +165,7 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         description="Readiness probe points at a closed port; pods stay unready.",
         weight=1.0,
         severity=SEVERITY_MEDIUM,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
+        expected_decisions=frozenset({"defer_until", "escalate"}),
         cooldown_seconds=120,
         capability_axes=frozenset({
             "detect_readiness_degradation",
@@ -191,24 +191,24 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
     ),
     ChaosExperiment(
         name="pod_kill_all",
-        description="Delete every pod of the deployment; readyReplicas hits zero.",
+        description="Delete every pod and hold replacement pods unready; readyReplicas stays at zero long enough to observe.",
         weight=1.5,
         severity=SEVERITY_HIGH,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
+        expected_decisions=frozenset({"defer_until", "escalate", "restart_deployment", "rollback_deployment"}),
         cooldown_seconds=90,
         capability_axes=frozenset({
             "detect_zero_ready_replicas",
             "separate_transient_from_service_outage",
             "choose_restart_or_rollback",
         }),
-        observation_delay_seconds=0.0,
+        observation_delay_seconds=5.0,
     ),
     ChaosExperiment(
         name="memory_pressure",
         description="Memory limit dropped to 2Mi; container OOMKills on first allocation.",
         weight=1.0,
         severity=SEVERITY_HIGH,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment"}),
+        expected_decisions=frozenset({"patch_resources", "escalate"}),
         cooldown_seconds=120,
         capability_axes=frozenset({
             "detect_oom_kill",
@@ -237,11 +237,10 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         description="Pod template gains an unexpected label; deployment rolls forward silently.",
         weight=0.5,
         severity=SEVERITY_MEDIUM,
-        # Config drift is the subtlest signal — Mesh may not have any
-        # visible symptom to act on. no_trigger or no_action are both
-        # defensible. If Mesh escalates, that's also fine (a human
-        # should look at the drift).
-        expected_decisions=frozenset({"escalate", "no_action"}),
+        # Config drift is a weak signal, but once the drift is observed the
+        # correct response is bounded human review rather than pretending the
+        # deployment is clean.
+        expected_decisions=frozenset({"escalate"}),
         cooldown_seconds=180,
         tags=frozenset({"subtle_fault"}),
         capability_axes=frozenset({

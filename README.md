@@ -475,10 +475,11 @@ Mesh's k8s decision policy follows the standard SRE escalation ladder rather tha
 |--------|---------------|-----|
 | `image_pull_failure` | `rollback_deployment` | Definitive supply-chain problem; the prior revision had a working image |
 | `rollout_status == "failed"` | `rollback_deployment` | `ProgressDeadlineExceeded` — deployment controller has given up |
-| `oom_killed` | `patch_resources` (raise memory limit) | Restart is a band-aid: new container fills the same limit and OOMs again |
+| `oom_killed` / resource-pressure evidence | `patch_resources` (raise memory limit) | Restart is a band-aid: new container fills the same limit and OOMs again |
 | `crash_loop` + recent deploy (≤30 min) | `rollback_deployment` | Deploy is the prior-cause hypothesis |
 | `crash_loop` + no recent deploy | **`escalate`** | Bug existed before the rollout; restart can't fix it; needs log investigation |
-| `probe_failure` only (no crash, no OOM) | **`escalate`** | Usually means a downstream dependency is sick; restarting our container won't fix that |
+| `probe_failure` only (no crash, no OOM) | `defer_until` | Bounded recheck first; persistent probe-only failures can escalate without a blind restart |
+| `configuration_drift` | **`escalate`** | Weak signal that needs human review before remediation |
 | Any other signature, or no clear cause | **`escalate`** | Mesh refuses to guess. Better to wake an SRE than auto-remediate the wrong thing |
 
 ### Where the previous policy was wrong
@@ -931,14 +932,14 @@ scripts/run_chaos_session.sh --keep-cluster
 |-----------|---------:|-------:|------------------------|
 | `crash_loop` | high | 3.0 | `restart_deployment` or `rollback_deployment` |
 | `bad_image` | high | 2.0 | `rollback_deployment` |
-| `readiness_failure` | medium | 1.0 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `readiness_failure` | medium | 1.0 | `defer_until` / `escalate` |
 | `pod_kill_one` | low | 4.0 | **No trigger** (false-positive probe) |
-| `pod_kill_all` | high | 1.5 | `restart_deployment` / `rollback_deployment` / `escalate` |
-| `memory_pressure` | high | 1.0 | `restart_deployment` / `rollback_deployment` |
+| `pod_kill_all` | high | 1.5 | `defer_until` / `escalate` / `restart_deployment` / `rollback_deployment` |
+| `memory_pressure` | high | 1.0 | `patch_resources` / `escalate` |
 | `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
-| `config_drift` | medium | 0.5 | `escalate` / `no_action` |
+| `config_drift` | medium | 0.5 | `escalate` |
 
-All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Compose-native runs use the global hold time for durable faults, but transient primitives such as `pod_kill_all` can launch Mesh observation immediately so short-lived outage signals are measured while live. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Coverage-frontier picks can bypass the high-severity spacing rule only while they prove missing axes; repeats still obey cooldown and severity spacing. Compose-native runs use the global hold time for durable faults. `pod_kill_one` remains the transient false-positive control; `pod_kill_all` holds replacement pods unready long enough to prove the zero-ready outage path. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
 
 ### Hypothesis thresholds
 

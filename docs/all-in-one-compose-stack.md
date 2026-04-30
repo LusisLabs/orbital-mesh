@@ -189,7 +189,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_MAX_SLEEP_SECONDS` | `180` | Maximum delay between chaos cycles |
 | `MESH_STACK_CHAOS_HOLD_SECONDS` | `30` | Default fault dwell time before launching the Mesh run and reverting; transient primitives can override this to launch observation immediately |
 | `MESH_STACK_CHAOS_SEED` | `20260428` | Deterministic replay seed for chaos selection |
-| `MESH_STACK_CHAOS_COVERAGE_FIRST` | `1` | When enabled, eligible experiments covering unproven capability axes are selected before weighted repeats |
+| `MESH_STACK_CHAOS_COVERAGE_FIRST` | `1` | When enabled, eligible experiments covering unproven capability axes are selected before weighted repeats; frontier picks can bypass high-severity spacing until their axes are proven |
 | `MESH_STACK_CHAOS_RUN_WAIT_SECONDS` | `600` | Base timeout for a post-injection Mesh run to reach a terminal stage |
 | `MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra wait granted after each observed run stage or status transition |
 | `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |
