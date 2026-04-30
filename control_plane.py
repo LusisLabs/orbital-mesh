@@ -35,6 +35,14 @@ MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS = (
     "mesh_brain_backend_matrix_summary",
 )
 
+MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS = (
+    "mesh_brain_posttraining_dataset_manifest",
+    "mesh_brain_posttraining_training_job",
+    "mesh_brain_posttraining_backend_result",
+    "mesh_brain_posttraining_registered_artifact",
+    "mesh_brain_posttraining_deployment_record",
+)
+
 
 @dataclass(frozen=True)
 class MeshBrainArtifactRef:

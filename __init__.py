@@ -119,6 +119,15 @@ from .posttraining import (
     plan_posttraining_run,
     write_posttraining_run,
 )
+from .posttraining_proof import (
+    DeterministicTrainingBackend,
+    LocalSubprocessTrainingBackend,
+    MeshBrainTrainingBackend,
+    PosttrainingProofResult,
+    TrainingBackendRequest,
+    TrainingBackendResult,
+    run_posttraining_proof,
+)
 from .research_registry import (
     RESEARCH_INFLUENCES,
     ResearchInfluence,
