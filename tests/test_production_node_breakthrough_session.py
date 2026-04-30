@@ -15,6 +15,20 @@ class ProductionNodeBreakthroughSessionTests(unittest.TestCase):
         self.assertIn("systemd", tags)
         self.assertIn("otel", tags)
         self.assertIn("production_node", tags)
+        self.assertIn("docker_compose", tags)
+        self.assertIn("baremetal", tags)
+        self.assertIn("vm", tags)
+        self.assertIn("multi_fault", tags)
+        self.assertIn("negative_control", tags)
+
+    def test_default_probes_exercise_every_declared_axis(self) -> None:
+        exercised = {
+            axis
+            for probe in node_session.default_probes()
+            for axis in probe.capability_axes
+        }
+
+        self.assertEqual(exercised, set(node_session.NODE_CAPABILITY_AXES))
 
     def test_summary_reaches_breakthrough_when_all_axes_pass(self) -> None:
         events = []

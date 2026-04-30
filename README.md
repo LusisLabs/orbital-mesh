@@ -974,7 +974,15 @@ For non-Kubernetes production-node coverage, run:
 PYTHONPATH=. python3 scripts/production_node_breakthrough_session.py
 ```
 
-That harness replays production-shaped Reth/systemd and OTel node signals through Mesh ingest, trigger, and decision logic. It writes `.mesh-runtime-state/node-breakthrough/events-<timestamp>.jsonl` and `summary-<timestamp>.json`, including `mesh.production_node_breakthrough_probe.v1`.
+That harness replays production-shaped Reth/systemd, Docker Compose, bare-metal process, VM, RPC, Kubernetes-readiness, webhook, and OTel node signals through Mesh ingest, trigger, and decision logic. It includes negative controls for benign memory, transient peer loss, stale untrusted metrics, noisy non-actionable logs, and partial readiness degradation, plus multi-fault probes for readiness/config drift, queue lag/node pressure, trusted signal plus untrusted noise, and transient-then-true outage separation. It writes `.mesh-runtime-state/node-breakthrough/events-<timestamp>.jsonl` and `summary-<timestamp>.json`, including `mesh.production_node_breakthrough_probe.v1`.
+
+To convert the latest Kubernetes, config-drift, and production-node artifacts into a regression-protected proof bundle, run:
+
+```bash
+PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py
+```
+
+The bundle is written under `.mesh-runtime-state/proofs/`. It hashes each source artifact, records the current git SHA and dirty state, captures validation command output, replays production-node probes through the Mesh pipeline, replays compose/config-drift scores through the chaos scoring contract, and marks the proof ready only when every included breakthrough summary is ready, every replay comparison matches, and every embedded validation command exits `0`. By default it runs the lightweight CI-safe breakthrough unittest, ruff checks, and focused strict mypy over the breakthrough proof files; use repeated `--validation-command` flags to embed a different command set.
 
 ## Development Commands
 

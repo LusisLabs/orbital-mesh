@@ -118,7 +118,15 @@ Non-Kubernetes production-node breakthrough probes run outside the long-lived `m
 PYTHONPATH=. python3 scripts/production_node_breakthrough_session.py
 ```
 
-The script covers production-shaped Reth/systemd and OTel node signals and writes proof artifacts under `.mesh-runtime-state/node-breakthrough/`.
+The script covers production-shaped Reth/systemd, Docker Compose, bare-metal process, VM, RPC, Kubernetes-readiness, webhook, and OTel node signals and writes proof artifacts under `.mesh-runtime-state/node-breakthrough/`. It includes negative controls and multi-fault probes so the summary can fail on missing capability axes instead of only reporting isolated happy-path decisions.
+
+After the compose chaos, config-drift, and production-node proof artifacts exist, build the hashed replay bundle:
+
+```bash
+PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py
+```
+
+The bundle is written under `.mesh-runtime-state/proofs/` and includes source artifact hashes, git state, validation command output, focused strict mypy over the breakthrough proof files, compose/config-drift score replay, and production-node pipeline replay. It exits non-zero when replay, summary readiness, or embedded validation fails, which makes it suitable as a lightweight CI gate.
 
 ## Smoke Contract
 
