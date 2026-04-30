@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .live_judge import judge_live_response
 from .model_client import OpenAICompatibleMeshBrainModelClient
 from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPool, TenantQuota
 
@@ -104,6 +105,7 @@ def run_live_serving_smoke(
     latency_budget_ms: float = 30_000.0,
     max_total_tokens: int = 4096,
     response_eval_min_score: float = 0.8,
+    judge_enabled: bool = True,
     deterministic_release_decision: str = "promote",
 ) -> dict[str, Any]:
     fabric = MeshBrainServingFabric(
@@ -154,11 +156,13 @@ def run_live_serving_smoke(
         text=response_text,
         policy=LiveResponseEvalPolicy(min_score=response_eval_min_score),
     )
-    live_decision = combine_live_decisions(gate.decision, response_eval.decision)
+    judge_eval = judge_live_response(text=response_text).to_dict() if judge_enabled else _disabled_judge_eval(response_text)
+    live_decision = combine_live_decisions(gate.decision, response_eval.decision, str(judge_eval["decision"]))
     release_gate = evaluate_live_release_gate(
         deterministic_release_decision=deterministic_release_decision,
         smoke_gate=gate.to_dict(),
         response_eval=response_eval.to_dict(),
+        judge_eval=judge_eval,
         summary={
             "model": execution.completion["model"],
             "requested_model": model,
@@ -185,6 +189,7 @@ def run_live_serving_smoke(
         "latency_ms": latency_ms,
         "gate": gate.to_dict(),
         "response_eval": response_eval.to_dict(),
+        "judge_eval": judge_eval,
         "live_decision": live_decision,
         "release_gate": release_gate.to_dict(),
         "deployment_record": release_gate.deployment_record,
@@ -194,6 +199,7 @@ def run_live_serving_smoke(
         execution=execution.to_dict(),
         gate=gate.to_dict(),
         response_eval=response_eval.to_dict(),
+        judge_eval=judge_eval,
         release_gate=release_gate.to_dict(),
         summary=summary,
         output_directory=output_directory,
@@ -307,11 +313,13 @@ def evaluate_live_release_gate(
     smoke_gate: dict[str, Any],
     response_eval: dict[str, Any],
     summary: dict[str, Any],
+    judge_eval: dict[str, Any] | None = None,
 ) -> LiveReleaseGateResult:
     reasons: list[str] = []
     deterministic = deterministic_release_decision
     smoke_decision = str(smoke_gate.get("decision") or "block")
     response_decision = str(response_eval.get("decision") or "block")
+    judge_decision = str((judge_eval or {}).get("decision") or "pass")
     if deterministic == "block":
         reasons.append("deterministic_eval_blocked")
     if deterministic == "manual_review":
@@ -324,6 +332,10 @@ def evaluate_live_release_gate(
         reasons.append("live_response_eval_blocked")
     if response_decision == "manual_review":
         reasons.append("live_response_eval_manual_review")
+    if judge_decision == "block":
+        reasons.append("live_judge_eval_blocked")
+    if judge_decision == "manual_review":
+        reasons.append("live_judge_eval_manual_review")
     if any(reason.endswith("_blocked") for reason in reasons) or "deterministic_eval_blocked" in reasons:
         decision = "block"
     elif reasons:
@@ -346,14 +358,17 @@ def evaluate_live_release_gate(
             "latency_ms": summary.get("latency_ms"),
             "total_tokens": (summary.get("usage") or {}).get("total_tokens") if isinstance(summary.get("usage"), dict) else None,
             "response_eval_score": response_eval.get("score"),
+            "judge_eval_score": (judge_eval or {}).get("score"),
             "smoke_gate_decision": smoke_decision,
             "response_eval_decision": response_decision,
+            "judge_eval_decision": judge_decision,
             "deterministic_release_decision": deterministic,
         },
         inputs={
             "deterministic_release_decision": deterministic,
             "live_smoke_gate_decision": smoke_decision,
             "live_response_eval_decision": response_decision,
+            "live_judge_eval_decision": judge_decision,
             "model": summary.get("model"),
             "requested_model": summary.get("requested_model"),
             "backend_name": summary.get("backend_name"),
@@ -366,6 +381,7 @@ def evaluate_live_release_gate(
             "release_decision": decision,
             "live_smoke_passed": smoke_decision == "pass",
             "live_response_eval_passed": response_decision == "pass",
+            "live_judge_eval_passed": judge_decision == "pass",
             "deterministic_release_decision": deterministic,
             "model": summary.get("model"),
             "backend_name": summary.get("backend_name"),
@@ -379,6 +395,7 @@ def write_live_serving_smoke(
     execution: dict[str, Any],
     gate: dict[str, Any],
     response_eval: dict[str, Any],
+    judge_eval: dict[str, Any],
     release_gate: dict[str, Any],
     summary: dict[str, Any],
     output_directory: str | Path,
@@ -388,17 +405,20 @@ def write_live_serving_smoke(
     execution_path = output_path / "live_serving_execution.json"
     gate_path = output_path / "live_smoke_gate.json"
     response_eval_path = output_path / "live_response_eval.json"
+    judge_eval_path = output_path / "live_judge_eval.json"
     release_gate_path = output_path / "live_release_gate.json"
     summary_path = output_path / "live_serving_summary.json"
     execution_path.write_text(_json(execution), encoding="utf-8")
     gate_path.write_text(_json(gate), encoding="utf-8")
     response_eval_path.write_text(_json(response_eval), encoding="utf-8")
+    judge_eval_path.write_text(_json(judge_eval), encoding="utf-8")
     release_gate_path.write_text(_json(release_gate), encoding="utf-8")
     summary_path.write_text(_json(summary), encoding="utf-8")
     return {
         "live_serving_execution": str(execution_path),
         "live_smoke_gate": str(gate_path),
         "live_response_eval": str(response_eval_path),
+        "live_judge_eval": str(judge_eval_path),
         "live_release_gate": str(release_gate_path),
         "live_serving_summary": str(summary_path),
     }
@@ -417,6 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--latency-budget-ms", type=float, default=30_000.0)
     parser.add_argument("--max-total-tokens", type=int, default=4096)
     parser.add_argument("--response-eval-min-score", type=float, default=0.8)
+    parser.add_argument("--disable-judge", action="store_true")
     parser.add_argument("--deterministic-release-decision", default="promote", choices=["block", "manual_review", "canary", "promote"])
     parser.add_argument("--json", action="store_true")
     return parser
@@ -436,6 +457,7 @@ def main(argv: list[str] | None = None) -> int:
         latency_budget_ms=args.latency_budget_ms,
         max_total_tokens=args.max_total_tokens,
         response_eval_min_score=args.response_eval_min_score,
+        judge_enabled=not args.disable_judge,
         deterministic_release_decision=args.deterministic_release_decision,
     )
     if args.json:
@@ -448,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"finish_reason={summary['finish_reason']}")
         print(f"gate={summary['gate']['decision']}")
         print(f"response_eval={summary['response_eval']['decision']}")
+        print(f"judge_eval={summary['judge_eval']['decision']}")
         print(f"release_gate={summary['release_gate']['decision']}")
         print(f"content_preview={summary['content_preview']}")
     return 0
@@ -455,6 +478,21 @@ def main(argv: list[str] | None = None) -> int:
 
 def _contains_any(value: str, needles: tuple[str, ...]) -> bool:
     return any(needle in value for needle in needles)
+
+
+def _disabled_judge_eval(text: str) -> dict[str, Any]:
+    import hashlib
+
+    return {
+        "decision": "pass",
+        "passed": True,
+        "score": 1.0,
+        "reasons": ["judge_disabled"],
+        "criterion_scores": {},
+        "consistency": {"order_swap_consistent": True},
+        "rubric": {"rubric_id": "disabled", "min_score": 0.0, "criteria": []},
+        "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+    }
 
 
 def _json(payload: Any) -> str:
