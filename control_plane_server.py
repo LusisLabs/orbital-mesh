@@ -570,6 +570,21 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
+        if parsed.path == "/api/mesh-brain/backend-matrix":
+            try:
+                run = self.server.coordinator.run_mesh_brain_backend_matrix(payload)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:  # pragma: no cover - defensive; avoid empty TCP replies to clients
+                _LOG.exception("POST /api/mesh-brain/backend-matrix failed: %s", exc)
+                self._send_json(
+                    {"error": "mesh brain backend matrix failed", "detail": str(exc)},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
         if parsed.path.startswith("/api/simulations/") and parsed.path.endswith("/run"):
             scenario_id = _safe_segment(parsed.path, 2)
             if scenario_id is None:

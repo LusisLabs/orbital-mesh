@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .judge_client import OpenAICompatibleMeshBrainJudgeClient
 from .live_judge import judge_live_response
 from .model_client import OpenAICompatibleMeshBrainModelClient
 from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPool, TenantQuota
@@ -106,6 +107,8 @@ def run_live_serving_smoke(
     max_total_tokens: int = 4096,
     response_eval_min_score: float = 0.8,
     judge_enabled: bool = True,
+    judge_base_url: str | None = None,
+    judge_model: str | None = None,
     deterministic_release_decision: str = "promote",
 ) -> dict[str, Any]:
     fabric = MeshBrainServingFabric(
@@ -156,7 +159,24 @@ def run_live_serving_smoke(
         text=response_text,
         policy=LiveResponseEvalPolicy(min_score=response_eval_min_score),
     )
-    judge_eval = judge_live_response(text=response_text).to_dict() if judge_enabled else _disabled_judge_eval(response_text)
+    judge_client = (
+        OpenAICompatibleMeshBrainJudgeClient(
+            base_url=judge_base_url,
+            model=judge_model or model,
+            timeout_seconds=timeout_seconds,
+        )
+        if judge_enabled and judge_base_url
+        else None
+    )
+    judge_eval = (
+        judge_live_response(
+            text=response_text,
+            client=judge_client,
+            context={"model": model, "backend_name": execution.plan.backend_name, "task_type": task_type},
+        ).to_dict()
+        if judge_enabled
+        else _disabled_judge_eval(response_text)
+    )
     live_decision = combine_live_decisions(gate.decision, response_eval.decision, str(judge_eval["decision"]))
     release_gate = evaluate_live_release_gate(
         deterministic_release_decision=deterministic_release_decision,
@@ -438,6 +458,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-total-tokens", type=int, default=4096)
     parser.add_argument("--response-eval-min-score", type=float, default=0.8)
     parser.add_argument("--disable-judge", action="store_true")
+    parser.add_argument("--judge-base-url")
+    parser.add_argument("--judge-model")
     parser.add_argument("--deterministic-release-decision", default="promote", choices=["block", "manual_review", "canary", "promote"])
     parser.add_argument("--json", action="store_true")
     return parser
@@ -458,6 +480,8 @@ def main(argv: list[str] | None = None) -> int:
         max_total_tokens=args.max_total_tokens,
         response_eval_min_score=args.response_eval_min_score,
         judge_enabled=not args.disable_judge,
+        judge_base_url=args.judge_base_url,
+        judge_model=args.judge_model,
         deterministic_release_decision=args.deterministic_release_decision,
     )
     if args.json:
@@ -491,6 +515,7 @@ def _disabled_judge_eval(text: str) -> dict[str, Any]:
         "criterion_scores": {},
         "consistency": {"order_swap_consistent": True},
         "rubric": {"rubric_id": "disabled", "min_score": 0.0, "criteria": []},
+        "transcript": {"client": "disabled", "prompt_version": "mesh_brain_judge_v2"},
         "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
     }
 

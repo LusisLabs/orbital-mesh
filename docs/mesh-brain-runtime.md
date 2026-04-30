@@ -102,6 +102,20 @@ The live serving run stores:
 
 That record preserves the served model id, backend, hardware tier, request id, completion id, token usage, finish reason, latency, gate decision, response-eval decision, judge-eval decision, release-gate decision, deployment eligibility, reasons, and content preview. The infrastructure gate, semantic response eval, and rubric-bound judge eval all emit `pass`, `manual_review`, or `block`; the release gate combines them with the deterministic release decision and emits `block`, `manual_review`, `canary`, or `promote`.
 
+Backend matrix smoke can be recorded as a Mesh run with:
+
+```http
+POST /api/mesh-brain/backend-matrix
+```
+
+The matrix run stores:
+
+- `mesh_brain_backend_matrix_results`;
+- `mesh_brain_backend_matrix_summary`;
+- `mesh_brain_backend_matrix_record`.
+
+Each target uses the same OpenAI-compatible live smoke path, including infrastructure gate, response eval, judge eval, and release gate. The aggregate status is `block` if any target blocks, `manual_review` if any target requires review, and `pass` only when every enabled target is promotable or canary-eligible.
+
 ## Data Plane
 
 `mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`.
@@ -211,11 +225,15 @@ PYTHONPATH=. python3 -m mesh_brain.run_live_serving_smoke \
 
 The smoke writes `live_serving_execution.json`, `live_smoke_gate.json`, `live_response_eval.json`, `live_judge_eval.json`, `live_release_gate.json`, and `live_serving_summary.json`.
 
-`mesh_brain.live_judge` adds a deterministic judge boundary for local smoke runs. The CROPS rubric scores evidence grounding, bounded reversible remediation, operator approval, unsupported execution claims, and concision. It also runs an order-swap consistency check so criterion order cannot change the release decision.
+`mesh_brain.live_judge` adds a judge boundary for local smoke runs. The CROPS rubric scores evidence grounding, bounded reversible remediation, operator approval, unsupported execution claims, and concision. It also runs an order-swap consistency check so criterion order cannot change the release decision.
+
+`mesh_brain.judge_client` defines `MeshBrainJudgeClient`, `DeterministicMeshBrainJudgeClient`, and `OpenAICompatibleMeshBrainJudgeClient`. Live smoke can use `--judge-base-url` and `--judge-model` to call a model-backed judge through `/v1/chat/completions`; Mesh Brain still applies the local rubric guardrail so a permissive model judge cannot override unsupported execution claims.
 
 `mesh_brain.backend_matrix` runs the same live smoke across multiple OpenAI-compatible targets and writes `backend_matrix_results.json` plus `backend_matrix_summary.json`. The aggregate status is `block` if any backend blocks, `manual_review` if any backend needs review, and `pass` only when every enabled backend is promotable or canary-eligible.
 
 `mesh_brain.live_feedback` turns blocked or manual-review live runs into data-plane feedback. It emits the existing five dataset row families from the failed/manual run context, including SFT, preference, RL trajectory, eval, and red-team rows. Promoted or canary-eligible runs are recorded as skipped feedback and do not create training rows.
+
+`mesh_brain.readiness_gaps` writes an explicit readiness report for the remaining non-MVP work. It marks live smoke ready, but real posttraining execution and MoE training/serving not ready until separate GPU-job and sparse-expert proofs exist.
 
 `build_serving_fabric_e2e()` proves:
 

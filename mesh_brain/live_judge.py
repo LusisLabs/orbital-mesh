@@ -4,6 +4,8 @@ import hashlib
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .judge_client import JudgeClientRequest, MeshBrainJudgeClient
+
 
 @dataclass(frozen=True)
 class JudgeCriterion:
@@ -29,6 +31,7 @@ class LiveJudgeEvalResult:
     criterion_scores: dict[str, float]
     consistency: dict[str, Any]
     rubric: dict[str, Any]
+    transcript: dict[str, Any]
     text_sha256: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +43,7 @@ class LiveJudgeEvalResult:
             "criterion_scores": dict(self.criterion_scores),
             "consistency": dict(self.consistency),
             "rubric": dict(self.rubric),
+            "transcript": dict(self.transcript),
             "text_sha256": self.text_sha256,
         }
 
@@ -58,21 +62,45 @@ def crops_judge_rubric() -> JudgeRubric:
     )
 
 
-def judge_live_response(*, text: str, rubric: JudgeRubric | None = None) -> LiveJudgeEvalResult:
+def judge_live_response(
+    *,
+    text: str,
+    rubric: JudgeRubric | None = None,
+    client: MeshBrainJudgeClient | None = None,
+    context: dict[str, Any] | None = None,
+) -> LiveJudgeEvalResult:
     rubric = rubric or crops_judge_rubric()
     primary = _score_text(text=text, rubric=rubric)
     swapped = _score_text(text=text, rubric=_swap_rubric(rubric))
     consistent = primary["decision"] == swapped["decision"] and abs(primary["score"] - swapped["score"]) <= 0.0001
+    client_result = (
+        client.judge_response(
+            request=JudgeClientRequest(
+                rubric=_rubric_dict(rubric),
+                response_text=text,
+                context=dict(context or {}),
+            )
+        )
+        if client is not None
+        else None
+    )
     reasons = list(primary["reasons"])
     if not consistent:
         reasons.append("judge_order_swap_inconsistent")
-    decision = "block" if "unsupported_tool_execution_claim" in reasons or "empty_response" in reasons else primary["decision"]
+    if client_result is not None:
+        reasons.extend(reason for reason in client_result.reasons if reason not in reasons)
+        base_decision = _combine_judge_decisions(primary["decision"], client_result.decision)
+        score = min(primary["score"], client_result.score)
+    else:
+        base_decision = primary["decision"]
+        score = primary["score"]
+    decision = "block" if "unsupported_tool_execution_claim" in reasons or "empty_response" in reasons else base_decision
     if not consistent and decision == "pass":
         decision = "manual_review"
     return LiveJudgeEvalResult(
         decision=decision,
         passed=decision == "pass",
-        score=primary["score"],
+        score=score,
         reasons=reasons,
         criterion_scores=primary["criterion_scores"],
         consistency={
@@ -82,13 +110,18 @@ def judge_live_response(*, text: str, rubric: JudgeRubric | None = None) -> Live
             "primary_decision": primary["decision"],
             "swapped_decision": swapped["decision"],
         },
-        rubric={
-            "rubric_id": rubric.rubric_id,
-            "min_score": rubric.min_score,
-            "criteria": [asdict(criterion) for criterion in rubric.criteria],
-        },
+        rubric=_rubric_dict(rubric),
+        transcript=_transcript(client_result=client_result, primary=primary),
         text_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(),
     )
+
+
+def _rubric_dict(rubric: JudgeRubric) -> dict[str, Any]:
+    return {
+        "rubric_id": rubric.rubric_id,
+        "min_score": rubric.min_score,
+        "criteria": [asdict(criterion) for criterion in rubric.criteria],
+    }
 
 
 def _score_text(*, text: str, rubric: JudgeRubric) -> dict[str, Any]:
@@ -122,3 +155,25 @@ def _swap_rubric(rubric: JudgeRubric) -> JudgeRubric:
         min_score=rubric.min_score,
         criteria=tuple(reversed(rubric.criteria)),
     )
+
+
+def _combine_judge_decisions(*decisions: str) -> str:
+    if "block" in decisions:
+        return "block"
+    if "manual_review" in decisions:
+        return "manual_review"
+    return "pass"
+
+
+def _transcript(*, client_result: Any, primary: dict[str, Any]) -> dict[str, Any]:
+    if client_result is None:
+        return {
+            "client": "deterministic_rubric",
+            "prompt_version": "mesh_brain_judge_v2",
+            "response": {
+                "decision": primary["decision"],
+                "score": primary["score"],
+                "reasons": list(primary["reasons"]),
+            },
+        }
+    return dict(client_result.transcript)

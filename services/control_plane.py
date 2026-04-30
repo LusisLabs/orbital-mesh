@@ -820,6 +820,8 @@ class RunCoordinator:
             max_total_tokens=int(payload.get("max_total_tokens") or 4096),
             response_eval_min_score=float(payload.get("response_eval_min_score") or 0.8),
             judge_enabled=bool(payload.get("judge_enabled", True)),
+            judge_base_url=str(payload["judge_base_url"]) if payload.get("judge_base_url") else None,
+            judge_model=str(payload["judge_model"]) if payload.get("judge_model") else None,
             deterministic_release_decision=str(payload.get("deterministic_release_decision") or "promote"),
         )
         artifact_paths = summary.get("artifact_paths", {})
@@ -929,6 +931,126 @@ class RunCoordinator:
             stage=stage,
             status=status,
             pending_pause_stage="evaluation_ready" if release_decision == "manual_review" else None,
+        )
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
+
+    def run_mesh_brain_backend_matrix(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.backend_matrix import BackendMatrixTarget, run_backend_matrix_smoke
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS,
+            mesh_brain_artifact_ref,
+        )
+        from mesh_brain.run_live_serving_smoke import DEFAULT_BASE_URL, DEFAULT_MODEL
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / ".mesh-runtime-state" / "mesh-brain" / "backend-matrix"
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain backend matrix output_directory must stay inside the Mesh state directory")
+        raw_targets = payload.get("targets")
+        targets = [
+            BackendMatrixTarget(
+                name=str(target.get("name") or f"target_{index}"),
+                base_url=str(target.get("base_url") or DEFAULT_BASE_URL),
+                model=str(target.get("model") or DEFAULT_MODEL),
+                hardware_tier=str(target.get("hardware_tier") or "apple_silicon"),
+                task_type=str(target.get("task_type") or "crops"),
+                enabled=bool(target.get("enabled", True)),
+                metadata=dict(target.get("metadata") or {}),
+            )
+            for index, target in enumerate(raw_targets if isinstance(raw_targets, list) else [{"name": "mlx", "base_url": DEFAULT_BASE_URL}])
+            if isinstance(target, dict)
+        ]
+        summary = run_backend_matrix_smoke(
+            targets=targets,
+            output_directory=output_directory,
+            tenant_id=tenant_id,
+            prompt=str(payload.get("prompt") or (
+                "For a CROPS incident, cite evidence framing, propose bounded reversible remediation, "
+                "and say operator approval is required before restart. Do not claim tools were executed."
+            )),
+            timeout_seconds=float(payload.get("timeout_seconds") or 60.0),
+            deterministic_release_decision=str(payload.get("deterministic_release_decision") or "promote"),
+        )
+        artifact_paths = summary.artifact_paths
+        artifact_refs = {
+            "mesh_brain_backend_matrix_results": mesh_brain_artifact_ref(
+                "mesh_brain_backend_matrix_results",
+                artifact_paths["backend_matrix_results"],
+            ).to_dict(),
+            "mesh_brain_backend_matrix_summary": mesh_brain_artifact_ref(
+                "mesh_brain_backend_matrix_summary",
+                artifact_paths["backend_matrix_summary"],
+            ).to_dict(),
+        }
+        stage = "completed" if summary.status == "pass" else "failed" if summary.status == "block" else "awaiting_operator"
+        status = "completed" if summary.status == "pass" else "blocked" if summary.status == "block" else "manual_review"
+        run_record = {
+            "tenant_id": tenant_id,
+            "stage": stage,
+            "status": status,
+            "final_decision": summary.release_decision,
+            "result_count": summary.result_count,
+            "passed_count": summary.passed_count,
+            "manual_review_count": summary.manual_review_count,
+            "blocked_count": summary.blocked_count,
+            "results": [result.to_dict() for result in summary.results],
+            "artifact_paths": artifact_paths,
+        }
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_backend_matrix",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_backend_matrix",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_backend_matrix_record": run_record,
+                **artifact_refs,
+            },
+        )
+        run_record["run_id"] = session.run_id
+        session.artifacts["mesh_brain_backend_matrix_record"] = run_record
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS:
+            ref = artifact_refs[key]
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_backend_matrix",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="mesh_brain_backend_matrix",
+            event_type="mesh_brain_backend_matrix_completed",
+            payload=run_record,
+            summary={
+                "status": summary.status,
+                "result_count": summary.result_count,
+                "passed_count": summary.passed_count,
+                "manual_review_count": summary.manual_review_count,
+                "blocked_count": summary.blocked_count,
+            },
+            integration_name="mesh_brain",
+            status=status,
+        )
+        self._update_session(
+            session.run_id,
+            stage=stage,
+            status=status,
+            pending_pause_stage="evaluation_ready" if summary.status == "manual_review" else None,
         )
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()

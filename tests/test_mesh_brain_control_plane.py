@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from mesh_brain.control_plane import MESH_BRAIN_ARTIFACT_KEYS, MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS
+from mesh_brain.control_plane import (
+    MESH_BRAIN_ARTIFACT_KEYS,
+    MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS,
+    MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
+)
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import RuntimeConfig
 from tests.test_mesh_brain_model_client import _FakeUrlopenResponse, _fake_openai_response
@@ -186,6 +190,55 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["release_gate"]["decision"], "block")
         self.assertEqual(record["deployment_record"]["status"], "blocked")
         self.assertIn("unsupported_tool_execution_claim", record["response_eval"]["reasons"])
+
+    def test_backend_matrix_records_mesh_run_artifacts(self) -> None:
+        responses = [
+            _matrix_response(
+                "Evidence indicates latency. Use bounded reversible remediation with rollback and require "
+                "operator approval before restart.",
+                model="pass-model",
+            ),
+            _matrix_response("I restarted the deployment and restart completed.", model="block-model"),
+        ]
+
+        def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
+            return _FakeUrlopenResponse(responses.pop(0))
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.model_client.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_backend_matrix(
+                    {
+                        "tenant_id": "tenant_a",
+                        "targets": [
+                            {"name": "pass", "base_url": "http://pass.local", "model": "pass-model"},
+                            {"name": "block", "base_url": "http://block.local", "model": "block-model"},
+                        ],
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["scenario_key"], "mesh_brain_backend_matrix")
+        self.assertEqual(run["stage"], "failed")
+        self.assertEqual(run["status"], "blocked")
+        artifacts = detail["artifacts"]
+        for key in MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS:
+            self.assertIn(key, artifacts)
+            self.assertTrue(artifacts[key]["exists"])
+        record = artifacts["mesh_brain_backend_matrix_record"]
+        self.assertEqual(record["final_decision"], "block")
+        self.assertEqual(record["result_count"], 2)
+        self.assertEqual(record["passed_count"], 1)
+        self.assertEqual(record["blocked_count"], 1)
+        event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
+        self.assertTrue(set(MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS).issubset(event_keys))
+
+
+def _matrix_response(content: str, *, model: str) -> dict[str, Any]:
+    response = _fake_openai_response()
+    response["model"] = model
+    response["choices"][0]["message"]["content"] = content
+    return response
 
 
 if __name__ == "__main__":

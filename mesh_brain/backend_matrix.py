@@ -48,6 +48,7 @@ class BackendMatrixSummary:
     blocked_count: int
     results: list[BackendMatrixResult]
     output_directory: str
+    artifact_paths: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class BackendMatrixSummary:
             "blocked_count": self.blocked_count,
             "results": [result.to_dict() for result in self.results],
             "output_directory": self.output_directory,
+            "artifact_paths": dict(self.artifact_paths),
         }
 
 
@@ -104,15 +106,20 @@ def run_backend_matrix_smoke(
             )
         )
     aggregate = _aggregate_matrix(results)
+    passed_count = sum(1 for result in results if result.status == "pass")
+    manual_review_count = sum(1 for result in results if result.status == "manual_review")
+    blocked_count = sum(1 for result in results if result.status == "block")
+    artifact_paths = _backend_matrix_artifact_paths(output_path)
     summary = BackendMatrixSummary(
         status=aggregate,
         release_decision=aggregate,
         result_count=len(results),
-        passed_count=sum(1 for result in results if result.status == "pass"),
-        manual_review_count=sum(1 for result in results if result.status == "manual_review"),
-        blocked_count=sum(1 for result in results if result.status == "block"),
+        passed_count=passed_count,
+        manual_review_count=manual_review_count,
+        blocked_count=blocked_count,
         results=results,
         output_directory=str(output_path),
+        artifact_paths=artifact_paths,
     )
     write_backend_matrix_summary(summary=summary, output_directory=output_path)
     return summary
@@ -131,6 +138,13 @@ def write_backend_matrix_summary(*, summary: BackendMatrixSummary, output_direct
     return {
         "backend_matrix_results": str(results_path),
         "backend_matrix_summary": str(summary_path),
+    }
+
+
+def _backend_matrix_artifact_paths(output_path: Path) -> dict[str, str]:
+    return {
+        "backend_matrix_results": str(output_path / "backend_matrix_results.json"),
+        "backend_matrix_summary": str(output_path / "backend_matrix_summary.json"),
     }
 
 
