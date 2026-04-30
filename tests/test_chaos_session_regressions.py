@@ -69,6 +69,35 @@ class EventFreshnessTests(unittest.TestCase):
         cutoff = _event_window_cutoff()
         self.assertFalse(_event_is_fresh({"reason": "BackOff"}, cutoff))
 
+    def test_pod_event_from_old_replicaset_is_excluded_even_when_fresh(self) -> None:
+        """A prior crash_loop can leave fresh BackOff events in the same
+        namespace for several minutes. A later pod_kill_one run on the
+        same deployment must not inherit those old pod events just
+        because the pod name has the deployment prefix."""
+        from services.ingest.kubernetes_live_signal import _event_matches
+        event = {
+            "involvedObject": {
+                "name": "semantic-search-oldrs-dead1",
+                "kind": "Pod",
+            },
+            "reason": "BackOff",
+        }
+        current_pods = {"semantic-search-newrs-live1", "semantic-search-newrs-live2"}
+
+        self.assertFalse(_event_matches(event, "semantic-search", current_pods))
+
+    def test_replicaset_event_for_deployment_prefix_is_still_included(self) -> None:
+        from services.ingest.kubernetes_live_signal import _event_matches
+        event = {
+            "involvedObject": {
+                "name": "semantic-search-abc123",
+                "kind": "ReplicaSet",
+            },
+            "reason": "ScalingReplicaSet",
+        }
+
+        self.assertTrue(_event_matches(event, "semantic-search", set()))
+
     def test_event_window_respects_env_override(self) -> None:
         """Operators running long investigations can widen the window."""
         from services.ingest.kubernetes_live_signal import _event_window_cutoff

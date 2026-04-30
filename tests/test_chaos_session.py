@@ -19,6 +19,7 @@ from __future__ import annotations
 import unittest
 
 from tests.e2e.chaos.portfolio import (
+    CAPABILITY_AXES,
     DEFAULT_PORTFOLIO,
     SEVERITY_HIGH,
     SEVERITY_LOW,
@@ -59,6 +60,14 @@ class PortfolioTests(unittest.TestCase):
         experiment = select_by_name("pod_kill_one")
         self.assertIn("false_positive_probe", experiment.tags)
         self.assertEqual(experiment.expected_decisions, frozenset())
+
+    def test_default_portfolio_declares_capability_axes(self) -> None:
+        self.assertGreater(len(CAPABILITY_AXES), 8)
+        for experiment in DEFAULT_PORTFOLIO:
+            self.assertTrue(
+                experiment.capability_axes,
+                f"{experiment.name} must declare the capability axes it exercises",
+            )
 
     def test_select_by_name_raises_on_missing(self) -> None:
         with self.assertRaises(KeyError):
@@ -156,6 +165,65 @@ class SchedulerEligibilityTests(unittest.TestCase):
         pick = sched.pick(history, now=10.0)
         self.assertIsNotNone(pick)
         self.assertEqual(pick[0].severity, SEVERITY_LOW)
+
+    def test_adaptive_weight_prefers_uncovered_capability_axes(self) -> None:
+        covered = ChaosExperiment(
+            "covered", "", 1.0, SEVERITY_LOW, frozenset(),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_a"}),
+        )
+        uncovered = ChaosExperiment(
+            "uncovered", "", 1.0, SEVERITY_LOW, frozenset(),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_b"}),
+        )
+        history = [
+            PriorExperiment(
+                "covered",
+                "svc",
+                SEVERITY_LOW,
+                completed_at=0.0,
+                capability_axes=frozenset({"axis_a"}),
+                passed=True,
+            )
+        ]
+
+        covered_weight = ExperimentScheduler._adaptive_weight(covered, "svc", history)
+        uncovered_weight = ExperimentScheduler._adaptive_weight(uncovered, "svc", history)
+
+        self.assertGreater(uncovered_weight, covered_weight)
+
+    def test_coverage_frontier_beats_high_weight_covered_experiment(self) -> None:
+        covered = ChaosExperiment(
+            "covered", "", 99.0, SEVERITY_LOW, frozenset(),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_a"}),
+        )
+        uncovered = ChaosExperiment(
+            "uncovered", "", 1.0, SEVERITY_LOW, frozenset(),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"axis_b"}),
+        )
+        sched = ExperimentScheduler(
+            portfolio=(covered, uncovered),
+            targets=("svc",),
+            seed=0,
+        )
+        history = [
+            PriorExperiment(
+                "covered",
+                "svc",
+                SEVERITY_LOW,
+                completed_at=0.0,
+                capability_axes=frozenset({"axis_a"}),
+                passed=True,
+            )
+        ]
+
+        pick = sched.pick(history=history, now=1.0)
+
+        self.assertIsNotNone(pick)
+        self.assertEqual(pick[0].name, "uncovered")
 
 
 class SchedulerWeightingTests(unittest.TestCase):

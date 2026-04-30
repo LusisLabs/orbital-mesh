@@ -8,7 +8,7 @@ function targetUrl(): string {
 
 async function openFixture(page: Page) {
   await page.goto(targetUrl());
-  await expect(page.getByRole("heading", { name: "Mesh Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
   await expect(page.getByText("Connection Failed")).toHaveCount(0);
 }
 
@@ -29,10 +29,44 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(overflowing).toEqual([]);
 }
 
-test("loads the Mesh professional console with overview as the default page", async ({ page }) => {
+test("applies the Purna Labs Nebula kit end to end", async ({ page }) => {
   await openFixture(page);
 
-  await expect(page.getByRole("heading", { name: "Mesh Console" })).toBeVisible();
+  await expect(page.getByText("Purna Labs OS")).toBeVisible();
+  await expect(page.getByText("Purna Labs desktop")).toBeVisible();
+  await expect(page.getByText(/Lusis/i)).toHaveCount(0);
+
+  const tokens = await page.evaluate(() => {
+    const styles = getComputedStyle(document.documentElement);
+    const activeNav = document.querySelector(".mesh-nav-item.active");
+    const primaryAction = document.querySelector(".action-button.primary");
+
+    return {
+      accent: styles.getPropertyValue("--accent").trim(),
+      bg: styles.getPropertyValue("--bg").trim(),
+      good: styles.getPropertyValue("--accent-good").trim(),
+      meshBlue: styles.getPropertyValue("--mesh-blue").trim(),
+      meshPurple: styles.getPropertyValue("--mesh-purple").trim(),
+      navAccent: activeNav ? getComputedStyle(activeNav).boxShadow : "",
+      primaryBorder: primaryAction ? getComputedStyle(primaryAction).borderColor : "",
+    };
+  });
+
+  expect(tokens).toMatchObject({
+    accent: "#3e79bd",
+    bg: "#0b1020",
+    good: "#20a77c",
+    meshBlue: "#3e79bd",
+    meshPurple: "#6d33ab",
+  });
+  expect(tokens.navAccent).toContain("62, 121, 189");
+  expect(tokens.primaryBorder).toBe("rgba(62, 121, 189, 0.52)");
+});
+
+test("loads the Purna console with overview as the default page", async ({ page }) => {
+  await openFixture(page);
+
+  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
   await expect(page.getByTestId("mesh-view-overview")).toBeVisible();
   await expect(page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Overview" })).toHaveClass(/active/);
   await expect(page.locator(".react-flow")).toHaveCount(0);
@@ -131,10 +165,10 @@ test("submits operator note and Hermes chat through steering", async ({ page }) 
   await expect((await hermesResponse).status()).toBeLessThan(500);
 });
 
-test("keeps the Mesh professional shell usable on mobile", async ({ page }) => {
+test("keeps the Purna shell usable on mobile", async ({ page }) => {
   await openFixture(page);
 
-  await expect(page.getByRole("heading", { name: "Mesh Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Context", exact: true })).toBeVisible();
   await expect(page.getByTestId("mesh-primary-nav")).toBeVisible();
   await expect(page.getByTestId("mesh-view-overview")).toBeVisible();

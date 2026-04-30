@@ -213,9 +213,9 @@ def _event_matches(item: dict[str, Any], deployment_name: str, pod_names: set[st
     kind = involved.get("kind")
     if name == deployment_name and kind == "Deployment":
         return True
-    if name in pod_names and kind == "Pod":
+    if name is not None and name in pod_names and kind == "Pod":
         return True
-    return bool(name and name.startswith(f"{deployment_name}-") and kind in {"ReplicaSet", "Pod"})
+    return bool(name and name.startswith(f"{deployment_name}-") and kind == "ReplicaSet")
 
 
 def _event_window_cutoff() -> datetime:

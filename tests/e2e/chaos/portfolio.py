@@ -110,6 +110,11 @@ class ChaosExperiment:
     # shouldn't trigger.
     tags: frozenset[str] = field(default_factory=frozenset)
 
+    # Capability axes this experiment exercises. The intelligent
+    # scheduler uses these to avoid repeatedly proving the same path
+    # while leaving other decision surfaces untouched.
+    capability_axes: frozenset[str] = field(default_factory=frozenset)
+
 
 # The default portfolio. Tuned for a 60-minute session on a 2-worker
 # kind cluster; adjust weights if your session duration, cluster size,
@@ -131,6 +136,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"restart_deployment", "rollback_deployment"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_crash_loop",
+            "choose_restart_or_rollback",
+            "recover_after_spec_revert",
+        }),
     ),
     ChaosExperiment(
         name="bad_image",
@@ -139,6 +149,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"rollback_deployment"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_image_pull_failure",
+            "choose_rollback",
+            "recover_after_spec_revert",
+        }),
     ),
     ChaosExperiment(
         name="readiness_failure",
@@ -147,6 +162,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_MEDIUM,
         expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_readiness_degradation",
+            "distinguish_running_from_ready",
+            "choose_restart_or_rollback",
+        }),
     ),
     ChaosExperiment(
         name="pod_kill_one",
@@ -159,6 +179,10 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         expected_decisions=frozenset(),
         cooldown_seconds=30,
         tags=frozenset({"false_positive_probe"}),
+        capability_axes=frozenset({
+            "suppress_transient_pod_churn",
+            "avoid_false_positive_remediation",
+        }),
     ),
     ChaosExperiment(
         name="pod_kill_all",
@@ -167,6 +191,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_zero_ready_replicas",
+            "separate_transient_from_service_outage",
+            "choose_restart_or_rollback",
+        }),
     ),
     ChaosExperiment(
         name="memory_pressure",
@@ -175,6 +204,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"restart_deployment", "rollback_deployment"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_oom_kill",
+            "infer_resource_pressure",
+            "choose_restart_or_rollback",
+        }),
     ),
     ChaosExperiment(
         name="scale_to_zero",
@@ -186,6 +220,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         # have intended the scale-down). Both acceptable.
         expected_decisions=frozenset({"escalate", "restart_deployment", "no_action"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_intentional_zero_replicas",
+            "avoid_over_remediation",
+            "escalate_ambiguous_operator_intent",
+        }),
     ),
     ChaosExperiment(
         name="config_drift",
@@ -199,7 +238,17 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         expected_decisions=frozenset({"escalate", "no_action"}),
         cooldown_seconds=180,
         tags=frozenset({"subtle_fault"}),
+        capability_axes=frozenset({
+            "detect_configuration_drift",
+            "handle_weak_signal",
+            "escalate_ambiguous_operator_intent",
+        }),
     ),
+)
+
+
+CAPABILITY_AXES: frozenset[str] = frozenset(
+    axis for experiment in DEFAULT_PORTFOLIO for axis in experiment.capability_axes
 )
 
 
@@ -219,6 +268,7 @@ def select_by_name(name: str, portfolio: tuple[ChaosExperiment, ...] = DEFAULT_P
 
 __all__ = [
     "ChaosExperiment",
+    "CAPABILITY_AXES",
     "DEFAULT_PORTFOLIO",
     "SEVERITY_HIGH",
     "SEVERITY_LOW",

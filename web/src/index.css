@@ -1,28 +1,28 @@
 /* ═══════════════════════════════════════════════
-   Mesh Intelligence — Operator Control Plane
-   Production Design System
+   Purna Labs — Operator Control Plane
+   Nebula-aligned production design system
    ═══════════════════════════════════════════════ */
 
 :root {
   color-scheme: dark;
 
   /* Palette */
-  --bg: #0b0b09;
-  --panel: rgba(17, 16, 12, 0.92);
-  --panel-border: rgba(230, 221, 194, 0.18);
-  --panel-strong: rgba(22, 20, 15, 0.97);
-  --panel-hover: rgba(31, 28, 21, 0.98);
-  --ink: #f3ead2;
-  --ink-secondary: #d3c7a7;
-  --muted: #978c73;
-  --accent: #68d8bd;
-  --accent-warm: #c9a857;
-  --accent-good: #86d48c;
-  --accent-danger: #e87963;
-  --accent-cool: #8fb7ff;
-  --shadow: 0 18px 54px rgba(0, 0, 0, 0.42);
-  --radius: 0.25rem;
-  --radius-lg: 0.25rem;
+  --bg: #0b1020;
+  --panel: rgba(17, 24, 39, 0.92);
+  --panel-border: rgba(148, 163, 184, 0.22);
+  --panel-strong: rgba(15, 23, 42, 0.97);
+  --panel-hover: rgba(30, 41, 59, 0.98);
+  --ink: #f8fafc;
+  --ink-secondary: #cbd5e1;
+  --muted: #94a3b8;
+  --accent: #3e79bd;
+  --accent-warm: #f59e0b;
+  --accent-good: #20a77c;
+  --accent-danger: #e11d48;
+  --accent-cool: #6d33ab;
+  --shadow: 0 18px 54px rgba(2, 6, 23, 0.42);
+  --radius: 0.5rem;
+  --radius-lg: 0.5rem;
   --radius-pill: 999px;
 
   /* Typography */
@@ -36,11 +36,11 @@
 
   /* Background */
   background:
-    linear-gradient(90deg, rgba(230, 221, 194, 0.035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(230, 221, 194, 0.025) 1px, transparent 1px),
-    linear-gradient(135deg, rgba(104, 216, 189, 0.08), transparent 38%),
-    linear-gradient(215deg, rgba(201, 168, 87, 0.09), transparent 42%),
-    linear-gradient(180deg, #11100c 0%, #090908 100%);
+    linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(62, 121, 189, 0.16), transparent 38%),
+    linear-gradient(215deg, rgba(109, 51, 171, 0.14), transparent 42%),
+    linear-gradient(180deg, #0b1020 0%, #070b14 100%);
   background-size: 28px 28px, 28px 28px, auto, auto, auto;
 }
 
@@ -2762,31 +2762,31 @@ body {
   }
 }
 
-/* Mesh agentic console skin. Static tokens derived from THPM Cursor/VS Code workbench roles. */
+/* Purna Labs console skin. Tokens follow the Nebula kit direction: neutral surfaces, blue primary, violet depth, teal success. */
 :root {
-  --mesh-bg: #0f0f10;
-  --mesh-editor: #1f1f1f;
-  --mesh-editor-2: #181818;
-  --mesh-side: #25272b;
-  --mesh-side-2: #202124;
-  --mesh-panel: #151515;
-  --mesh-panel-2: #1b1b1c;
-  --mesh-line: #303033;
-  --mesh-line-soft: #272729;
-  --mesh-text: #e8e8e8;
-  --mesh-text-soft: #c5c5c5;
-  --mesh-muted: #8f8f93;
-  --mesh-dim: #686b70;
-  --mesh-blue: #6aa6f8;
-  --mesh-green: #65d18f;
-  --mesh-yellow: #e6b450;
-  --mesh-red: #ef6b64;
-  --mesh-purple: #c586f0;
-  --mesh-cyan: #57c7d4;
-  --mesh-selection: rgba(106, 166, 248, 0.18);
-  --mesh-focus: rgba(106, 166, 248, 0.42);
-  --mesh-radius: 7px;
-  --mesh-radius-sm: 5px;
+  --mesh-bg: #0b1020;
+  --mesh-editor: #111827;
+  --mesh-editor-2: #0f172a;
+  --mesh-side: #111827;
+  --mesh-side-2: #0f172a;
+  --mesh-panel: #111827;
+  --mesh-panel-2: #1e293b;
+  --mesh-line: #334155;
+  --mesh-line-soft: #1f2a3d;
+  --mesh-text: #f8fafc;
+  --mesh-text-soft: #cbd5e1;
+  --mesh-muted: #94a3b8;
+  --mesh-dim: #64748b;
+  --mesh-blue: #3e79bd;
+  --mesh-green: #20a77c;
+  --mesh-yellow: #f59e0b;
+  --mesh-red: #e11d48;
+  --mesh-purple: #6d33ab;
+  --mesh-cyan: #315e65;
+  --mesh-selection: rgba(62, 121, 189, 0.18);
+  --mesh-focus: rgba(62, 121, 189, 0.42);
+  --mesh-radius: 8px;
+  --mesh-radius-sm: 6px;
   --mesh-font: "Inter", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --mesh-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
 }
@@ -3510,10 +3510,10 @@ body {
   }
 }
 
-/* Desktop operator refinement: Codex-like workbench with Mesh-specific command affordances. */
+/* Desktop operator refinement with Purna Labs Nebula treatment. */
 .mesh-agent-console {
   grid-template-columns: 288px minmax(0, 1fr);
-  background: #0f1011;
+  background: var(--mesh-bg);
 }
 
 .mesh-agent-console.drawer-open {
@@ -3521,17 +3521,17 @@ body {
 }
 
 .mesh-session-rail {
-  background: #262728;
+  background: var(--mesh-side);
 }
 
 .mesh-agent-console .mesh-console-main {
-  background: #111213;
+  background: #0b1020;
 }
 
 .mesh-agent-console .mesh-console-topbar {
   min-height: 58px;
   padding: 0.48rem 0.8rem;
-  background: rgba(17, 18, 19, 0.98);
+  background: rgba(15, 23, 42, 0.96);
 }
 
 .mesh-agent-console .mesh-task-title h2 {
@@ -3560,23 +3560,23 @@ body {
 
 .mesh-agent-console .mesh-nav-item {
   min-height: 32px;
-  color: #d1d1d2;
+  color: var(--mesh-text-soft);
 }
 
 .mesh-agent-console .mesh-nav-item.active {
-  background: #343537;
-  color: #ffffff;
-  box-shadow: inset 2px 0 0 #6aa6f8;
+  background: rgba(62, 121, 189, 0.18);
+  color: var(--mesh-text);
+  box-shadow: inset 2px 0 0 var(--mesh-blue);
 }
 
 .mesh-rail-workspaces {
-  border-top-color: #343537;
+  border-top-color: var(--mesh-line);
 }
 
 .mesh-rail-workstream:hover,
 .mesh-rail-workstream.active {
-  border-color: #3a3b3d;
-  background: #2d2e30;
+  border-color: var(--mesh-line);
+  background: var(--mesh-panel-2);
 }
 
 .mesh-command-center {
@@ -3588,16 +3588,19 @@ body {
   display: grid;
   gap: 0.95rem;
   padding: 1.1rem;
-  background: #151617;
+  background:
+    linear-gradient(135deg, rgba(62, 121, 189, 0.12), transparent 40%),
+    linear-gradient(315deg, rgba(109, 51, 171, 0.12), transparent 42%),
+    var(--mesh-editor);
 }
 
 .mesh-command-dock {
   max-width: 920px;
   margin: 0 auto;
   overflow: hidden;
-  border: 1px solid #343537;
+  border: 1px solid var(--mesh-line);
   border-radius: 8px;
-  background: #2b2c2e;
+  background: var(--mesh-panel);
 }
 
 .mesh-command-dock-copy {
@@ -3606,7 +3609,7 @@ body {
 
 .mesh-command-dock-copy h2 {
   margin: 0;
-  color: #f4f4f5;
+  color: var(--mesh-text);
   font-size: clamp(1.45rem, 2.2vw, 2.35rem);
   font-weight: 700;
   line-height: 1.14;
@@ -3615,7 +3618,7 @@ body {
 .mesh-command-dock-copy p:last-child {
   max-width: 76ch;
   margin: 0.55rem 0 0;
-  color: #d0d0d2;
+  color: var(--mesh-text-soft);
   font-size: 0.92rem;
   line-height: 1.45;
 }
@@ -3636,8 +3639,8 @@ body {
   align-items: center;
   gap: 0.38rem;
   padding: 0.55rem 0.75rem;
-  border-top: 1px solid #343537;
-  background: #242527;
+  border-top: 1px solid var(--mesh-line);
+  background: var(--mesh-editor-2);
 }
 
 .mesh-command-dock-footer button {
@@ -3649,22 +3652,22 @@ body {
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #a9aaae;
+  color: var(--mesh-muted);
   cursor: pointer;
   font-size: 0.78rem;
 }
 
 .mesh-command-dock-footer button:hover {
-  background: #303134;
-  color: #f4f4f5;
+  background: var(--mesh-panel-2);
+  color: var(--mesh-text);
 }
 
 .mesh-agent-console .mesh-card,
 .mesh-agent-console .context-panel,
 .mesh-agent-console .mesh-chat-message,
 .mesh-agent-console .agent-attempt-card {
-  border-color: #2c2d30;
-  background: #171819;
+  border-color: var(--mesh-line-soft);
+  background: var(--mesh-panel);
 }
 
 .mesh-agent-console .mesh-metric-card,
@@ -3672,14 +3675,14 @@ body {
 .mesh-agent-console .mesh-connector-card,
 .mesh-agent-console .mesh-integration-row,
 .mesh-agent-console .header-metric {
-  border-color: #2d2e31;
-  background: #202123;
+  border-color: var(--mesh-line-soft);
+  background: var(--mesh-editor-2);
 }
 
 .mesh-agent-console .action-button.primary,
 .mesh-agent-console .tab.active {
-  border-color: rgba(106, 166, 248, 0.52);
-  background: rgba(106, 166, 248, 0.18);
+  border-color: rgba(62, 121, 189, 0.52);
+  background: rgba(62, 121, 189, 0.18);
 }
 
 .mesh-agent-console .action-button:disabled {
@@ -3690,11 +3693,11 @@ body {
 .mesh-agent-card,
 .mesh-evidence-card,
 .mesh-tool-card {
-  border-color: #2c2d30;
+  border-color: var(--mesh-line-soft);
 }
 
 .mesh-agent-console .mesh-context-drawer {
-  background: #171819;
+  background: var(--mesh-panel);
 }
 
 @media (max-width: 1500px) {

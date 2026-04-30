@@ -136,7 +136,7 @@ mesh-intelligence/
 │   ├── vault.py
 │   └── state.py
 ├── web/                             # React/Vite browser control plane, retained as parity reference
-├── lusisOS-main/                    # Lusis OS shell and native MeshControl app
+├── purnaOS-main/                    # Purna Labs OS shell and native MeshControl app
 ├── fixtures/
 ├── policies/
 └── tests/
@@ -905,7 +905,7 @@ Mesh ships with a continuous chaos-engineering harness that implements the [Prin
 
 1. **Build a hypothesis around steady-state behavior** — detection rate, correct-decision rate, P95 latency, pipeline availability, probe pass rate.
 2. **Vary real-world events** — 8-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures.
-3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn weighted-at-random with per-primitive cooldowns.
+3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn with adaptive weights, per-primitive cooldowns, and pressure toward capability axes the session has not proven yet.
 4. **Automate** — one driver script, no manual scenario selection.
 5. **Minimize blast radius** — circuit breaker halts the session on two consecutive steady-state probe failures or if Mesh pipeline latency blows past a ceiling.
 
@@ -938,7 +938,7 @@ scripts/run_chaos_session.sh --keep-cluster
 | `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
 | `config_drift` | medium | 0.5 | `escalate` / `no_action` |
 
-All primitives use `kubectl` directly — no `chaos-mesh` dependency. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
 
 ### Hypothesis thresholds
 
@@ -964,6 +964,8 @@ Each session writes two artifacts to `e2e-reports/`:
 - `chaos_session_<timestamp>.server.log` — Mesh's per-stage INFO logs for the entire session
 
 Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
+
+Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold.
 
 ## Development Commands
 

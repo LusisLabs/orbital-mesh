@@ -971,14 +971,14 @@ export default function App() {
     <div className={`mesh-console-shell mesh-agent-console ${rightRailOpen ? "drawer-open" : ""}`}>
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
-      <aside className={`mesh-sidebar mesh-session-rail ${leftRailOpen ? "" : "collapsed"}`} aria-label="Mesh workspace sessions">
+      <aside className={`mesh-sidebar mesh-session-rail ${leftRailOpen ? "" : "collapsed"}`} aria-label="Purna Labs workspace sessions">
         <div className="mesh-sidebar-brand">
           <div className="brand-icon"><Codicon name="circuit-board" /></div>
           {leftRailOpen ? (
             <div>
-              <p className="mesh-kicker">Control plane</p>
-              <h1>Mesh Console</h1>
-              <span className="mesh-brand-subtitle">Bounded agent operations</span>
+              <p className="mesh-kicker">Purna Labs OS</p>
+              <h1>Purna Console</h1>
+              <span className="mesh-brand-subtitle">Bounded operations</span>
             </div>
           ) : null}
         </div>
@@ -1077,7 +1077,7 @@ export default function App() {
       <div className="mesh-console-main">
         <header className="mesh-console-topbar">
           <div className="mesh-task-title">
-            <p className="mesh-kicker">Operator desktop</p>
+            <p className="mesh-kicker">Purna Labs desktop</p>
             <h2>{viewTitle(activeView)}</h2>
             <span>{activeGoal?.title ?? "No active goal"} / {activeRun ? activeRun.run_id.slice(0, 12) : "no run"}</span>
           </div>

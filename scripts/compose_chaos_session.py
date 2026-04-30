@@ -16,7 +16,13 @@ from typing import Any
 from urllib.error import URLError
 
 from tests.e2e.chaos.injector import ChaosError, ChaosInjector
-from tests.e2e.chaos.portfolio import DEFAULT_PORTFOLIO, SEVERITY_HIGH, SEVERITY_SEVERE, ChaosExperiment
+from tests.e2e.chaos.portfolio import (
+    CAPABILITY_AXES,
+    DEFAULT_PORTFOLIO,
+    SEVERITY_HIGH,
+    SEVERITY_SEVERE,
+    ChaosExperiment,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,8 @@ class Prior:
     target_key: str
     severity: str
     completed_at: float
+    capability_axes: frozenset[str] = frozenset()
+    passed: bool | None = None
 
 
 _LONG_RUNNING_RUN_STAGES = {"scenario_analysis_ready", "evaluation_ready"}
@@ -49,12 +57,14 @@ def main() -> int:
     max_sleep = float(os.environ.get("MESH_STACK_CHAOS_MAX_SLEEP_SECONDS", "180"))
     hold_seconds = float(os.environ.get("MESH_STACK_CHAOS_HOLD_SECONDS", "30"))
     seed = int(os.environ.get("MESH_STACK_CHAOS_SEED", "20260428"))
+    coverage_first = os.environ.get("MESH_STACK_CHAOS_COVERAGE_FIRST", "1").lower() not in {"0", "false", "no"}
     output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/mesh-intel/.mesh-runtime-state/compose-chaos"))
     output_root.mkdir(parents=True, exist_ok=True)
 
     _wait_for_mesh(base_url)
     rng = random.Random(seed)
     history: list[Prior] = []
+    session_events: list[dict[str, Any]] = []
     started = time.monotonic()
     deadline = started + duration
     events_path = output_root / f"events-{_stamp_compact()}.jsonl"
@@ -69,7 +79,7 @@ def main() -> int:
 
     while time.monotonic() < deadline:
         now = time.monotonic() - started
-        pick = _pick(rng, targets, history, now)
+        pick = _pick(rng, targets, history, now, coverage_first=coverage_first)
         if pick is None:
             time.sleep(min_sleep)
             continue
@@ -79,7 +89,12 @@ def main() -> int:
             "event": "chaos_cycle",
             "observed_at": _now(),
             "experiment": experiment.name,
+            "experiment_description": experiment.description,
             "severity": experiment.severity,
+            "tags": sorted(experiment.tags),
+            "capability_axes": sorted(experiment.capability_axes),
+            "expected_decisions": sorted(experiment.expected_decisions),
+            "selection_reason": _selection_reason(experiment, history),
             "target": target.__dict__,
         }
         try:
@@ -95,12 +110,32 @@ def main() -> int:
             event["error"] = repr(exc)
         finally:
             injector.revert_all()
-        history.append(Prior(experiment.name, _target_key(target), experiment.severity, now))
+        event["score"] = _score_event(experiment, event)
+        history.append(
+            Prior(
+                experiment.name,
+                _target_key(target),
+                experiment.severity,
+                now,
+                experiment.capability_axes,
+                bool(event["score"].get("passed")),
+            )
+        )
         _append_jsonl(events_path, event)
+        session_events.append(event)
         print(json.dumps(event, sort_keys=True), flush=True)
         time.sleep(rng.uniform(min_sleep, max_sleep))
 
-    print(json.dumps({"event": "session_completed", "observed_at": _now(), "output": str(events_path)}, sort_keys=True), flush=True)
+    summary = _session_summary(events_path, session_events)
+    summary_path = events_path.with_name(events_path.name.replace("events-", "summary-").replace(".jsonl", ".json"))
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "event": "session_completed",
+        "observed_at": _now(),
+        "output": str(events_path),
+        "summary": str(summary_path),
+        "breakthrough_probe": summary["breakthrough_probe"],
+    }, sort_keys=True), flush=True)
     return 0
 
 
@@ -122,7 +157,14 @@ def _parse_targets(raw: str) -> list[Target]:
     return targets
 
 
-def _pick(rng: random.Random, targets: list[Target], history: list[Prior], now: float) -> tuple[ChaosExperiment, Target] | None:
+def _pick(
+    rng: random.Random,
+    targets: list[Target],
+    history: list[Prior],
+    now: float,
+    *,
+    coverage_first: bool = True,
+) -> tuple[ChaosExperiment, Target] | None:
     last_high = next((prior.completed_at for prior in reversed(history) if prior.severity in {SEVERITY_HIGH, SEVERITY_SEVERE}), None)
     eligible: list[tuple[ChaosExperiment, Target]] = []
     weights: list[float] = []
@@ -140,10 +182,211 @@ def _pick(rng: random.Random, targets: list[Target], history: list[Prior], now: 
             if prior is not None and now - prior.completed_at < experiment.cooldown_seconds:
                 continue
             eligible.append((experiment, target))
-            weights.append(experiment.weight)
+            weights.append(_adaptive_weight(experiment, history))
     if not eligible:
         return None
+    if coverage_first:
+        coverage_pick = _coverage_frontier_pick(eligible, history)
+        if coverage_pick is not None:
+            return coverage_pick
     return eligible[_weighted_index(rng, weights)]
+
+
+def _coverage_frontier_pick(
+    eligible: list[tuple[ChaosExperiment, Target]],
+    history: list[Prior],
+) -> tuple[ChaosExperiment, Target] | None:
+    covered_axes = _covered_axes(history)
+    attempted_experiments = {prior.experiment for prior in history}
+    frontier: list[tuple[int, int, float, str, str, tuple[ChaosExperiment, Target]]] = []
+    for experiment, target in eligible:
+        missing_axes = set(experiment.capability_axes) - covered_axes
+        if not missing_axes:
+            continue
+        never_attempted = 1 if experiment.name not in attempted_experiments else 0
+        frontier.append((
+            len(missing_axes),
+            never_attempted,
+            experiment.weight,
+            experiment.name,
+            _target_key(target),
+            (experiment, target),
+        ))
+    if not frontier:
+        return None
+    frontier.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4]))
+    return frontier[0][5]
+
+
+def _adaptive_weight(experiment: ChaosExperiment, history: list[Prior]) -> float:
+    covered_axes = _covered_axes(history)
+    axes = set(experiment.capability_axes)
+    weight = experiment.weight
+    if axes:
+        missing = axes - covered_axes
+        coverage_gap = len(missing) / len(axes)
+        weight *= 1.0 + (3.0 * coverage_gap)
+        if missing == axes:
+            weight *= 1.5
+    recent_failures = sum(
+        1
+        for prior in history[-8:]
+        if prior.experiment == experiment.name and prior.passed is False
+    )
+    if recent_failures:
+        weight *= 1.0 / (1.0 + recent_failures)
+    return max(weight, 0.01)
+
+
+def _selection_reason(experiment: ChaosExperiment, history: list[Prior]) -> dict[str, Any]:
+    covered_axes = _covered_axes(history)
+    missing_axes = sorted(set(experiment.capability_axes) - covered_axes)
+    return {
+        "base_weight": experiment.weight,
+        "adaptive_weight": round(_adaptive_weight(experiment, history), 4),
+        "missing_capability_axes": missing_axes,
+        "coverage_driven": bool(missing_axes),
+        "coverage_first": bool(missing_axes),
+    }
+
+
+def _covered_axes(history: list[Prior]) -> set[str]:
+    return {
+        axis
+        for prior in history
+        for axis in prior.capability_axes
+        if prior.passed is not False
+    }
+
+
+def _score_event(experiment: ChaosExperiment, event: dict[str, Any]) -> dict[str, Any]:
+    if event.get("error"):
+        return {
+            "passed": False,
+            "reason": "injection_or_mesh_error",
+            "trigger_fired": False,
+            "decision_type": None,
+        }
+    mesh_run = event.get("mesh_run") if isinstance(event.get("mesh_run"), dict) else {}
+    if mesh_run.get("timed_out"):
+        return {
+            "passed": False,
+            "reason": "mesh_run_timeout",
+            "trigger_fired": True,
+            "decision_type": mesh_run.get("decision_type"),
+        }
+    stage = mesh_run.get("stage")
+    decision_type = mesh_run.get("decision_type")
+    trigger_fired = stage not in {"no_trigger", None} or decision_type is not None
+    if "false_positive_probe" in experiment.tags:
+        passed = (not trigger_fired) or decision_type == "no_action"
+        return {
+            "passed": passed,
+            "reason": None if passed else "false_positive_remediation",
+            "trigger_fired": trigger_fired,
+            "decision_type": decision_type,
+        }
+    if not trigger_fired:
+        passed = "no_action" in experiment.expected_decisions
+        return {
+            "passed": passed,
+            "reason": None if passed else "missed_fault",
+            "trigger_fired": False,
+            "decision_type": None,
+        }
+    passed = decision_type in experiment.expected_decisions
+    return {
+        "passed": passed,
+        "reason": None if passed else "unexpected_decision",
+        "trigger_fired": trigger_fired,
+        "decision_type": decision_type,
+    }
+
+
+def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[str, Any]:
+    scored = [event for event in events if isinstance(event.get("score"), dict)]
+    passed = [event for event in scored if event["score"].get("passed") is True]
+    pipeline_attempts = [
+        event for event in scored if isinstance(event.get("mesh_run"), dict)
+    ]
+    pipeline_completed = [
+        event for event in pipeline_attempts if not event["mesh_run"].get("timed_out")
+    ]
+    regular = [
+        event for event in scored if "false_positive_probe" not in set(event.get("tags") or [])
+    ]
+    trigger_expected = [
+        event for event in regular if "no_action" not in set(event.get("expected_decisions") or [])
+    ]
+    probes = [
+        event for event in scored if "false_positive_probe" in set(event.get("tags") or [])
+    ]
+    detection_hits = sum(1 for event in trigger_expected if event["score"].get("trigger_fired"))
+    correct_hits = sum(1 for event in regular if event["score"].get("passed"))
+    false_positive_hits = sum(
+        1
+        for event in probes
+        if event["score"].get("trigger_fired") and event["score"].get("decision_type") != "no_action"
+    )
+    axes_exercised = {
+        axis
+        for event in scored
+        for axis in event.get("capability_axes", [])
+    }
+    axes_passed = {
+        axis
+        for event in passed
+        for axis in event.get("capability_axes", [])
+    }
+    all_axes = set(CAPABILITY_AXES)
+    coverage_rate = (len(axes_passed) / len(all_axes)) if all_axes else 1.0
+    detection_rate = (detection_hits / len(trigger_expected)) if trigger_expected else 1.0
+    correct_decision_rate = (correct_hits / len(regular)) if regular else 0.0
+    false_positive_rate = (false_positive_hits / len(probes)) if probes else 0.0
+    pipeline_availability = (
+        len(pipeline_completed) / len(pipeline_attempts)
+    ) if pipeline_attempts else 1.0
+    breakthrough_ready = (
+        bool(scored)
+        and coverage_rate >= 0.85
+        and detection_rate >= 0.90
+        and correct_decision_rate >= 0.85
+        and false_positive_rate <= 0.10
+        and pipeline_availability >= 0.99
+    )
+    return {
+        "schema_version": "mesh.compose_chaos_summary.v1",
+        "events_path": str(events_path),
+        "generated_at": _now(),
+        "experiments_total": len(scored),
+        "experiments_passed": len(passed),
+        "metrics": {
+            "capability_axis_pass_rate": round(coverage_rate, 4),
+            "detection_rate": round(detection_rate, 4),
+            "correct_decision_rate": round(correct_decision_rate, 4),
+            "false_positive_rate": round(false_positive_rate, 4),
+            "pipeline_availability": round(pipeline_availability, 4),
+        },
+        "capabilities": {
+            "known_axes": sorted(all_axes),
+            "exercised_axes": sorted(axes_exercised),
+            "passed_axes": sorted(axes_passed),
+            "missing_axes": sorted(all_axes - axes_exercised),
+            "failed_or_unproven_axes": sorted(all_axes - axes_passed),
+        },
+        "breakthrough_probe": {
+            "schema_version": "mesh.chaos_breakthrough_probe.v1",
+            "status": "breakthrough_signal" if breakthrough_ready else "below_threshold",
+            "ready": breakthrough_ready,
+            "thresholds": {
+                "capability_axis_pass_rate": 0.85,
+                "detection_rate": 0.90,
+                "correct_decision_rate": 0.85,
+                "false_positive_rate_max": 0.10,
+                "pipeline_availability": 0.99,
+            },
+        },
+    }
 
 
 def _weighted_index(rng: random.Random, weights: list[float]) -> int:

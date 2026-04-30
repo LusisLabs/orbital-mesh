@@ -1,0 +1,297 @@
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); }
+  .wrap { padding: 1rem 0; }
+  .filter-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 1.5rem; }
+  .filter-btn { font-size: 12px; padding: 5px 12px; border-radius: 20px; border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-secondary); cursor: pointer; transition: all .15s; }
+  .filter-btn:hover { background: var(--color-background-secondary); }
+  .filter-btn.active { background: var(--color-background-tertiary); color: var(--color-text-primary); border-color: var(--color-border-primary); font-weight: 500; }
+  .hw-section { margin-bottom: 2rem; }
+  .hw-title { font-size: 14px; font-weight: 500; color: var(--color-text-secondary); margin-bottom: 10px; text-transform: uppercase; letter-spacing: .06em; font-size: 11px; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+  .repo-card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); padding: 14px 16px; cursor: pointer; transition: border-color .15s; }
+  .repo-card:hover { border-color: var(--color-border-primary); }
+  .repo-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  .repo-name { font-size: 13px; font-weight: 500; color: var(--color-text-info); }
+  .repo-name a { color: inherit; text-decoration: none; }
+  .repo-name a:hover { text-decoration: underline; }
+  .badge-row { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; }
+  .badge-purple { background: #EEEDFE; color: #3C3489; }
+  .badge-teal   { background: #E1F5EE; color: #0F6E56; }
+  .badge-coral  { background: #FAECE7; color: #993C1D; }
+  .badge-amber  { background: #FAEEDA; color: #854F0B; }
+  .badge-blue   { background: #E6F1FB; color: #185FA5; }
+  .badge-green  { background: #EAF3DE; color: #3B6D11; }
+  .badge-gray   { background: #F1EFE8; color: #5F5E5A; }
+  .badge-pink   { background: #FBEAF0; color: #993556; }
+  @media (prefers-color-scheme: dark) {
+    .badge-purple { background: #26215C; color: #AFA9EC; }
+    .badge-teal   { background: #04342C; color: #5DCAA5; }
+    .badge-coral  { background: #4A1B0C; color: #F0997B; }
+    .badge-amber  { background: #412402; color: #EF9F27; }
+    .badge-blue   { background: #042C53; color: #85B7EB; }
+    .badge-green  { background: #173404; color: #97C459; }
+    .badge-gray   { background: #2C2C2A; color: #B4B2A9; }
+    .badge-pink   { background: #4B1528; color: #ED93B1; }
+  }
+  .repo-desc { font-size: 12px; color: var(--color-text-secondary); line-height: 1.55; }
+  .section-divider { height: 0.5px; background: var(--color-border-tertiary); margin: 1.5rem 0; }
+  .empty-state { font-size: 13px; color: var(--color-text-tertiary); padding: 2rem 0; text-align: center; }
+</style>
+<div class="wrap">
+  <div class="filter-bar" id="filters">
+    <button class="filter-btn active" onclick="filter('all', this)">All hardware</button>
+    <button class="filter-btn" onclick="filter('nvidia-datacenter', this)">NVIDIA datacenter</button>
+    <button class="filter-btn" onclick="filter('nvidia-consumer', this)">NVIDIA consumer</button>
+    <button class="filter-btn" onclick="filter('amd', this)">AMD ROCm</button>
+    <button class="filter-btn" onclick="filter('apple', this)">Apple Silicon</button>
+    <button class="filter-btn" onclick="filter('cpu', this)">CPU / Edge</button>
+    <button class="filter-btn" onclick="filter('multi', this)">Multi-hardware</button>
+  </div>
+  <div id="content"></div>
+</div>
+<script>
+const REPOS = [
+  {
+    name: "vllm-project/vllm",
+    url: "https://github.com/vllm-project/vllm",
+    hw: ["nvidia-datacenter","nvidia-consumer","amd","multi"],
+    model_families: ["all"],
+    techniques: ["PagedAttention","FlashAttention / FlashInfer","Speculative decoding (EAGLE, DFlash, n-gram)","Continuous batching","FP8 / INT4 / GPTQ / AWQ / NVFP4","Prefix caching","Chunked prefill","CUDA graph","MoE kernels (CUTLASS, TRT-GEN)","Tensor / pipeline parallelism"],
+    desc: "The de-facto high-throughput serving engine. PagedAttention eliminates KV fragmentation for 20–30× throughput vs naive serving. Supports 200+ HF architectures.",
+    badge_color: "blue",
+    category: "Serving engine"
+  },
+  {
+    name: "sgl-project/sglang",
+    url: "https://github.com/sgl-project/sglang",
+    hw: ["nvidia-datacenter","nvidia-consumer","amd","multi"],
+    model_families: ["all"],
+    techniques: ["RadixAttention (prefix reuse)", "FlashInfer kernels","MXFP8 MoE","Piecewise CUDA graph","PD disaggregation","Speculative decoding + FA4","Skip-softmax attention","Elastic EP for MoE fault tolerance"],
+    desc: "6.4× higher throughput than vLLM on structured/agentic workloads via RadixAttention. First open-source PD disaggregation matching DeepSeek blog numbers (52k tok/s on H100s).",
+    badge_color: "purple",
+    category: "Serving engine"
+  },
+  {
+    name: "ai-dynamo/dynamo",
+    url: "https://github.com/ai-dynamo/dynamo",
+    hw: ["nvidia-datacenter","multi"],
+    model_families: ["DeepSeek","Llama","Qwen","MoE"],
+    techniques: ["Disaggregated prefill/decode","KV-aware routing (Radix Tree)","SLA-based GPU autoscaler","NIXL low-latency transfer (NVLink / IB / PCIe)","Multi-tier KV offload (S3/blob)","Wide expert parallelism","Multi-node orchestration"],
+    desc: "NVIDIA's datacenter-scale orchestration layer over vLLM/SGLang/TRT-LLM. 30× throughput on DeepSeek-R1 on GB200 NVL72 via P/D disaggregation. Built in Rust.",
+    badge_color: "teal",
+    category: "Orchestration"
+  },
+  {
+    name: "NVIDIA/TensorRT-LLM",
+    url: "https://github.com/NVIDIA/TensorRT-LLM",
+    hw: ["nvidia-datacenter","nvidia-consumer"],
+    model_families: ["all"],
+    techniques: ["FP8 / NVFP4 / INT8 / INT4","FlashMLA (DeepSeek MLA)","WideEP for MoE","In-flight batching","CUDA graph","Speculative decoding","KV cache reuse","AutoDeploy PyTorch backend"],
+    desc: "NVIDIA's production LLM compiler. World's fastest DeepSeek-R1 on Blackwell via FP4. 2.3× speedup over FP16 on H100 with FP8 at batch 16.",
+    badge_color: "teal",
+    category: "Serving engine"
+  },
+  {
+    name: "NVIDIA/Model-Optimizer",
+    url: "https://github.com/NVIDIA/Model-Optimizer",
+    hw: ["nvidia-datacenter","nvidia-consumer"],
+    model_families: ["Llama","DeepSeek","Nemotron","diffusion"],
+    techniques: ["NVFP4 / FP8 PTQ","Quantization-aware training (QAT)","Speculative decoding (Medusa)","Pruning + distillation","EoRA (LoRA-based recovery)","Export to SGLang / vLLM / TRT-LLM"],
+    desc: "Unified NVIDIA compression toolkit. NVFP4 models on HuggingFace for DeepSeek-R1, Llama-3.3-70B. 44% perf gain on Llama 3.1 405B on H200.",
+    badge_color: "teal",
+    category: "Quantization"
+  },
+  {
+    name: "flashinfer-ai/flashinfer",
+    url: "https://github.com/flashinfer-ai/flashinfer",
+    hw: ["nvidia-datacenter","nvidia-consumer"],
+    model_families: ["all"],
+    techniques: ["Block-sparse KV cache","JIT kernel compilation","Load-balanced scheduling","CUDAGraph compatible","GQA / MLA / MQA kernels","29–69% ITL reduction vs compiler backends","MXFP8 GEMM"],
+    desc: "Customizable attention engine used by vLLM, SGLang, MLC. JIT compiles kernels per-model. NVIDIA now ships TRT-LLM kernels through this repo.",
+    badge_color: "purple",
+    category: "Kernel library"
+  },
+  {
+    name: "llm-d/llm-d",
+    url: "https://github.com/llm-d/llm-d",
+    hw: ["nvidia-datacenter","multi"],
+    model_families: ["DeepSeek","Llama","MoE"],
+    techniques: ["Disaggregated serving","KV connector interfaces","Wide expert parallelism","CPU memory tiering for KV","Kubernetes Inference Gateway","Prefix cache offload"],
+    desc: "Red Hat / community K8s-native disaggregated serving on top of vLLM. 40% decode latency reduction for DeepSeek V3.1 on H200. Intel XPU + TPU support.",
+    badge_color: "teal",
+    category: "Orchestration"
+  },
+  {
+    name: "ggml-org/llama.cpp",
+    url: "https://github.com/ggml-org/llama.cpp",
+    hw: ["nvidia-consumer","amd","apple","cpu","multi"],
+    model_families: ["all"],
+    techniques: ["GGUF 2–8 bit quants (IQ, K-quant)","Metal GPU offload","ROCm / Vulkan / SYCL","GGML tensor ops","Flash attention (opt-in)","Speculative decoding","CPU SIMD (AVX, ARM NEON, Metal)","Grammar sampling / constrained decoding"],
+    desc: "The universal runtime. C/C++, zero deps. Best quant variety (IQ2–Q8). Use `-ngl -1` for full GPU offload on Apple/NVIDIA/AMD. Best for single-user, edge, and portability.",
+    badge_color: "amber",
+    category: "Runtime"
+  },
+  {
+    name: "ml-explore/mlx",
+    url: "https://github.com/ml-explore/mlx",
+    hw: ["apple"],
+    model_families: ["all"],
+    techniques: ["Unified memory (zero-copy)","Lazy evaluation + op fusion","Metal GPU kernels","4-bit / 8-bit quant","Rotating KV cache","Prompt caching"],
+    desc: "Apple's own ML framework. Best single-user throughput on M-series (~230 tok/s on M2 Ultra). mlx-lm is the model-serving wrapper. Zero memory copy thanks to unified memory.",
+    badge_color: "pink",
+    category: "Runtime"
+  },
+  {
+    name: "waybarrios/vllm-mlx",
+    url: "https://github.com/waybarrios/vllm-mlx",
+    hw: ["apple"],
+    model_families: ["Llama","Qwen","LLaVA","Gemma"],
+    techniques: ["Continuous batching on Metal","PagedAttention (unified memory)","Prefix caching","SSD-tiered KV cache","KV cache quantization (4/8-bit)","Vision embedding reuse (multimodal)","400+ tok/s on M4 Max"],
+    desc: "vLLM-style server on Apple Silicon via MLX. 21–87% higher throughput than llama.cpp. OpenAI + Anthropic API compatible. Works with Claude Code.",
+    badge_color: "pink",
+    category: "Serving engine"
+  },
+  {
+    name: "modelcloud/GPTQModel",
+    url: "https://github.com/modelcloud/gptqmodel",
+    hw: ["nvidia-datacenter","nvidia-consumer","amd","cpu","multi"],
+    model_families: ["all"],
+    techniques: ["GPTQ / AWQ / QQQ / FP8","GGUF / EXL3 / ParoQuant","JIT CUDA kernel compilation","Marlin / Machete kernels","Huawei Ascend NPU","vLLM + SGLang export","MoE quantization (lazy loading)"],
+    desc: "Production quantization toolkit supporting every major format. JIT wheel shrinks 300×. Covers NVIDIA Turing+, AMD ROCm, Intel XPU, Huawei Ascend, Apple CPU.",
+    badge_color: "coral",
+    category: "Quantization"
+  },
+  {
+    name: "chenhongyu2048/LLM-inference-optimization-paper",
+    url: "https://github.com/chenhongyu2048/LLM-inference-optimization-paper",
+    hw: ["multi"],
+    model_families: ["all"],
+    techniques: ["KV cache compression / offload","Progressive sparse attention","HCache (EuroSys'25)","CPU memory tiering","BaKlaVa KV budget allocation","GPU bottleneck analysis"],
+    desc: "Curated paper list for inference optimization research — KV cache, attention sparsity, memory tiering, MoE. Good literature review starting point.",
+    badge_color: "gray",
+    category: "Research list"
+  },
+  {
+    name: "sihyeong/Awesome-LLM-Inference-Engine",
+    url: "https://github.com/sihyeong/Awesome-LLM-Inference-Engine",
+    hw: ["nvidia-datacenter","nvidia-consumer","amd","apple","cpu","multi"],
+    model_families: ["all"],
+    techniques: ["Survey of 25 engines","Radar chart: latency / throughput / scalability / ease","Server-class + edge benchmarks","CoT / agent workload analysis"],
+    desc: "Comprehensive survey repo + paper benchmarking 25 engines across 6 dimensions. Great for choosing an engine. Covers A100/H100/H200, AMD MI300X, Jetson, Snapdragon.",
+    badge_color: "gray",
+    category: "Survey"
+  },
+  {
+    name: "xlite-dev/Awesome-LLM-Inference",
+    url: "https://github.com/xlite-dev/Awesome-LLM-Inference",
+    hw: ["multi"],
+    model_families: ["all"],
+    techniques: ["FlashAttention variants","PagedAttention","INT8/INT4 WINT","Tensor/sequence parallelism","MHA→MLA conversion","Ring attention / USP","Cache-DiT for diffusion"],
+    desc: "Curated paper+code list for LLM & VLM inference. 2026-active. Includes diffusion inference (Cache-DiT), DeepSeek MLA retro-fit, ring/hybrid parallelism.",
+    badge_color: "gray",
+    category: "Research list"
+  },
+  {
+    name: "codelion/optillm",
+    url: "https://github.com/codelion/optillm",
+    hw: ["multi"],
+    model_families: ["all"],
+    techniques: ["Mixture-of-agents (MoA)","Test-time diffusion researcher","CoT / entropy decoding","Multi-provider load balancing","2-pass verification","OpenAI-compatible proxy"],
+    desc: "Inference-time compute scaling proxy. Drop-in OpenAI API replacement adding MoA, speculative reasoning, and multi-provider failover. Works with any backend.",
+    badge_color: "green",
+    category: "Inference-time scaling"
+  },
+  {
+    name: "AlibabaResearch/flash-llm",
+    url: "https://github.com/AlibabaResearch/flash-llm",
+    hw: ["nvidia-datacenter","nvidia-consumer"],
+    model_families: ["OPT","GPT","Llama"],
+    techniques: ["Unstructured sparsity on tensor cores","Load-as-Sparse / Compute-as-Dense SpMM","2.9× over Sputnik","3.8× over DeepSpeed on OPT-175B"],
+    desc: "Unstructured sparse GEMM library for NVIDIA tensor cores. Enables pruned model inference without structured sparsity restrictions.",
+    badge_color: "coral",
+    category: "Kernel library"
+  }
+];
+
+const HW_META = {
+  "nvidia-datacenter": { label: "NVIDIA datacenter (H100, H200, B200, GB200)", color: "teal" },
+  "nvidia-consumer":   { label: "NVIDIA consumer (RTX, A-series)", color: "blue" },
+  "amd":               { label: "AMD ROCm (MI300X, Radeon)", color: "coral" },
+  "apple":             { label: "Apple Silicon (M-series, Metal)", color: "pink" },
+  "cpu":               { label: "CPU / Edge (AVX, ARM, Snapdragon)", color: "amber" },
+  "multi":             { label: "Multi-hardware / hardware-agnostic", color: "gray" }
+};
+
+const TECHNIQUE_BADGES = {
+  "PagedAttention": "purple", "FlashAttention": "purple", "FlashInfer": "purple",
+  "Speculative": "amber", "speculative": "amber",
+  "Quantization": "coral", "FP8": "coral", "INT4": "coral", "INT8": "coral", "NVFP4": "coral", "GPTQ": "coral", "AWQ": "coral",
+  "KV cache": "teal", "KV-cache": "teal",
+  "disaggregat": "green", "Disaggregat": "green",
+  "MoE": "blue", "expert": "blue",
+  "CUDA": "gray", "Metal": "pink", "ROCm": "coral"
+};
+
+function techBadgeColor(t) {
+  for (const [k, c] of Object.entries(TECHNIQUE_BADGES)) {
+    if (t.includes(k)) return c;
+  }
+  return "gray";
+}
+
+let current = "all";
+
+function filter(hw, btn) {
+  current = hw;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  render();
+}
+
+function render() {
+  const el = document.getElementById('content');
+  const groups = {};
+  for (const hw of Object.keys(HW_META)) groups[hw] = [];
+  REPOS.forEach(r => {
+    const hws = current === 'all' ? r.hw : (r.hw.includes(current) ? r.hw : []);
+    const shown = current === 'all' ? r.hw : (r.hw.includes(current) ? [current] : []);
+    shown.forEach(h => { if (groups[h]) groups[h].push(r); });
+  });
+  // dedup within group
+  for (const hw of Object.keys(groups)) {
+    const seen = new Set();
+    groups[hw] = groups[hw].filter(r => { if (seen.has(r.name)) return false; seen.add(r.name); return true; });
+  }
+  const activeGroups = current === 'all' ? Object.keys(HW_META) : [current];
+  let html = '';
+  for (const hw of activeGroups) {
+    const repos = groups[hw] || [];
+    if (!repos.length && current !== 'all') { html += `<div class="empty-state">No repos specifically targeting this hardware.</div>`; continue; }
+    if (!repos.length) continue;
+    const meta = HW_META[hw];
+    html += `<div class="hw-section">
+      <div class="hw-title">${meta.label}</div>
+      <div class="card-grid">`;
+    repos.forEach(r => {
+      html += `<div class="repo-card" onclick="openLink('${r.url}')">
+        <div class="repo-header">
+          <div class="repo-name"><a href="${r.url}" onclick="event.stopPropagation()">${r.name}</a></div>
+          <span class="badge badge-${r.badge_color}" style="white-space:nowrap;flex-shrink:0">${r.category}</span>
+        </div>
+        <div class="badge-row">`;
+      r.techniques.slice(0, 4).forEach(t => {
+        html += `<span class="badge badge-${techBadgeColor(t)}">${t}</span>`;
+      });
+      if (r.techniques.length > 4) html += `<span class="badge badge-gray">+${r.techniques.length - 4} more</span>`;
+      html += `</div><div class="repo-desc">${r.desc}</div></div>`;
+    });
+    html += `</div></div><div class="section-divider"></div>`;
+  }
+  el.innerHTML = html || `<div class="empty-state">No repos found.</div>`;
+}
+
+render();
+</script>

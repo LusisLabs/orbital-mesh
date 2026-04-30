@@ -92,11 +92,11 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 | `mesh-kube-bootstrap-vm` | One-shot bootstrap for the VM-labeled k3s cluster | none | `mesh_kubeconfig_vm` |
 | `mesh-kube-bootstrap-baremetal` | One-shot bootstrap for the bare-metal-labeled k3s cluster | none | `mesh_kubeconfig_baremetal` |
 | `mesh` | Mesh API, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, all `mesh_kubeconfig*` volumes |
-| `mesh-ui` | Lusis OS shell with native `MeshControl` | `${MESH_UI_PUBLISH_PORT:-3000}` | none |
+| `mesh-ui` | Purna Labs OS shell with native `MeshControl` | `${MESH_UI_PUBLISH_PORT:-3000}` | none |
 | `hermes` | Dedicated Hermes runtime sidecar reached by `MESH_HERMES_COMMAND` through `docker exec` | none | `hermes_home` |
 | `mesh-agent-operator` | Non-human operator loop that resolves eligible evaluation gates through audited steering commands | none | none |
 | `mesh-smoke` | One-shot readiness and live-remediation verifier | none | `mesh_kubeconfig` |
-| `mesh-chaos` | Long-running random chaos injector and Mesh run launcher | none | `.mesh-runtime-state/compose-chaos` |
+| `mesh-chaos` | Long-running adaptive chaos injector, Mesh run launcher, and breakthrough probe reporter | none | `.mesh-runtime-state/compose-chaos` |
 | `latentmas` | Optional GPU inference sidecar | `${MESH_LATENTMAS_PUBLISH_PORT:-8791}` | `latentmas_hf_cache` |
 
 ## Boot Sequence
@@ -110,7 +110,7 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 7. `mesh-ui` waits for Mesh health and serves the internal OS companion.
 8. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
 9. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
-10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts and launches Mesh runs against the affected target after each injection.
+10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON.
 
 ## Smoke Contract
 
@@ -189,6 +189,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_MAX_SLEEP_SECONDS` | `180` | Maximum delay between chaos cycles |
 | `MESH_STACK_CHAOS_HOLD_SECONDS` | `30` | Fault dwell time before launching the Mesh run and reverting |
 | `MESH_STACK_CHAOS_SEED` | `20260428` | Deterministic replay seed for chaos selection |
+| `MESH_STACK_CHAOS_COVERAGE_FIRST` | `1` | When enabled, eligible experiments covering unproven capability axes are selected before weighted repeats |
 | `MESH_STACK_CHAOS_RUN_WAIT_SECONDS` | `600` | Base timeout for a post-injection Mesh run to reach a terminal stage |
 | `MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra wait granted after each observed run stage or status transition |
 | `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |

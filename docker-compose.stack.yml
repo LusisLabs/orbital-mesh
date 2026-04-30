@@ -575,7 +575,7 @@ services:
 
   mesh-ui:
     build:
-      context: ./lusisOS-main
+      context: ./purnaOS-main
       args:
         NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
         NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"

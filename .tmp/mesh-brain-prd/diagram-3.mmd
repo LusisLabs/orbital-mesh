@@ -1,0 +1,22 @@
+sequenceDiagram
+  participant User
+  participant MeshOS
+  participant Router
+  participant Model
+  participant Tools
+  participant Audit
+
+  User->>MeshOS: Submit task
+  MeshOS->>MeshOS: Load tenant policy, tools, memory, retrieval context
+  MeshOS->>Router: Request inference with tenant, adapter, SLA, risk
+  Router->>Model: Execute routed inference
+  Model->>MeshOS: Plan or tool call
+  MeshOS->>MeshOS: Validate schema, authority, policy, approval requirement
+  MeshOS->>Tools: Execute allowed tool
+  Tools->>MeshOS: Observation
+  MeshOS->>Audit: Record step, policy decision, tool result
+  MeshOS->>Router: Continue or summarize
+  Router->>Model: Follow-up inference
+  Model->>MeshOS: Final answer
+  MeshOS->>Audit: Store trace and eval signals
+  MeshOS->>User: Return result

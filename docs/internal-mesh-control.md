@@ -1,11 +1,11 @@
 # Internal MeshControl
 
-`MeshControl` is the internal Lusis OS companion for Mesh operator visibility. It runs as a native OS process under `lusisOS-main/components/apps/MeshControl`, opens automatically on OS boot, and is shipped by Compose as the `mesh-ui` sidecar.
+`MeshControl` is the internal Purna Labs OS companion for Mesh operator visibility. It runs as a native OS process under `purnaOS-main/components/apps/MeshControl`, opens automatically on OS boot, and is shipped by Compose as the `mesh-ui` sidecar.
 
 ## Launch topology
 
 - `mesh` serves the Mesh API on port `8787`.
-- `mesh-ui` serves the Lusis OS shell on `MESH_UI_PUBLISH_PORT`, default `3000`.
+- `mesh-ui` serves the Purna Labs OS shell on `MESH_UI_PUBLISH_PORT`, default `3000`.
 - `MeshControl` is registered as a singleton process and can be opened with `?app=MeshControl`.
 - `MeshTerminal` remains secondary log visibility. `MeshControl` is the primary internal operator interface.
 
@@ -53,4 +53,4 @@ Open the OS UI:
 http://127.0.0.1:3000/?app=MeshControl
 ```
 
-For local development outside Compose, run Mesh on `127.0.0.1:8787` and start the OS shell from `lusisOS-main`.
+For local development outside Compose, run Mesh on `127.0.0.1:8787` and start the Purna Labs OS shell from `purnaOS-main`.
