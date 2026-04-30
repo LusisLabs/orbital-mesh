@@ -111,7 +111,7 @@ class OpenAICompatibleMeshBrainModelClient:
 
 def _openai_payload(*, plan: ServingPlan, request: OpenAIChatRequest) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "model": plan.model_artifact_id or request.model,
+        "model": _openai_model(plan=plan, request=request),
         "messages": list(request.messages),
         "stream": bool(request.stream),
         "metadata": {
@@ -126,6 +126,13 @@ def _openai_payload(*, plan: ServingPlan, request: OpenAIChatRequest) -> dict[st
     if request.response_format is not None:
         payload["response_format"] = dict(request.response_format)
     return payload
+
+
+def _openai_model(*, plan: ServingPlan, request: OpenAIChatRequest) -> str:
+    override = request.metadata.get("openai_model") or request.metadata.get("served_model")
+    if override:
+        return str(override)
+    return plan.model_artifact_id or request.model
 
 
 def _parse_openai_response(
