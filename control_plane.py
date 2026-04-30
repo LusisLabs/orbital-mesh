@@ -40,6 +40,8 @@ MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS = (
     "mesh_brain_posttraining_training_job",
     "mesh_brain_posttraining_backend_result",
     "mesh_brain_posttraining_registered_artifact",
+    "mesh_brain_posttraining_eval_job",
+    "mesh_brain_posttraining_serving_smoke",
     "mesh_brain_posttraining_deployment_record",
 )
 

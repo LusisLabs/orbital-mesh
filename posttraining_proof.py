@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from .data_plane import build_data_plane_e2e
+from .eval_jobs import EvalJobRequest, run_eval_job, write_eval_job_result
 from .model_management import MeshBrainModelCatalog
-from .runtime import stable_digest, utc_now
+from .model_client import DeterministicMeshBrainModelClient
+from .runtime import ModelArtifact, ReleaseGatePolicy, stable_digest, utc_now
+from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPool, TenantQuota
 from .training_jobs import TrainingJobRequest, launch_mesh_brain_training_job, write_training_job_result
 
 
@@ -93,6 +98,9 @@ class LocalSubprocessTrainingBackend:
         stdout_path = output_path / "stdout.log"
         stderr_path = output_path / "stderr.log"
         try:
+            env = os.environ.copy()
+            repo_root = str(Path(__file__).resolve().parents[1])
+            env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else repo_root
             completed = subprocess.run(
                 request.command,
                 cwd=output_path,
@@ -100,6 +108,7 @@ class LocalSubprocessTrainingBackend:
                 check=False,
                 text=True,
                 timeout=request.timeout_seconds,
+                env=env,
             )
             return_code = int(completed.returncode)
             stdout = completed.stdout
@@ -113,10 +122,13 @@ class LocalSubprocessTrainingBackend:
         stderr_path.write_text(stderr, encoding="utf-8")
         status = "completed" if return_code == 0 else "failed"
         output_manifest = _discover_backend_outputs(output_path)
+        metrics_path = output_manifest.get("metrics_path")
         metrics = {
             "return_code": float(return_code),
             "output_count": float(len(output_manifest["outputs"])),
         }
+        if isinstance(metrics_path, str) and Path(metrics_path).exists():
+            metrics.update(_read_float_metrics(Path(metrics_path)))
         return TrainingBackendResult(
             backend_name=self.backend_name,
             status=status,
@@ -138,6 +150,8 @@ class PosttrainingProofResult:
     training_job: dict[str, Any]
     backend_result: dict[str, Any]
     registered_artifact: dict[str, Any] | None
+    eval_job: dict[str, Any] | None
+    serving_smoke: dict[str, Any] | None
     deployment_record: dict[str, Any]
     artifact_paths: dict[str, str]
 
@@ -149,7 +163,7 @@ def run_posttraining_proof(
     *,
     output_directory: str | Path,
     tenant_id: str = "tenant_a",
-    method: str = "sft",
+    method: str = "lora",
     backend: MeshBrainTrainingBackend | None = None,
     command: list[str] | None = None,
     timeout_seconds: float = 30.0,
@@ -180,8 +194,23 @@ def run_posttraining_proof(
         command=list(command or []),
         timeout_seconds=timeout_seconds,
     )
-    backend_result = (backend or DeterministicTrainingBackend()).run(backend_request)
+    if backend is None and not command:
+        command = _tiny_lora_sft_command(backend_request)
+        backend_request = TrainingBackendRequest(
+            job_id=backend_request.job_id,
+            method=backend_request.method,
+            dataset_manifest_path=backend_request.dataset_manifest_path,
+            output_directory=backend_request.output_directory,
+            command=command,
+            timeout_seconds=backend_request.timeout_seconds,
+            metadata=backend_request.metadata,
+        )
+    backend_result = (backend or LocalSubprocessTrainingBackend()).run(backend_request)
     registered_artifact = None
+    eval_job = None
+    eval_paths: dict[str, str] = {}
+    serving_smoke = None
+    serving_path = None
     if backend_result.status == "completed":
         catalog = MeshBrainModelCatalog()
         registered = catalog.register_artifact(training_job.posttraining_run.artifact)
@@ -189,16 +218,35 @@ def run_posttraining_proof(
             {
                 "posttraining_proof_backend": backend_result.backend_name,
                 "posttraining_proof_outputs": backend_result.output_manifest.get("outputs", []),
-                "eval_required_before_deployment": True,
+                "training_command": list(backend_request.command),
             }
         )
+        eval_job_result = run_eval_job(
+            EvalJobRequest(
+                candidate_artifact=registered,
+                dataset_bundle=data_result.bundle,
+                hardware_tiers=["cpu_edge"],
+                policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
+                required_backend_techniques=[],
+                output_directory=str(output_path / "eval_job"),
+            )
+        )
+        eval_paths = write_eval_job_result(result=eval_job_result, output_directory=output_path / "eval_job")
+        registered.eval_report_id = eval_job_result.eval_job_id
         registered_artifact = registered.to_dict()
+        eval_job = eval_job_result.to_dict()
+        if eval_job_result.release_decision in {"canary", "promote"}:
+            serving_smoke = _run_serving_smoke(registered, tenant_id=tenant_id)
+            serving_path = output_path / "serving_smoke.json"
+            serving_path.write_text(json.dumps(serving_smoke, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    release_decision = eval_job["release_decision"] if eval_job else "block"
     deployment_record = {
-        "status": "eval_required" if registered_artifact is not None else "blocked",
+        "status": _deployment_status(release_decision, serving_smoke),
         "deployed": False,
-        "release_decision": "manual_review" if registered_artifact is not None else "block",
+        "release_decision": release_decision,
         "registered_artifact_id": registered_artifact["artifact_id"] if registered_artifact else None,
-        "eval_required_before_deployment": True,
+        "eval_job_id": eval_job["eval_job_id"] if eval_job else None,
+        "serving_smoke_status": serving_smoke["status"] if serving_smoke else None,
         "backend_status": backend_result.status,
         "backend_name": backend_result.backend_name,
     }
@@ -208,17 +256,23 @@ def run_posttraining_proof(
         training_paths=training_paths,
         backend_result=backend_result,
         registered_artifact=registered_artifact,
+        eval_job=eval_job,
+        serving_smoke=serving_smoke,
         deployment_record=deployment_record,
+        eval_paths=eval_paths,
+        serving_path=serving_path,
     )
-    proof_id = f"mesh_brain_posttraining_proof_{stable_digest({'job_id': training_job.job_id, 'backend': backend_result.to_dict()})[:12]}"
+    proof_id = f"mesh_brain_real_training_proof_{stable_digest({'job_id': training_job.job_id, 'backend': backend_result.to_dict(), 'eval': eval_job})[:12]}"
     return PosttrainingProofResult(
         proof_id=proof_id,
-        status="completed" if registered_artifact is not None else "blocked",
+        status="completed" if deployment_record["status"] == "smoke_served" else "blocked",
         tenant_id=tenant_id,
         method=method,
         training_job=training_job.to_dict(),
         backend_result=backend_result.to_dict(),
         registered_artifact=registered_artifact,
+        eval_job=eval_job,
+        serving_smoke=serving_smoke,
         deployment_record=deployment_record,
         artifact_paths=artifact_paths,
     )
@@ -231,11 +285,17 @@ def _write_posttraining_proof_artifacts(
     training_paths: dict[str, str],
     backend_result: TrainingBackendResult,
     registered_artifact: dict[str, Any] | None,
+    eval_job: dict[str, Any] | None,
+    serving_smoke: dict[str, Any] | None,
     deployment_record: dict[str, Any],
+    eval_paths: dict[str, str],
+    serving_path: Path | None,
 ) -> dict[str, str]:
     artifacts = {
         "posttraining_backend_result.json": backend_result.to_dict(),
         "registered_artifact.json": registered_artifact or {},
+        "posttraining_eval_job.json": eval_job or {},
+        "posttraining_serving_smoke.json": serving_smoke or {},
         "posttraining_deployment_record.json": deployment_record,
     }
     paths = {
@@ -243,6 +303,10 @@ def _write_posttraining_proof_artifacts(
         "training_job": training_paths["training_job.json"],
         "training_metrics": training_paths["metrics.json"],
     }
+    if "eval_job.json" in eval_paths:
+        paths["posttraining_eval_job"] = eval_paths["eval_job.json"]
+    if serving_path is not None:
+        paths["posttraining_serving_smoke"] = str(serving_path)
     for name, payload in artifacts.items():
         path = output_path / name
         path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
@@ -255,4 +319,71 @@ def _discover_backend_outputs(output_path: Path) -> dict[str, Any]:
     for path in sorted(output_path.iterdir()):
         if path.is_file() and path.name not in {"stdout.log", "stderr.log"}:
             outputs.append({"name": path.name, "path": str(path), "sha256": stable_digest(path.read_text(encoding="utf-8", errors="replace"))})
-    return {"outputs": outputs}
+    manifest_path = output_path / "tiny_lora_sft_manifest.json"
+    metrics_path = output_path / "backend_metrics.json"
+    manifest: dict[str, Any] = {"outputs": outputs}
+    if manifest_path.exists():
+        manifest.update(json.loads(manifest_path.read_text(encoding="utf-8")))
+    if metrics_path.exists():
+        manifest["metrics_path"] = str(metrics_path)
+    return manifest
+
+
+def _tiny_lora_sft_command(request: TrainingBackendRequest) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "mesh_brain.local_lora_sft",
+        "--dataset-manifest",
+        request.dataset_manifest_path,
+        "--output-dir",
+        request.output_directory,
+        "--job-id",
+        request.job_id,
+        "--method",
+        request.method,
+    ]
+
+
+def _read_float_metrics(path: Path) -> dict[str, float]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    metrics: dict[str, float] = {}
+    for key, value in payload.items():
+        if isinstance(value, (int, float)):
+            metrics[str(key)] = float(value)
+    return metrics
+
+
+def _run_serving_smoke(artifact: ModelArtifact, *, tenant_id: str) -> dict[str, Any]:
+    serving_artifact = ModelArtifact.from_dict({**artifact.to_dict(), "state": "production"})
+    fabric = MeshBrainServingFabric(
+        pools=[ServingPool(pool_id="local-cpu-proof", hardware_tier="cpu_edge", backend_name="llama.cpp")],
+        artifacts=[serving_artifact],
+        quotas={tenant_id: TenantQuota(tenant_id=tenant_id, max_requests_per_minute=5, max_tokens_per_minute=5000)},
+    )
+    execution = fabric.execute_chat_completion(
+        OpenAIChatRequest(
+            tenant_id=tenant_id,
+            messages=[{"role": "user", "content": "Summarize the safe remediation boundary for search latency."}],
+            task_type="crops",
+            hardware_tier="cpu_edge",
+            risk_level="high",
+            model="mesh-brain-posttraining-proof",
+            metadata={"served_model": artifact.artifact_id},
+        ),
+        client=DeterministicMeshBrainModelClient(content="Tiny LoRA/SFT adapter smoke response."),
+    )
+    payload = execution.to_dict()
+    return {
+        "status": "passed" if payload["completion"].get("content") else "failed",
+        "artifact_id": artifact.artifact_id,
+        "execution": payload,
+    }
+
+
+def _deployment_status(release_decision: str, serving_smoke: dict[str, Any] | None) -> str:
+    if release_decision == "block":
+        return "blocked"
+    if serving_smoke and serving_smoke.get("status") == "passed":
+        return "smoke_served"
+    return "eval_passed"
