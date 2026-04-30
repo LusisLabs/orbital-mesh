@@ -511,7 +511,15 @@ class RunCoordinator:
         calculator = AgentSLOCalculator()
         runs = self.state_store.list_run_sessions(limit=500)
         report = calculator.compute(runs)
-        return report_to_prometheus(report)
+        return report_to_prometheus(report) + self.mesh_brain_prometheus()
+
+    def mesh_brain_prometheus(self) -> str:
+        lines: list[str] = []
+        for session in self.state_store.list_run_sessions(limit=100):
+            metrics = session.artifacts.get("mesh_brain_prometheus")
+            if isinstance(metrics, str) and metrics.strip():
+                lines.append(metrics.strip())
+        return ("\n".join(lines) + "\n") if lines else ""
 
     def build_readiness(self) -> dict[str, Any]:
         now = time.monotonic()
@@ -695,6 +703,85 @@ class RunCoordinator:
             "events": [event.to_dict() for event in self.state_store.list_run_events(run_id)],
             "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
         }
+
+    def run_mesh_brain_mvp(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_ARTIFACT_KEYS,
+            blocked_eval_result,
+            build_mesh_brain_artifact_bundle,
+            mesh_brain_mvp_to_run_record,
+            mesh_brain_result_prometheus,
+        )
+        from mesh_brain.run_mvp_e2e import DEFAULT_OUTPUT_DIRECTORY, run_persisted_mvp_e2e, write_run_summary
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / DEFAULT_OUTPUT_DIRECTORY
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain output_directory must stay inside the Mesh state directory")
+        result = run_persisted_mvp_e2e(output_directory=output_directory, tenant_id=tenant_id)
+        if payload.get("force_eval_block"):
+            result = blocked_eval_result(result)
+            write_run_summary(result=result, output_directory=output_directory)
+        bundle = build_mesh_brain_artifact_bundle(result=result, output_directory=output_directory)
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_private_crops_mvp",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_mvp",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_workflow_id": result.workflow_id,
+                "mesh_brain_artifact_bundle": bundle.to_dict(),
+                "mesh_brain_deployment_record": bundle.deployment_record,
+                "mesh_brain_prometheus": mesh_brain_result_prometheus(result),
+            },
+        )
+        run_record = mesh_brain_mvp_to_run_record(result=result, bundle=bundle, run_id=session.run_id)
+        session.artifacts["mesh_brain_run_record"] = run_record
+        for key in MESH_BRAIN_ARTIFACT_KEYS:
+            session.artifacts[key] = bundle.artifacts[key].to_dict()
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_ARTIFACT_KEYS:
+            ref = bundle.artifacts[key].to_dict()
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_artifacts",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        for event in result.agent_result.events:
+            event_payload = event.to_dict()
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_runtime",
+                event_type=str(event_payload.get("event_type", "mesh_brain_runtime_event")),
+                payload=event_payload,
+                summary={"event_type": event_payload.get("event_type")},
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        terminal_stage = run_record["stage"]
+        terminal_status = run_record["status"]
+        self._update_session(
+            session.run_id,
+            stage=terminal_stage,
+            status=terminal_status,
+            pending_pause_stage=None,
+        )
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
 
     def list_simulations(self) -> list[dict[str, Any]]:
         return self.simulation_service.list_scenarios()

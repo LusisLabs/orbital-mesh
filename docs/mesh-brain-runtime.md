@@ -64,6 +64,26 @@ It writes:
 - `observability/mesh_brain_metrics.prom`;
 - `catalog/model_catalog_snapshot.json`.
 
+## Control-Plane Lane
+
+`RunCoordinator.run_mesh_brain_mvp()` records the deterministic MVP as a first-class Mesh run instead of a package-only command. The HTTP hook is:
+
+```http
+POST /api/mesh-brain/mvp-runs
+```
+
+The run session stores these normalized artifact keys:
+
+- `mesh_brain_dataset_manifest`;
+- `mesh_brain_training_job`;
+- `mesh_brain_eval_job`;
+- `mesh_brain_serving_plan`;
+- `mesh_brain_runtime_trace`;
+- `mesh_brain_observability_metrics`;
+- `mesh_brain_catalog_snapshot`.
+
+The session also stores `mesh_brain_run_record`, which includes run id, tenant id, stage/status, artifact refs, audit events, policy events, summary metrics, and final release decision. A blocked eval marks the deployment record as blocked and non-deployed. `/metrics` appends the latest Mesh Brain Prometheus samples from recorded Mesh Brain runs.
+
 ## Data Plane
 
 `mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`.
