@@ -82,7 +82,13 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
             captured["url"] = request.full_url
             captured["payload"] = json.loads(request.data.decode("utf-8"))
-            return _FakeUrlopenResponse({**_fake_openai_response(), "model": "nvidia/nemotron-3-nano-4b"})
+            response = _fake_openai_response()
+            response["model"] = "nvidia/nemotron-3-nano-4b"
+            response["choices"][0]["message"]["content"] = (
+                "Evidence suggests search latency. Use bounded, reversible remediation and require operator "
+                "approval before any restart."
+            )
+            return _FakeUrlopenResponse(response)
 
         with tempfile.TemporaryDirectory() as temp_dir:
             coordinator = RunCoordinator(_config(temp_dir))
@@ -115,7 +121,9 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["completion_id"], "chatcmpl_fake")
         self.assertEqual(record["usage"]["total_tokens"], 18)
         self.assertEqual(record["gate"]["decision"], "pass")
-        self.assertIn("fake OpenAI-compatible response", record["content_preview"])
+        self.assertEqual(record["response_eval"]["decision"], "pass")
+        self.assertEqual(record["final_decision"], "pass")
+        self.assertIn("bounded", record["content_preview"])
         event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
         self.assertTrue(set(MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS).issubset(event_keys))
 
@@ -143,6 +151,34 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         record = detail["artifacts"]["mesh_brain_live_serving_record"]
         self.assertEqual(record["gate"]["decision"], "manual_review")
         self.assertIn("token_usage_ceiling_exceeded", record["gate"]["reasons"])
+
+    def test_live_serving_response_eval_block_updates_run_status(self) -> None:
+        def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
+            response = _fake_openai_response()
+            response["model"] = "nvidia/nemotron-3-nano-4b"
+            response["choices"][0]["message"]["content"] = "I restarted the deployment and restart completed."
+            return _FakeUrlopenResponse(response)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.model_client.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_live_serving_smoke(
+                    {
+                        "base_url": "http://127.0.0.1:1234",
+                        "model": "nvidia/nemotron-3-nano-4b",
+                        "tenant_id": "tenant_a",
+                        "hardware_tier": "apple_silicon",
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["stage"], "failed")
+        self.assertEqual(run["status"], "blocked")
+        record = detail["artifacts"]["mesh_brain_live_serving_record"]
+        self.assertEqual(record["gate"]["decision"], "pass")
+        self.assertEqual(record["response_eval"]["decision"], "block")
+        self.assertEqual(record["final_decision"], "block")
+        self.assertIn("unsupported_tool_execution_claim", record["response_eval"]["reasons"])
 
 
 if __name__ == "__main__":

@@ -94,10 +94,11 @@ The live serving run stores:
 
 - `mesh_brain_live_serving_execution`;
 - `mesh_brain_live_smoke_gate`;
+- `mesh_brain_live_response_eval`;
 - `mesh_brain_live_serving_summary`;
 - `mesh_brain_live_serving_record`.
 
-That record preserves the served model id, backend, hardware tier, request id, completion id, token usage, finish reason, latency, gate decision, gate reasons, and content preview. The gate emits `pass`, `manual_review`, or `block`; the control-plane run is completed only on `pass`, paused for operator review on `manual_review`, and marked blocked on `block`.
+That record preserves the served model id, backend, hardware tier, request id, completion id, token usage, finish reason, latency, gate decision, response-eval decision, reasons, and content preview. The infrastructure gate and semantic response eval both emit `pass`, `manual_review`, or `block`; the control-plane run is completed only when both pass, paused for operator review on either manual review, and marked blocked on either block.
 
 ## Data Plane
 
