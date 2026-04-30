@@ -11,6 +11,7 @@ from mesh_brain.control_plane import (
     MESH_BRAIN_ARTIFACT_KEYS,
     MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS,
     MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
+    MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS,
 )
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import RuntimeConfig
@@ -232,6 +233,26 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["blocked_count"], 1)
         event_keys = {event["artifact_key"] for event in detail["events"] if event.get("artifact_key")}
         self.assertTrue(set(MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS).issubset(event_keys))
+
+    def test_posttraining_proof_records_mesh_run_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            run = coordinator.run_mesh_brain_posttraining_proof({"tenant_id": "tenant_a"})
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["scenario_key"], "mesh_brain_posttraining_proof")
+        self.assertEqual(run["stage"], "completed")
+        self.assertEqual(run["status"], "manual_review")
+        self.assertEqual(run["pending_pause_stage"], "evaluation_ready")
+        artifacts = detail["artifacts"]
+        for key in MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS:
+            self.assertIn(key, artifacts)
+            self.assertTrue(artifacts[key]["exists"])
+        record = artifacts["mesh_brain_posttraining_proof_record"]
+        self.assertEqual(record["backend_result"]["status"], "completed")
+        self.assertIsNotNone(record["registered_artifact"])
+        self.assertEqual(record["deployment_record"]["status"], "eval_required")
+        self.assertFalse(record["deployment_record"]["deployed"])
 
 
 def _matrix_response(content: str, *, model: str) -> dict[str, Any]:

@@ -1055,6 +1055,123 @@ class RunCoordinator:
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
 
+    def run_mesh_brain_posttraining_proof(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS,
+            mesh_brain_artifact_ref,
+        )
+        from mesh_brain.posttraining_proof import (
+            LocalSubprocessTrainingBackend,
+            run_posttraining_proof,
+        )
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / ".mesh-runtime-state" / "mesh-brain" / "posttraining-proof"
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain posttraining proof output_directory must stay inside the Mesh state directory")
+        command = payload.get("command")
+        backend = LocalSubprocessTrainingBackend() if isinstance(command, list) and command else None
+        result = run_posttraining_proof(
+            output_directory=output_directory,
+            tenant_id=tenant_id,
+            method=str(payload.get("method") or "sft"),
+            backend=backend,
+            command=[str(part) for part in command] if isinstance(command, list) else None,
+            timeout_seconds=float(payload.get("timeout_seconds") or 30.0),
+        )
+        artifact_paths = result.artifact_paths
+        artifact_refs = {
+            "mesh_brain_posttraining_dataset_manifest": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_dataset_manifest",
+                artifact_paths["dataset_manifest"],
+            ).to_dict(),
+            "mesh_brain_posttraining_training_job": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_training_job",
+                artifact_paths["training_job"],
+            ).to_dict(),
+            "mesh_brain_posttraining_backend_result": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_backend_result",
+                artifact_paths["posttraining_backend_result"],
+            ).to_dict(),
+            "mesh_brain_posttraining_registered_artifact": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_registered_artifact",
+                artifact_paths["registered_artifact"],
+            ).to_dict(),
+            "mesh_brain_posttraining_deployment_record": mesh_brain_artifact_ref(
+                "mesh_brain_posttraining_deployment_record",
+                artifact_paths["posttraining_deployment_record"],
+            ).to_dict(),
+        }
+        stage = "completed" if result.status == "completed" else "failed"
+        status = "manual_review" if result.status == "completed" else "blocked"
+        run_record = {
+            "tenant_id": tenant_id,
+            "stage": stage,
+            "status": status,
+            "proof_id": result.proof_id,
+            "method": result.method,
+            "backend_result": result.backend_result,
+            "registered_artifact": result.registered_artifact,
+            "deployment_record": result.deployment_record,
+            "artifact_paths": artifact_paths,
+        }
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_posttraining_proof",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_posttraining_proof",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_posttraining_proof_record": run_record,
+                **artifact_refs,
+            },
+        )
+        run_record["run_id"] = session.run_id
+        session.artifacts["mesh_brain_posttraining_proof_record"] = run_record
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS:
+            ref = artifact_refs[key]
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_posttraining_proof",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="mesh_brain_posttraining_proof",
+            event_type="mesh_brain_posttraining_proof_completed",
+            payload=run_record,
+            summary={
+                "proof_id": result.proof_id,
+                "status": result.status,
+                "backend_status": result.backend_result["status"],
+                "deployment_status": result.deployment_record["status"],
+            },
+            integration_name="mesh_brain",
+            status=status,
+        )
+        self._update_session(
+            session.run_id,
+            stage=stage,
+            status=status,
+            pending_pause_stage="evaluation_ready" if result.status == "completed" else None,
+        )
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
+
     def list_simulations(self) -> list[dict[str, Any]]:
         return self.simulation_service.list_scenarios()
 
