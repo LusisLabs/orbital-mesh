@@ -179,6 +179,20 @@ The registry currently covers:
 - `OpenAICompatibleMeshBrainModelClient` posts `/v1/chat/completions` requests to an OpenAI-compatible backend and normalizes the response;
 - `MeshBrainServingFabric.execute_chat_completion()` plans the route, calls the injected client, and returns a `ServingExecution` trace.
 
+Run a live OpenAI-compatible smoke against a local MLX endpoint with:
+
+```bash
+PYTHONPATH=. python3 -m mesh_brain.run_live_serving_smoke \
+  --base-url http://127.0.0.1:1234 \
+  --model nvidia/nemotron-3-nano-4b \
+  --hardware-tier apple_silicon \
+  --tenant-id tenant_a \
+  --output .mesh-runtime-state/mesh-brain/live-serving-smoke \
+  --json
+```
+
+The smoke writes `live_serving_execution.json` and `live_serving_summary.json`.
+
 `build_serving_fabric_e2e()` proves:
 
 - high-risk requests route through verification mode and constrained decoding;

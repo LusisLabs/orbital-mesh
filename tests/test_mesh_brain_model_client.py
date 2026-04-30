@@ -84,6 +84,23 @@ class MeshBrainModelClientTests(unittest.TestCase):
         self.assertEqual(execution.completion["completion_id"], "chatcmpl_fake")
         self.assertEqual(execution.completion["usage"]["total_tokens"], 18)
 
+    def test_openai_compatible_client_uses_served_model_override_for_live_backends(self) -> None:
+        captured: dict[str, Any] = {}
+
+        def fake_urlopen(request: Any, timeout: float) -> _FakeUrlopenResponse:
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return _FakeUrlopenResponse({**_fake_openai_response(), "model": "nvidia/nemotron-3-nano-4b"})
+
+        fabric = _fabric()
+        live_request = _request(stream=False)
+        live_request.metadata["openai_model"] = "nvidia/nemotron-3-nano-4b"
+        client = OpenAICompatibleMeshBrainModelClient(base_url="http://127.0.0.1:1234")
+        with patch("mesh_brain.model_client.urlrequest.urlopen", side_effect=fake_urlopen):
+            execution = fabric.execute_chat_completion(live_request, client=client)
+
+        self.assertEqual(captured["payload"]["model"], "nvidia/nemotron-3-nano-4b")
+        self.assertEqual(execution.completion["model"], "nvidia/nemotron-3-nano-4b")
+
     def test_openai_compatible_client_rejects_malformed_response(self) -> None:
         server = None
         try:
