@@ -212,24 +212,6 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertIn("AI Run Insight", insights["content"])
         self.assertIn("```mermaid", visualization["content"])
 
-    def test_create_run_returns_compact_payload_before_worker_completion(self) -> None:
-        run = self._request(
-            "POST",
-            "/api/runs",
-            {
-                "scenario_key": "search_latency_regression",
-                "evaluation_mode": "native",
-                "orchestration_mode": "native",
-                "steering_mode": "approval_gate",
-            },
-        )
-
-        self.assertIn("run_id", run)
-        self.assertEqual(run["stage"], "queued")
-        self.assertNotIn("events", run)
-        self.assertNotIn("merkle", run)
-        self.assertNotIn("artifacts", run)
-
     def test_runs_summary_api_does_not_expand_artifacts(self) -> None:
         run = self._request(
             "POST",

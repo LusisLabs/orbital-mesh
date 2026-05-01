@@ -1621,7 +1621,12 @@ class RunCoordinator:
         with self._lock:
             self._threads[session.run_id] = worker
         worker.start()
-        return _run_session_summary(session)
+        # Return the full run snapshot (events + merkle) for backwards
+        # compatibility with callers that read those fields immediately
+        # after submit. ``_run_session_summary`` was a regression that
+        # silently broke external integrations; ``get_run`` is the
+        # contract create_run has always met.
+        return self.get_run(session.run_id) or session.to_dict()
 
     def steer_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         command_type = payload.get("command")
@@ -3487,7 +3492,13 @@ class RunCoordinator:
             return self._build_signal_from_otlp(otlp_payload, payload)
         live_signal = payload.get("live_signal")
         if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
-            return self._defer_live_kubernetes_signal(live_signal, payload)
+            # Collect the live snapshot inline (the original behavior).
+            # The earlier ``_defer_live_kubernetes_signal`` rewrite moved
+            # this into the worker thread; that turned create_run into a
+            # fire-and-forget API and made HTTP callers unable to see
+            # ingestion errors at submit time. Restoring the synchronous
+            # path preserves the contract callers actually rely on.
+            return self._collect_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
         if isinstance(scenario_key, str) and scenario_key.startswith("live_kubernetes:"):
             remainder = scenario_key[len("live_kubernetes:") :].strip()
@@ -3518,7 +3529,7 @@ class RunCoordinator:
                     '(e.g. \"kube_context\": \"k3d-mesh-e2e\" or '
                     '\"live_kubernetes\": {\"kube_context\": \"...\"})'
                 )
-            return self._defer_live_kubernetes_signal(
+            return self._collect_live_kubernetes_signal(
                 {
                     "source": "kubernetes",
                     "deployment_name": deployment_name,
