@@ -44,10 +44,16 @@ def build_readiness_gap_report() -> ReadinessGapReport:
     gaps = [
         ReadinessGap(
             capability="posttraining_execution",
-            current_state="deterministic manifests for SFT, LoRA/QLoRA, DPO/IPO/KTO, RL, quantization, and QAT",
-            target_state="real GPU job adapter with artifacts, logs, metrics, and failure capture",
-            risk="training plans can be audited but do not yet prove optimizer/runtime correctness",
-            next_proof="run a small real SFT or LoRA job against a toy dataset and register the resulting adapter",
+            current_state=(
+                "real one-iteration MLX LoRA smoke plus deterministic quality-training contracts for curated data, "
+                "measurable SFT, DPO/ORPO, and base-vs-adapter judge gates"
+            ),
+            target_state="longer local or GPU quality-training job with artifacts, logs, metrics, eval lift, and failure capture",
+            risk="quality gates can be audited but do not yet prove sustained optimizer/runtime behavior on larger data",
+            next_proof=(
+                "run the quality plan against a larger curated dataset with longer live MLX SFT and preference training, "
+                "then compare live base and adapter outputs"
+            ),
         ),
         ReadinessGap(
             capability="llm_as_judge",
