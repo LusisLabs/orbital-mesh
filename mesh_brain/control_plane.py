@@ -50,6 +50,24 @@ MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS = (
     "mesh_brain_posttraining_deployment_record",
 )
 
+MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS = (
+    "mesh_brain_mlx_lm_lora_mesh_dataset_manifest",
+    "mesh_brain_mlx_lm_lora_train_jsonl",
+    "mesh_brain_mlx_lm_lora_valid_jsonl",
+    "mesh_brain_mlx_lm_lora_test_jsonl",
+    "mesh_brain_mlx_lm_lora_command_plan",
+    "mesh_brain_mlx_lm_lora_train_stdout",
+    "mesh_brain_mlx_lm_lora_train_stderr",
+    "mesh_brain_mlx_lm_lora_native_inference_stdout",
+    "mesh_brain_mlx_lm_lora_native_inference_stderr",
+    "mesh_brain_mlx_lm_lora_adapter_export",
+    "mesh_brain_mlx_lm_lora_backend_compatibility",
+    "mesh_brain_mlx_lm_lora_native_server_probe",
+    "mesh_brain_mlx_lm_lora_native_response_eval",
+    "mesh_brain_mlx_lm_lora_lm_studio_compatibility",
+    "mesh_brain_mlx_lm_lora_run_summary",
+)
+
 
 @dataclass(frozen=True)
 class MeshBrainArtifactRef:

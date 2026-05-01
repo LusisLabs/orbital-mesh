@@ -552,6 +552,8 @@ services:
       MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS: "${MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS:-600}"
       MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS: "${MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS:-1800}"
       MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS: "${MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS:-90}"
+      MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE: "${MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE:-1}"
+      MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH: "${MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH:-1}"
       MESH_STACK_CHAOS_EVALUATION_MODE: "${MESH_STACK_CHAOS_EVALUATION_MODE:-native}"
       MESH_STACK_CHAOS_ORCHESTRATION_MODE: "${MESH_STACK_CHAOS_ORCHESTRATION_MODE:-native}"
       MESH_STACK_CHAOS_STEERING_MODE: "${MESH_STACK_CHAOS_STEERING_MODE:-interruptible_auto}"
@@ -598,7 +600,7 @@ services:
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
       MESH_HALO_COMMAND: "${MESH_HALO_COMMAND:-halo}"
-      MESH_HALO_MODEL: "${MESH_HALO_MODEL:-${OPENAI_MODEL:-gpt-5.4-mini}}"
+      MESH_HALO_MODEL: "${MESH_HALO_MODEL:-MiniMax-M2.7}"
       MESH_HALO_MAX_DEPTH: "${MESH_HALO_MAX_DEPTH:-1}"
       MESH_HALO_MAX_TURNS: "${MESH_HALO_MAX_TURNS:-8}"
       MESH_HALO_MAX_PARALLEL: "${MESH_HALO_MAX_PARALLEL:-2}"
@@ -607,6 +609,8 @@ services:
       MESH_HALO_TRACE_PATH: "${MESH_HALO_TRACE_PATH:-/app/.mesh-runtime-state/halo/traces.jsonl}"
       MESH_HALO_REPORT_PATH: "${MESH_HALO_REPORT_PATH:-/app/.mesh-runtime-state/halo/report.md}"
       MESH_HALO_RECORD_TASK_ON_FAILURE: "${MESH_HALO_RECORD_TASK_ON_FAILURE:-0}"
+      MESH_HALO_OPENAI_API_KEY: "${MESH_HALO_OPENAI_API_KEY:-}"
+      MESH_HALO_OPENAI_BASE_URL: "${MESH_HALO_OPENAI_BASE_URL:-https://api.openai.com/v1}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
     command:
@@ -614,6 +618,8 @@ services:
       - -lc
       - |
         mkdir -p "$$(dirname "$${MESH_HALO_TRACE_PATH}")" "$$(dirname "$${MESH_HALO_REPORT_PATH}")";
+        export OPENAI_API_KEY="$${MESH_HALO_OPENAI_API_KEY:-$${OPENAI_API_KEY}}";
+        export OPENAI_BASE_URL="$${MESH_HALO_OPENAI_BASE_URL:-https://api.openai.com/v1}";
         python3 /workspace/mesh-intel/scripts/halo_outer_loop.py \
           --state-directory "$${MESH_STATE_DIRECTORY}" \
           --vault-path "$${MESH_VAULT_PATH}" \

@@ -96,6 +96,10 @@ def build_bundle(
     evidence_by_kind = {item.kind: item.path for item in evidence}
     manifest = [_manifest_entry(repo_root, item) for item in evidence]
     compose_replay = replay_compose_events(evidence_by_kind["compose_events"])
+    compose_summary_replay = replay_compose_summary(
+        evidence_by_kind["compose_summary"],
+        evidence_by_kind["compose_events"],
+    )
     config_drift_replay = replay_config_drift_proof(evidence_by_kind["config_drift_proof"])
     node_replay = replay_node_events(evidence_by_kind["node_events"])
     summary_checks = [
@@ -103,7 +107,7 @@ def build_bundle(
         _summary_check("node", evidence_by_kind["node_summary"]),
     ]
     validation_results = run_validation_commands(repo_root, validation_commands or [])
-    replay_reports = [compose_replay, config_drift_replay, node_replay]
+    replay_reports = [compose_replay, compose_summary_replay, config_drift_replay, node_replay]
     proof_ready = (
         all(entry["exists"] and entry["sha256"] for entry in manifest)
         and all(report["passed"] for report in replay_reports)
@@ -156,6 +160,54 @@ def replay_compose_events(events_path: Path) -> dict[str, Any]:
         "events_total": len(events),
         "events_passed": sum(1 for item in comparisons if item.get("passed") is True),
         "passed": bool(comparisons) and all(item.get("passed") is True for item in comparisons),
+        "comparisons": comparisons,
+    }
+
+
+def replay_compose_summary(summary_path: Path, events_path: Path) -> dict[str, Any]:
+    recorded = _read_json(summary_path)
+    events = _read_jsonl(events_path)
+    recorded_substrates = _recorded_substrates(recorded)
+    replayed = compose_chaos_session._session_summary(  # noqa: SLF001 - proof replay validates harness contract.
+        events_path,
+        events,
+        configured_substrates=recorded_substrates,
+    )
+    recorded_ready = _breakthrough_ready(recorded)
+    replayed_ready = _breakthrough_ready(replayed)
+    recorded_coverage = _compose_coverage_checks(recorded)
+    replayed_coverage = _compose_coverage_checks(replayed)
+    recorded_total = recorded.get("experiments_total")
+    replayed_total = replayed.get("experiments_total")
+    recorded_passed = recorded.get("experiments_passed")
+    replayed_passed = replayed.get("experiments_passed")
+    comparisons = {
+        "breakthrough_ready": {
+            "recorded": recorded_ready,
+            "replayed": replayed_ready,
+        },
+        "coverage_checks": {
+            "recorded": recorded_coverage,
+            "replayed": replayed_coverage,
+        },
+        "experiments": {
+            "recorded_total": recorded_total,
+            "replayed_total": replayed_total,
+            "recorded_passed": recorded_passed,
+            "replayed_passed": replayed_passed,
+        },
+    }
+    passed = (
+        recorded_ready == replayed_ready
+        and recorded_coverage == replayed_coverage
+        and recorded_total == replayed_total
+        and recorded_passed == replayed_passed
+    )
+    return {
+        "kind": "compose_summary_replay",
+        "summary_path": str(summary_path),
+        "events_path": str(events_path),
+        "passed": passed,
         "comparisons": comparisons,
     }
 
@@ -259,6 +311,12 @@ def _node_signature(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _breakthrough_ready(summary: dict[str, Any]) -> bool:
+    raw_probe = summary.get("breakthrough_probe")
+    probe = cast(dict[str, Any], raw_probe) if isinstance(raw_probe, dict) else {}
+    return probe.get("ready") is True
+
+
 def _summary_check(kind: str, summary_path: Path) -> dict[str, Any]:
     summary = _read_json(summary_path)
     probe = (
@@ -267,13 +325,63 @@ def _summary_check(kind: str, summary_path: Path) -> dict[str, Any]:
         else {}
     )
     metrics = cast(dict[str, Any], summary.get("metrics")) if isinstance(summary.get("metrics"), dict) else {}
+    coverage_checks = _compose_coverage_checks(summary) if kind == "compose" else {}
+    coverage_ready = all(not value for value in coverage_checks.values())
     return {
         "kind": kind,
         "summary_path": str(summary_path),
         "schema_version": summary.get("schema_version"),
-        "ready": probe.get("ready") is True,
+        "ready": probe.get("ready") is True and coverage_ready,
         "status": probe.get("status"),
         "metrics": metrics,
+        "coverage_checks": coverage_checks,
+    }
+
+
+def _compose_coverage_checks(summary: dict[str, Any]) -> dict[str, Any]:
+    raw_capabilities = summary.get("capabilities")
+    capabilities = cast(dict[str, Any], raw_capabilities) if isinstance(raw_capabilities, dict) else {}
+    raw_substrate_coverage = summary.get("substrate_coverage")
+    substrate_coverage = (
+        cast(dict[str, Any], raw_substrate_coverage)
+        if isinstance(raw_substrate_coverage, dict)
+        else {}
+    )
+    raw_multi_fault_coverage = summary.get("multi_fault_coverage")
+    multi_fault_coverage = (
+        cast(dict[str, Any], raw_multi_fault_coverage)
+        if isinstance(raw_multi_fault_coverage, dict)
+        else {}
+    )
+    substrate_gaps = sorted(
+        substrate
+        for substrate, coverage in substrate_coverage.items()
+        if not isinstance(coverage, dict) or int(coverage.get("passed", 0) or 0) < 1
+    )
+    if not substrate_coverage:
+        substrate_gaps = ["<missing_substrate_coverage>"]
+    multi_fault_missing = multi_fault_coverage.get("missing_experiments")
+    if not isinstance(multi_fault_missing, list):
+        multi_fault_missing = ["<missing_multi_fault_coverage>"]
+    return {
+        "missing_axes": capabilities.get("missing_axes") or [],
+        "failed_or_unproven_axes": capabilities.get("failed_or_unproven_axes") or [],
+        "substrates_without_pass": substrate_gaps,
+        "missing_multi_fault_experiments": multi_fault_missing,
+    }
+
+
+def _recorded_substrates(summary: dict[str, Any]) -> set[str]:
+    raw_substrate_coverage = summary.get("substrate_coverage")
+    substrate_coverage = (
+        cast(dict[str, Any], raw_substrate_coverage)
+        if isinstance(raw_substrate_coverage, dict)
+        else {}
+    )
+    return {
+        substrate
+        for substrate in substrate_coverage
+        if isinstance(substrate, str)
     }
 
 

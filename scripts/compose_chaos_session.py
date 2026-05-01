@@ -12,7 +12,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.error import URLError
 
 from tests.e2e.chaos.injector import ChaosError, ChaosInjector
@@ -41,6 +41,7 @@ class Prior:
     completed_at: float
     capability_axes: frozenset[str] = frozenset()
     passed: bool | None = None
+    substrate: str = "unknown"
 
 
 _LONG_RUNNING_RUN_STAGES = {"scenario_analysis_ready", "evaluation_ready"}
@@ -59,6 +60,18 @@ def main() -> int:
     seed = int(os.environ.get("MESH_STACK_CHAOS_SEED", "20260428"))
     coverage_first = os.environ.get("MESH_STACK_CHAOS_COVERAGE_FIRST", "1").lower() not in {"0", "false", "no"}
     stop_on_breakthrough = os.environ.get("MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH", "0").lower() in {"1", "true", "yes"}
+    require_full_axis_coverage = os.environ.get(
+        "MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE",
+        "1" if coverage_first else "0",
+    ).lower() not in {"0", "false", "no"}
+    require_substrate_coverage = os.environ.get(
+        "MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE",
+        "1" if coverage_first else "0",
+    ).lower() not in {"0", "false", "no"}
+    require_multi_fault_breadth = os.environ.get(
+        "MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH",
+        "1" if coverage_first else "0",
+    ).lower() not in {"0", "false", "no"}
     output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/mesh-intel/.mesh-runtime-state/compose-chaos"))
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -128,18 +141,24 @@ def main() -> int:
                 now,
                 experiment.capability_axes,
                 bool(event["score"].get("passed")),
+                target.substrate,
             )
         )
         _append_jsonl(events_path, event)
         session_events.append(event)
-        summary = _session_summary(events_path, session_events)
+        summary = _session_summary(events_path, session_events, configured_substrates={target.substrate for target in targets})
         summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         print(json.dumps(event, sort_keys=True), flush=True)
-        if stop_on_breakthrough and summary["breakthrough_probe"]["ready"]:
+        if stop_on_breakthrough and _should_stop_on_breakthrough(
+            summary,
+            require_full_axis_coverage=require_full_axis_coverage,
+            require_substrate_coverage=require_substrate_coverage,
+            require_multi_fault_breadth=require_multi_fault_breadth,
+        ):
             break
         time.sleep(rng.uniform(min_sleep, max_sleep))
 
-    summary = _session_summary(events_path, session_events)
+    summary = _session_summary(events_path, session_events, configured_substrates={target.substrate for target in targets})
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({
         "event": "session_completed",
@@ -149,6 +168,44 @@ def main() -> int:
         "breakthrough_probe": summary["breakthrough_probe"],
     }, sort_keys=True), flush=True)
     return 0
+
+
+def _should_stop_on_breakthrough(
+    summary: dict[str, Any],
+    *,
+    require_full_axis_coverage: bool,
+    require_substrate_coverage: bool,
+    require_multi_fault_breadth: bool,
+) -> bool:
+    breakthrough_probe = summary.get("breakthrough_probe")
+    if not isinstance(breakthrough_probe, dict) or not breakthrough_probe.get("ready"):
+        return False
+    if not require_full_axis_coverage:
+        capabilities_clear = True
+    else:
+        raw_capabilities = summary.get("capabilities")
+        capabilities = cast(dict[str, Any], raw_capabilities) if isinstance(raw_capabilities, dict) else {}
+        capabilities_clear = not bool(capabilities.get("missing_axes") or capabilities.get("failed_or_unproven_axes"))
+    if not capabilities_clear:
+        return False
+    if not require_substrate_coverage:
+        substrates_clear = True
+    else:
+        raw_substrate_coverage = summary.get("substrate_coverage")
+        substrate_coverage = cast(dict[str, Any], raw_substrate_coverage) if isinstance(raw_substrate_coverage, dict) else {}
+        if not substrate_coverage:
+            return False
+        substrates_clear = all(
+            isinstance(coverage, dict) and int(coverage.get("passed", 0) or 0) >= 1
+            for coverage in substrate_coverage.values()
+        )
+    if not substrates_clear:
+        return False
+    if not require_multi_fault_breadth:
+        return True
+    raw_multi_fault_coverage = summary.get("multi_fault_coverage")
+    multi_fault_coverage = cast(dict[str, Any], raw_multi_fault_coverage) if isinstance(raw_multi_fault_coverage, dict) else {}
+    return not bool(multi_fault_coverage.get("missing_experiments"))
 
 
 def _parse_targets(raw: str) -> list[Target]:
@@ -217,15 +274,19 @@ def _coverage_frontier_pick(
 ) -> tuple[ChaosExperiment, Target] | None:
     covered_axes = _covered_axes(history)
     attempted_experiments = {prior.experiment for prior in history}
-    frontier: list[tuple[int, int, float, str, str, tuple[ChaosExperiment, Target]]] = []
+    passed_substrates = _passed_substrates(history)
+    configured_substrates = {target.substrate for _, target in eligible}
+    frontier: list[tuple[int, int, int, float, str, str, tuple[ChaosExperiment, Target]]] = []
     for experiment, target in eligible:
         missing_axes = set(experiment.capability_axes) - covered_axes
-        if not missing_axes:
+        substrate_uncovered = target.substrate in configured_substrates - passed_substrates
+        if not missing_axes and not substrate_uncovered:
             continue
         never_attempted = 1 if experiment.name not in attempted_experiments else 0
         frontier.append((
             len(missing_axes),
             never_attempted,
+            1 if substrate_uncovered else 0,
             experiment.weight,
             experiment.name,
             _target_key(target),
@@ -233,8 +294,8 @@ def _coverage_frontier_pick(
         ))
     if not frontier:
         return None
-    frontier.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4]))
-    return frontier[0][5]
+    frontier.sort(key=lambda item: (-item[0], -item[2], -item[1], -item[3], item[4], item[5]))
+    return frontier[0][6]
 
 
 def _adaptive_weight(experiment: ChaosExperiment, history: list[Prior]) -> float:
@@ -278,6 +339,14 @@ def _covered_axes(history: list[Prior]) -> set[str]:
     }
 
 
+def _passed_substrates(history: list[Prior]) -> set[str]:
+    return {
+        prior.substrate
+        for prior in history
+        if prior.passed is True and prior.substrate != "unknown"
+    }
+
+
 def _observation_delay_seconds(experiment: ChaosExperiment, hold_seconds: float) -> float:
     if experiment.observation_delay_seconds is not None:
         return max(0.0, experiment.observation_delay_seconds)
@@ -292,7 +361,8 @@ def _score_event(experiment: ChaosExperiment, event: dict[str, Any]) -> dict[str
             "trigger_fired": False,
             "decision_type": None,
         }
-    mesh_run = event.get("mesh_run") if isinstance(event.get("mesh_run"), dict) else {}
+    raw_mesh_run = event.get("mesh_run")
+    mesh_run = cast(dict[str, Any], raw_mesh_run) if isinstance(raw_mesh_run, dict) else {}
     if mesh_run.get("timed_out"):
         return {
             "passed": False,
@@ -328,7 +398,12 @@ def _score_event(experiment: ChaosExperiment, event: dict[str, Any]) -> dict[str
     }
 
 
-def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[str, Any]:
+def _session_summary(
+    events_path: Path,
+    events: list[dict[str, Any]],
+    *,
+    configured_substrates: set[str] | None = None,
+) -> dict[str, Any]:
     scored = [event for event in events if isinstance(event.get("score"), dict)]
     passed = [event for event in scored if event["score"].get("passed") is True]
     pipeline_attempts = [
@@ -346,6 +421,20 @@ def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[st
     probes = [
         event for event in scored if "false_positive_probe" in set(event.get("tags") or [])
     ]
+    multi_fault = [
+        event for event in scored if "multi_fault" in set(event.get("tags") or [])
+    ]
+    multi_fault_passed = [
+        event for event in multi_fault if event["score"].get("passed") is True
+    ]
+    known_multi_fault_experiments = {
+        experiment.name for experiment in DEFAULT_PORTFOLIO if "multi_fault" in experiment.tags
+    }
+    passed_multi_fault_experiments = {
+        event["experiment"]
+        for event in multi_fault_passed
+        if isinstance(event.get("experiment"), str)
+    }
     detection_hits = sum(1 for event in trigger_expected if event["score"].get("trigger_fired"))
     correct_hits = sum(1 for event in regular if event["score"].get("passed"))
     false_positive_hits = sum(
@@ -363,6 +452,7 @@ def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[st
         for event in passed
         for axis in event.get("capability_axes", [])
     }
+    substrate_coverage = _substrate_coverage(scored, configured_substrates=configured_substrates)
     all_axes = set(CAPABILITY_AXES)
     coverage_rate = (len(axes_passed) / len(all_axes)) if all_axes else 1.0
     detection_rate = (detection_hits / len(trigger_expected)) if trigger_expected else 1.0
@@ -399,6 +489,14 @@ def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[st
             "missing_axes": sorted(all_axes - axes_exercised),
             "failed_or_unproven_axes": sorted(all_axes - axes_passed),
         },
+        "substrate_coverage": substrate_coverage,
+        "multi_fault_coverage": {
+            "known_experiments": sorted(known_multi_fault_experiments),
+            "attempted": len(multi_fault),
+            "passed": len(multi_fault_passed),
+            "experiments": sorted(passed_multi_fault_experiments),
+            "missing_experiments": sorted(known_multi_fault_experiments - passed_multi_fault_experiments),
+        },
         "breakthrough_probe": {
             "schema_version": "mesh.chaos_breakthrough_probe.v1",
             "status": "breakthrough_signal" if breakthrough_ready else "below_threshold",
@@ -412,6 +510,49 @@ def _session_summary(events_path: Path, events: list[dict[str, Any]]) -> dict[st
             },
         },
     }
+
+
+def _substrate_coverage(
+    events: list[dict[str, Any]],
+    *,
+    configured_substrates: set[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    observed_substrates = {
+        target.get("substrate")
+        for event in events
+        if isinstance(event.get("target"), dict)
+        for target in [cast(dict[str, Any], event["target"])]
+        if isinstance(target.get("substrate"), str)
+    }
+    substrates = set(configured_substrates or set()) | cast(set[str], observed_substrates)
+    coverage: dict[str, dict[str, Any]] = {
+        substrate: {
+            "attempted": 0,
+            "passed": 0,
+            "experiments": [],
+        }
+        for substrate in sorted(substrates)
+    }
+    passed_experiments_by_substrate: dict[str, set[str]] = {substrate: set() for substrate in substrates}
+    for event in events:
+        target = event.get("target")
+        if not isinstance(target, dict):
+            continue
+        substrate = target.get("substrate")
+        if not isinstance(substrate, str):
+            continue
+        coverage.setdefault(substrate, {"attempted": 0, "passed": 0, "experiments": []})
+        coverage[substrate]["attempted"] += 1
+        score = event.get("score")
+        if isinstance(score, dict) and score.get("passed") is True:
+            coverage[substrate]["passed"] += 1
+            experiment = event.get("experiment")
+            if isinstance(experiment, str):
+                passed_experiments_by_substrate.setdefault(substrate, set()).add(experiment)
+    for substrate, experiments in passed_experiments_by_substrate.items():
+        coverage.setdefault(substrate, {"attempted": 0, "passed": 0, "experiments": []})
+        coverage[substrate]["experiments"] = sorted(experiments)
+    return coverage
 
 
 def _weighted_index(rng: random.Random, weights: list[float]) -> int:
@@ -493,9 +634,14 @@ def _wait_for_target_ready(
 
 
 def _pod_ready(pod: dict[str, Any]) -> bool:
-    for condition in pod.get("conditions", []):
+    conditions = pod.get("conditions", [])
+    if not isinstance(conditions, list):
+        return False
+    for condition in conditions:
+        if not isinstance(condition, dict):
+            continue
         if condition.get("type") == "Ready":
-            return condition.get("status") == "True"
+            return bool(condition.get("status") == "True")
     return False
 
 

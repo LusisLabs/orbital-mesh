@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from typing import Any
 from unittest import mock
 
 from scripts import compose_chaos_session
@@ -444,6 +445,205 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertTrue(summary["breakthrough_probe"]["ready"])
         self.assertEqual(summary["breakthrough_probe"]["status"], "breakthrough_signal")
 
+    def test_stop_on_breakthrough_can_require_complete_axis_coverage(self) -> None:
+        summary = {
+            "breakthrough_probe": {"ready": True},
+            "capabilities": {
+                "missing_axes": ["detect_configuration_drift"],
+                "failed_or_unproven_axes": [],
+            },
+        }
+
+        self.assertFalse(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=False,
+                require_multi_fault_breadth=False,
+            )
+        )
+        self.assertTrue(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=False,
+                require_substrate_coverage=False,
+                require_multi_fault_breadth=False,
+            )
+        )
+
+    def test_stop_on_breakthrough_allows_complete_axis_coverage(self) -> None:
+        summary = {
+            "breakthrough_probe": {"ready": True},
+            "capabilities": {
+                "missing_axes": [],
+                "failed_or_unproven_axes": [],
+            },
+            "substrate_coverage": {
+                "container": {"attempted": 1, "passed": 1, "experiments": ["crash_loop"]},
+            },
+            "multi_fault_coverage": {"missing_experiments": []},
+        }
+
+        self.assertTrue(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=True,
+                require_multi_fault_breadth=True,
+            )
+        )
+
+    def test_session_summary_reports_configured_substrate_coverage(self) -> None:
+        path = compose_chaos_session.Path("/tmp/events.jsonl")
+        events = [
+            {
+                "experiment": "crash_loop",
+                "target": {"substrate": "container"},
+                "tags": [],
+                "capability_axes": ["detect_crash_loop"],
+                "expected_decisions": ["restart_deployment"],
+                "mesh_run": {"timed_out": False},
+                "score": {
+                    "passed": True,
+                    "trigger_fired": True,
+                    "decision_type": "restart_deployment",
+                },
+            },
+            {
+                "experiment": "bad_image",
+                "target": {"substrate": "vm"},
+                "tags": [],
+                "capability_axes": ["detect_image_pull_failure"],
+                "expected_decisions": ["rollback_deployment"],
+                "mesh_run": {"timed_out": False},
+                "score": {
+                    "passed": False,
+                    "trigger_fired": True,
+                    "decision_type": "escalate",
+                },
+            },
+        ]
+
+        summary = compose_chaos_session._session_summary(
+            path,
+            events,
+            configured_substrates={"container", "vm", "baremetal"},
+        )
+
+        self.assertEqual(summary["substrate_coverage"]["container"]["attempted"], 1)
+        self.assertEqual(summary["substrate_coverage"]["container"]["passed"], 1)
+        self.assertEqual(summary["substrate_coverage"]["container"]["experiments"], ["crash_loop"])
+        self.assertEqual(summary["substrate_coverage"]["vm"]["attempted"], 1)
+        self.assertEqual(summary["substrate_coverage"]["vm"]["passed"], 0)
+        self.assertEqual(summary["substrate_coverage"]["baremetal"]["attempted"], 0)
+
+    def test_stop_on_breakthrough_requires_substrate_coverage_when_enabled(self) -> None:
+        summary = {
+            "breakthrough_probe": {"ready": True},
+            "capabilities": {
+                "missing_axes": [],
+                "failed_or_unproven_axes": [],
+            },
+            "substrate_coverage": {
+                "container": {"attempted": 1, "passed": 1, "experiments": ["crash_loop"]},
+                "vm": {"attempted": 1, "passed": 1, "experiments": ["bad_image"]},
+                "baremetal": {"attempted": 0, "passed": 0, "experiments": []},
+            },
+        }
+
+        self.assertFalse(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=True,
+                require_multi_fault_breadth=False,
+            )
+        )
+        self.assertFalse(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=False,
+                require_substrate_coverage=True,
+                require_multi_fault_breadth=False,
+            )
+        )
+        self.assertTrue(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=False,
+                require_multi_fault_breadth=False,
+            )
+        )
+
+    def test_stop_on_breakthrough_requires_multi_fault_breadth_when_enabled(self) -> None:
+        summary = {
+            "breakthrough_probe": {"ready": True},
+            "capabilities": {
+                "missing_axes": [],
+                "failed_or_unproven_axes": [],
+            },
+            "substrate_coverage": {
+                "container": {"attempted": 1, "passed": 1, "experiments": ["crash_loop"]},
+            },
+            "multi_fault_coverage": {
+                "missing_experiments": ["bad_image_untrusted_metric"],
+            },
+        }
+
+        self.assertFalse(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=True,
+                require_multi_fault_breadth=True,
+            )
+        )
+        self.assertTrue(
+            compose_chaos_session._should_stop_on_breakthrough(
+                summary,
+                require_full_axis_coverage=True,
+                require_substrate_coverage=True,
+                require_multi_fault_breadth=False,
+            )
+        )
+
+    def test_coverage_frontier_prefers_uncovered_substrate_when_axes_match(self) -> None:
+        container = compose_chaos_session.Target("ctx-container", "ns", "svc", "container")
+        vm = compose_chaos_session.Target("ctx-vm", "ns", "svc", "vm")
+        experiment = compose_chaos_session.ChaosExperiment(
+            name="readiness_failure",
+            description="",
+            weight=1.0,
+            severity="medium",
+            expected_decisions=frozenset({"defer_until"}),
+            cooldown_seconds=0,
+            capability_axes=frozenset({"detect_readiness_degradation"}),
+        )
+        history = [
+            compose_chaos_session.Prior(
+                "crash_loop",
+                compose_chaos_session._target_key(container),
+                "high",
+                0.0,
+                frozenset({"detect_crash_loop"}),
+                True,
+                "container",
+            )
+        ]
+
+        with mock.patch.object(compose_chaos_session, "DEFAULT_PORTFOLIO", (experiment,)):
+            pick = compose_chaos_session._pick(
+                compose_chaos_session.random.Random(0),
+                [container, vm],
+                history,
+                now=120.0,
+                coverage_first=True,
+            )
+
+        self.assertIsNotNone(pick)
+        self.assertEqual(pick[1].substrate, "vm")
+
     def test_wait_for_target_ready_requires_desired_running_ready_pods(self) -> None:
         target = compose_chaos_session.Target("ctx", "ns", "svc", "container")
 
@@ -459,7 +659,7 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                     },
                 }
 
-            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, Any]]:
                 return [
                     {
                         "name": "p1",
@@ -494,7 +694,7 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                     },
                 }
 
-            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, Any]]:
                 return [
                     {
                         "name": f"old-{index}",
@@ -534,7 +734,7 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                     },
                 }
 
-            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, object]]:
+            def _list_pods(self, deployment: str, namespace: str) -> list[dict[str, Any]]:
                 return [
                     {
                         "name": f"ready-{index}",

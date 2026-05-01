@@ -1300,6 +1300,147 @@ class RunCoordinator:
         final = self.state_store.get_run_session(session.run_id)
         return final.to_dict() if final is not None else session.to_dict()
 
+    def run_mesh_brain_mlx_lm_lora_e2e(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from mesh_brain.control_plane import (
+            MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS,
+            mesh_brain_artifact_ref,
+        )
+        from mesh_brain.mlx_lm_lora_e2e import DEFAULT_MODEL_ID, run_mlx_lm_lora_e2e
+
+        payload = payload or {}
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        state_root = Path(self.config.state_directory).resolve()
+        output_directory = Path(
+            payload.get("output_directory")
+            or state_root / ".mesh-runtime-state" / "mesh-brain" / "mlx-lm-lora-nemotron"
+        ).resolve()
+        if not str(output_directory).startswith(str(state_root)):
+            raise ValueError("mesh brain MLX-LM-LoRA output_directory must stay inside the Mesh state directory")
+
+        result = run_mlx_lm_lora_e2e(
+            output_directory=output_directory,
+            model_id=str(payload.get("model") or DEFAULT_MODEL_ID),
+            tenant_id=tenant_id,
+            iters=int(payload.get("iters") or 1),
+            max_seq_length=int(payload.get("max_seq_length") or 512),
+            num_layers=int(payload.get("num_layers") or 2),
+            timeout_seconds=float(payload.get("timeout_seconds") or 1800.0),
+            train=bool(payload.get("train", True)),
+            native_inference=bool(payload.get("native_inference", True)),
+            fuse=bool(payload.get("fuse", False) or payload.get("lm_studio", False)),
+            lm_studio=bool(payload.get("lm_studio", False)),
+            lm_studio_identifier=str(payload.get("lm_studio_identifier") or "mesh-brain-nemotron-3-nano-4b"),
+            lm_studio_port=int(payload.get("lm_studio_port") or 1234),
+            native_server_base_url=payload.get("native_server_base_url"),
+            native_server_model=payload.get("native_server_model"),
+        )
+        artifact_paths = result.artifact_paths
+        artifact_path_by_key = {
+            "mesh_brain_mlx_lm_lora_mesh_dataset_manifest": artifact_paths["mesh_dataset_manifest"],
+            "mesh_brain_mlx_lm_lora_train_jsonl": artifact_paths["mlx_train_jsonl"],
+            "mesh_brain_mlx_lm_lora_valid_jsonl": artifact_paths["mlx_valid_jsonl"],
+            "mesh_brain_mlx_lm_lora_test_jsonl": artifact_paths["mlx_test_jsonl"],
+            "mesh_brain_mlx_lm_lora_command_plan": artifact_paths["command_plan"],
+            "mesh_brain_mlx_lm_lora_train_stdout": artifact_paths["train_stdout"],
+            "mesh_brain_mlx_lm_lora_train_stderr": artifact_paths["train_stderr"],
+            "mesh_brain_mlx_lm_lora_native_inference_stdout": artifact_paths["native_inference_stdout"],
+            "mesh_brain_mlx_lm_lora_native_inference_stderr": artifact_paths["native_inference_stderr"],
+            "mesh_brain_mlx_lm_lora_adapter_export": artifact_paths["adapter_export"],
+            "mesh_brain_mlx_lm_lora_backend_compatibility": artifact_paths["backend_compatibility"],
+            "mesh_brain_mlx_lm_lora_native_server_probe": artifact_paths["native_server_probe"],
+            "mesh_brain_mlx_lm_lora_native_response_eval": artifact_paths["native_response_eval"],
+            "mesh_brain_mlx_lm_lora_lm_studio_compatibility": artifact_paths["lm_studio_compatibility"],
+            "mesh_brain_mlx_lm_lora_run_summary": artifact_paths["run_summary"],
+        }
+        artifact_refs = {
+            key: mesh_brain_artifact_ref(key, artifact_path_by_key[key]).to_dict()
+            for key in MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS
+        }
+        backend_compatibility = result.backend_compatibility
+        final_decision = "promote" if result.status == "completed" else "block"
+        if backend_compatibility["mlx_lm_lora_train"]["status"] != "pass" or backend_compatibility["mlx_lm_generate"]["status"] != "pass":
+            final_decision = "manual_review" if result.status == "completed" else "block"
+        if backend_compatibility["mlx_lm_server"]["status"] == "not_run":
+            final_decision = "manual_review" if result.status == "completed" else "block"
+        elif backend_compatibility["mlx_lm_server"]["status"] != "pass":
+            final_decision = "block"
+        if backend_compatibility["native_response_eval"]["status"] == "not_run":
+            final_decision = "manual_review" if result.status == "completed" else "block"
+        elif backend_compatibility["native_response_eval"]["status"] != "pass":
+            final_decision = "block"
+        stage = "completed" if final_decision == "promote" else "awaiting_operator" if final_decision == "manual_review" else "failed"
+        status = "completed" if final_decision == "promote" else "manual_review" if final_decision == "manual_review" else "blocked"
+        run_record = {
+            **result.to_dict(),
+            "tenant_id": tenant_id,
+            "stage": stage,
+            "status": status,
+            "final_decision": final_decision,
+            "deployment_record": {
+                "status": "eligible_for_promote" if final_decision == "promote" else final_decision,
+                "deployed": False,
+                "model_id": result.model_id,
+                "adapter_export_id": result.adapter_export["export_id"],
+                "native_mlx_server": backend_compatibility["mlx_lm_server"],
+                "native_response_eval": backend_compatibility["native_response_eval"],
+                "lm_studio": backend_compatibility["lm_studio"],
+                "lm_studio_promotion_blocking": False,
+            },
+        }
+        session = self.state_store.create_run_session(
+            goal_id=payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id,
+            scenario_key="mesh_brain_mlx_lm_lora_e2e",
+            steering_mode="deterministic_local",
+            auto_mode=True,
+            pause_points=[],
+            evaluation_mode="mesh_brain_mlx_lm_lora_e2e",
+            orchestration_mode="mesh_brain",
+            artifacts={
+                "mesh_brain_mlx_lm_lora_record": run_record,
+                **artifact_refs,
+            },
+        )
+        run_record["run_id"] = session.run_id
+        session.artifacts["mesh_brain_mlx_lm_lora_record"] = run_record
+        self.state_store.save_run_session(session)
+        for key in MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS:
+            ref = artifact_refs[key]
+            self.state_store.put_artifact({"run_id": session.run_id, **ref})
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="mesh_brain_mlx_lm_lora_e2e",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=ref,
+                summary={"artifact_key": key, "exists": ref["exists"]},
+                artifact_key=key,
+                integration_name="mesh_brain",
+                status="recorded",
+            )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="mesh_brain_mlx_lm_lora_e2e",
+            event_type="mesh_brain_mlx_lm_lora_e2e_completed",
+            payload=run_record,
+            summary={
+                "status": result.status,
+                "final_decision": final_decision,
+                "mlx_lm_generate": backend_compatibility["mlx_lm_generate"]["status"],
+                "mlx_lm_server": backend_compatibility["mlx_lm_server"]["status"],
+                "native_response_eval": backend_compatibility["native_response_eval"]["status"],
+                "lm_studio": backend_compatibility["lm_studio"]["status"],
+            },
+            integration_name="mesh_brain",
+            status=status,
+        )
+        self._update_session(
+            session.run_id,
+            stage=stage,
+            status=status,
+            pending_pause_stage="evaluation_ready" if final_decision == "manual_review" else None,
+        )
+        final = self.state_store.get_run_session(session.run_id)
+        return final.to_dict() if final is not None else session.to_dict()
+
     def _posttraining_corpus_rows(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         if payload.get("include_corpus_context", True) is False:
             return []

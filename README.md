@@ -905,7 +905,7 @@ The image currently runs as root because the bundled Goose profile path and kube
 Mesh ships with a continuous chaos-engineering harness that implements the [Principles of Chaos](https://principlesofchaos.org/):
 
 1. **Build a hypothesis around steady-state behavior** — detection rate, correct-decision rate, P95 latency, pipeline availability, probe pass rate.
-2. **Vary real-world events** — 8-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures.
+2. **Vary real-world events** — 12-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures, and live overlapping multi-faults.
 3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn with adaptive weights, per-primitive cooldowns, and pressure toward capability axes the session has not proven yet.
 4. **Automate** — one driver script, no manual scenario selection.
 5. **Minimize blast radius** — circuit breaker halts the session on two consecutive steady-state probe failures or if Mesh pipeline latency blows past a ceiling.
@@ -936,10 +936,14 @@ scripts/run_chaos_session.sh --keep-cluster
 | `pod_kill_one` | low | 4.0 | **No trigger** (false-positive probe) |
 | `pod_kill_all` | high | 1.5 | `defer_until` / `escalate` / `restart_deployment` / `rollback_deployment` |
 | `memory_pressure` | high | 1.0 | `patch_resources` / `escalate` |
+| `memory_pressure_pod_churn` | high | 0.6 | `patch_resources` / `escalate` |
 | `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
 | `config_drift` | medium | 0.5 | `escalate` |
+| `readiness_config_drift` | high | 0.7 | `defer_until` / `escalate` |
+| `bad_image_untrusted_metric` | high | 0.5 | `rollback_deployment` |
+| `zero_ready_after_churn` | high | 0.6 | `defer_until` / `escalate` / `restart_deployment` / `rollback_deployment` |
 
-All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, then weighting takes over once the frontier is covered. Coverage-frontier picks can bypass the high-severity spacing rule only while they prove missing axes; repeats still obey cooldown and severity spacing. Compose-native runs use the global hold time for durable faults. `pod_kill_one` remains the transient false-positive control; `pod_kill_all` holds replacement pods unready long enough to prove the zero-ready outage path. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, with uncovered substrates used as the secondary frontier when axis coverage is otherwise equivalent. Coverage-frontier picks can bypass the high-severity spacing rule only while they prove missing axes; repeats still obey cooldown and severity spacing. Compose-native runs use the global hold time for durable faults. `pod_kill_one` remains the transient false-positive control; `pod_kill_all` holds replacement pods unready long enough to prove the zero-ready outage path. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
 
 ### Hypothesis thresholds
 
@@ -966,7 +970,7 @@ Each session writes two artifacts to `e2e-reports/`:
 
 Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
 
-Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold.
+Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, substrate coverage, multi-fault coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold. When `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions require every known capability axis to be exercised and passed before early stopping unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set. They also require every configured substrate to have at least one passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and every multi-fault primitive to pass unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
 
 For non-Kubernetes production-node coverage, run:
 
@@ -983,6 +987,14 @@ PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py
 ```
 
 The bundle is written under `.mesh-runtime-state/proofs/`. It hashes each source artifact, records the current git SHA and dirty state, captures validation command output, replays production-node probes through the Mesh pipeline, replays compose/config-drift scores through the chaos scoring contract, and marks the proof ready only when every included breakthrough summary is ready, every replay comparison matches, and every embedded validation command exits `0`. By default it runs the lightweight CI-safe breakthrough unittest, ruff checks, and focused strict mypy over the breakthrough proof files; use repeated `--validation-command` flags to embed a different command set.
+
+To run the whole live breakthrough gate from a healthy compose stack, use:
+
+```bash
+scripts/run_breakthrough_proof.sh
+```
+
+That command verifies all configured substrates are healthy, runs compose chaos with full-axis, substrate, and multi-fault breadth early-stop gates, verifies the stack recovered, generates the proof bundle, and fails unless the bundle is ready. For CI-safe validation of existing artifacts without mutating the stack, use `scripts/run_breakthrough_proof.sh --replay-only`.
 
 ## Development Commands
 

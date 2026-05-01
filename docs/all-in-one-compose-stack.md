@@ -110,7 +110,7 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 7. `mesh-ui` waits for Mesh health and serves the internal OS companion.
 8. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
 9. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
-10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON.
+10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes and uncovered substrates, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON. With `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions do not stop while any known capability axis remains missing or failed unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set, do not stop while any configured substrate lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and do not stop while any multi-fault primitive lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
 
 Non-Kubernetes production-node breakthrough probes run outside the long-lived `mesh-chaos` container:
 
@@ -126,7 +126,15 @@ After the compose chaos, config-drift, and production-node proof artifacts exist
 PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py
 ```
 
-The bundle is written under `.mesh-runtime-state/proofs/` and includes source artifact hashes, git state, validation command output, focused strict mypy over the breakthrough proof files, compose/config-drift score replay, and production-node pipeline replay. It exits non-zero when replay, summary readiness, or embedded validation fails, which makes it suitable as a lightweight CI gate.
+The bundle is written under `.mesh-runtime-state/proofs/` and includes source artifact hashes, git state, validation command output, focused strict mypy over the breakthrough proof files, compose/config-drift score replay, compose summary replay from events, and production-node pipeline replay. It exits non-zero when replay, summary readiness, coverage gates, or embedded validation fails, which makes it suitable as a lightweight CI gate.
+
+To run the live proof gate end to end from a healthy stack:
+
+```bash
+scripts/run_breakthrough_proof.sh
+```
+
+The script checks every configured chaos target before and after the run, executes `mesh-chaos` with `--no-deps`, requires full-axis, substrate, and multi-fault coverage, generates the replay-protected proof bundle, and prints the proof path plus SHA. Use `scripts/run_breakthrough_proof.sh --replay-only` to validate the latest existing proof artifacts without mutating the stack.
 
 ## Smoke Contract
 
@@ -205,7 +213,10 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_MAX_SLEEP_SECONDS` | `180` | Maximum delay between chaos cycles |
 | `MESH_STACK_CHAOS_HOLD_SECONDS` | `30` | Default fault dwell time before launching the Mesh run and reverting; transient primitives can override this to launch observation immediately |
 | `MESH_STACK_CHAOS_SEED` | `20260428` | Deterministic replay seed for chaos selection |
-| `MESH_STACK_CHAOS_COVERAGE_FIRST` | `1` | When enabled, eligible experiments covering unproven capability axes are selected before weighted repeats; frontier picks can bypass high-severity spacing until their axes are proven |
+| `MESH_STACK_CHAOS_COVERAGE_FIRST` | `1` | When enabled, eligible experiments covering unproven capability axes are selected before weighted repeats; uncovered substrates are used as the secondary frontier |
+| `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE` | `1` when coverage-first is enabled | Requires all known capability axes to pass before breakthrough early-stop |
+| `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE` | `1` when coverage-first is enabled | Requires every configured substrate to pass at least one cycle before breakthrough early-stop |
+| `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH` | `1` when coverage-first is enabled | Requires every multi-fault primitive to pass before breakthrough early-stop |
 | `MESH_STACK_CHAOS_RUN_WAIT_SECONDS` | `600` | Base timeout for a post-injection Mesh run to reach a terminal stage |
 | `MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS` | `120` | Extra wait granted after each observed run stage or status transition |
 | `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |

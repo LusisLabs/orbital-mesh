@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from urllib import request as urlrequest
 
 from .data_plane import build_context_training_data_plane
 from .hardware_profiles import build_mlx_lm_lora_export_manifest, write_adapter_export_manifest
+from .run_live_serving_smoke import LiveResponseEvalPolicy, evaluate_live_response
 from .runtime import new_model_artifact, stable_digest, utc_now
 
 
@@ -47,7 +49,10 @@ class MlxLmLoraE2EResult:
     fuse: MlxLmLoraCommandResult | None
     lm_studio_server: MlxLmLoraCommandResult | None
     lm_studio_load: MlxLmLoraCommandResult | None
+    native_openai_probe: dict[str, Any] | None
+    native_response_eval: dict[str, Any] | None
     openai_probe: dict[str, Any] | None
+    backend_compatibility: dict[str, Any]
     adapter_export: dict[str, Any]
     artifact_paths: dict[str, str]
 
@@ -65,7 +70,10 @@ class MlxLmLoraE2EResult:
             "fuse": self.fuse.to_dict() if self.fuse else None,
             "lm_studio_server": self.lm_studio_server.to_dict() if self.lm_studio_server else None,
             "lm_studio_load": self.lm_studio_load.to_dict() if self.lm_studio_load else None,
+            "native_openai_probe": self.native_openai_probe,
+            "native_response_eval": self.native_response_eval,
             "openai_probe": self.openai_probe,
+            "backend_compatibility": self.backend_compatibility,
             "adapter_export": self.adapter_export,
             "artifact_paths": dict(self.artifact_paths),
         }
@@ -86,6 +94,8 @@ def run_mlx_lm_lora_e2e(
     lm_studio: bool = False,
     lm_studio_identifier: str = DEFAULT_LM_STUDIO_IDENTIFIER,
     lm_studio_port: int = 1234,
+    native_server_base_url: str | None = None,
+    native_server_model: str | None = None,
 ) -> MlxLmLoraE2EResult:
     output_path = Path(output_directory).resolve()
     output_path.mkdir(parents=True, exist_ok=True)
@@ -138,6 +148,8 @@ def run_mlx_lm_lora_e2e(
     fuse_result = None
     server_result = None
     load_result = None
+    native_openai_probe = None
+    native_response_eval = None
     openai_probe = None
 
     if train:
@@ -173,6 +185,12 @@ def run_mlx_lm_lora_e2e(
             base_url=f"http://127.0.0.1:{lm_studio_port}",
             model=lm_studio_identifier,
         )
+    if native_server_base_url:
+        native_openai_probe = _probe_openai_server(
+            base_url=native_server_base_url,
+            model=native_server_model or model_id,
+        )
+        native_response_eval = _evaluate_native_probe_response(native_openai_probe)
 
     adapter_outputs = _adapter_files(adapter_path)
     source_artifact = new_model_artifact(
@@ -193,6 +211,37 @@ def run_mlx_lm_lora_e2e(
     adapter_export_paths = write_adapter_export_manifest(
         manifest=adapter_export_manifest,
         output_directory=output_path / "adapter_export",
+    )
+    backend_compatibility = _backend_compatibility(
+        train_result=train_result,
+        native_result=native_result,
+        native_openai_probe=native_openai_probe,
+        native_response_eval=native_response_eval,
+        lm_studio_load=load_result,
+        lm_studio_probe=openai_probe,
+        train_requested=train,
+        native_requested=native_inference,
+        native_server_requested=bool(native_server_base_url),
+        lm_studio_requested=lm_studio,
+    )
+    backend_compatibility_path = output_path / "backend_compatibility.json"
+    backend_compatibility_path.write_text(_json(backend_compatibility), encoding="utf-8")
+    native_probe_path = output_path / "native_openai_server_probe.json"
+    native_probe_path.write_text(_json(native_openai_probe or {"status": "not_run"}), encoding="utf-8")
+    native_response_eval_path = output_path / "native_response_eval.json"
+    native_response_eval_path.write_text(_json(native_response_eval or {"decision": "not_run"}), encoding="utf-8")
+    lm_studio_compatibility_path = output_path / "lm_studio_compatibility.json"
+    lm_studio_compatibility_path.write_text(
+        _json(
+            {
+                "status": backend_compatibility["lm_studio"]["status"],
+                "reason": backend_compatibility["lm_studio"]["reason"],
+                "load": load_result.to_dict() if load_result else None,
+                "probe": openai_probe,
+                "promotion_blocking": False,
+            }
+        ),
+        encoding="utf-8",
     )
 
     status = _overall_status(
@@ -219,7 +268,10 @@ def run_mlx_lm_lora_e2e(
         fuse=fuse_result,
         lm_studio_server=server_result,
         lm_studio_load=load_result,
+        native_openai_probe=native_openai_probe,
+        native_response_eval=native_response_eval,
         openai_probe=openai_probe,
+        backend_compatibility=backend_compatibility,
         adapter_export=adapter_export_manifest.to_dict(),
         artifact_paths={
             "mesh_dataset_manifest": data_result.report.output_files["dataset_manifest.json"],
@@ -228,9 +280,27 @@ def run_mlx_lm_lora_e2e(
             "mlx_test_jsonl": data_paths["test.jsonl"],
             "command_plan": str(command_plan_path),
             "adapter_export": adapter_export_paths["adapter_export_manifest.json"],
+            "backend_compatibility": str(backend_compatibility_path),
+            "native_server_probe": str(native_probe_path),
+            "native_response_eval": str(native_response_eval_path),
+            "lm_studio_compatibility": str(lm_studio_compatibility_path),
+            "train_stdout": train_result.stdout_path if train_result else _placeholder_log(logs_path, "train.stdout.log", "train not requested"),
+            "train_stderr": train_result.stderr_path if train_result else _placeholder_log(logs_path, "train.stderr.log", "train not requested"),
+            "native_inference_stdout": (
+                native_result.stdout_path
+                if native_result
+                else _placeholder_log(logs_path, "native_inference.stdout.log", "native inference not requested")
+            ),
+            "native_inference_stderr": (
+                native_result.stderr_path
+                if native_result
+                else _placeholder_log(logs_path, "native_inference.stderr.log", "native inference not requested")
+            ),
         },
     )
     summary_path = output_path / "run_summary.json"
+    summary_path.write_text(_json(result.to_dict()), encoding="utf-8")
+    result.artifact_paths["run_summary"] = str(summary_path)
     summary_path.write_text(_json(result.to_dict()), encoding="utf-8")
     return result
 
@@ -415,6 +485,13 @@ def _run_command(command: list[str], *, logs_path: Path, name: str, timeout_seco
     )
 
 
+def _placeholder_log(logs_path: Path, name: str, message: str) -> str:
+    path = logs_path / name
+    if not path.exists():
+        path.write_text(message + "\n", encoding="utf-8")
+    return str(path)
+
+
 def _probe_openai_server(*, base_url: str, model: str) -> dict[str, Any]:
     request_payload = {
         "model": model,
@@ -443,6 +520,23 @@ def _probe_openai_server(*, base_url: str, model: str) -> dict[str, Any]:
         return {"status": "failed", "error": str(exc)}
 
 
+def _evaluate_native_probe_response(probe: dict[str, Any] | None) -> dict[str, Any]:
+    if not probe or probe.get("status") != "completed":
+        return {
+            "decision": "block",
+            "passed": False,
+            "score": 0.0,
+            "checks": {},
+            "reasons": ["native_openai_probe_failed"],
+            "text_sha256": "",
+            "policy": {},
+        }
+    return evaluate_live_response(
+        text=str(probe.get("content") or ""),
+        policy=LiveResponseEvalPolicy(min_score=0.8),
+    ).to_dict()
+
+
 def _adapter_files(adapter_path: Path) -> list[dict[str, Any]]:
     files = []
     for path in sorted(adapter_path.rglob("*")):
@@ -451,10 +545,18 @@ def _adapter_files(adapter_path: Path) -> list[dict[str, Any]]:
                 {
                     "name": path.name,
                     "path": str(path),
-                    "sha256": stable_digest({"path": str(path), "content": path.read_bytes().hex()}),
+                    "sha256": _sha256_file(path),
                 }
             )
     return files
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _overall_status(
@@ -483,6 +585,120 @@ def _overall_status(
     if lm_studio_requested and (not openai_probe or openai_probe.get("status") != "completed"):
         return "failed"
     return "completed"
+
+
+def _backend_compatibility(
+    *,
+    train_result: MlxLmLoraCommandResult | None,
+    native_result: MlxLmLoraCommandResult | None,
+    native_openai_probe: dict[str, Any] | None,
+    native_response_eval: dict[str, Any] | None,
+    lm_studio_load: MlxLmLoraCommandResult | None,
+    lm_studio_probe: dict[str, Any] | None,
+    train_requested: bool,
+    native_requested: bool,
+    native_server_requested: bool,
+    lm_studio_requested: bool,
+) -> dict[str, Any]:
+    return {
+        "mlx_lm_lora_train": {
+            "status": _command_status(train_result, requested=train_requested),
+            "reason": _command_reason(train_result, requested=train_requested),
+        },
+        "mlx_lm_generate": {
+            "status": _command_status(native_result, requested=native_requested),
+            "reason": _command_reason(native_result, requested=native_requested),
+        },
+        "mlx_lm_server": {
+            "status": _probe_status(native_openai_probe, requested=native_server_requested),
+            "reason": _probe_reason(native_openai_probe, requested=native_server_requested),
+        },
+        "native_response_eval": {
+            "status": _response_eval_status(native_response_eval, requested=native_server_requested),
+            "reason": _response_eval_reason(native_response_eval, requested=native_server_requested),
+        },
+        "lm_studio": {
+            "status": _lm_studio_status(lm_studio_load, lm_studio_probe, requested=lm_studio_requested),
+            "reason": _lm_studio_reason(lm_studio_load, lm_studio_probe, requested=lm_studio_requested),
+        },
+    }
+
+
+def _command_status(result: MlxLmLoraCommandResult | None, *, requested: bool) -> str:
+    if not requested:
+        return "not_run"
+    if result is None:
+        return "failed"
+    return "pass" if result.status == "completed" else "failed"
+
+
+def _command_reason(result: MlxLmLoraCommandResult | None, *, requested: bool) -> str:
+    if not requested:
+        return "not requested"
+    if result is None:
+        return "command did not run"
+    return f"return_code={result.return_code}"
+
+
+def _probe_status(probe: dict[str, Any] | None, *, requested: bool) -> str:
+    if not requested:
+        return "not_run"
+    if probe and probe.get("status") == "completed":
+        return "pass"
+    return "failed"
+
+
+def _probe_reason(probe: dict[str, Any] | None, *, requested: bool) -> str:
+    if not requested:
+        return "not requested"
+    if not probe:
+        return "probe did not run"
+    return str(probe.get("error") or probe.get("http_status") or probe.get("status"))
+
+
+def _response_eval_status(eval_result: dict[str, Any] | None, *, requested: bool) -> str:
+    if not requested:
+        return "not_run"
+    return "pass" if eval_result and eval_result.get("decision") == "pass" else "failed"
+
+
+def _response_eval_reason(eval_result: dict[str, Any] | None, *, requested: bool) -> str:
+    if not requested:
+        return "not requested"
+    if not eval_result:
+        return "response eval did not run"
+    reasons = eval_result.get("reasons")
+    if isinstance(reasons, list) and reasons:
+        return ",".join(str(reason) for reason in reasons)
+    return str(eval_result.get("decision") or "unknown")
+
+
+def _lm_studio_status(
+    load_result: MlxLmLoraCommandResult | None,
+    probe: dict[str, Any] | None,
+    *,
+    requested: bool,
+) -> str:
+    if not requested:
+        return "not_run"
+    if load_result and load_result.status == "completed" and probe and probe.get("status") == "completed":
+        return "pass"
+    return "blocked"
+
+
+def _lm_studio_reason(
+    load_result: MlxLmLoraCommandResult | None,
+    probe: dict[str, Any] | None,
+    *,
+    requested: bool,
+) -> str:
+    if not requested:
+        return "not requested"
+    if load_result and load_result.status != "completed":
+        return f"lms load return_code={load_result.return_code}"
+    if probe and probe.get("status") != "completed":
+        return str(probe.get("error") or "OpenAI-compatible probe failed")
+    return "LM Studio accepted model"
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -514,6 +730,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--lm-studio", action="store_true")
     parser.add_argument("--lm-studio-identifier", default=DEFAULT_LM_STUDIO_IDENTIFIER)
     parser.add_argument("--lm-studio-port", type=int, default=1234)
+    parser.add_argument("--native-server-base-url")
+    parser.add_argument("--native-server-model")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     result = run_mlx_lm_lora_e2e(
@@ -530,6 +748,8 @@ def main(argv: list[str] | None = None) -> int:
         lm_studio=args.lm_studio,
         lm_studio_identifier=args.lm_studio_identifier,
         lm_studio_port=args.lm_studio_port,
+        native_server_base_url=args.native_server_base_url,
+        native_server_model=args.native_server_model,
     )
     if args.json:
         print(json.dumps(result.to_dict(), sort_keys=True))

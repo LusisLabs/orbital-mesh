@@ -54,13 +54,20 @@ class MeshBrainMlxLmLoraE2ETests(unittest.TestCase):
                 lm_studio=False,
             )
             command_plan = json.loads(Path(result.artifact_paths["command_plan"]).read_text(encoding="utf-8"))
+            run_summary_exists = Path(result.artifact_paths["run_summary"]).exists()
+            backend_compatibility_exists = Path(result.artifact_paths["backend_compatibility"]).exists()
 
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.model_id, DEFAULT_MODEL_ID)
         self.assertEqual(result.adapter_export["export_format"], "mlx_lm_lora")
+        self.assertEqual(result.backend_compatibility["mlx_lm_lora_train"]["status"], "not_run")
+        self.assertEqual(result.backend_compatibility["mlx_lm_generate"]["status"], "not_run")
+        self.assertEqual(result.backend_compatibility["native_response_eval"]["status"], "not_run")
         self.assertIn("--model", command_plan["train"])
         self.assertIn(DEFAULT_MODEL_ID, command_plan["train"])
         self.assertIn("--adapter-path", command_plan["native_inference"])
+        self.assertTrue(run_summary_exists)
+        self.assertTrue(backend_compatibility_exists)
 
 
 if __name__ == "__main__":

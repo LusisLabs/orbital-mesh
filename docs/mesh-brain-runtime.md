@@ -148,6 +148,14 @@ POST /api/mesh-brain/live-adapter-runtime-probe
 
 The probe checks `/v1/models`, runs a base-model `/v1/chat/completions` request, evaluates the response, and probes `/v1/adapters/load`. If adapter loading is unsupported, the run can only report `base_model_pass`; it never counts as trained-adapter serving. It reports `adapter_pass` only when adapter loading succeeds and the loaded adapter appears in `/v1/models`.
 
+The real Apple Silicon MLX LoRA lane can be recorded through:
+
+```http
+POST /api/mesh-brain/mlx-lm-lora-e2e
+```
+
+This lane wraps `mesh_brain.mlx_lm_lora_e2e`. It prepares MLX-LM-LoRA `messages` JSONL splits from the Mesh Brain data plane, runs `mlx_lm_lora.train` against `mlx-community/NVIDIA-Nemotron-3-Nano-4B-BF16`, records native `mlx_lm.generate` inference, writes an `mlx_lm_lora` adapter export manifest, and stores backend compatibility for `mlx_lm_lora.train`, `mlx_lm.generate`, and `mlx_lm.server`. Native MLX is the source-of-truth serving path for this model family. Promotion requires native train/generate/server checks plus Mesh response eval; LM Studio can be recorded only as optional compatibility metadata and is not promotion-blocking.
+
 ## Data Plane
 
 `mesh_brain.data_plane` implements the first organized PRD plane. `MeshBrainDataRefinery` accepts source records, rejects records for other tenants, removes duplicates, redacts secret-like material, chunks content, extracts tool-call schemas, labels outcomes, and writes the five required JSONL outputs plus `dataset_manifest.json`. `build_context_training_data_plane()` is the posttraining ingestion path for mixed context: reference records, incident-corpus rows, runtime run sessions, and runtime run events. Public corpus rows are included for context and eval coverage, but remain audit-only unless their catalog metadata explicitly allows training use.
@@ -185,6 +193,45 @@ The probe checks `/v1/models`, runs a base-model `/v1/chat/completions` request,
 - quantization and QAT emit quantized checkpoint deployment outputs;
 - every job writes `training_job.json`, `model_card.json`, `deployment_manifest.json`, and `metrics.json`;
 - deployment manifests require a release gate before serving.
+
+## Quality Training
+
+`mesh_brain.quality_training` is the promotion-grade training gate above the deterministic proof runs. It builds curated runtime/corpus datasets from reference records, incident-corpus rows, control-plane run sessions, and runtime events. It writes SFT, preference, eval, red-team, and provenance rows so the training set is auditable before any adapter can be promoted.
+
+The quality plan records:
+
+- a measurable SFT stage with row count, iteration count, train/validation loss trend, NaN checks, and adapter checkpoint gate;
+- a DPO or ORPO preference stage with preference-pair count, iteration count, margin metric, and NaN checks;
+- concrete runtime evidence that adapter files were created and native inference completed;
+- a deterministic or injected LLM-as-judge comparison between base and adapter responses on Mesh policy/evidence tasks;
+- side-by-side policy-boundary, evidence-grounding, approval-gating, and unsupported-action-claim rubric scores;
+- a red-team regression gate that blocks unsafe adapter behavior;
+- a promotion gate that only promotes when SFT passed, runtime adapter evidence passed, preference training passed, the adapter beats base on aggregate and rubric-specific checks, and no red-team regression is found.
+
+`run_quality_training_plan()` writes `quality_dataset.json`, `quality_sft_stage.json`, `quality_preference_stage.json`, `quality_runtime_evidence.json`, `quality_eval_comparison.json`, `quality_promotion_gate.json`, and `quality_training_result.json`. It also writes JSONL split artifacts for `quality_sft_messages`, `quality_preference_pairs`, `quality_eval_prompts`, `quality_red_team_prompts`, and `quality_provenance`, plus a pinned `quality_split_manifest`. This is the quality-control contract for longer MLX or GPU training runs; it does not claim that a long live DPO/ORPO run has already been executed.
+
+Run the live Apple Silicon quality-training path with:
+
+```bash
+PYTHONPATH=. python3 -m mesh_brain.live_quality_training \
+  --output .mesh-runtime-state/mesh-brain/live-quality-training-nemotron \
+  --model mlx-community/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --sft-iters 20 \
+  --preference-iters 8 \
+  --preference-method orpo \
+  --json
+```
+
+The live runner writes MLX SFT and preference datasets, executes `mlx_lm_lora.train` for SFT and ORPO/DPO, runs native `mlx_lm.generate`, runs held-out prompts against base and adapter, and feeds the real responses into the quality gate. If MLX saves adapter weights but fails while writing fused full-model shards, Mesh Brain treats the adapter as usable only when the adapter file exists and native inference succeeds; the post-save failure remains visible in the command record.
+
+The live runner also combines local Mesh corpus sources before training:
+
+- `.mesh-runtime-state/corpus/incident_corpus.sqlite`;
+- recent `corpus.jsonl` rows under `.mesh-runtime-state/reth-kurtosis-loop`;
+- breakthrough evidence corpus rows;
+- cleaned public monitoring-corpus rows.
+
+Those rows are not fed to MLX as raw JSON. Mesh Brain synthesizes clean instruction examples from the source evidence, writes `clean_sft_messages.jsonl`, `clean_preference_pairs.jsonl`, `clean_eval_prompts.jsonl`, and `clean_provenance.jsonl`, and trains/evaluates on those clean examples while retaining source provenance.
 
 ## Inference Catalog
 
@@ -265,7 +312,7 @@ The smoke writes `live_serving_execution.json`, `live_smoke_gate.json`, `live_re
 
 `mesh_brain.live_feedback` turns blocked or manual-review live runs into data-plane feedback. It emits the existing five dataset row families from the failed/manual run context, including SFT, preference, RL trajectory, eval, and red-team rows. Promoted or canary-eligible runs are recorded as skipped feedback and do not create training rows.
 
-`mesh_brain.readiness_gaps` writes an explicit readiness report for the remaining non-MVP work. It marks live smoke ready, but full posttraining execution and MoE training/serving not ready until separate GPU-job and sparse-expert proofs exist.
+`mesh_brain.readiness_gaps` writes an explicit readiness report for the remaining non-MVP work. It marks live smoke ready, but full posttraining execution and MoE training/serving not ready until longer quality-training jobs and sparse-expert proofs exist.
 
 `build_serving_fabric_e2e()` proves:
 

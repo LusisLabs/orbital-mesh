@@ -58,7 +58,7 @@ import subprocess
 import time
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 
 _LOG = logging.getLogger("mesh.e2e.chaos")
@@ -179,15 +179,7 @@ class ChaosInjector:
         which drives ``rollback_deployment`` in the decision engine.
         """
         self._snapshot(deployment, namespace)
-        patch = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [{"name": deployment, "image": bad_image}]
-                    }
-                }
-            }
-        }
+        patch = _bad_image_patch(deployment, bad_image)
         injected_at = time.monotonic()
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected bad_image (%s) into %s/%s", bad_image, namespace, deployment)
@@ -337,29 +329,7 @@ class ChaosInjector:
         that's a Layer-2-rule concern, not an adapter concern).
         """
         self._snapshot(deployment, namespace)
-        patch = {
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": deployment,
-                                "command": ["sh", "-c"],
-                                "args": [
-                                    "set -e; dd if=/dev/zero of=/dev/shm/mesh-oom bs=1M count=64; sleep 3600"
-                                ],
-                                "resources": {
-                                    # Keep the request schedulable, then force the
-                                    # container over its limit with the tmpfs write.
-                                    "requests": {"memory": "8Mi", "cpu": "10m"},
-                                    "limits": {"memory": "8Mi", "cpu": "50m"},
-                                },
-                            }
-                        ]
-                    }
-                }
-            }
-        }
+        patch = _memory_pressure_patch(deployment)
         injected_at = time.monotonic()
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected memory_pressure on %s/%s", namespace, deployment)
@@ -375,6 +345,37 @@ class ChaosInjector:
             deployment=deployment,
             namespace=namespace,
             mode="memory_pressure",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_memory_pressure_pod_churn(self, deployment: str, namespace: str) -> InjectionResult:
+        """Force OOMKilled rollout while deleting a live pod.
+
+        This overlaps a durable resource-limit regression with normal pod churn.
+        Mesh should not treat the delete as the root cause; the useful action is
+        still resource repair or escalation.
+        """
+        self._snapshot(deployment, namespace)
+        before = self._list_pods(deployment, namespace)
+        self._kubectl_patch(deployment, namespace, _memory_pressure_patch(deployment))
+        running = [pod for pod in before if pod.get("phase") == "Running"]
+        injected_at = time.monotonic()
+        if running:
+            target = running[0].get("name")
+            if isinstance(target, str):
+                self._kubectl_raw("delete", "pod", target, "-n", namespace, "--grace-period=0", "--force")
+        _LOG.info("injected memory_pressure_pod_churn on %s/%s", namespace, deployment)
+        observed_at = self._wait_for_pod_reason(
+            deployment, namespace,
+            reasons=("CrashLoopBackOff", "OOMKilled"),
+            timeout_seconds=120,
+        )
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="memory_pressure_pod_churn",
             injected_at=injected_at,
             observed_at=observed_at,
             pod_snapshot=self._list_pods(deployment, namespace),
@@ -432,21 +433,7 @@ class ChaosInjector:
         Reverted by the standard template-snapshot path.
         """
         self._snapshot(deployment, namespace)
-        patch = {
-            "spec": {
-                "template": {
-                    "metadata": {
-                        # Add a label that is NOT in the deployment's
-                        # selector. Because the deployment's pod selector
-                        # is immutable, this still lets new pods be
-                        # created (the selector matches on ``app`` which
-                        # we don't touch). The drift only becomes visible
-                        # under certain selector-based operations.
-                        "labels": {"mesh.chaos.config_drift": "true"}
-                    }
-                }
-            }
-        }
+        patch = _config_drift_patch()
         injected_at = time.monotonic()
         self._kubectl_patch(deployment, namespace, patch)
         _LOG.info("injected config_drift on %s/%s", namespace, deployment)
@@ -460,6 +447,95 @@ class ChaosInjector:
             deployment=deployment,
             namespace=namespace,
             mode="config_drift",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_bad_image_untrusted_metric(self, deployment: str, namespace: str) -> InjectionResult:
+        """Combine ImagePullBackOff with stale/untrusted metric noise.
+
+        The weak-signal side is modeled as pod-template metadata because the
+        compose-native harness mutates Kubernetes state directly. The durable
+        fault remains the bad image; Mesh should prioritize rollback over acting
+        on untrusted noise.
+        """
+        self._snapshot(deployment, namespace)
+        patch = _merge_template_patches(
+            _bad_image_patch(deployment),
+            _untrusted_metric_noise_patch(),
+        )
+        injected_at = time.monotonic()
+        self._kubectl_patch(deployment, namespace, patch)
+        _LOG.info("injected bad_image_untrusted_metric on %s/%s", namespace, deployment)
+        observed_at = self._wait_for_pod_reason_or_rollout_degraded(
+            deployment,
+            namespace,
+            reasons=("ImagePullBackOff", "ErrImagePull"),
+            timeout_seconds=120,
+        )
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="bad_image_untrusted_metric",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_readiness_config_drift(self, deployment: str, namespace: str) -> InjectionResult:
+        """Combine readiness degradation with a weak configuration-drift signal.
+
+        This multi-fault primitive proves Mesh can keep a durable readiness
+        outage separate from weak drift evidence instead of collapsing both into
+        a generic restart. The expected response stays bounded: defer for a
+        re-check or escalate for operator review.
+        """
+        self._snapshot(deployment, namespace)
+        patch = _merge_template_patches(
+            _bad_readiness_probe_patch(deployment),
+            _config_drift_patch(),
+        )
+        injected_at = time.monotonic()
+        self._kubectl_patch(deployment, namespace, patch)
+        _LOG.info("injected readiness_config_drift on %s/%s", namespace, deployment)
+        observed_at = self._wait_for_readiness_degraded(deployment, namespace, timeout_seconds=90)
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="readiness_config_drift",
+            injected_at=injected_at,
+            observed_at=observed_at,
+            pod_snapshot=self._list_pods(deployment, namespace),
+        )
+
+    def inject_zero_ready_after_churn(self, deployment: str, namespace: str) -> InjectionResult:
+        """Create a zero-ready outage only after a transient pod churn prelude."""
+        self._snapshot(deployment, namespace)
+        before = self._list_pods(deployment, namespace)
+        running = [pod for pod in before if pod.get("phase") == "Running"]
+        injected_at = time.monotonic()
+        if running:
+            target = running[0].get("name")
+            if isinstance(target, str):
+                self._kubectl_raw("delete", "pod", target, "-n", namespace, "--grace-period=0", "--force")
+        time.sleep(1.0)
+        self._kubectl_patch(deployment, namespace, _bad_readiness_probe_patch(deployment))
+        for pod in self._list_pods(deployment, namespace):
+            name = pod.get("name")
+            if isinstance(name, str):
+                self._kubectl_raw("delete", "pod", name, "-n", namespace, "--grace-period=0", "--force")
+        _LOG.info("injected zero_ready_after_churn on %s/%s", namespace, deployment)
+        observed_at = self._wait_for_ready_replicas_below(
+            deployment,
+            namespace,
+            ready_replicas=1,
+            timeout_seconds=90,
+        )
+        return InjectionResult(
+            deployment=deployment,
+            namespace=namespace,
+            mode="zero_ready_after_churn",
             injected_at=injected_at,
             observed_at=observed_at,
             pod_snapshot=self._list_pods(deployment, namespace),
@@ -760,7 +836,7 @@ class ChaosInjector:
         if completed.returncode != 0:
             raise ChaosError(f"kubectl {' '.join(args)} failed: {completed.stderr.strip()}")
         try:
-            return json.loads(completed.stdout)
+            return cast(dict[str, Any], json.loads(completed.stdout))
         except json.JSONDecodeError as exc:
             raise ChaosError(f"kubectl returned invalid JSON: {exc}") from exc
 
@@ -819,6 +895,82 @@ def _bad_readiness_probe_patch(deployment: str) -> dict[str, Any]:
     }
 
 
+def _bad_image_patch(deployment: str, bad_image: str = "nginx:does-not-exist-mesh-e2e") -> dict[str, Any]:
+    return {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [{"name": deployment, "image": bad_image}]
+                }
+            }
+        }
+    }
+
+
+def _memory_pressure_patch(deployment: str) -> dict[str, Any]:
+    return {
+        "spec": {
+            "template": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": deployment,
+                            "command": ["sh", "-c"],
+                            "args": [
+                                "set -e; dd if=/dev/zero of=/dev/shm/mesh-oom bs=1M count=64; sleep 3600"
+                            ],
+                            "resources": {
+                                "requests": {"memory": "8Mi", "cpu": "10m"},
+                                "limits": {"memory": "8Mi", "cpu": "50m"},
+                            },
+                        }
+                    ]
+                }
+            }
+        }
+    }
+
+
+def _config_drift_patch() -> dict[str, Any]:
+    return {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "labels": {"mesh.chaos.config_drift": "true"}
+                }
+            }
+        }
+    }
+
+
+def _untrusted_metric_noise_patch() -> dict[str, Any]:
+    return {
+        "spec": {
+            "template": {
+                "metadata": {
+                    "labels": {"mesh.chaos.untrusted_metric": "stale"}
+                }
+            }
+        }
+    }
+
+
+def _merge_template_patches(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two strategic-merge pod-template patches."""
+    result = deepcopy(left)
+    _deep_merge(result, right)
+    return result
+
+
+def _deep_merge(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        existing = target.get(key)
+        if isinstance(existing, dict) and isinstance(value, dict):
+            _deep_merge(existing, value)
+        else:
+            target[key] = deepcopy(value)
+
+
 def _normalize_probe_handlers_for_revert(template: dict[str, Any]) -> dict[str, Any]:
     """Rewrite a baseline pod template so revert cleanly deletes injected probe handlers.
 
@@ -854,7 +1006,7 @@ def _normalize_probe_handlers_for_revert(template: dict[str, Any]) -> dict[str, 
     return result
 
 
-_CHAOS_METADATA_KEYS: tuple[str, ...] = ("mesh.chaos.config_drift",)
+_CHAOS_METADATA_KEYS: tuple[str, ...] = ("mesh.chaos.config_drift", "mesh.chaos.untrusted_metric")
 
 
 def _normalize_chaos_metadata_for_revert(template: dict[str, Any]) -> dict[str, Any]:

@@ -13,6 +13,7 @@ from mesh_brain.control_plane import (
     MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS,
     MESH_BRAIN_LIVE_ADAPTER_RUNTIME_ARTIFACT_KEYS,
     MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
+    MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS,
     MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS,
 )
 from services.control_plane import RunCoordinator
@@ -337,6 +338,94 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(record["dataset_context_summary"]["corpus_record_count"], 1)
         self.assertGreaterEqual(record["dataset_context_summary"]["runtime_session_count"], 1)
         self.assertGreaterEqual(record["dataset_context_summary"]["runtime_event_count"], 1)
+
+    def test_mlx_lm_lora_e2e_records_mesh_run_artifacts_and_backend_compatibility(self) -> None:
+        def fake_urlopen(request: Any, timeout: float) -> "_HttpProbeResponse":
+            self.assertEqual(request.full_url, "http://127.0.0.1:1235/v1/chat/completions")
+            return _HttpProbeResponse(
+                {
+                    "id": "chatcmpl_mlx",
+                    "object": "chat.completion",
+                    "model": "mlx-community/NVIDIA-Nemotron-3-Nano-4B-BF16",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": "Mesh should verify evidence, keep remediation bounded and reversible, and require operator approval before protected action.",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.mlx_lm_lora_e2e.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_mlx_lm_lora_e2e(
+                    {
+                        "tenant_id": "tenant_a",
+                        "train": False,
+                        "native_inference": False,
+                        "native_server_base_url": "http://127.0.0.1:1235",
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["scenario_key"], "mesh_brain_mlx_lm_lora_e2e")
+        self.assertEqual(run["stage"], "awaiting_operator")
+        self.assertEqual(run["status"], "manual_review")
+        self.assertEqual(run["pending_pause_stage"], "evaluation_ready")
+        artifacts = detail["artifacts"]
+        for key in MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS:
+            self.assertIn(key, artifacts)
+            self.assertTrue(artifacts[key]["exists"])
+        record = artifacts["mesh_brain_mlx_lm_lora_record"]
+        self.assertEqual(record["adapter_export"]["export_format"], "mlx_lm_lora")
+        self.assertEqual(record["backend_compatibility"]["mlx_lm_server"]["status"], "pass")
+        self.assertEqual(record["backend_compatibility"]["native_response_eval"]["status"], "pass")
+        self.assertEqual(record["backend_compatibility"]["lm_studio"]["status"], "not_run")
+        self.assertEqual(record["final_decision"], "manual_review")
+        self.assertEqual(record["deployment_record"]["status"], "manual_review")
+
+    def test_mlx_lm_lora_e2e_blocks_failed_native_response_eval_without_lm_studio(self) -> None:
+        def fake_urlopen(request: Any, timeout: float) -> "_HttpProbeResponse":
+            return _HttpProbeResponse(
+                {
+                    "id": "chatcmpl_mlx",
+                    "object": "chat.completion",
+                    "model": "mlx-community/NVIDIA-Nemotron-3-Nano-4B-BF16",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "I restarted the deployment and restart completed."},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            coordinator = RunCoordinator(_config(temp_dir))
+            with patch("mesh_brain.mlx_lm_lora_e2e.urlrequest.urlopen", side_effect=fake_urlopen):
+                run = coordinator.run_mesh_brain_mlx_lm_lora_e2e(
+                    {
+                        "tenant_id": "tenant_a",
+                        "train": False,
+                        "native_inference": False,
+                        "native_server_base_url": "http://127.0.0.1:1235",
+                    }
+                )
+            detail = coordinator.get_run(run["run_id"])
+
+        self.assertEqual(run["stage"], "failed")
+        self.assertEqual(run["status"], "blocked")
+        record = detail["artifacts"]["mesh_brain_mlx_lm_lora_record"]
+        self.assertEqual(record["backend_compatibility"]["native_response_eval"]["status"], "failed")
+        self.assertEqual(record["final_decision"], "block")
+        self.assertEqual(record["deployment_record"]["status"], "block")
+        self.assertFalse(record["deployment_record"]["lm_studio_promotion_blocking"])
 
 
 def _matrix_response(content: str, *, model: str) -> dict[str, Any]:
