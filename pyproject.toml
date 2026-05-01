@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "post-training"
+version = "0.1.0"
+description = "Model lifecycle plane (data refinery, training jobs, eval, serving) extracted from Mesh."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [
+    { name = "Hyperstrategy" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+mlx = []
+dev = [
+    "pytest>=7.0",
+]
+
+[tool.setuptools]
+packages = ["mesh_brain"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
