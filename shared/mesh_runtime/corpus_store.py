@@ -1,8 +1,15 @@
-"""Durable incident-corpus database and memory projection helpers."""
+"""Durable incident-corpus database and memory projection helpers.
+
+Single-tenant by design. A Mesh deployment monitors one operational fleet
+(its set of nodes / services); multi-tenant isolation is not modeled here.
+If this assumption ever changes, every query in this module must grow a
+tenant-id predicate — there is no implicit scoping.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -17,6 +24,8 @@ from .breakthrough import (
     promotion_pattern_counts,
 )
 
+
+_LOG = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 1
 
@@ -124,16 +133,49 @@ class IncidentCorpusDatabase:
             self._upsert_fts(conn, row)
 
     def import_jsonl(self, path: str | Path) -> int:
+        """Import a JSONL corpus file row by row.
+
+        Malformed lines are logged and skipped rather than aborting the import —
+        a single bad line in a 100k-row export shouldn't lose the other 99,999
+        good rows. Return value is the count of rows successfully imported.
+        """
+
         imported = 0
+        skipped_parse = 0
+        skipped_upsert = 0
         jsonl_path = Path(path)
         if not jsonl_path.is_file():
             return 0
-        for raw in jsonl_path.read_text(encoding="utf-8").splitlines():
+        for line_no, raw in enumerate(
+            jsonl_path.read_text(encoding="utf-8").splitlines(), start=1,
+        ):
             line = raw.strip()
             if not line:
                 continue
-            self.upsert_row(json.loads(line))
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                skipped_parse += 1
+                _LOG.warning(
+                    "corpus_store: skipping malformed JSON at %s:%d: %s",
+                    jsonl_path, line_no, exc,
+                )
+                continue
+            try:
+                self.upsert_row(row)
+            except (KeyError, TypeError, ValueError, sqlite3.Error) as exc:
+                skipped_upsert += 1
+                _LOG.warning(
+                    "corpus_store: skipping unupsertable row at %s:%d: %s",
+                    jsonl_path, line_no, exc,
+                )
+                continue
             imported += 1
+        if skipped_parse or skipped_upsert:
+            _LOG.info(
+                "corpus_store: %s import complete — %d imported, %d parse-skipped, %d upsert-skipped",
+                jsonl_path, imported, skipped_parse, skipped_upsert,
+            )
         return imported
 
     def import_jsonl_files(self, paths: Sequence[str | Path]) -> int:

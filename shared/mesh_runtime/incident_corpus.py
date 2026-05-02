@@ -1,4 +1,8 @@
-"""Normalize Mesh run artifacts into incident-corpus training rows."""
+"""Normalize Mesh run artifacts into incident-corpus training rows.
+
+Single-tenant by design. See ``corpus_store.py`` for the same caveat —
+rows produced here flow into the corpus DB without a tenant predicate.
+"""
 
 from __future__ import annotations
 
