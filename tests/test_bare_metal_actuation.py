@@ -21,8 +21,10 @@ from dataclasses import replace
 from unittest.mock import patch
 
 from services.actuators.systemd_ssh import SystemdSshAdapter
+from services.decision.hypothesis_engine import HypothesisEngine
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
+from services.evidence import EvidenceService
 from services.ingest.bare_metal_node import (
     BareMetalNodeTarget,
     EthereumNodeIngester,
@@ -50,6 +52,14 @@ def _bare_metal_config(**overrides) -> RuntimeConfig:
     )
     defaults.update(overrides)
     return replace(RuntimeConfig(), **defaults)
+
+
+def _decide_with_evidence(trigger, signal):
+    evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+    return DecisionService(hypothesis_engine=HypothesisEngine()).decide(
+        trigger,
+        evidence_pack=evidence_pack.to_dict(),
+    )
 
 
 # ---------------------------------------------------------------- SSH adapter
@@ -551,7 +561,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         self.assertIsNotNone(trigger)
 
         load_metric_action_rules.cache_clear()
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
 
         # The starter rule should match and route to the systemd_service path.
         self.assertEqual(decision.decision_type, "restart_systemd_service")
@@ -575,7 +585,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         trigger = TriggerService().detect(envelope)
         self.assertIsNotNone(trigger)
         load_metric_action_rules.cache_clear()
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
         self.assertEqual(decision.decision_type, "restart_systemd_service")
         self.assertEqual(decision.execution_plan["parameters"]["host"], "eth-archival-02")
 
@@ -592,7 +602,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         self.assertIsNotNone(trigger)
         self.assertEqual(trigger.trigger_type, "reth_node_degraded")
 
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
 
         self.assertEqual(decision.decision_type, "restart_systemd_service")
         self.assertEqual(decision.autonomy_tier, "approval_required")
@@ -613,7 +623,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
 
         trigger = TriggerService().detect(IngestService().normalize_signal(payload))
         self.assertIsNotNone(trigger)
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, payload)
 
         self.assertEqual(decision.decision_type, "escalate")
         self.assertEqual(decision.execution_plan["system"], "incident_service")
@@ -632,7 +642,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         trigger = TriggerService().detect(IngestService().normalize_signal(signal))
         self.assertIn("rpc_exposed", trigger.related_context["error_signatures"])
         self.assertIn("authrpc_exposed", trigger.related_context["error_signatures"])
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
         self.assertEqual(decision.decision_type, "escalate")
 
     def test_reth_restart_frequency_cap_escalates(self) -> None:
@@ -645,7 +655,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         signal["related_context"]["systemd_restarts_last_1h"] = 1
 
         trigger = TriggerService().detect(IngestService().normalize_signal(signal))
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
 
         self.assertEqual(decision.decision_type, "escalate")
         self.assertIn("restart_frequency_exceeded", decision.reasoning["evidence_pack"]["error_signatures"])
@@ -662,7 +672,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         ):
             signal = ingester.build_signal()
         trigger = TriggerService().detect(IngestService().normalize_signal(signal))
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
 
         service = EvaluationService(config=RuntimeConfig())
         ready, notes = service._systemd_service_ready(decision)
@@ -679,7 +689,7 @@ class BareMetalDecisionFlowTests(unittest.TestCase):
         ):
             signal = ingester.build_signal()
         trigger = TriggerService().detect(IngestService().normalize_signal(signal))
-        decision = DecisionService().decide(trigger)
+        decision = _decide_with_evidence(trigger, signal)
 
         config = replace(
             RuntimeConfig(),

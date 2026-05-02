@@ -196,6 +196,37 @@ export interface ScenarioRecord {
   };
 }
 
+export interface SimulationScenarioRecord {
+  scenario_id: string;
+  title: string;
+  signal_payload: Record<string, any>;
+  expected_decision_type?: string | null;
+  expected_outcome?: string | null;
+  fault_type: string;
+  sandbox: Record<string, any>;
+  tags: string[];
+  standards_refs: string[];
+}
+
+export interface BenchmarkRecord {
+  benchmark_id: string;
+  run_id: string;
+  scenario_id: string;
+  recorded_at: string;
+  score: number;
+  passed: boolean;
+  dimensions: Record<string, any>;
+  dataset_ref?: string | null;
+}
+
+export interface ServiceAgentRecord {
+  service: string;
+  scope: Record<string, string[]>;
+  runbook_path?: string | null;
+  preferred_lanes: string[];
+  autonomy_overrides: Record<string, string>;
+}
+
 export interface EvoLaunchRecord {
   launch_id: string;
   action: string;
@@ -275,6 +306,99 @@ export interface ResearchCorpusIntelligence {
   accepted_anchors: Array<{ key: string; label: string; session_count: number }>;
   drift_sessions: Array<{ session_id: string; directory: string; off_domain_terms: string[] }>;
   next_actions: string[];
+}
+
+export type LabyrinthSeverity = "info" | "warning" | "danger" | "success";
+export type LabyrinthThread = "main" | "evidence" | "threshold" | "execution" | "memory" | "watcher";
+
+export interface LabyrinthJourney {
+  id: string;
+  kind: "run" | "research" | "watcher";
+  source: string;
+  title: string;
+  status: string;
+  summary: string;
+  updated_at: string;
+  event_count: number;
+  risk_level?: string | null;
+  selected?: boolean;
+}
+
+export interface LabyrinthCrossing {
+  id: string;
+  journey_id: string;
+  type: string;
+  label: string;
+  status: string;
+  thread: LabyrinthThread;
+  sequence: number;
+  recorded_at?: string | null;
+  duration_ms?: number | null;
+  actor?: string | null;
+  target?: string | null;
+  preview_in?: string | null;
+  preview_out?: string | null;
+  event_id?: string | null;
+  artifact_key?: string | null;
+  evidence_refs: string[];
+  severity: LabyrinthSeverity;
+}
+
+export interface LabyrinthGuidepost {
+  id: string;
+  journey_id: string;
+  severity: LabyrinthSeverity;
+  title: string;
+  detail: string;
+  evidence_refs: string[];
+}
+
+export interface EvidenceGraphNode {
+  id: string;
+  type: string;
+  label?: string | null;
+  analyzer?: string | null;
+  confidence?: number | null;
+  requires_review?: boolean | null;
+  merkle_root?: string | null;
+}
+
+export interface EvidenceGraphEdge {
+  source: string;
+  target: string;
+  kind?: string | null;
+}
+
+export interface EvidenceGraph {
+  nodes: EvidenceGraphNode[];
+  edges: EvidenceGraphEdge[];
+  merkle_root?: string | null;
+}
+
+export interface ScenarioAnalysis {
+  analysis_id: string;
+  trigger_id: string;
+  created_at: string;
+  suggested_decision_type: string;
+  confidence: number;
+  risk_level: string;
+  autonomy_tier_hint: string;
+  required_review_reasons: string[];
+  evidence_refs: string[];
+  evidence_nodes: Array<Record<string, any>>;
+  subdecisions: Array<Record<string, any>>;
+  merkle_root?: string | null;
+  merkle_event_ids?: string[];
+}
+
+export interface WatcherStatus {
+  watchers: Array<{
+    name: string;
+    signal_source: string;
+    interval_seconds: number;
+    running: boolean;
+    detail?: Record<string, any>;
+  }>;
 }
 
 export interface VaultTreeEntry {

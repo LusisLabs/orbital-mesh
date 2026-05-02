@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, ClassVar
+from typing import Any, ClassVar, TypeVar
 
 from .schema_validation import validate_payload
+
+ContractModelT = TypeVar("ContractModelT", bound="ContractModel")
 
 
 @dataclass
@@ -19,7 +21,7 @@ class ContractModel:
         return payload
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]):
+    def from_dict(cls: type[ContractModelT], payload: dict[str, Any]) -> ContractModelT:
         validate_payload(cls.schema_name, payload)
         return cls(**payload)
 
@@ -99,6 +101,7 @@ class ScenarioAnalysis(ContractModel):
     evidence_nodes: list[dict[str, Any]]
     merkle_root: str | None = None
     merkle_event_ids: list[str] | None = None
+    quality_measurements: dict[str, Any] | None = None
 
 
 @dataclass
@@ -239,3 +242,4 @@ class FeedbackRecord(ContractModel):
     side_effects: list[dict[str, Any] | str]
     world_model_updates: dict[str, Any]
     recommended_follow_up: str | None = None
+    quality_measurements: dict[str, Any] | None = None

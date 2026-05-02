@@ -31,11 +31,13 @@ _TERMINAL_BLOCKER_PATTERNS = (
     "action is not idempotent",
     "rollback parameters are missing",
     "required credentials are unavailable",
+    "remediation safety case has hard stops",
 )
 
 _RECOVERABLE_BLOCKER_PATTERNS = (
-    "promptfoo quality gate did not pass",
+    "trajectory quality gate did not pass",
     "confidence below minimum threshold",
+    "remediation safety score below execution threshold",
     "repo path is missing or does not exist",
     "allowed repo patch paths are missing",
     "bounded test commands are missing",
@@ -44,7 +46,7 @@ _RECOVERABLE_BLOCKER_PATTERNS = (
 )
 
 _RETRY_HINTS = {
-    "promptfoo quality gate did not pass": "Expand grounded evidence and rerun Promptfoo against the updated decision context.",
+    "trajectory quality gate did not pass": "Expand grounded evidence and rerun the Mesh trajectory scorer against the updated run context.",
     "confidence below minimum threshold": "Add corroborating evidence from prior runs, active memory, or historical outcomes before reevaluating.",
     "conflicting signals are present": "Collect corroborating evidence to disambiguate the conflicting telemetry before rerunning.",
     "historical success rate is weak for": "Bring in stronger verification or service-specific prior cases before retrying the action.",

@@ -110,6 +110,16 @@ class ChaosExperiment:
     # shouldn't trigger.
     tags: frozenset[str] = field(default_factory=frozenset)
 
+    # Capability axes this experiment exercises. The intelligent
+    # scheduler uses these to avoid repeatedly proving the same path
+    # while leaving other decision surfaces untouched.
+    capability_axes: frozenset[str] = field(default_factory=frozenset)
+
+    # Optional per-primitive delay before launching the Mesh observation run.
+    # Durable faults use the session-wide hold. Transient faults can override
+    # this so Mesh observes the failure while the signal still exists.
+    observation_delay_seconds: float | None = None
+
 
 # The default portfolio. Tuned for a 60-minute session on a 2-worker
 # kind cluster; adjust weights if your session duration, cluster size,
@@ -131,6 +141,11 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"restart_deployment", "rollback_deployment"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_crash_loop",
+            "choose_restart_or_rollback",
+            "recover_after_spec_revert",
+        }),
     ),
     ChaosExperiment(
         name="bad_image",
@@ -139,14 +154,24 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         severity=SEVERITY_HIGH,
         expected_decisions=frozenset({"rollback_deployment"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_image_pull_failure",
+            "choose_rollback",
+            "recover_after_spec_revert",
+        }),
     ),
     ChaosExperiment(
         name="readiness_failure",
         description="Readiness probe points at a closed port; pods stay unready.",
         weight=1.0,
         severity=SEVERITY_MEDIUM,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
+        expected_decisions=frozenset({"defer_until", "escalate"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_readiness_degradation",
+            "distinguish_running_from_ready",
+            "choose_restart_or_rollback",
+        }),
     ),
     ChaosExperiment(
         name="pod_kill_one",
@@ -159,22 +184,52 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         expected_decisions=frozenset(),
         cooldown_seconds=30,
         tags=frozenset({"false_positive_probe"}),
+        capability_axes=frozenset({
+            "suppress_transient_pod_churn",
+            "avoid_false_positive_remediation",
+        }),
     ),
     ChaosExperiment(
         name="pod_kill_all",
-        description="Delete every pod of the deployment; readyReplicas hits zero.",
+        description="Delete every pod and hold replacement pods unready; readyReplicas stays at zero long enough to observe.",
         weight=1.5,
         severity=SEVERITY_HIGH,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment", "escalate"}),
+        expected_decisions=frozenset({"defer_until", "escalate", "restart_deployment", "rollback_deployment"}),
         cooldown_seconds=90,
+        capability_axes=frozenset({
+            "detect_zero_ready_replicas",
+            "separate_transient_from_service_outage",
+            "choose_restart_or_rollback",
+        }),
+        observation_delay_seconds=5.0,
     ),
     ChaosExperiment(
         name="memory_pressure",
         description="Memory limit dropped to 2Mi; container OOMKills on first allocation.",
         weight=1.0,
         severity=SEVERITY_HIGH,
-        expected_decisions=frozenset({"restart_deployment", "rollback_deployment"}),
+        expected_decisions=frozenset({"patch_resources", "escalate"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_oom_kill",
+            "infer_resource_pressure",
+            "choose_restart_or_rollback",
+        }),
+    ),
+    ChaosExperiment(
+        name="memory_pressure_pod_churn",
+        description="Memory pressure overlaps with a live pod delete; resource repair should stay dominant.",
+        weight=0.6,
+        severity=SEVERITY_HIGH,
+        expected_decisions=frozenset({"patch_resources", "escalate"}),
+        cooldown_seconds=180,
+        tags=frozenset({"multi_fault"}),
+        capability_axes=frozenset({
+            "detect_oom_kill",
+            "infer_resource_pressure",
+            "suppress_transient_pod_churn",
+            "separate_memory_pressure_from_pod_churn_multifault",
+        }),
     ),
     ChaosExperiment(
         name="scale_to_zero",
@@ -186,20 +241,82 @@ DEFAULT_PORTFOLIO: tuple[ChaosExperiment, ...] = (
         # have intended the scale-down). Both acceptable.
         expected_decisions=frozenset({"escalate", "restart_deployment", "no_action"}),
         cooldown_seconds=120,
+        capability_axes=frozenset({
+            "detect_intentional_zero_replicas",
+            "avoid_over_remediation",
+            "escalate_ambiguous_operator_intent",
+        }),
     ),
     ChaosExperiment(
         name="config_drift",
         description="Pod template gains an unexpected label; deployment rolls forward silently.",
         weight=0.5,
         severity=SEVERITY_MEDIUM,
-        # Config drift is the subtlest signal — Mesh may not have any
-        # visible symptom to act on. no_trigger or no_action are both
-        # defensible. If Mesh escalates, that's also fine (a human
-        # should look at the drift).
-        expected_decisions=frozenset({"escalate", "no_action"}),
+        # Config drift is a weak signal, but once the drift is observed the
+        # correct response is bounded human review rather than pretending the
+        # deployment is clean.
+        expected_decisions=frozenset({"escalate"}),
         cooldown_seconds=180,
         tags=frozenset({"subtle_fault"}),
+        capability_axes=frozenset({
+            "detect_configuration_drift",
+            "handle_weak_signal",
+            "escalate_ambiguous_operator_intent",
+        }),
     ),
+    ChaosExperiment(
+        name="readiness_config_drift",
+        description="Readiness degradation overlaps with weak pod-template configuration drift.",
+        weight=0.7,
+        severity=SEVERITY_HIGH,
+        expected_decisions=frozenset({"defer_until", "escalate"}),
+        cooldown_seconds=180,
+        tags=frozenset({"multi_fault", "subtle_fault"}),
+        capability_axes=frozenset({
+            "detect_configuration_drift",
+            "detect_readiness_degradation",
+            "distinguish_running_from_ready",
+            "handle_weak_signal",
+            "separate_readiness_config_drift_multifault",
+        }),
+    ),
+    ChaosExperiment(
+        name="bad_image_untrusted_metric",
+        description="ImagePullBackOff overlaps with stale untrusted metric noise.",
+        weight=0.5,
+        severity=SEVERITY_HIGH,
+        expected_decisions=frozenset({"rollback_deployment"}),
+        cooldown_seconds=180,
+        tags=frozenset({"multi_fault", "subtle_fault"}),
+        capability_axes=frozenset({
+            "detect_image_pull_failure",
+            "choose_rollback",
+            "handle_weak_signal",
+            "suppress_stale_untrusted_metric",
+            "prioritize_image_pull_over_untrusted_metric_noise",
+        }),
+    ),
+    ChaosExperiment(
+        name="zero_ready_after_churn",
+        description="A transient pod delete is followed by durable zero-ready replacement pods.",
+        weight=0.6,
+        severity=SEVERITY_HIGH,
+        expected_decisions=frozenset({"defer_until", "escalate", "restart_deployment", "rollback_deployment"}),
+        cooldown_seconds=180,
+        tags=frozenset({"multi_fault"}),
+        capability_axes=frozenset({
+            "detect_zero_ready_replicas",
+            "separate_transient_from_service_outage",
+            "suppress_transient_pod_churn",
+            "separate_zero_ready_after_transient_churn_multifault",
+        }),
+        observation_delay_seconds=5.0,
+    ),
+)
+
+
+CAPABILITY_AXES: frozenset[str] = frozenset(
+    axis for experiment in DEFAULT_PORTFOLIO for axis in experiment.capability_axes
 )
 
 
@@ -219,6 +336,7 @@ def select_by_name(name: str, portfolio: tuple[ChaosExperiment, ...] = DEFAULT_P
 
 __all__ = [
     "ChaosExperiment",
+    "CAPABILITY_AXES",
     "DEFAULT_PORTFOLIO",
     "SEVERITY_HIGH",
     "SEVERITY_LOW",

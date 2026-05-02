@@ -107,6 +107,20 @@ def collect_kubernetes_signal(
     # both an absolute timestamp (for the audit trail) and the relative
     # age in seconds (for the decision engine's threshold check).
     seconds_since_deploy = _seconds_since(rollout_started_at)
+    related_context = _related_context(
+        active_context=active_context,
+        repo_path=repo_path,
+        suspected_file=suspected_file,
+        allowed_paths=allowed_paths or [],
+        test_commands=test_commands or [],
+        patch_template=patch_template,
+    )
+    configuration_drift = _configuration_drift_signals(deployment)
+    if configuration_drift:
+        related_context["configuration_drift"] = configuration_drift
+    resource_pressure = _resource_pressure_signals(deployment)
+    if resource_pressure:
+        related_context["resource_pressure"] = resource_pressure
     signal = {
         "signal_type": "kubernetes_deployment_issue",
         "signal_id": f"sig_k8s_{_slugify(namespace)}_{_slugify(deployment_name)}_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
@@ -140,14 +154,7 @@ def collect_kubernetes_signal(
         ],
         "events": events,
         "logs": log_entries,
-        "related_context": _related_context(
-            active_context=active_context,
-            repo_path=repo_path,
-            suspected_file=suspected_file,
-            allowed_paths=allowed_paths or [],
-            test_commands=test_commands or [],
-            patch_template=patch_template,
-        ),
+        "related_context": related_context,
         "post_action_observations": {},
     }
     return signal
@@ -207,15 +214,75 @@ def _selector(match_labels: dict[str, str]) -> str:
     return ",".join(f"{key}={value}" for key, value in sorted(match_labels.items()))
 
 
+def _configuration_drift_signals(deployment: dict[str, Any]) -> list[dict[str, str]]:
+    template = deployment.get("spec", {}).get("template", {})
+    metadata = template.get("metadata", {})
+    signals: list[dict[str, str]] = []
+    for field in ("labels", "annotations"):
+        values = metadata.get(field, {})
+        if not isinstance(values, dict):
+            continue
+        for key, value in sorted(values.items()):
+            if str(key).startswith("mesh.chaos."):
+                signals.append({"field": field, "key": str(key), "value": str(value)})
+    return signals
+
+
+def _resource_pressure_signals(deployment: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose obviously unsafe resource limits as decision context."""
+    containers = deployment.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [])
+    signals: list[dict[str, Any]] = []
+    for container in containers:
+        if not isinstance(container, dict):
+            continue
+        resources = container.get("resources") or {}
+        limits = resources.get("limits") or {}
+        memory = limits.get("memory")
+        memory_bytes = _parse_memory_quantity(memory)
+        if memory_bytes is not None and memory_bytes <= 16 * 1024 * 1024:
+            signals.append({
+                "container": str(container.get("name") or "unknown"),
+                "limit": str(memory),
+                "limit_bytes": memory_bytes,
+                "reason": "memory_limit_too_low",
+            })
+    return signals
+
+
+def _parse_memory_quantity(raw: Any) -> int | None:
+    if not isinstance(raw, str) or not raw:
+        return None
+    import re
+    match = re.fullmatch(r"([0-9]+)([KMGTE]i?|[kmgte]i?)?", raw.strip())
+    if match is None:
+        return None
+    value = int(match.group(1))
+    suffix = (match.group(2) or "").lower()
+    multipliers = {
+        "": 1,
+        "k": 1000,
+        "m": 1000 ** 2,
+        "g": 1000 ** 3,
+        "t": 1000 ** 4,
+        "e": 1000 ** 5,
+        "ki": 1024,
+        "mi": 1024 ** 2,
+        "gi": 1024 ** 3,
+        "ti": 1024 ** 4,
+        "ei": 1024 ** 5,
+    }
+    return value * multipliers[suffix]
+
+
 def _event_matches(item: dict[str, Any], deployment_name: str, pod_names: set[str | None]) -> bool:
     involved = item.get("involvedObject", {})
     name = involved.get("name")
     kind = involved.get("kind")
     if name == deployment_name and kind == "Deployment":
         return True
-    if name in pod_names and kind == "Pod":
+    if name is not None and name in pod_names and kind == "Pod":
         return True
-    return bool(name and name.startswith(f"{deployment_name}-") and kind in {"ReplicaSet", "Pod"})
+    return bool(name and name.startswith(f"{deployment_name}-") and kind == "ReplicaSet")
 
 
 def _event_window_cutoff() -> datetime:
@@ -354,6 +421,8 @@ def _rollout_status(payload: dict[str, Any]) -> str:
     for condition in status.get("conditions", []):
         if condition.get("type") == "Progressing" and condition.get("reason") == "ProgressDeadlineExceeded":
             return "failed"
+    if desired == 0:
+        return "healthy"
     if desired > 0 and available >= desired and updated >= desired:
         return "healthy"
     if available == 0 and updated < desired:

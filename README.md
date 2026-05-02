@@ -21,10 +21,11 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Dimension | Mesh behavior |
 |-----------|----------------|
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
-- Browser-first control plane served by `run_server.py`
+- Internal `MeshControl` OS companion served by the Compose `mesh-ui` sidecar
+- Browser-first Vite control plane served by `run_server.py`
 - Curses TUI served by `run_tui.py` for terminal-native inspection
 
-The browser UI is the primary interface.
+`MeshControl` is the primary internal operator interface. The Vite browser UI remains a migration reference while native OS coverage catches up.
 
 ## What It Does
 
@@ -38,8 +39,8 @@ The browser UI is the primary interface.
 - Computes Merkle roots for canonical run events and returns proofs per event
 - Integrates with a local code/process inspection surface for repository context
 - Supports two evaluation modes:
-  - `native`
-  - `promptfoo`
+  - `native` Mesh trajectory evaluation
+  - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
 - Supports three orchestration modes:
   - `native`
   - `goose`
@@ -72,7 +73,7 @@ Steering is bounded. Supported commands are:
 - `attach_note`
 
 Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
-Recoverable blockers such as low confidence or Promptfoo failures can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
+Recoverable blockers such as low confidence or failed trajectory scorers can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
 
 ## Runtime Modes
 
@@ -80,11 +81,11 @@ Runs choose one evaluation mode and one orchestration mode.
 
 ### Evaluation: `native`
 
-Default local evaluation path. Uses in-process policy and contract validation without external CLIs.
+Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory.
 
 ### Evaluation: `promptfoo`
 
-CLI-backed evaluation mode. `setup_integrations.py` resolves this to a bridge command that runs a real Promptfoo eval and returns the Mesh evaluation contract. Readiness is reported explicitly through the API and UI.
+Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
 
 ### Orchestration: `native`
 
@@ -134,7 +135,8 @@ mesh-intelligence/
 │   ├── merkle.py
 │   ├── vault.py
 │   └── state.py
-├── web/                             # React/Vite browser control plane
+├── web/                             # React/Vite browser control plane, retained as parity reference
+├── purnaOS-main/                    # Purna Labs OS shell and native MeshControl app
 ├── fixtures/
 ├── policies/
 └── tests/
@@ -150,7 +152,7 @@ Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster,
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The control plane is available at `http://127.0.0.1:8787`.
+This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, `mesh-ui`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API is available at `http://127.0.0.1:8787`; the internal OS companion is available at `http://127.0.0.1:3000/?app=MeshControl`.
 
 Optional lanes:
 
@@ -159,7 +161,7 @@ COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docke
 MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
 ```
 
-Full runbook: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
+Full runbooks: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md) and [`docs/internal-mesh-control.md`](./docs/internal-mesh-control.md).
 
 Manual local server path:
 
@@ -438,6 +440,31 @@ The decision stage handles OTel metric-regression signals through four composabl
 
 **Layer 4 rule learning** — every `override_decision` on an OTel signal is recorded against a stable fingerprint. When ≥5 overrides agree on an action with successful outcomes, a candidate rule surfaces at `GET /api/rules/suggestions`. Suggestions never auto-apply; operators review, edit, paste into the policy file.
 
+## AI CROPS simulation and benchmarks
+
+Mesh includes a sandbox-first AI CROPS spine for Cloud, Reliability, Ops, Platform, and Security work: simulation catalogs, benchmark records, service-agent routing, and agent-lane reconciliation. The public surfaces are `GET /api/simulations`, `POST /api/simulations/{scenario_id}/run`, `GET /api/benchmarks`, `GET /api/service-agents`, and `GET /api/reconciliation/{run_id}`. Simulation runs are disabled by default and require explicit sandbox context allowlists.
+
+Runbook: [`docs/ai-sre-platform.md`](./docs/ai-sre-platform.md). The filename remains stable for existing links; the operating model is now AI CROPS, not AI SRE alone.
+
+Parallel local stress harness:
+
+```bash
+python3 scripts/run_simulation_matrix.py --iterations 32 --workers 8 --output .mesh-runtime-state/simulation-stress/run-32x8
+```
+
+Continuous randomized benchmark loop:
+
+```bash
+python3 scripts/run_continuous_simulations.py --cycles 3 --iterations 64 --workers 8 --sleep-seconds 2 --root .mesh-runtime-state/simulation-stress/post-merge-randomized
+```
+
+Current measured baseline:
+
+- deterministic one-hour run: 1808 runs, 0 harness failures, pass rate 0.4375, average score 0.775;
+- post-merge randomized run: 192 runs, 0 harness failures, pass rate 0.8125, average score 0.8167, 133 override replay rows.
+
+The randomized run is the stronger current benchmark because it includes seeded telemetry variation and pause-aware scoring. High-risk or missing-authority cases count as valid bounded outcomes when Mesh pauses or escalates instead of executing autonomously.
+
 ## Kubernetes Remediation Policy (SRE-grade)
 
 Mesh's k8s decision policy follows the standard SRE escalation ladder rather than the naive "any failure → restart" pattern that most automation tools default to. The core principle: **gather evidence first, take the minimum action**, escalate when evidence is ambiguous.
@@ -448,10 +475,11 @@ Mesh's k8s decision policy follows the standard SRE escalation ladder rather tha
 |--------|---------------|-----|
 | `image_pull_failure` | `rollback_deployment` | Definitive supply-chain problem; the prior revision had a working image |
 | `rollout_status == "failed"` | `rollback_deployment` | `ProgressDeadlineExceeded` — deployment controller has given up |
-| `oom_killed` | `patch_resources` (raise memory limit) | Restart is a band-aid: new container fills the same limit and OOMs again |
+| `oom_killed` / resource-pressure evidence | `patch_resources` (raise memory limit) | Restart is a band-aid: new container fills the same limit and OOMs again |
 | `crash_loop` + recent deploy (≤30 min) | `rollback_deployment` | Deploy is the prior-cause hypothesis |
 | `crash_loop` + no recent deploy | **`escalate`** | Bug existed before the rollout; restart can't fix it; needs log investigation |
-| `probe_failure` only (no crash, no OOM) | **`escalate`** | Usually means a downstream dependency is sick; restarting our container won't fix that |
+| `probe_failure` only (no crash, no OOM) | `defer_until` | Bounded recheck first; persistent probe-only failures can escalate without a blind restart |
+| `configuration_drift` | **`escalate`** | Weak signal that needs human review before remediation |
 | Any other signature, or no clear cause | **`escalate`** | Mesh refuses to guess. Better to wake an SRE than auto-remediate the wrong thing |
 
 ### Where the previous policy was wrong
@@ -611,6 +639,11 @@ Supported configuration variables:
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_EVO_COMMAND` — optional Evo proposal-lane command; must resolve to `evo-hq-cli`.
 - `MESH_EVO_COMMAND_TIMEOUT_SECONDS` — timeout for the Evo `--version` readiness probe.
+- `MESH_SIMULATION_ENABLED` — enables `POST /api/simulations/{scenario_id}/run`; disabled by default.
+- `MESH_SIMULATION_CONTEXT_ALLOWLIST` — comma-separated sandbox kube contexts permitted for simulation runs.
+- `MESH_BENCHMARK_EXPORT_PATH` — JSONL dataset export path for simulation-backed benchmark runs.
+- `MESH_SERVICE_AGENTS_CONFIG_PATH` — JSON service-agent routing config.
+- `MESH_AGENT_RECONCILIATION_ENABLED` — records reconciliation artifacts for agent-task attempts; defaults on.
 - `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` — when `1`/`true`, `kubernetes_service` actions use live `kubectl` execution instead of the default mock adapter.
 - `MESH_KUBECTL_COMMAND` — override the `kubectl` command used for live Kubernetes execution.
 - `MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS` — timeout for `kubectl rollout status` after restart/rollback actions.
@@ -707,6 +740,7 @@ Or from the CLI:
 ```
 
 `e2e_up.sh` generates a container-safe kubeconfig under `.mesh-runtime-state/e2e/kubeconfig` and starts Compose with `docker-compose.e2e.yml`, which enables live Kubernetes execution inside the mesh container while keeping the allowed context and namespace bounded.
+The overlay uses `MESH_E2E_KUBERNETES_ALLOWED_CONTEXTS` and `MESH_E2E_KUBERNETES_ALLOWED_NAMESPACES` so production `MESH_KUBERNETES_*` values in `.env` do not redirect local e2e runs.
 For local `k3d` use, that generated kubeconfig intentionally enables insecure TLS verification after rewriting the API server host for container access. Treat it as a disposable local-development artifact, not a production kubeconfig.
 
 ### Empirical showcase (multi-scenario pipeline digest)
@@ -871,8 +905,8 @@ The image currently runs as root because the bundled Goose profile path and kube
 Mesh ships with a continuous chaos-engineering harness that implements the [Principles of Chaos](https://principlesofchaos.org/):
 
 1. **Build a hypothesis around steady-state behavior** — detection rate, correct-decision rate, P95 latency, pipeline availability, probe pass rate.
-2. **Vary real-world events** — 8-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures.
-3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn weighted-at-random with per-primitive cooldowns.
+2. **Vary real-world events** — 12-primitive portfolio spanning crash loops, image-pull failures, pod kills, OOMKills, scale-to-zero, config drift, readiness failures, and live overlapping multi-faults.
+3. **Run continuously** — sessions default to 60 minutes. Experiments are drawn with adaptive weights, per-primitive cooldowns, and pressure toward capability axes the session has not proven yet.
 4. **Automate** — one driver script, no manual scenario selection.
 5. **Minimize blast radius** — circuit breaker halts the session on two consecutive steady-state probe failures or if Mesh pipeline latency blows past a ceiling.
 
@@ -898,14 +932,18 @@ scripts/run_chaos_session.sh --keep-cluster
 |-----------|---------:|-------:|------------------------|
 | `crash_loop` | high | 3.0 | `restart_deployment` or `rollback_deployment` |
 | `bad_image` | high | 2.0 | `rollback_deployment` |
-| `readiness_failure` | medium | 1.0 | `restart_deployment` / `rollback_deployment` / `escalate` |
+| `readiness_failure` | medium | 1.0 | `defer_until` / `escalate` |
 | `pod_kill_one` | low | 4.0 | **No trigger** (false-positive probe) |
-| `pod_kill_all` | high | 1.5 | `restart_deployment` / `rollback_deployment` / `escalate` |
-| `memory_pressure` | high | 1.0 | `restart_deployment` / `rollback_deployment` |
+| `pod_kill_all` | high | 1.5 | `defer_until` / `escalate` / `restart_deployment` / `rollback_deployment` |
+| `memory_pressure` | high | 1.0 | `patch_resources` / `escalate` |
+| `memory_pressure_pod_churn` | high | 0.6 | `patch_resources` / `escalate` |
 | `scale_to_zero` | high | 0.8 | `escalate` / `no_action` / `restart_deployment` |
-| `config_drift` | medium | 0.5 | `escalate` / `no_action` |
+| `config_drift` | medium | 0.5 | `escalate` |
+| `readiness_config_drift` | high | 0.7 | `defer_until` / `escalate` |
+| `bad_image_untrusted_metric` | high | 0.5 | `rollback_deployment` |
+| `zero_ready_after_churn` | high | 0.6 | `defer_until` / `escalate` / `restart_deployment` / `rollback_deployment` |
 
-All primitives use `kubectl` directly — no `chaos-mesh` dependency. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
+All primitives use `kubectl` directly — no `chaos-mesh` dependency. Each primitive declares capability axes such as crash-loop detection, rollback choice, false-positive suppression, weak-signal handling, and ambiguous operator-intent escalation. The scheduler runs coverage-first by default: eligible experiments covering unproven axes are selected before weighted repeats, with uncovered substrates used as the secondary frontier when axis coverage is otherwise equivalent. Coverage-frontier picks can bypass the high-severity spacing rule only while they prove missing axes; repeats still obey cooldown and severity spacing. Compose-native runs use the global hold time for durable faults. `pod_kill_one` remains the transient false-positive control; `pod_kill_all` holds replacement pods unready long enough to prove the zero-ready outage path. Network faults (latency, partitions) and node-level faults (disk pressure, kernel panic) require `chaos-mesh` and are scoped to a future PR.
 
 ### Hypothesis thresholds
 
@@ -931,6 +969,32 @@ Each session writes two artifacts to `e2e-reports/`:
 - `chaos_session_<timestamp>.server.log` — Mesh's per-stage INFO logs for the entire session
 
 Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
+
+Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, substrate coverage, multi-fault coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold. When `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions require every known capability axis to be exercised and passed before early stopping unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set. They also require every configured substrate to have at least one passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and every multi-fault primitive to pass unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
+
+For non-Kubernetes production-node coverage, run:
+
+```bash
+PYTHONPATH=. python3 scripts/production_node_breakthrough_session.py
+```
+
+That harness replays production-shaped Reth/systemd, Docker Compose, bare-metal process, VM, RPC, Kubernetes-readiness, webhook, and OTel node signals through Mesh ingest, trigger, and decision logic. It includes negative controls for benign memory, transient peer loss, stale untrusted metrics, noisy non-actionable logs, and partial readiness degradation, plus multi-fault probes for readiness/config drift, queue lag/node pressure, trusted signal plus untrusted noise, and transient-then-true outage separation. It writes `.mesh-runtime-state/node-breakthrough/events-<timestamp>.jsonl` and `summary-<timestamp>.json`, including `mesh.production_node_breakthrough_probe.v1`.
+
+To convert the latest Kubernetes, config-drift, and production-node artifacts into a regression-protected proof bundle, run:
+
+```bash
+PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py
+```
+
+The bundle is written under `.mesh-runtime-state/proofs/`. It hashes each source artifact, records the current git SHA and dirty state, captures validation command output, replays production-node probes through the Mesh pipeline, replays compose/config-drift scores through the chaos scoring contract, and marks the proof ready only when every included breakthrough summary is ready, every replay comparison matches, and every embedded validation command exits `0`. By default it runs the lightweight CI-safe breakthrough unittest, ruff checks, and focused strict mypy over the breakthrough proof files; use repeated `--validation-command` flags to embed a different command set.
+
+To run the whole live breakthrough gate from a healthy compose stack, use:
+
+```bash
+scripts/run_breakthrough_proof.sh
+```
+
+That command verifies all configured substrates are healthy, runs compose chaos with full-axis, substrate, and multi-fault breadth early-stop gates, verifies the stack recovered, generates the proof bundle, and fails unless the bundle is ready. For CI-safe validation of existing artifacts without mutating the stack, use `scripts/run_breakthrough_proof.sh --replay-only`.
 
 ## Development Commands
 
@@ -970,6 +1034,9 @@ The stable local path is:
 - [docs/foundations.md](./docs/foundations.md)
 - [docs/integrations.md](./docs/integrations.md)
 - [docs/agent-mesh.md](./docs/agent-mesh.md)
+- [docs/monitoring-corpus.md](./docs/monitoring-corpus.md)
+- [docs/reth-kurtosis-testing.md](./docs/reth-kurtosis-testing.md)
+- [docs/production-readiness-validation.md](./docs/production-readiness-validation.md)
 - [docs/research-intelligence.md](./docs/research-intelligence.md)
 - [docs/production-live-runbook.md](./docs/production-live-runbook.md)
 - [docs/ui-auto-canvas-workspace.md](./docs/ui-auto-canvas-workspace.md)

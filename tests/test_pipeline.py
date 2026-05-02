@@ -34,6 +34,18 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(result["execution"]["status"], "succeeded")
         self.assertEqual(result["feedback"]["outcome"], "successful")
 
+    def test_feature_flag_rollback_conflict_escalates(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        signal["related_context"]["rollbacks_last_24h"] = 1
+        signal["related_context"]["flag_rollback_conflict"] = True
+        pipeline = FirstSlicePipeline(config=self.config)
+        trigger = pipeline.trigger.detect(pipeline.ingest.normalize_signal(signal))
+        self.assertIsNotNone(trigger)
+
+        decision = pipeline.decision.decide(trigger)
+        self.assertEqual(decision.decision_type, "escalate")
+        self.assertEqual(decision.autonomy_tier, "escalated")
+
     def test_trigger_rejects_low_sample_signal(self) -> None:
         signal = load_fixture("signals", "search_latency_regression.json")
         signal["request_telemetry"]["sample_size"] = 499
@@ -65,7 +77,10 @@ class PipelineTests(unittest.TestCase):
             stage_results={
                 "schema_validation": {"passed": True},
                 "policy_validation": {"passed": True},
-                "promptfoo_quality": {"passed": False, "score": 0.42, "notes": ["human review required"]},
+                "contract_checks": {"passed": False, "score": 0.0, "checks": {}},
+                "trajectory_quality": {"passed": False, "score": 0.42, "notes": ["human review required"]},
+                "behavioral_scores": {"scorers": []},
+                "verifier": {"passed": True, "score": 1.0, "facts": {}},
                 "business_rules": {"passed": False, "notes": ["human review required"]},
                 "execution_readiness": {"passed": False, "notes": ["human review required"]},
             },

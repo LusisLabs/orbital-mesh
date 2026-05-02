@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/reconciliation.schema.json",
+  "title": "AgentReconciliation",
+  "type": "object",
+  "required": [
+    "selected_action",
+    "confidence",
+    "attempt_count",
+    "completed_attempt_count",
+    "recommendation_counts",
+    "normalized_recommendation_counts",
+    "disagreement",
+    "risk_flags",
+    "material_risk_flags",
+    "losing_attempt_ids",
+    "all_attempt_ids"
+  ],
+  "properties": {
+    "selected_action": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "attempt_count": {"type": "integer", "minimum": 0},
+    "completed_attempt_count": {"type": "integer", "minimum": 0},
+    "recommendation_counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "normalized_recommendation_counts": {"type": "object", "additionalProperties": {"type": "integer"}},
+    "disagreement": {"type": "boolean"},
+    "risk_flags": {"type": "array", "items": {"type": "string"}},
+    "material_risk_flags": {"type": "array", "items": {"type": "string"}},
+    "losing_attempt_ids": {"type": "array", "items": {"type": "string"}},
+    "all_attempt_ids": {"type": "array", "items": {"type": "string"}}
+  },
+  "additionalProperties": false
+}

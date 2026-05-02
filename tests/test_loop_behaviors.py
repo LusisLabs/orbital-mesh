@@ -32,7 +32,10 @@ def approved_evaluation(decision_id: str) -> EvaluationResult:
         stage_results={
             "schema_validation": {"passed": True},
             "policy_validation": {"passed": True, "notes": []},
-            "promptfoo_quality": {"passed": True, "score": 0.91, "notes": []},
+            "contract_checks": {"passed": True, "score": 1.0, "checks": {}},
+            "trajectory_quality": {"passed": True, "score": 0.91, "notes": []},
+            "behavioral_scores": {"scorers": []},
+            "verifier": {"passed": True, "score": 1.0, "facts": {}},
             "business_rules": {"passed": True, "notes": []},
             "execution_readiness": {"passed": True, "notes": []},
         },
@@ -143,6 +146,7 @@ class LoopBehaviorTests(unittest.TestCase):
         signal["post_action_observations"]["10m"]["error_rate"] = 0.014
         signal["post_action_observations"]["30m"]["p95_latency_ms"] = 435
         signal["post_action_observations"]["30m"]["error_rate"] = 0.014
+        signal["post_action_observations"]["30m"]["time_to_diagnosis_reduction_seconds"] = 37
 
         result = FirstSlicePipeline(config=self.config).run(signal)
 
@@ -150,6 +154,11 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertEqual(result["decision"]["execution_plan"]["parameters"]["rollout_pct"], 10)
         self.assertEqual(result["evaluation"]["final_recommendation"], "execute")
         self.assertEqual(result["feedback"]["outcome"], "successful")
+        self.assertEqual(result["feedback"]["quality_measurements"]["time_to_diagnosis_reduction_seconds"], 37)
+        self.assertIn(
+            "post_action_observations.30m.time_to_diagnosis_reduction_seconds",
+            result["feedback"]["quality_measurements"]["evidence_refs"],
+        )
 
     def test_pipeline_approval_required_path_blocks_execution(self) -> None:
         signal = base_signal()
@@ -346,9 +355,9 @@ class LoopBehaviorTests(unittest.TestCase):
             )
             result = FirstSlicePipeline(config=config).run(signal)
 
-        self.assertEqual(result["evaluation"]["stage_results"]["promptfoo_quality"]["passed"], True)
-        self.assertIn("artifacts", result["evaluation"]["stage_results"]["promptfoo_quality"])
-        self.assertIn("assertion_results", result["evaluation"]["stage_results"]["promptfoo_quality"]["artifacts"])
+        self.assertEqual(result["evaluation"]["stage_results"]["trajectory_quality"]["passed"], True)
+        self.assertIn("artifacts", result["evaluation"]["stage_results"]["trajectory_quality"])
+        self.assertIn("scorers", result["evaluation"]["stage_results"]["trajectory_quality"]["artifacts"])
         self.assertEqual(result["execution"]["status"], "succeeded")
         self.assertIn("audit_log_id", result["execution"]["external_refs"])
         self.assertTrue(result["execution"]["external_refs"]["goose_review"]["approved"])
@@ -369,7 +378,7 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertIn("evaluation_ready", event_types)
         self.assertIn("execution_recorded", event_types)
         integration_events = [event for event in result["run_events"] if event.get("integration_name")]
-        self.assertTrue(any(event["integration_name"] == "promptfoo" for event in integration_events))
+        self.assertTrue(any(event["integration_name"] == "mesh_trajectory" for event in integration_events))
         self.assertTrue(any(event["integration_name"] == "goose" for event in integration_events))
         self.assertGreater(result["run_metadata"]["stage_event_count"], 0)
         self.assertGreaterEqual(result["run_metadata"]["integration_artifact_count"], 2)
@@ -513,9 +522,9 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertEqual(result["execution"]["applied_action"]["system"], "kubernetes_service")
         self.assertEqual(result["execution"]["applied_action"]["action"], "rollback_deployment")
 
-    def test_kubernetes_probe_failure_alone_escalates(self) -> None:
+    def test_kubernetes_probe_failure_alone_defers_for_recheck(self) -> None:
         """Probe-failure-only signal (no crash, no OOM, no image-pull)
-        is the textbook SRE case for ``escalate``, not ``restart``.
+        is the textbook SRE case for bounded recheck, not ``restart``.
 
         Why: the kubelet has already been restarting the container
         (restarts > 0) in response to the failing probe. If kubelet's
@@ -529,7 +538,7 @@ class LoopBehaviorTests(unittest.TestCase):
         The previous policy routed this to ``restart_deployment`` —
         exactly the naive remediation SREs criticize as "buying time
         without fixing anything." The SRE-grade response is to
-        escalate so a human can investigate the actual cause.
+        defer briefly and re-check before paging a human.
         """
         signal = base_kubernetes_signal()
         signal["logs"] = []
@@ -553,8 +562,8 @@ class LoopBehaviorTests(unittest.TestCase):
 
         result = FirstSlicePipeline(config=config).run(signal)
 
-        self.assertEqual(result["decision"]["decision_type"], "escalate")
-        self.assertEqual(result["decision"]["execution_plan"]["system"], "incident_service")
+        self.assertEqual(result["decision"]["decision_type"], "defer_until")
+        self.assertEqual(result["decision"]["execution_plan"]["action"], "record_defer_until")
 
 
 if __name__ == "__main__":

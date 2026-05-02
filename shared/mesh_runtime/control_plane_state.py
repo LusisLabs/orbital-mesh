@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+import os
+import time
 from collections import deque
 from copy import deepcopy
 from dataclasses import replace
@@ -21,6 +23,7 @@ from .vault import VaultManager
 
 
 _EVENT_CACHE_SIZE = 512
+_TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator"}
 
 
 class FileStateStore:
@@ -42,12 +45,18 @@ class FileStateStore:
         self._supersessions_path = self._memory_dir / "supersessions.json"
         self._retrievals_path = self._memory_dir / "retrievals.json"
         self._packets_path = self._memory_dir / "packets.json"
+        self._benchmarks_path = self.state_directory / "benchmarks" / "records.json"
+        self._benchmarks_path.parent.mkdir(parents=True, exist_ok=True)
         # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
         # JSON from disk + redeserializing is 10-50x more expensive than a
         # deque slice. The tail is bounded per run_id, populated on append
         # and warmed on first read.
         self._event_tail_cache: dict[str, Deque[RunEvent]] = {}
         self._event_cache_lock = threading.Lock()
+        self._last_vault_materialized_at: dict[str, float] = {}
+        self._vault_materialize_min_interval_seconds = float(
+            os.getenv("MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS", "30")
+        )
 
     def ensure_default_goal(self) -> GoalRecord:
         goals = self.list_goals()
@@ -158,7 +167,7 @@ class FileStateStore:
             else:
                 records.insert(0, session_dict)
             records.sort(key=lambda record: record.get("created_at", ""), reverse=True)
-        self._materialize_vault(session.run_id)
+        self._materialize_vault(session.run_id, force=session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES)
         return session
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
@@ -279,6 +288,25 @@ class FileStateStore:
         session.updated_at = _timestamp()
         self.save_run_session(session)
         return session
+
+    def record_benchmark(self, record: dict[str, Any]) -> None:
+        with LockedJsonFile(self._benchmarks_path) as payload:
+            rows = payload.setdefault("benchmarks", [])
+            rows.insert(0, deepcopy(record))
+            payload["benchmarks"] = rows[:1000]
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        if not self._benchmarks_path.exists():
+            return []
+        with LockedJsonFile(self._benchmarks_path) as payload:
+            rows = payload.get("benchmarks", [])
+        return [deepcopy(row) for row in rows[:limit] if isinstance(row, dict)]
+
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any] | None:
+        for record in self.list_benchmarks(limit=1000):
+            if record.get("benchmark_id") == benchmark_id:
+                return record
+        return None
 
     def record_approval(self, run_id: str, approval: dict[str, Any]) -> None:
         session = self.get_run_session(run_id)
@@ -448,7 +476,15 @@ class FileStateStore:
     def read_document(self, relative_path: str) -> dict[str, str]:
         return self.vault.read_document(relative_path)
 
-    def _materialize_vault(self, run_id: str) -> None:
+    def _materialize_vault(self, run_id: str, *, force: bool = False) -> None:
+        now = time.monotonic()
+        last_materialized = self._last_vault_materialized_at.get(run_id)
+        if (
+            not force
+            and last_materialized is not None
+            and now - last_materialized < self._vault_materialize_min_interval_seconds
+        ):
+            return
         session = self.get_run_session(run_id)
         if session is None:
             return
@@ -461,6 +497,7 @@ class FileStateStore:
         events = self.list_run_events(run_id)
         merkle = build_merkle_snapshot(run_id, events)
         self.vault.write_run_bundle(session, events, merkle, goal)
+        self._last_vault_materialized_at[run_id] = now
 
     def _load_learning_outcomes(self) -> list[dict[str, Any]]:
         learning_path = self.state_directory / "learning" / "outcomes.json"

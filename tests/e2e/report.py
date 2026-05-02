@@ -233,9 +233,9 @@ def _verdict_badge(verdict: str) -> str:
     """
     label = verdict.upper()
     if verdict == "pass":
-        return f"**[PASS]**"
+        return "**[PASS]**"
     if verdict == "fail":
-        return f"**[FAIL]**"
+        return "**[FAIL]**"
     return f"**[{label}]**"
 
 

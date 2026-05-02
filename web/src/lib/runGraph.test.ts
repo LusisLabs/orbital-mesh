@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildArtifactGraph,
+  buildEvidenceGraph,
   buildKubernetesGraph,
+  buildLabyrinthGraph,
   buildMerkleGraph,
+  buildRethSignalGraph,
   buildRunGraph,
   buildUnifiedGraph,
   toneForStage,
@@ -202,5 +205,66 @@ describe("runGraph", () => {
     expect(unified.nodes.map((node) => node.id)).toContain("artifacts:artifact-run");
     expect(unified.edges.some((edge) => edge.id === "unified:input-signal-kubernetes")).toBe(true);
     expect(unified.edges.some((edge) => edge.id === "unified:execution-merkle-root")).toBe(true);
+  });
+
+  it("builds a labyrinth graph from normalized crossings", () => {
+    const graph = buildLabyrinthGraph([
+      {
+        id: "c1",
+        journey_id: "run-1",
+        type: "run_queued",
+        label: "Run queued",
+        status: "recorded",
+        thread: "main",
+        sequence: 1,
+        evidence_refs: [],
+        severity: "success",
+      },
+      {
+        id: "c2",
+        journey_id: "run-1",
+        type: "approval_blocked",
+        label: "Approval blocked",
+        status: "requires_review",
+        thread: "threshold",
+        sequence: 2,
+        event_id: "evt-2",
+        evidence_refs: ["ev-1"],
+        severity: "warning",
+      },
+    ], "evt-2");
+
+    expect(graph.nodes).toHaveLength(2);
+    expect(graph.nodes[1].selected).toBe(true);
+    expect(graph.edges[0].animated).toBe(true);
+  });
+
+  it("builds scenario evidence and reth signal canvases", () => {
+    const evidence = buildEvidenceGraph({
+      nodes: [
+        { id: "ev-1", type: "evidence", label: "Historical outcome", confidence: 0.75 },
+        { id: "sub-1", type: "subdecision", label: "approval_required", requires_review: true },
+        { id: "analysis-1", type: "scenario_analysis", label: "escalate" },
+      ],
+      edges: [
+        { source: "ev-1", target: "sub-1", kind: "supports" },
+        { source: "sub-1", target: "analysis-1", kind: "feeds" },
+      ],
+    });
+    const reth = buildRethSignalGraph({
+      signal_type: "reth_node",
+      service: "el-1-reth-lighthouse",
+      environment: "production",
+      node: { client_version: "reth/v1.9.3", deployment_mode: "docker", role: "full" },
+      execution: { peer_count: 0, min_peer_count: 1, head_block: 417, block_lag: 0 },
+      consensus: { consensus_client: "lighthouse", engine_api_reachable: true },
+      storage: { disk_used_pct: 97, diagnostic_source: "live" },
+      rpc: { http_reachable: true, error_rate: 0 },
+    });
+
+    expect(evidence.nodes.map((node) => node.id)).toContain("sub-1");
+    expect(evidence.edges.some((edge) => edge.animated)).toBe(true);
+    expect(reth.nodes.map((node) => node.id)).toContain("reth-storage");
+    expect(reth.edges.some((edge) => edge.target === "reth-storage" && edge.animated)).toBe(true);
   });
 });

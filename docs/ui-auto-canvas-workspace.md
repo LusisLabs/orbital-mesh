@@ -1,66 +1,129 @@
-# Auto Canvas Workspace
+# Mesh Agentic Console
 
 ## Scope
 
-The web control plane is now organized around the run graph as the primary auto canvas.
+The web UI is a self-hosted Mesh agent control console for monitoring, evidence review, approval, agent interaction, integration readiness, and audit continuity. It is Mesh-native, not a clone of VS Code, Cursor, Codex, or Claude Code.
 
-- Left drawer: sessions, run sessions, research sessions, goals, launch configuration, and integration readiness.
-- Left drawer also surfaces corpus-level research drift/action summary and the runtime state/vault paths from readiness.
-- Center canvas: active goal, run state, React Flow execution graph, Kubernetes topology view, Merkle proof view, artifact graph, and the live event timeline.
-- Right drawer: steering console, operator notes, advanced overrides, and inspector tabs.
-- Header controls: session drawer and steering drawer toggles, plus environment/build metadata from `/api/health`.
+The interface uses the visual language of modern terminal and editor-based agent tools: dense dark surfaces, project/session rails, run-thread workspaces, review/context drawers, transcript blocks, tool-call rows, and a terminal-style runtime strip. The referenced Theme Hook Plugin Manager Cursor/VS Code hooks are used only as a static color-role source for workbench-like tokens such as side bar, editor, panel, input, list, badge, status, diagnostics, git, and terminal roles.
 
-## Canvas Modes
+The default page is `Overview`. Topology and graph canvases are secondary investigation tools under run detail.
 
-The center canvas exposes five views, all backed by current run data:
+## Product Model
 
-- `Unified`: combined run flow, Kubernetes, Merkle, and artifact context on one canvas.
-- `Run Flow`: ordered event graph for the live session.
-- `Kubernetes`: cluster, namespace, deployment, pods, and recent cluster events when the run was launched from a live Kubernetes deployment signal.
-- `Merkle`: Merkle root, snapshot, proof path, siblings, and selected leaf for the active event proof.
-- `Artifacts`: session artifacts across ingestion, triggering, decision, evaluation, execution, and feedback.
+- `Overview`: active Mesh command center for the current run thread, launch/review actions, incidents, agents, integrations, evidence, watchers, and audit continuity.
+- `Runs`: run-thread list plus detail tabs for `Timeline`, `Evidence`, `Approvals`, `Actions`, `Audit`, `Agents`, and `Topology`.
+- `Hermes`: default connected agent surface for blocker explanation, run-scoped chat, proposed action review, and evidence context.
+- `Agents`: connected and connectable workers. Hermes is primary by default; Goose, Codex, Claude Code, OpenClaw, Evo, LatentMAS, Deep Agents, and custom HTTP agents are modeled as bounded proposal workers.
+- `Integrations`: modular connection catalog grouped by Web3, Web2 Production, Development, and Operations.
+- `Control Plane`: secondary runtime diagnostics for readiness, storage paths, API stream state, connector inventory, and low-level health.
 
-Canvas nodes route into the right-side inspector where the backing data exists:
+## Connector States
 
-- Run nodes keep the selected event synchronized with overview and steering.
-- Kubernetes nodes open evidence context.
-- Merkle nodes open the Merkle inspector.
-- Artifact nodes jump to the inspector tab that matches the artifact family.
+Connection surfaces use these states:
 
-## Reproduce Locally
+- `ready`: available and operational.
+- `degraded`: configured but warning or partial failure exists.
+- `config-only`: known to Mesh but not live-ready.
+- `unsafe`: present but blocked by production safety constraints.
+- `stub`: explicitly unfinished production adapter.
+- `disconnected`: not configured.
 
-Run from the repository root unless stated otherwise.
+Raw secrets must stay outside run artifacts. Events may reference connection ids, scopes, readiness state, and audit evidence, but not OAuth tokens, API keys, kubeconfigs, SSH keys, or service-account credentials.
+
+## Agent Boundary
+
+Agents can propose investigation summaries, root-cause hypotheses, patch plans, reviews, validation suggestions, and benchmark advice.
+
+Mesh owns:
+
+- policy gates
+- evaluation
+- approval
+- execution
+- audit records
+- Merkle proof continuity
+- action allowlists
+
+Hermes remains the default operator interaction agent, but it does not replace Mesh. Hermes explains and proposes; Mesh decides and records.
+
+## Integration Domains
+
+Initial domain packs:
+
+- `Web3`: Reth/geth nodes, validators, Kurtosis/devnets, RPC health, peer/sync/finality telemetry.
+- `Web2 Production`: Kubernetes, ArgoCD, Prometheus/OpenTelemetry, logs, incident systems.
+- `Development`: GitHub/GitLab, PRs/issues, CI, repos, test/build gates, Promptfoo.
+- `Operations`: PagerDuty/Opsgenie, Linear/Jira, cloud providers, audit sinks.
+
+OAuth/OIDC is preferred where providers support it. API keys and service accounts are reserved for providers that do not expose an appropriate OAuth flow.
+
+## Canvas Placement
+
+React Flow canvases are available only inside `Runs > Detail > Topology`.
+
+Canvas modes:
+
+- `Overview`: operation map from run flow and evidence boundaries.
+- `Run Flow`: ordered event graph for the selected run.
+- `Evidence`: scenario-analysis evidence/subdecision graph.
+- `Signal`: Reth/Kurtosis or Kubernetes signal topology.
+- `Merkle`: Merkle root, snapshot, proof steps, and selected leaf.
+- `Artifacts`: input, readiness, trigger, decision, execution, and feedback artifacts.
+
+Canvas node clicks keep the context drawer evidence-first: Merkle nodes open audit context, signal nodes open evidence context, artifact nodes route to the matching inspector tab, and run nodes keep event selection synchronized.
+
+## Visual System
+
+- Static dark tokens are derived from THPM's Cursor/VS Code workbench color mapping; Mesh does not load Omarchy `colors.toml` or vendor THPM shell hooks at runtime.
+- Codicons are used for editor and agent-console semantics where they fit. Existing lucide icons remain for gaps.
+- Surfaces are capped at 8px radius and use dense spacing. Cards are work surfaces, not marketing panels.
+- The bottom runtime strip summarizes local API target, selected run, SSE connection state, integration readiness, and agent readiness.
+- The left workstream rail and bottom runtime strip are wired controls. They route directly to run threads, review queue, Hermes, evidence, agents, integrations, and control-plane diagnostics.
+- The right drawer is a review/context panel for evidence, policy, execution, agents, Merkle audit, code, and research output.
+
+## Current API Use
+
+The first implementation is UI-first and uses existing routes:
+
+- `GET /api/runs`, `GET /api/runs/{run_id}`, `GET /api/stream/runs/{run_id}`
+- `GET /api/runs/{run_id}/scenario-analysis`
+- `GET /api/runs/{run_id}/evidence-graph`
+- `GET /api/runs/{run_id}/memory-crystallization`
+- `GET /api/runs/{run_id}/agent-tasks`
+- `GET /api/watchers`
+- `POST /api/runs`
+- `POST /api/runs/{run_id}/steer`
+- `GET /api/readiness`, `GET /api/health`, `GET /api/research-sessions`, `GET /api/research-corpus`, `GET /api/vault/tree`
+
+Future backend registry routes should add dynamic agents, integrations, domains, and connection records while preserving these existing routes.
+
+## Verification Gates
+
+Run from the repository root:
 
 ```bash
-git checkout codex/ui-overhaul-auto-canvas
-cd web
-npm ci
-npm run lint
-npm run build
-npm run dev
+npm --prefix web run test
+npm --prefix web run lint
+npm --prefix web run build
+npm --prefix web run test:e2e
 ```
 
-Open the Vite URL printed by `npm run dev`.
+The E2E suite verifies:
 
-## Control Plane Data Contract
+- `Overview` is default and not canvas-centered.
+- `Control Plane` is secondary and reachable.
+- `Hermes` opens and renders readiness/chat surfaces.
+- `Agents` lists default and available workers.
+- `Integrations` groups providers by domain and state.
+- Run detail topology still renders canvas modes.
+- Steering notes still submit through `/api/runs/{run_id}/steer`.
+- No user-facing Labyrinth language appears.
+- Desktop and mobile shells avoid horizontal overflow outside React Flow internals.
 
-The UI only exposes actions backed by the current API:
+## Non-Goals For This Pass
 
-- `POST /api/runs` for launch.
-- `POST /api/runs/{run_id}/steer` for approval, resume, cancel, auto-mode, notes, decision overrides, and execution parameter overrides.
-- `GET /api/runs`, `GET /api/research-sessions`, `GET /api/goals`, and `GET /api/readiness` for the session drawer.
-- `GET /api/health` for environment and build metadata in the header.
-- `GET /api/research-corpus` for aggregate research drift and next-action summary.
-- `GET /api/runs/{run_id}` and `GET /api/stream/runs/{run_id}` for the auto canvas.
-- `GET /api/runs/{run_id}/agent-tasks` for the Agents tab so worker lanes stay current even when the embedded artifact is stale.
-
-Session rename and archive controls are intentionally not rendered until backend endpoints exist. Required backend contract:
-
-- Rename run session: stable run display name field plus an update endpoint.
-- Archive run session: archived status or timestamp plus list filtering semantics.
-- Rename research session: stable display name field plus an update endpoint.
-- Archive research session: archived status or timestamp plus list filtering semantics.
-
-## Production Use
-
-The UI change does not alter deployment, inference routing, Kubernetes access, or remediation policy. Production rollout remains governed by `docs/production-live-runbook.md`.
+- No backend registry endpoints yet.
+- No OAuth token storage yet.
+- No RBAC implementation yet.
+- No backend mutation behavior change.
+- No full external dashboard fork.

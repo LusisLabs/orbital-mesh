@@ -1,13 +1,14 @@
 services:
   k3s:
     image: "${MESH_K3S_IMAGE:-rancher/k3s:v1.31.5-k3s1}"
-    container_name: mesh-intelligence-k3s
+    container_name: mesh-intel-k3s
     privileged: true
     command:
       - server
       - --disable=traefik
       - --disable=servicelb
       - --https-listen-port=6443
+      - --node-name=${MESH_K3S_NODE_NAME:-mesh-compose-k3s}
       - --tls-san=k3s
       - --tls-san=host.docker.internal
     environment:
@@ -29,9 +30,67 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  k3s-vm:
+    image: "${MESH_K3S_IMAGE:-rancher/k3s:v1.31.5-k3s1}"
+    container_name: mesh-intel-k3s-vm
+    privileged: true
+    command:
+      - server
+      - --disable=traefik
+      - --disable=servicelb
+      - --https-listen-port=6443
+      - --node-name=${MESH_K3S_VM_NODE_NAME:-mesh-compose-vm-k3s}
+      - --tls-san=k3s-vm
+      - --tls-san=host.docker.internal
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig
+      K3S_KUBECONFIG_MODE: "666"
+    tmpfs:
+      - /run
+      - /var/run
+    volumes:
+      - k3s_vm_server_data:/var/lib/rancher/k3s
+      - mesh_kubeconfig_vm:/output
+    healthcheck:
+      test: ["CMD-SHELL", "kubectl get nodes >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  k3s-baremetal:
+    image: "${MESH_K3S_IMAGE:-rancher/k3s:v1.31.5-k3s1}"
+    container_name: mesh-intel-k3s-baremetal
+    privileged: true
+    command:
+      - server
+      - --disable=traefik
+      - --disable=servicelb
+      - --https-listen-port=6443
+      - --node-name=${MESH_K3S_BAREMETAL_NODE_NAME:-mesh-compose-baremetal-k3s}
+      - --tls-san=k3s-baremetal
+      - --tls-san=host.docker.internal
+    environment:
+      K3S_KUBECONFIG_OUTPUT: /output/kubeconfig
+      K3S_KUBECONFIG_MODE: "666"
+    tmpfs:
+      - /run
+      - /var/run
+    volumes:
+      - k3s_baremetal_server_data:/var/lib/rancher/k3s
+      - mesh_kubeconfig_baremetal:/output
+    healthcheck:
+      test: ["CMD-SHELL", "kubectl get nodes >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
   postgres:
     image: "${MESH_POSTGRES_IMAGE:-postgres:16-alpine}"
-    container_name: mesh-intelligence-postgres
+    container_name: mesh-postgres
     environment:
       POSTGRES_DB: "${MESH_POSTGRES_DB:-mesh}"
       POSTGRES_USER: "${MESH_POSTGRES_USER:-mesh}"
@@ -48,6 +107,46 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  rpc-gateway:
+    image: "${MESH_BUSYBOX_IMAGE:-busybox:1.36}"
+    container_name: mesh-intel-rpc-gateway
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www
+        cat > /www/health <<'EOF'
+        {"status":"ok","component_kind":"rpc_gateway","baseline_value":1.0,"observed_value":1.0,"delta_pct":0.0,"threshold_pct":30.0}
+        EOF
+        exec httpd -f -p 8080 -h /www
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health | grep -q '\"status\":\"ok\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  indexer:
+    image: "${MESH_BUSYBOX_IMAGE:-busybox:1.36}"
+    container_name: mesh-intel-indexer
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /www
+        cat > /www/health <<'EOF'
+        {"status":"ok","component_kind":"indexer","baseline_value":1.0,"observed_value":1.0,"delta_pct":0.0,"threshold_pct":30.0}
+        EOF
+        exec httpd -f -p 8080 -h /www
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health | grep -q '\"status\":\"ok\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   hermes:
     build:
       context: .
@@ -55,9 +154,9 @@ services:
       args:
         HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
         UV_VERSION: "${UV_VERSION:-0.11.6}"
-    image: "${HERMES_RUNTIME_IMAGE:-mesh-intelligence-hermes:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-hermes-stack
-    working_dir: /workspace/mesh-intelligence
+    image: "${HERMES_RUNTIME_IMAGE:-mesh-intel-hermes:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-hermes-stack
+    working_dir: /workspace/mesh-intel
     command:
       - sh
       - -lc
@@ -82,7 +181,7 @@ services:
         touch "$${HERMES_HOME}/.env";
         exec sleep infinity
     environment:
-      HERMES_HOME: /workspace/mesh-intelligence/.hermes-local
+      HERMES_HOME: /workspace/mesh-intel/.hermes-local
       HERMES_INFERENCE_PROVIDER: "${MESH_COMPOSE_HERMES_INFERENCE_PROVIDER:-openai}"
       HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.7}"
       LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.7}"
@@ -93,13 +192,13 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
     volumes:
-      - ./:/workspace/mesh-intelligence
-      - hermes_home:/workspace/mesh-intelligence/.hermes-local
+      - ./:/workspace/mesh-intel
+      - hermes_home:/workspace/mesh-intel/.hermes-local
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "/opt/venv/bin/hermes", "version"]
       interval: 30s
-      timeout: 10s
+      timeout: 20s
       retries: 5
       start_period: 20s
 
@@ -112,8 +211,8 @@ services:
         HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
         UV_VERSION: "${UV_VERSION:-0.11.6}"
         GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
-    image: "${MESH_STACK_IMAGE:-mesh-intelligence-stack:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-kube-bootstrap
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-kube-bootstrap
     # Same image defaults to USER mesh; k3s writes kubeconfig as root on this volume, so kubectl
     # cannot create kubeconfig.lock unless we run this one-shot bootstrap as root.
     user: "0:0"
@@ -126,13 +225,76 @@ services:
       MESH_STACK_NAMESPACE: "${MESH_STACK_NAMESPACE:-search}"
       MESH_STACK_DEPLOYMENT: "${MESH_STACK_DEPLOYMENT:-semantic-search}"
       MESH_STACK_K3S_URL: "https://k3s:6443"
+      MESH_STACK_NODE_NAME: "${MESH_K3S_NODE_NAME:-mesh-compose-k3s}"
     command:
       - sh
       - -lc
-      - /workspace/mesh-intelligence/scripts/compose_kube_bootstrap.sh
+      - /workspace/mesh-intel/scripts/compose_kube_bootstrap.sh
     volumes:
-      - ./:/workspace/mesh-intelligence
+      - ./:/workspace/mesh-intel
       - mesh_kubeconfig:/mesh-kubeconfig
+    restart: "no"
+
+  mesh-kube-bootstrap-vm:
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-kube-bootstrap-vm
+    user: "0:0"
+    depends_on:
+      k3s-vm:
+        condition: service_healthy
+    environment:
+      KUBECONFIG: /mesh-kubeconfig-vm/kubeconfig
+      MESH_STACK_KUBE_CONTEXT: "${MESH_STACK_VM_KUBE_CONTEXT:-mesh-compose-vm}"
+      MESH_STACK_NAMESPACE: "${MESH_STACK_VM_NAMESPACE:-search}"
+      MESH_STACK_DEPLOYMENT: "${MESH_STACK_VM_DEPLOYMENT:-semantic-search}"
+      MESH_STACK_K3S_URL: "https://k3s-vm:6443"
+      MESH_STACK_NODE_NAME: "${MESH_K3S_VM_NODE_NAME:-mesh-compose-vm-k3s}"
+    command:
+      - sh
+      - -lc
+      - /workspace/mesh-intel/scripts/compose_kube_bootstrap.sh
+    volumes:
+      - ./:/workspace/mesh-intel
+      - mesh_kubeconfig_vm:/mesh-kubeconfig-vm
+    restart: "no"
+
+  mesh-kube-bootstrap-baremetal:
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-kube-bootstrap-baremetal
+    user: "0:0"
+    depends_on:
+      k3s-baremetal:
+        condition: service_healthy
+    environment:
+      KUBECONFIG: /mesh-kubeconfig-baremetal/kubeconfig
+      MESH_STACK_KUBE_CONTEXT: "${MESH_STACK_BAREMETAL_KUBE_CONTEXT:-mesh-compose-baremetal}"
+      MESH_STACK_NAMESPACE: "${MESH_STACK_BAREMETAL_NAMESPACE:-search}"
+      MESH_STACK_DEPLOYMENT: "${MESH_STACK_BAREMETAL_DEPLOYMENT:-semantic-search}"
+      MESH_STACK_K3S_URL: "https://k3s-baremetal:6443"
+      MESH_STACK_NODE_NAME: "${MESH_K3S_BAREMETAL_NODE_NAME:-mesh-compose-baremetal-k3s}"
+    command:
+      - sh
+      - -lc
+      - /workspace/mesh-intel/scripts/compose_kube_bootstrap.sh
+    volumes:
+      - ./:/workspace/mesh-intel
+      - mesh_kubeconfig_baremetal:/mesh-kubeconfig-baremetal
     restart: "no"
 
   mesh:
@@ -144,15 +306,21 @@ services:
         HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
         UV_VERSION: "${UV_VERSION:-0.11.6}"
         GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
-    image: "${MESH_STACK_IMAGE:-mesh-intelligence-stack:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-stack
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-stack
     init: true
     depends_on:
       hermes:
         condition: service_healthy
       mesh-kube-bootstrap:
         condition: service_completed_successfully
+      mesh-kube-bootstrap-vm:
+        condition: service_completed_successfully
+      mesh-kube-bootstrap-baremetal:
+        condition: service_completed_successfully
       postgres:
+        condition: service_healthy
+      latentmas:
         condition: service_healthy
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
@@ -167,13 +335,20 @@ services:
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
+      MESH_READINESS_PROBE_TIMEOUT_SECONDS: "${MESH_READINESS_PROBE_TIMEOUT_SECONDS:-15}"
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"
-      MESH_HERMES_COMMAND: "${MESH_STACK_HERMES_COMMAND:-docker exec -w /workspace/mesh-intelligence -e HERMES_HOME=/workspace/mesh-intelligence/.hermes-local mesh-intelligence-hermes-stack /opt/venv/bin/hermes}"
+      MESH_HERMES_COMMAND: "${MESH_STACK_HERMES_EXEC_COMMAND:-docker exec -w /workspace/mesh-intel -e HERMES_HOME=/workspace/mesh-intel/.hermes-local mesh-intel-hermes-stack /opt/venv/bin/hermes}"
       MESH_HERMES_COMMAND_TIMEOUT_SECONDS: "${MESH_HERMES_COMMAND_TIMEOUT_SECONDS:-180}"
       MESH_GOOSE_COMMAND: "${MESH_GOOSE_COMMAND:-goose}"
       MESH_GOOSE_COMMAND_TIMEOUT_SECONDS: "${MESH_GOOSE_COMMAND_TIMEOUT_SECONDS:-180}"
       MESH_EVO_COMMAND: "${MESH_EVO_COMMAND:-}"
       MESH_EVO_COMMAND_TIMEOUT_SECONDS: "${MESH_EVO_COMMAND_TIMEOUT_SECONDS:-60}"
+      MESH_EVAL_CONTEXT_TOKEN_BUDGET: "${MESH_EVAL_CONTEXT_TOKEN_BUDGET:-2048}"
+      MESH_EVAL_TOKENIZER_JSON: "${MESH_EVAL_TOKENIZER_JSON:-}"
+      MESH_EVAL_SENTENCEPIECE_MODEL: "${MESH_EVAL_SENTENCEPIECE_MODEL:-}"
+      MESH_EVAL_LATENTMAS_CRATE: "${MESH_EVAL_LATENTMAS_CRATE:-latent-mesh/LatentMAS}"
+      MESH_EVAL_LATENTMAS_COMMAND: "${MESH_EVAL_LATENTMAS_COMMAND:-latentmas}"
+      MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS: "${MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS:-30}"
       DOCKER_HOST: unix:///var/run/docker.sock
       MESH_GITNEXUS_DISABLE_AUTOSTART: "1"
       MESH_GITNEXUS_SIDECAR_URL: "${MESH_STACK_GITNEXUS_URL:-}"
@@ -182,11 +357,19 @@ services:
       MESH_SECURITY_HEADERS: "${MESH_SECURITY_HEADERS:-true}"
       MESH_MAX_JSON_BODY_BYTES: "${MESH_MAX_JSON_BODY_BYTES:-1048576}"
       MESH_VAULT_AI_POSTPROCESS_ENABLED: "${MESH_VAULT_AI_POSTPROCESS_ENABLED:-0}"
-      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-native}"
+      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-deepagents}"
       MESH_DEEPAGENTS_MODEL: "${MESH_DEEPAGENTS_MODEL:-openai:MiniMax-M2.7}"
       MESH_DEEPAGENTS_TIMEOUT_SECONDS: "${MESH_DEEPAGENTS_TIMEOUT_SECONDS:-120}"
       MESH_DEEPAGENTS_WORKSPACE_ROOT: /app/.mesh-runtime-state/deepagents
       MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS: "${MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS:-20000}"
+      MESH_AGENT_TASK_TIMEOUT_SECONDS: "${MESH_AGENT_TASK_TIMEOUT_SECONDS:-180}"
+      MESH_REASONING_BANK_ENABLED: "${MESH_REASONING_BANK_ENABLED:-1}"
+      MESH_REASONING_BANK_MAX_STRATEGIES: "${MESH_REASONING_BANK_MAX_STRATEGIES:-8}"
+      MESH_REASONING_BANK_SCALING_MODE: "${MESH_REASONING_BANK_SCALING_MODE:-sequential}"
+      MESH_CORPUS_MEMORY_ENABLED: "${MESH_CORPUS_MEMORY_ENABLED:-1}"
+      MESH_CORPUS_DATABASE_PATH: "${MESH_CORPUS_DATABASE_PATH:-/workspace/mesh-intel/.mesh-runtime-state/corpus/incident_corpus.sqlite}"
+      MESH_CORPUS_MEMORY_PROJECTION_LIMIT: "${MESH_CORPUS_MEMORY_PROJECTION_LIMIT:-5000}"
+      MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS: "${MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS:-30}"
       HERMES_INFERENCE_PROVIDER: "${MESH_COMPOSE_HERMES_INFERENCE_PROVIDER:-openai}"
       HERMES_MODEL: "${MESH_COMPOSE_HERMES_MODEL:-MiniMax-M2.7}"
       LLM_MODEL: "${MESH_COMPOSE_LLM_MODEL:-MiniMax-M2.7}"
@@ -204,17 +387,17 @@ services:
       GOOGLE_API_KEY: "${GOOGLE_API_KEY:-}"
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
       OLLAMA_HOST: "${MESH_COMPOSE_OLLAMA_HOST:-}"
-      KUBECONFIG: /mesh-kubeconfig/kubeconfig
+      KUBECONFIG: /mesh-kubeconfig/kubeconfig:/mesh-kubeconfig-vm/kubeconfig:/mesh-kubeconfig-baremetal/kubeconfig
       MESH_KUBERNETES_LIVE_EXECUTION_ENABLED: "${MESH_KUBERNETES_LIVE_EXECUTION_ENABLED:-1}"
       MESH_KUBECTL_COMMAND: "${MESH_KUBECTL_COMMAND:-kubectl}"
       MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS: "${MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS:-120}"
-      MESH_KUBERNETES_ALLOWED_CONTEXTS: "${MESH_STACK_ALLOWED_CONTEXTS:-mesh-compose}"
+      MESH_KUBERNETES_ALLOWED_CONTEXTS: "${MESH_STACK_MULTI_ALLOWED_CONTEXTS:-mesh-compose,mesh-compose-vm,mesh-compose-baremetal}"
       MESH_KUBERNETES_ALLOWED_NAMESPACES: "${MESH_STACK_ALLOWED_NAMESPACES:-search}"
-      MESH_LATENTMAS_ENABLED: "${MESH_STACK_ENABLE_LATENTMAS:-0}"
+      MESH_LATENTMAS_ENABLED: "${MESH_STACK_ENABLE_LATENTMAS:-1}"
       MESH_LATENTMAS_URL: "${MESH_STACK_LATENTMAS_URL:-http://latentmas:8791}"
       MESH_LATENTMAS_TIMEOUT_SECONDS: "${MESH_LATENTMAS_TIMEOUT_SECONDS:-600}"
-      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
-      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-sshleifer/tiny-gpt2}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cpu}"
       MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
       MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
       MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"
@@ -227,8 +410,10 @@ services:
     volumes:
       - mesh_runtime_state:/app/.mesh-runtime-state
       - goose_config:/root/.config/goose
-      - ./:/workspace/mesh-intelligence
+      - ./:/workspace/mesh-intel
       - mesh_kubeconfig:/mesh-kubeconfig:ro
+      - mesh_kubeconfig_vm:/mesh-kubeconfig-vm:ro
+      - mesh_kubeconfig_baremetal:/mesh-kubeconfig-baremetal:ro
       - "${MESH_DOCKER_SOCKET_HOST_PATH:-/var/run/docker.sock}:/var/run/docker.sock"
     restart: unless-stopped
     logging:
@@ -243,6 +428,44 @@ services:
       retries: 3
       start_period: 20s
 
+  mesh-agent-operator:
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-agent-operator
+    depends_on:
+      mesh:
+        condition: service_healthy
+    environment:
+      PYTHONPATH: /workspace/mesh-intel
+      BASE_URL: "${MESH_STACK_BASE_URL:-http://mesh:8787}"
+      MESH_AGENT_OPERATOR_ENABLED: "${MESH_STACK_AGENT_OPERATOR_ENABLED:-1}"
+      MESH_AGENT_OPERATOR_PRIORITY: "${MESH_AGENT_OPERATOR_PRIORITY:-hermes,goose,codex,claudecode,openclaw,evo,latentmas}"
+      MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR: "${MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR:-0.86}"
+      MESH_AGENT_OPERATOR_AUTONOMY_TIER: "${MESH_AGENT_OPERATOR_AUTONOMY_TIER:-escalated}"
+      MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS: "${MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS:-3600}"
+      MESH_AGENT_OPERATOR_INTERVAL_SECONDS: "${MESH_AGENT_OPERATOR_INTERVAL_SECONDS:-3}"
+      MESH_AGENT_OPERATOR_REQUEST_TIMEOUT_SECONDS: "${MESH_AGENT_OPERATOR_REQUEST_TIMEOUT_SECONDS:-10}"
+    command:
+      - python3
+      - /workspace/mesh-intel/scripts/mesh_agent_operator.py
+    volumes:
+      - ./:/workspace/mesh-intel
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      disable: true
+
   mesh-smoke:
     build:
       context: .
@@ -252,10 +475,16 @@ services:
         HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
         UV_VERSION: "${UV_VERSION:-0.11.6}"
         GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
-    image: "${MESH_STACK_IMAGE:-mesh-intelligence-stack:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-smoke
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-smoke
     depends_on:
       mesh:
+        condition: service_healthy
+      mesh-agent-operator:
+        condition: service_started
+      rpc-gateway:
+        condition: service_healthy
+      indexer:
         condition: service_healthy
     environment:
       KUBECONFIG: /mesh-kubeconfig/kubeconfig
@@ -266,31 +495,202 @@ services:
       EVALUATION_MODE: "${MESH_STACK_SMOKE_EVALUATION_MODE:-native}"
       ORCHESTRATION_MODE: "${MESH_STACK_SMOKE_ORCHESTRATION_MODE:-native}"
       STEERING_MODE: "${MESH_STACK_SMOKE_STEERING_MODE:-interruptible_auto}"
-      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-native}"
-      MESH_EXPECT_LATENTMAS: "${MESH_STACK_ENABLE_LATENTMAS:-0}"
+      E2E_RUN_REQUEST_TIMEOUT_SECONDS: "${E2E_RUN_REQUEST_TIMEOUT_SECONDS:-90}"
+      E2E_RUN_TERMINAL_WAIT_SECONDS: "${E2E_RUN_TERMINAL_WAIT_SECONDS:-600}"
+      E2E_RUN_PROGRESS_GRACE_SECONDS: "${E2E_RUN_PROGRESS_GRACE_SECONDS:-120}"
+      E2E_RUN_STAGE_GRACE_SECONDS: "${E2E_RUN_STAGE_GRACE_SECONDS:-600}"
+      E2E_RUN_MAX_WAIT_SECONDS: "${E2E_RUN_MAX_WAIT_SECONDS:-1800}"
+      E2E_ACCEPT_AWAITING_OPERATOR: "${E2E_ACCEPT_AWAITING_OPERATOR:-0}"
+      MESH_AGENT_FABRIC_MODE: "${MESH_STACK_AGENT_FABRIC_MODE:-deepagents}"
+      MESH_EXPECT_LATENTMAS: "${MESH_STACK_ENABLE_LATENTMAS:-1}"
+      MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE: "${MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE:-1}"
+      MESH_STACK_RPC_GATEWAY_URL: "http://rpc-gateway:8080/health"
+      MESH_STACK_INDEXER_URL: "http://indexer:8080/health"
     command:
       - sh
       - -lc
-      - /workspace/mesh-intelligence/scripts/compose_stack_smoke.sh
+      - /workspace/mesh-intel/scripts/compose_stack_smoke.sh
     volumes:
-      - ./:/workspace/mesh-intelligence
+      - ./:/workspace/mesh-intel
       - mesh_kubeconfig:/mesh-kubeconfig:ro
     restart: "no"
 
-  latentmas:
-    profiles: ["latentmas"]
+  mesh-chaos:
     build:
       context: .
-      dockerfile: "${MESH_LATENTMAS_DOCKERFILE:-Dockerfile.latentmas}"
-    image: "${MESH_LATENTMAS_IMAGE:-mesh-intelligence-latentmas:${MESH_BUILD_VERSION:-dev}}"
-    container_name: mesh-intelligence-latentmas
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-chaos
+    depends_on:
+      mesh:
+        condition: service_healthy
+      mesh-kube-bootstrap:
+        condition: service_completed_successfully
+      mesh-kube-bootstrap-vm:
+        condition: service_completed_successfully
+      mesh-kube-bootstrap-baremetal:
+        condition: service_completed_successfully
+      mesh-smoke:
+        condition: service_completed_successfully
+    environment:
+      PYTHONPATH: /workspace/mesh-intel
+      KUBECONFIG: /mesh-kubeconfig/kubeconfig:/mesh-kubeconfig-vm/kubeconfig:/mesh-kubeconfig-baremetal/kubeconfig
+      BASE_URL: "${MESH_STACK_BASE_URL:-http://mesh:8787}"
+      MESH_STACK_CHAOS_TARGETS: "${MESH_STACK_CHAOS_TARGETS:-mesh-compose:search:semantic-search:container,mesh-compose-vm:search:semantic-search:vm,mesh-compose-baremetal:search:semantic-search:baremetal}"
+      MESH_STACK_CHAOS_DURATION_SECONDS: "${MESH_STACK_CHAOS_DURATION_SECONDS:-259200}"
+      MESH_STACK_CHAOS_MIN_SLEEP_SECONDS: "${MESH_STACK_CHAOS_MIN_SLEEP_SECONDS:-45}"
+      MESH_STACK_CHAOS_MAX_SLEEP_SECONDS: "${MESH_STACK_CHAOS_MAX_SLEEP_SECONDS:-180}"
+      MESH_STACK_CHAOS_HOLD_SECONDS: "${MESH_STACK_CHAOS_HOLD_SECONDS:-30}"
+      MESH_STACK_CHAOS_SEED: "${MESH_STACK_CHAOS_SEED:-20260428}"
+      MESH_STACK_CHAOS_RUN_WAIT_SECONDS: "${MESH_STACK_CHAOS_RUN_WAIT_SECONDS:-600}"
+      MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS: "${MESH_STACK_CHAOS_RUN_PROGRESS_GRACE_SECONDS:-120}"
+      MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS: "${MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS:-600}"
+      MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS: "${MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS:-1800}"
+      MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS: "${MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS:-90}"
+      MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE: "${MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE:-1}"
+      MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH: "${MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH:-1}"
+      MESH_STACK_CHAOS_EVALUATION_MODE: "${MESH_STACK_CHAOS_EVALUATION_MODE:-native}"
+      MESH_STACK_CHAOS_ORCHESTRATION_MODE: "${MESH_STACK_CHAOS_ORCHESTRATION_MODE:-native}"
+      MESH_STACK_CHAOS_STEERING_MODE: "${MESH_STACK_CHAOS_STEERING_MODE:-interruptible_auto}"
+      MESH_STACK_CHAOS_OUTPUT_DIR: /workspace/mesh-intel/.mesh-runtime-state/compose-chaos
+    command:
+      - python3
+      - /workspace/mesh-intel/scripts/compose_chaos_session.py
+    healthcheck:
+      disable: true
+    volumes:
+      - ./:/workspace/mesh-intel
+      - mesh_kubeconfig:/mesh-kubeconfig:ro
+      - mesh_kubeconfig_vm:/mesh-kubeconfig-vm:ro
+      - mesh_kubeconfig_baremetal:/mesh-kubeconfig-baremetal:ro
+    restart: on-failure
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  mesh-halo-optimizer:
+    profiles:
+      - halo
+    build:
+      context: .
+      args:
+        MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+        MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+        HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+        UV_VERSION: "${UV_VERSION:-0.11.6}"
+        GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+    image: "${MESH_STACK_IMAGE:-mesh-intel-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-halo-optimizer
+    depends_on:
+      mesh:
+        condition: service_healthy
+      mesh-agent-operator:
+        condition: service_started
+    environment:
+      PYTHONPATH: /workspace/mesh-intel
+      MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
+      MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
+      MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
+      MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
+      MESH_HALO_COMMAND: "${MESH_HALO_COMMAND:-halo}"
+      MESH_HALO_MODEL: "${MESH_HALO_MODEL:-MiniMax-M2.7}"
+      MESH_HALO_MAX_DEPTH: "${MESH_HALO_MAX_DEPTH:-1}"
+      MESH_HALO_MAX_TURNS: "${MESH_HALO_MAX_TURNS:-8}"
+      MESH_HALO_MAX_PARALLEL: "${MESH_HALO_MAX_PARALLEL:-2}"
+      MESH_HALO_TRACE_LIMIT: "${MESH_HALO_TRACE_LIMIT:-100}"
+      MESH_HALO_PROMPT: "${MESH_HALO_PROMPT:-Diagnose recurring Mesh harness failure modes across remediation, evaluation, agent-task, and verifier traces. Suggest bounded harness fixes only; do not propose direct production actuation.}"
+      MESH_HALO_TRACE_PATH: "${MESH_HALO_TRACE_PATH:-/app/.mesh-runtime-state/halo/traces.jsonl}"
+      MESH_HALO_REPORT_PATH: "${MESH_HALO_REPORT_PATH:-/app/.mesh-runtime-state/halo/report.md}"
+      MESH_HALO_RECORD_TASK_ON_FAILURE: "${MESH_HALO_RECORD_TASK_ON_FAILURE:-0}"
+      MESH_HALO_OPENAI_API_KEY: "${MESH_HALO_OPENAI_API_KEY:-}"
+      MESH_HALO_OPENAI_BASE_URL: "${MESH_HALO_OPENAI_BASE_URL:-https://api.openai.com/v1}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.minimax.io/v1}"
+    command:
+      - sh
+      - -lc
+      - |
+        mkdir -p "$$(dirname "$${MESH_HALO_TRACE_PATH}")" "$$(dirname "$${MESH_HALO_REPORT_PATH}")";
+        export OPENAI_API_KEY="$${MESH_HALO_OPENAI_API_KEY:-$${OPENAI_API_KEY}}";
+        export OPENAI_BASE_URL="$${MESH_HALO_OPENAI_BASE_URL:-https://api.openai.com/v1}";
+        python3 /workspace/mesh-intel/scripts/halo_outer_loop.py \
+          --state-directory "$${MESH_STATE_DIRECTORY}" \
+          --vault-path "$${MESH_VAULT_PATH}" \
+          run \
+          --output "$${MESH_HALO_TRACE_PATH}" \
+          --report-path "$${MESH_HALO_REPORT_PATH}" \
+          --halo-command "$${MESH_HALO_COMMAND}" \
+          --model "$${MESH_HALO_MODEL}" \
+          --max-depth "$${MESH_HALO_MAX_DEPTH}" \
+          --max-turns "$${MESH_HALO_MAX_TURNS}" \
+          --max-parallel "$${MESH_HALO_MAX_PARALLEL}" \
+          --limit "$${MESH_HALO_TRACE_LIMIT}" \
+          --prompt "$${MESH_HALO_PROMPT}";
+        status="$$?";
+        if [ "$${status}" = "0" ] || [ "$${MESH_HALO_RECORD_TASK_ON_FAILURE}" = "1" ]; then
+          python3 /workspace/mesh-intel/scripts/halo_outer_loop.py \
+            --state-directory "$${MESH_STATE_DIRECTORY}" \
+            --vault-path "$${MESH_VAULT_PATH}" \
+            task \
+            --trace-jsonl "$${MESH_HALO_TRACE_PATH}" \
+            --report "$${MESH_HALO_REPORT_PATH}" \
+            --print-json;
+        fi;
+        exit "$${status}"
+    healthcheck:
+      disable: true
+    volumes:
+      - ./:/workspace/mesh-intel
+      - mesh_runtime_state:/app/.mesh-runtime-state
+    restart: "no"
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  mesh-ui:
+    build:
+      context: ./purnaOS-main
+      args:
+        NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
+        NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"
+    init: true
+    depends_on:
+      mesh:
+        condition: service_healthy
+    ports:
+      - "${MESH_UI_PUBLISH_PORT:-3000}:3000"
+    environment:
+      NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
+      NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  latentmas:
+    build:
+      context: .
+      dockerfile: "${MESH_LATENTMAS_DOCKERFILE:-Dockerfile.latentmas.cpu}"
+    image: "${MESH_LATENTMAS_IMAGE:-mesh-intel-latentmas:${MESH_BUILD_VERSION:-dev}}"
+    container_name: mesh-intel-latentmas
     environment:
       MESH_LATENTMAS_URL: "http://0.0.0.0:8791"
-      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
-      # Docker Desktop (macOS/Windows): use Dockerfile.latentmas.cpu and cpu — no Metal inside Linux VMs.
+      MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-sshleifer/tiny-gpt2}"
+      # Docker Desktop (macOS/Windows): default to Dockerfile.latentmas.cpu and cpu — no Metal inside Linux VMs.
       # Apple Silicon Metal (MPS): run `python -m services.orchestrator.latentmas_server` on the host with
       # MESH_LATENTMAS_DEVICE=mps and point Mesh at http://host.docker.internal:8791 .
-      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cuda}"
+      MESH_LATENTMAS_DEVICE: "${MESH_LATENTMAS_DEVICE:-cpu}"
       MESH_LATENTMAS_PROMPT_MODE: "${MESH_LATENTMAS_PROMPT_MODE:-sequential}"
       MESH_LATENTMAS_LATENT_STEPS: "${MESH_LATENTMAS_LATENT_STEPS:-10}"
       MESH_LATENTMAS_MAX_NEW_TOKENS: "${MESH_LATENTMAS_MAX_NEW_TOKENS:-1024}"
@@ -299,7 +699,7 @@ services:
       TRANSFORMERS_CACHE: /cache/huggingface
       HF_DATASETS_CACHE: /cache/huggingface
     volumes:
-      - ./:/workspace/mesh-intelligence
+      - ./:/workspace/mesh-intel
       - latentmas_hf_cache:/cache/huggingface
     ports:
       - "${MESH_LATENTMAS_PUBLISH_PORT:-8791}:8791"
@@ -314,7 +714,11 @@ volumes:
   goose_config:
   hermes_home:
   k3s_server_data:
+  k3s_vm_server_data:
+  k3s_baremetal_server_data:
   latentmas_hf_cache:
   mesh_kubeconfig:
+  mesh_kubeconfig_vm:
+  mesh_kubeconfig_baremetal:
   mesh_runtime_state:
   mesh_postgres_data:

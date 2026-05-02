@@ -69,6 +69,35 @@ class EventFreshnessTests(unittest.TestCase):
         cutoff = _event_window_cutoff()
         self.assertFalse(_event_is_fresh({"reason": "BackOff"}, cutoff))
 
+    def test_pod_event_from_old_replicaset_is_excluded_even_when_fresh(self) -> None:
+        """A prior crash_loop can leave fresh BackOff events in the same
+        namespace for several minutes. A later pod_kill_one run on the
+        same deployment must not inherit those old pod events just
+        because the pod name has the deployment prefix."""
+        from services.ingest.kubernetes_live_signal import _event_matches
+        event = {
+            "involvedObject": {
+                "name": "semantic-search-oldrs-dead1",
+                "kind": "Pod",
+            },
+            "reason": "BackOff",
+        }
+        current_pods = {"semantic-search-newrs-live1", "semantic-search-newrs-live2"}
+
+        self.assertFalse(_event_matches(event, "semantic-search", current_pods))
+
+    def test_replicaset_event_for_deployment_prefix_is_still_included(self) -> None:
+        from services.ingest.kubernetes_live_signal import _event_matches
+        event = {
+            "involvedObject": {
+                "name": "semantic-search-abc123",
+                "kind": "ReplicaSet",
+            },
+            "reason": "ScalingReplicaSet",
+        }
+
+        self.assertTrue(_event_matches(event, "semantic-search", set()))
+
     def test_event_window_respects_env_override(self) -> None:
         """Operators running long investigations can widen the window."""
         from services.ingest.kubernetes_live_signal import _event_window_cutoff
@@ -96,6 +125,7 @@ class TriggerFailingPodsTests(unittest.TestCase):
         *,
         rollout_status: str = "healthy",
         error_signatures: list[str] | None = None,
+        related_context: dict | None = None,
     ) -> object:
         """Build a minimal k8s signal envelope with the given pod list.
 
@@ -143,7 +173,7 @@ class TriggerFailingPodsTests(unittest.TestCase):
                     "event_reasons": [],
                     "restart_count_total": 0,
                 },
-                "related_context": {},
+                "related_context": related_context or {},
                 "post_action_observations": {},
             },
             summary={"service": "search-api", "endpoint": "deployment/search-api", "deployment": "search-api"},
@@ -231,6 +261,64 @@ class TriggerFailingPodsTests(unittest.TestCase):
         trigger = TriggerService().detect(envelope)
         self.assertIsNone(trigger)
 
+    def test_degraded_running_unready_probe_failure_fires(self) -> None:
+        """A real readiness regression has Running containers that are
+        explicitly unready. That is different from pod startup churn."""
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": False, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+            ],
+            rollout_status="degraded",
+            error_signatures=["probe_failure"],
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+
+    def test_configuration_drift_fires_as_weak_signal(self) -> None:
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": True, "restarts": 0, "container_status": "Running",
+                 "phase": "Running", "last_state_reason": None},
+            ],
+            rollout_status="healthy",
+            error_signatures=[],
+            related_context={
+                "configuration_drift": [
+                    {"field": "labels", "key": "mesh.chaos.config_drift", "value": "true"}
+                ]
+            },
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+        self.assertIn("configuration_drift", trigger.related_context["error_signatures"])
+
+    def test_resource_pressure_context_adds_oom_signature(self) -> None:
+        from services.trigger.service import TriggerService
+        envelope = self._envelope(
+            [
+                {"name": "p1", "ready": False, "restarts": 2, "container_status": "RunContainerError",
+                 "phase": "Running", "last_state_reason": "StartError"},
+            ],
+            rollout_status="degraded",
+            error_signatures=["crash_loop"],
+            related_context={
+                "resource_pressure": [
+                    {
+                        "container": "semantic-search",
+                        "limit": "8Mi",
+                        "limit_bytes": 8388608,
+                        "reason": "memory_limit_too_low",
+                    }
+                ]
+            },
+        )
+        trigger = TriggerService().detect(envelope)
+        self.assertIsNotNone(trigger)
+        self.assertIn("oom_killed", trigger.related_context["error_signatures"])
+
     def test_degraded_rollout_with_crash_loop_fires(self) -> None:
         """Hard signature corroborates the degraded rollout — trigger fires."""
         from services.trigger.service import TriggerService
@@ -306,6 +394,124 @@ class ProbeHandlerRevertTests(unittest.TestCase):
         template = {"spec": {"containers": [{"name": "c", "image": "nginx"}]}}
         normalized = _normalize_probe_handlers_for_revert(template)
         self.assertEqual(normalized, template)
+
+    def test_revert_nulls_out_config_drift_metadata(self) -> None:
+        from tests.e2e.chaos.injector import _normalize_chaos_metadata_for_revert
+        template = {
+            "metadata": {"labels": {"app": "semantic-search"}},
+            "spec": {"containers": [{"name": "c", "image": "nginx"}]},
+        }
+
+        normalized = _normalize_chaos_metadata_for_revert(template)
+
+        self.assertEqual(normalized["metadata"]["labels"]["app"], "semantic-search")
+        self.assertIsNone(normalized["metadata"]["labels"]["mesh.chaos.config_drift"])
+
+
+class ReadinessFailureObservationTests(unittest.TestCase):
+    def test_readiness_failure_accepts_degraded_updated_rollout(self) -> None:
+        """The compose stack uses rolling Deployments.
+
+        Old pods may stay ready while the bad new ReplicaSet is blocked
+        by the injected readiness probe, so the harness must key on
+        unavailable updated replicas rather than requiring total
+        readyReplicas to hit zero.
+        """
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "status": {
+                "readyReplicas": 3,
+                "updatedReplicas": 1,
+                "unavailableReplicas": 1,
+            }
+        }
+
+        observed_at = injector._wait_for_readiness_degraded("semantic-search", "search", timeout_seconds=1)
+        self.assertIsInstance(observed_at, float)
+
+    def test_scale_to_zero_still_waits_for_zero_ready(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 0},
+            "status": {"readyReplicas": 0},
+        }
+
+        observed_at = injector._wait_for_zero_ready("semantic-search", "search", timeout_seconds=1)
+        self.assertIsInstance(observed_at, float)
+
+    def test_pod_kill_all_waits_for_transient_zero_ready_not_zero_desired(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 3},
+            "status": {"readyReplicas": 0},
+        }
+
+        observed_at = injector._wait_for_ready_replicas_below(
+            "semantic-search",
+            "search",
+            ready_replicas=1,
+            timeout_seconds=1,
+        )
+        self.assertIsInstance(observed_at, float)
+
+    def test_pod_reason_accepts_last_terminated_oom_reason(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._list_pods = lambda *args: [  # type: ignore[method-assign]
+            {
+                "containerStatuses": [
+                    {
+                        "state": {"waiting": {"reason": "CrashLoopBackOff"}},
+                        "lastState": {"terminated": {"reason": "OOMKilled"}},
+                    }
+                ]
+            }
+        ]
+
+        observed_at = injector._wait_for_pod_reason(
+            "semantic-search",
+            "search",
+            reasons=("OOMKilled",),
+            timeout_seconds=1,
+        )
+        self.assertIsInstance(observed_at, float)
+
+    def test_bad_image_observation_accepts_degraded_rollout_without_pod_reason(self) -> None:
+        from tests.e2e.chaos.injector import ChaosInjector
+
+        injector = ChaosInjector()
+        injector._list_pods = lambda *args: [  # type: ignore[method-assign]
+            {
+                "containerStatuses": [
+                    {"state": {"waiting": {"reason": "ContainerCreating"}}}
+                ]
+            }
+        ]
+        injector._kubectl_json = lambda *args: {  # type: ignore[method-assign]
+            "spec": {"replicas": 3},
+            "status": {
+                "updatedReplicas": 1,
+                "unavailableReplicas": 1,
+                "readyReplicas": 3,
+                "availableReplicas": 3,
+            },
+        }
+
+        observed_at = injector._wait_for_pod_reason_or_rollout_degraded(
+            "semantic-search",
+            "search",
+            reasons=("ImagePullBackOff", "ErrImagePull"),
+            timeout_seconds=1,
+        )
+
+        self.assertIsInstance(observed_at, float)
 
 
 # --------------------------------------------------------- Bug 10: baseline-failure fast-trip

@@ -34,6 +34,15 @@ RUN apt-get update \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
   && rm -rf /var/lib/apt/lists/*
 
+FROM rust:1.92-slim-bookworm AS latentmas-rust
+WORKDIR /repo/latent-mesh/LatentMAS
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends build-essential cmake pkg-config \
+  && rm -rf /var/lib/apt/lists/*
+COPY latent-mesh/LatentMAS/Cargo.toml latent-mesh/LatentMAS/Cargo.lock ./
+COPY latent-mesh/LatentMAS/src ./src
+RUN cargo build --release --bin latentmas
+
 FROM python:3.12-slim-bookworm
 WORKDIR /app
 
@@ -61,6 +70,7 @@ COPY --from=promptfoo /usr/local/lib/node_modules/promptfoo /usr/local/lib/node_
 RUN ln -sf ../lib/node_modules/promptfoo/dist/src/entrypoint.js /usr/local/bin/promptfoo
 
 COPY --from=goose /usr/local/bin/goose /usr/local/bin/goose
+COPY --from=latentmas-rust /repo/latent-mesh/LatentMAS/target/release/latentmas /usr/local/bin/latentmas
 
 RUN groupadd -r mesh && useradd -r -g mesh -d /app mesh
 
@@ -100,7 +110,7 @@ COPY shared ./shared
 COPY services ./services
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies

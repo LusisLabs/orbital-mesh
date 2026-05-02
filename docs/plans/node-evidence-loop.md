@@ -1,5 +1,15 @@
 # Plan: Evidence-driven node loop (Reth, first slice)
 
+## Current Status
+
+This plan is historical for the first Reth evidence-loop slice. The current
+implementation wires `reth_node_degraded` through Reth-specific hypothesis
+templates, scenario-analysis evidence, decision biasing, and the bounded
+Kurtosis restart path documented in
+[`docs/reth-kurtosis-testing.md`](../reth-kurtosis-testing.md). Remaining work
+is repeatable full-stack gating and wider client coverage, not initial wiring
+of the Reth trigger.
+
 ## Problem
 
 Today the Reth path treats the inbound signal as the truth. The bare-metal
@@ -19,9 +29,10 @@ Concretely:
   signal directly and matches against [policies/reth-node.policy.json](../../policies/reth-node.policy.json).
   No alternative hypotheses are considered, no probes are issued, no second
   look is taken before action.
-- The `HypothesisEngine` ([services/decision/hypothesis_engine.py](../../services/decision/hypothesis_engine.py))
-  has the right shape (templates + falsification predicates + posterior) but
-  carries only k8s templates and is not wired for `reth_node_degraded`.
+- The original `HypothesisEngine` ([services/decision/hypothesis_engine.py](../../services/decision/hypothesis_engine.py))
+  carried only k8s templates and was not wired for `reth_node_degraded`.
+  Current code now includes the Reth path; keep this section as the historical
+  reason for the first slice.
 
 The user-visible gap: when an alert says "peer count low," Mesh cannot
 distinguish *peer starvation from network isolation* or *sync stalled from

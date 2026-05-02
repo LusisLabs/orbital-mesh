@@ -68,6 +68,8 @@ class PriorExperiment:
     deployment: str
     severity: str
     completed_at: float  # monotonic seconds since session start
+    capability_axes: frozenset[str] = frozenset()
+    passed: bool | None = None
 
 
 class ExperimentScheduler:
@@ -112,13 +114,21 @@ class ExperimentScheduler:
         if not eligible:
             _LOG.debug("scheduler: no eligible (experiment, target) at t=%.1f", now)
             return None
+        coverage_pick = self._coverage_frontier_pick(eligible, history)
+        if coverage_pick is not None:
+            _LOG.info(
+                "scheduler: picked coverage frontier %s on %s",
+                coverage_pick[0].name,
+                coverage_pick[1],
+            )
+            return coverage_pick
 
         # Weighted pick over the eligible pairs. We flatten (experiment,
         # target) into a single list and weight each entry by the
         # experiment's portfolio weight — a two-target cluster naturally
         # gives the experiment twice as many chances to fire, which is
         # the right behavior (more targets = more opportunities).
-        weights = [pair[0].weight for pair in eligible]
+        weights = [self._adaptive_weight(pair[0], pair[1], history) for pair in eligible]
         index = self._weighted_index(weights)
         chosen = eligible[index]
         _LOG.info(
@@ -212,6 +222,79 @@ class ExperimentScheduler:
             if r <= acc:
                 return i
         return len(weights) - 1  # float-precision fallback
+
+    @staticmethod
+    def _coverage_frontier_pick(
+        eligible: list[tuple[ChaosExperiment, str]],
+        history: Sequence[PriorExperiment],
+    ) -> tuple[ChaosExperiment, str] | None:
+        covered_axes = _covered_axes(history)
+        attempted_experiments = {prior.experiment_name for prior in history}
+        frontier: list[tuple[int, int, float, str, str, tuple[ChaosExperiment, str]]] = []
+        for experiment, target in eligible:
+            missing_axes = set(experiment.capability_axes) - covered_axes
+            if not missing_axes:
+                continue
+            never_attempted = 1 if experiment.name not in attempted_experiments else 0
+            frontier.append((
+                len(missing_axes),
+                never_attempted,
+                experiment.weight,
+                experiment.name,
+                target,
+                (experiment, target),
+            ))
+        if not frontier:
+            return None
+        frontier.sort(key=lambda item: (-item[0], -item[1], -item[2], item[3], item[4]))
+        return frontier[0][5]
+
+    @staticmethod
+    def _adaptive_weight(
+        experiment: ChaosExperiment,
+        target: str,
+        history: Sequence[PriorExperiment],
+    ) -> float:
+        """Bias selection toward unproven capability axes.
+
+        The base portfolio weight still controls real-world frequency.
+        The multiplier only prevents a long session from spending most
+        of its budget on the same high-weight primitive while subtle
+        axes such as drift handling or false-positive suppression remain
+        untested.
+        """
+        covered_axes = _covered_axes(history)
+        axes = set(experiment.capability_axes)
+        missing_axes = axes - covered_axes
+        weight = experiment.weight
+        if axes:
+            coverage_gap = len(missing_axes) / len(axes)
+            weight *= 1.0 + (3.0 * coverage_gap)
+            if missing_axes == axes:
+                weight *= 1.5
+
+        last_same_target = next(
+            (
+                prior
+                for prior in reversed(history)
+                if prior.experiment_name == experiment.name and prior.deployment == target
+            ),
+            None,
+        )
+        if last_same_target is not None and last_same_target.passed is False:
+            # A failed primitive is worth retrying after its cooldown,
+            # but do not let one flaky path monopolize the session.
+            weight *= 0.75
+        return max(weight, 0.01)
+
+
+def _covered_axes(history: Sequence[PriorExperiment]) -> set[str]:
+    return {
+        axis
+        for prior in history
+        for axis in prior.capability_axes
+        if prior.passed is not False
+    }
 
 
 __all__ = ["ExperimentScheduler", "PriorExperiment"]

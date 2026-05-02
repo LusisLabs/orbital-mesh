@@ -2,16 +2,22 @@ import type {
   GoalRecord,
   HealthSnapshot,
   IntegrationReadiness,
+  EvidenceGraph,
   MerkleProof,
   MerkleSnapshot,
+  ScenarioAnalysis,
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
   RunDetail,
   RunSessionRecord,
   ScenarioRecord,
+  BenchmarkRecord,
+  ServiceAgentRecord,
+  SimulationScenarioRecord,
   SystemSnapshot,
   VaultTreeEntry,
+  WatcherStatus,
 } from "./types";
 
 export function resolveBaseUrl(): string {
@@ -57,6 +63,29 @@ export const api = {
 
   getScenarios(baseUrl: string) {
     return request<{ scenarios: ScenarioRecord[] }>(baseUrl, "/api/scenarios");
+  },
+
+  getSimulations(baseUrl: string) {
+    return request<{ simulations: SimulationScenarioRecord[] }>(baseUrl, "/api/simulations");
+  },
+
+  runSimulation(baseUrl: string, scenarioId: string, payload: Record<string, unknown>) {
+    return request<RunDetail>(baseUrl, `/api/simulations/${encodeURIComponent(scenarioId)}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getBenchmarks(baseUrl: string) {
+    return request<{ benchmarks: BenchmarkRecord[] }>(baseUrl, "/api/benchmarks");
+  },
+
+  getBenchmark(baseUrl: string, benchmarkId: string) {
+    return request<BenchmarkRecord>(baseUrl, `/api/benchmarks/${encodeURIComponent(benchmarkId)}`);
+  },
+
+  getServiceAgents(baseUrl: string) {
+    return request<{ service_agents: ServiceAgentRecord[] }>(baseUrl, "/api/service-agents");
   },
 
   getGoals(baseUrl: string) {
@@ -113,8 +142,24 @@ export const api = {
     return request<MerkleSnapshot>(baseUrl, `/api/runs/${runId}/merkle`);
   },
 
+  getScenarioAnalysis(baseUrl: string, runId: string) {
+    return request<ScenarioAnalysis>(baseUrl, `/api/runs/${runId}/scenario-analysis`);
+  },
+
+  getEvidenceGraph(baseUrl: string, runId: string) {
+    return request<EvidenceGraph>(baseUrl, `/api/runs/${runId}/evidence-graph`);
+  },
+
+  getMemoryCrystallization(baseUrl: string, runId: string) {
+    return request<Record<string, unknown>>(baseUrl, `/api/runs/${runId}/memory-crystallization`);
+  },
+
   getAgentTasks(baseUrl: string, runId: string) {
     return request<{ tasks: import("./types").AgentTask[] }>(baseUrl, `/api/runs/${runId}/agent-tasks`);
+  },
+
+  getWatchers(baseUrl: string) {
+    return request<WatcherStatus>(baseUrl, "/api/watchers");
   },
 
   getMerkleProof(baseUrl: string, runId: string, eventId: string) {

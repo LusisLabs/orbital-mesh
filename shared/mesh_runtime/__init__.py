@@ -1,6 +1,8 @@
 from .active_memory import ActiveMemoryStore
+from .breakthrough import BreakthroughCriterion, BreakthroughThresholds, breakthrough_threshold_report
 from .config import RuntimeConfig
 from .context_store import ContextStore
+from .corpus_store import CorpusQuery, IncidentCorpusDatabase, project_corpus_row_to_memory, project_database_to_memory
 from .infra_graph import GraphEdge, GraphNode, GraphSnapshot, InfraGraph
 from .learning import LearningStore
 from .trust_ladder import TRUST_LEVELS, TrustLadder
@@ -20,7 +22,11 @@ from .control_plane_models import (
 from .control_plane_state import ControlPlaneStateStore, FileStateStore
 from .mesh_state_store import MeshStateStore, RunFilters
 from .postgres_state import PostgresStateStore
+from .public_corpus_cleaner import build_clean_public_corpus_index
+from .reasoning_bank import ReasoningBankService, format_strategy_context
 from .state_store_factory import build_mesh_state_store
+from .temperature_policy import TemperatureInputs, fixed_temperature, generator_temperature
+from .benchmarking import BenchmarkRecord, BenchmarkStore, SimulationScenario
 from .contracts import (
     ClaimRecord,
     Decision,
@@ -51,8 +57,23 @@ from .integrations import (
     save_integrations_config,
 )
 from .logging import log_runtime_event
+from .halo import (
+    DEFAULT_HARNESS_ALLOWED_PATHS,
+    DEFAULT_HARNESS_TEST_COMMANDS,
+    OPTIMIZATION_ARTIFACT_KEY,
+    TRACE_FORMAT,
+    HaloExportResult,
+    HaloRunResult,
+    build_halo_patch_task,
+    build_halo_trace_record,
+    export_halo_traces,
+    load_halo_report,
+    record_halo_optimization_cycle,
+    run_halo_engine,
+)
 from .merkle import build_merkle_proof, build_merkle_snapshot, verify_merkle_proof
 from .policies import load_policy
+from .phoenix_trace import build_phoenix_spans
 from .run_events import (
     AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,

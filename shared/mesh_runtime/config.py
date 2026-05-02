@@ -13,6 +13,8 @@ DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
+DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
+DEFAULT_CORPUS_DATABASE_PATH = DEFAULT_STATE_DIRECTORY / "corpus" / "incident_corpus.sqlite"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
@@ -153,6 +155,8 @@ class RuntimeConfig:
     prometheus_url: str | None = None
     prometheus_query_timeout_seconds: float = 10.0
     feedback_prometheus_enabled: bool = False
+    feedback_prometheus_latency_query: str = 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000'
+    feedback_prometheus_error_rate_query: str = 'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)'
     # Layer 3: LLM-backed decision fallback for OTel signals that don't match
     # any metric-action rule. Opt-in because it adds LLM latency (5-30s) to
     # the decision stage for unknown signals.
@@ -162,6 +166,18 @@ class RuntimeConfig:
     rule_learning_enabled: bool = False
     rule_learning_min_observations: int = 5
     rule_learning_max_age_days: int = 30
+    simulation_enabled: bool = False
+    simulation_context_allowlist: tuple[str, ...] = ()
+    benchmark_export_path: str = str(DEFAULT_BENCHMARK_EXPORT_PATH)
+    service_agents_config_path: str | None = None
+    agent_reconciliation_enabled: bool = True
+    reasoning_bank_enabled: bool = False
+    reasoning_bank_distiller: str = "deterministic"
+    reasoning_bank_max_strategies: int = 5
+    reasoning_bank_scaling_mode: str = "off"
+    corpus_memory_enabled: bool = False
+    corpus_database_path: str = str(DEFAULT_CORPUS_DATABASE_PATH)
+    corpus_memory_projection_limit: int = 5000
     # Bare-metal SSH actuator: blockchain nodes (Solana/Agave, geth, reth,
     # lighthouse) run as systemd services on dedicated hardware, not in k8s.
     # Actuation goes through the SSH adapter with four overlapping safety
@@ -205,8 +221,24 @@ class RuntimeConfig:
             )
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
+        if self.reasoning_bank_max_strategies < 1:
+            raise ValueError(
+                "reasoning_bank_max_strategies must be >= 1, "
+                f"got {self.reasoning_bank_max_strategies}"
+            )
+        if self.reasoning_bank_scaling_mode not in {"off", "sequential", "parallel"}:
+            self.reasoning_bank_scaling_mode = "off"
+        if self.reasoning_bank_distiller != "deterministic":
+            self.reasoning_bank_distiller = "deterministic"
+        if self.corpus_memory_projection_limit < 1:
+            raise ValueError(
+                "corpus_memory_projection_limit must be >= 1, "
+                f"got {self.corpus_memory_projection_limit}"
+            )
         if self.research_directory == str(DEFAULT_RESEARCH_DIRECTORY):
             self.research_directory = str(Path(self.state_directory) / "research")
+        if self.corpus_database_path == str(DEFAULT_CORPUS_DATABASE_PATH):
+            self.corpus_database_path = str(Path(self.state_directory) / "corpus" / "incident_corpus.sqlite")
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -318,12 +350,43 @@ class RuntimeConfig:
             prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
             feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            feedback_prometheus_latency_query=os.getenv(
+                "MESH_FEEDBACK_PROMETHEUS_LATENCY_QUERY",
+                'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000',
+            ),
+            feedback_prometheus_error_rate_query=os.getenv(
+                "MESH_FEEDBACK_PROMETHEUS_ERROR_RATE_QUERY",
+                'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)',
+            ),
             llm_decision_fallback_enabled=os.getenv("MESH_LLM_DECISION_FALLBACK_ENABLED", "").lower()
             in ("1", "true", "yes"),
             llm_decision_fallback_timeout_seconds=float(os.getenv("MESH_LLM_DECISION_FALLBACK_TIMEOUT_SECONDS", "30")),
             rule_learning_enabled=os.getenv("MESH_RULE_LEARNING_ENABLED", "").lower() in ("1", "true", "yes"),
             rule_learning_min_observations=int(os.getenv("MESH_RULE_LEARNING_MIN_OBSERVATIONS", "5")),
             rule_learning_max_age_days=int(os.getenv("MESH_RULE_LEARNING_MAX_AGE_DAYS", "30")),
+            simulation_enabled=os.getenv("MESH_SIMULATION_ENABLED", "").lower() in ("1", "true", "yes"),
+            simulation_context_allowlist=_csv_env("MESH_SIMULATION_CONTEXT_ALLOWLIST"),
+            benchmark_export_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_BENCHMARK_EXPORT_PATH"),
+                default=str(DEFAULT_BENCHMARK_EXPORT_PATH),
+            ),
+            service_agents_config_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH"), default="")
+                if os.getenv("MESH_SERVICE_AGENTS_CONFIG_PATH")
+                else None
+            ),
+            agent_reconciliation_enabled=os.getenv("MESH_AGENT_RECONCILIATION_ENABLED", "true").lower()
+            not in ("0", "false", "no"),
+            reasoning_bank_enabled=os.getenv("MESH_REASONING_BANK_ENABLED", "").lower() in ("1", "true", "yes"),
+            reasoning_bank_distiller=os.getenv("MESH_REASONING_BANK_DISTILLER", "deterministic"),
+            reasoning_bank_max_strategies=int(os.getenv("MESH_REASONING_BANK_MAX_STRATEGIES", "5")),
+            reasoning_bank_scaling_mode=os.getenv("MESH_REASONING_BANK_SCALING_MODE", "off"),
+            corpus_memory_enabled=os.getenv("MESH_CORPUS_MEMORY_ENABLED", "").lower() in ("1", "true", "yes"),
+            corpus_database_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_CORPUS_DATABASE_PATH"),
+                default=str(Path(state_directory) / "corpus" / "incident_corpus.sqlite"),
+            ),
+            corpus_memory_projection_limit=int(os.getenv("MESH_CORPUS_MEMORY_PROJECTION_LIMIT", "5000")),
             ssh_execution_enabled=os.getenv("MESH_SSH_EXECUTION_ENABLED", "").lower() in ("1", "true", "yes"),
             ssh_command=os.getenv("MESH_SSH_COMMAND", "ssh"),
             ssh_identity_file=os.getenv("MESH_SSH_IDENTITY_FILE") or None,

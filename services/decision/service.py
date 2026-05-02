@@ -79,6 +79,7 @@ class DecisionService:
         trigger: Trigger,
         scenario_analysis: ScenarioAnalysis | dict | None = None,
         evidence_pack: dict | None = None,
+        reasoning_bank_packet: dict | None = None,
     ) -> Decision:
         # Log the branch up front. Readers scanning a server log for
         # "why did Mesh propose X" need to know which decision path ran
@@ -91,6 +92,7 @@ class DecisionService:
         )
         if trigger.trigger_type == "otel_metric_regression":
             decision = self._decide_otel_metric(trigger)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -101,6 +103,7 @@ class DecisionService:
             return decision
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -111,6 +114,17 @@ class DecisionService:
             return decision
         if trigger.trigger_type == "reth_node_degraded":
             decision = self._decide_reth_node(trigger, evidence_pack=evidence_pack)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
+        if trigger.trigger_type == "webhook_alert_firing":
+            decision = self._decide_webhook_alert(trigger)
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -132,6 +146,7 @@ class DecisionService:
         protected_tiers = set(load_policy("protected-scope.policy.json")["approval_required_customer_tiers"])
         protected_tier = trigger.segment["customer_tier"] in protected_tiers
         repeated_rollback = trigger.related_context.get("rollbacks_last_24h", 0) > 0
+        flag_rollback_conflict = bool(trigger.related_context.get("flag_rollback_conflict", False))
         high_business_impact = bool(trigger.related_context.get("high_business_impact", False))
         flag_causality_confidence = trigger.related_context.get("flag_causality_confidence")
         active_incidents = int(trigger.related_context.get("active_incidents", 0))
@@ -162,7 +177,7 @@ class DecisionService:
             decision_type = "investigate_and_patch"
             confidence = 0.78
             risk_level = "medium"
-        elif high_business_impact:
+        elif high_business_impact or flag_rollback_conflict:
             decision_type = "escalate"
             confidence = 0.64
             risk_level = "high"
@@ -282,6 +297,68 @@ class DecisionService:
             execution_plan=execution_plan,
         )
         decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
+        _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+        decision.validate()
+        return decision
+
+    def _decide_webhook_alert(self, trigger: Trigger) -> Decision:
+        severity = str(trigger.related_context.get("severity") or "warning").lower()
+        high_severity = severity in {"critical", "high", "p1", "sev1", "sev2"}
+        confidence = 0.84 if high_severity else 0.76
+        autonomy_tier = "autonomous" if high_severity else "approval_required"
+        decision = Decision(
+            decision_id=f"dec_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            summary=(
+                f"Open an incident for webhook alert "
+                f"{trigger.related_context.get('webhook_alert_id', 'unknown')} on {trigger.service}."
+            ),
+            decision_type="escalate",
+            autonomy_tier=autonomy_tier,
+            reasoning={
+                "primary_hypothesis": "A verified external alert fired and should be routed into the bounded incident lane.",
+                "evidence": [
+                    f"severity={severity}",
+                    f"source={trigger.related_context.get('webhook_source_id', 'unknown')}",
+                    f"title={trigger.related_context.get('title', 'unknown')}",
+                ],
+                "evidence_pack": {
+                    "labels": trigger.related_context.get("labels", {}),
+                    "annotations": trigger.related_context.get("annotations", {}),
+                },
+                "alternatives_considered": ["record_no_action"],
+            },
+            expected_outcome={
+                "target_metrics": {
+                    "p95_latency_ms": "n/a",
+                    "error_rate": "n/a",
+                },
+                "time_to_effect": "immediate",
+            },
+            risk={
+                "level": "low" if high_severity else "medium",
+                "blast_radius": "single_service",
+                "customer_impact_if_wrong": "limited to creating an unnecessary human-review incident",
+            },
+            confidence=confidence,
+            execution_plan={
+                "system": "incident_service",
+                "action": "open_incident",
+                "parameters": {
+                    "service": trigger.service,
+                    "endpoint": trigger.endpoint,
+                    "environment": trigger.environment,
+                    "severity": "high" if high_severity else "medium",
+                    "source": "webhook_alert",
+                    "source_id": trigger.related_context.get("webhook_source_id"),
+                    "alert_id": trigger.related_context.get("webhook_alert_id"),
+                    "summary": trigger.related_context.get("title") or "webhook alert fired",
+                    "reason": trigger.related_context.get("description") or "external alert fired",
+                    "labels": trigger.related_context.get("labels", {}),
+                },
+                "rollback_plan": "close or downgrade the incident once an operator confirms the alert is resolved or non-actionable",
+            },
+        )
         decision.validate()
         return decision
 
@@ -1112,9 +1189,9 @@ class DecisionService:
         #
         #   investigate_and_patch — explicit code-remediation handoff,
         #     only when the operator pre-supplied repo/test/patch context
+        #   oom_killed            — memory pressure, raise limit BEFORE restart
         #   image_pull_failure   — supply-chain problem, rollback fixes it
         #   rollout_status=failed — definitive controller verdict, rollback
-        #   oom_killed            — memory pressure, raise limit BEFORE restart
         #   crash_loop + recent deploy — rollback (deploy is the cause)
         #   crash_loop + no recent deploy — escalate (code investigation)
         #   probe_failure only    — downstream/dependency, escalate
@@ -1133,6 +1210,20 @@ class DecisionService:
             risk_level = "medium"
             autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
             blast_radius = "single_repo_single_file"
+        elif "oom_killed" in error_signatures:
+            # OOMKilled with restart is a band-aid: the new container
+            # fills the same limit and OOMs again within minutes.
+            # ``patch_resources`` raises the memory limit, which gives
+            # the workload room to either run cleanly (limit was tight)
+            # or surface the leak more visibly. Either is more useful
+            # than the restart loop kubelet is already running.
+            decision_type = "patch_resources"
+            confidence = 0.74
+            risk_level = "medium"
+            # Always require approval — bumping resource limits has
+            # cluster-wide cost implications. An SRE should sign off.
+            autonomy_tier = "approval_required"
+            blast_radius = "single_deployment"
         elif "image_pull_failure" in error_signatures:
             # Image pull failure is the cleanest "rollback fixes it" case.
             # The new image can't be pulled; the prior revision had a
@@ -1157,20 +1248,6 @@ class DecisionService:
                 confidence = 0.85
                 risk_level = "medium"
                 autonomy_tier = "autonomous"
-            blast_radius = "single_deployment"
-        elif "oom_killed" in error_signatures:
-            # OOMKilled with restart is a band-aid: the new container
-            # fills the same limit and OOMs again within minutes.
-            # ``patch_resources`` raises the memory limit, which gives
-            # the workload room to either run cleanly (limit was tight)
-            # or surface the leak more visibly. Either is more useful
-            # than the restart loop kubelet is already running.
-            decision_type = "patch_resources"
-            confidence = 0.74
-            risk_level = "medium"
-            # Always require approval — bumping resource limits has
-            # cluster-wide cost implications. An SRE should sign off.
-            autonomy_tier = "approval_required"
             blast_radius = "single_deployment"
         elif "crash_loop" in error_signatures and deploy_correlated:
             # Recent deploy + crash loop = the deploy is almost certainly
@@ -1202,6 +1279,12 @@ class DecisionService:
             confidence = 0.70
             risk_level = "low"
             autonomy_tier = "autonomous"
+            blast_radius = "single_deployment"
+        elif "configuration_drift" in error_signatures:
+            decision_type = "escalate"
+            confidence = 0.64
+            risk_level = "medium"
+            autonomy_tier = "escalated"
             blast_radius = "single_deployment"
         else:
             # Catch-all: when we can't narrow the cause, escalate
@@ -1381,6 +1464,37 @@ def _apply_scenario_analysis(
             "scenario analysis requires review: " + "; ".join(review_reasons)
         )
     return decision
+
+
+def _attach_reasoning_bank_context(decision: Decision, reasoning_bank_packet: dict | None) -> None:
+    if not isinstance(reasoning_bank_packet, dict) or not reasoning_bank_packet:
+        return
+    claims = list(reasoning_bank_packet.get("claims", []))
+    procedures = list(reasoning_bank_packet.get("procedures", []))
+    contradictions = list(reasoning_bank_packet.get("contradictions", []))
+    context = {
+        "packet_id": reasoning_bank_packet.get("packet_id"),
+        "strategy_claim_count": len(claims),
+        "strategy_procedure_count": len(procedures),
+        "contradiction_count": len(contradictions),
+        "strategies": [
+            {
+                "claim_id": item.get("claim_id"),
+                "tier": item.get("tier"),
+                "statement": item.get("statement"),
+                "confidence": item.get("confidence"),
+            }
+            for item in (procedures + claims)[:5]
+            if isinstance(item, dict)
+        ],
+        "advisory_only": True,
+    }
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["reasoning_bank"] = context
+    if context["strategies"]:
+        decision.reasoning.setdefault("evidence", []).append(
+            "ReasoningBank retrieved advisory strategies; live evidence and policy gates remain authoritative."
+        )
 
 
 def _build_signal_view_from_trigger(trigger: Trigger) -> dict:

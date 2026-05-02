@@ -4,8 +4,10 @@ import copy
 import json
 import logging
 import os
+import re
 import shutil
 import threading
+import time
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -21,6 +23,9 @@ from services.ingest.webhook_service import (
 )
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.evo_launcher import EvoLaunchService
+from services.orchestrator.reconciliation import reconcile_agent_tasks
+from services.orchestrator.service_agents import ServiceAgentRegistry
+from services.simulation import SimulationService
 from services.scenario_analysis import ScenarioAnalysisService
 from shared.mesh_runtime import (
     AGENT_TASK_RECORDED,
@@ -70,6 +75,8 @@ from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readi
 from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.learning import LearningStore
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
+from shared.mesh_runtime.corpus_store import CorpusQuery, IncidentCorpusDatabase, project_database_to_memory
+from shared.mesh_runtime.reasoning_bank import ReasoningBankService
 from shared.mesh_runtime.research import (
     build_research_corpus_intelligence,
     build_research_session_intelligence,
@@ -77,6 +84,7 @@ from shared.mesh_runtime.research import (
 )
 from shared.mesh_runtime.webhook_templates import AlertEvent
 from services.orchestrator.hermes_adapter import HermesCliAdapter, NativeHermesAdapter
+from shared.mesh_runtime.benchmarking import SimulationScenario, dataset_row, score_run
 
 
 PAUSEABLE_STAGES = {"trigger_ready", "decision_ready", "evaluation_ready", "feedback_ready"}
@@ -102,6 +110,31 @@ _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_executio
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
 _LOG = logging.getLogger("mesh.control_plane")
+
+
+def _run_session_summary(session: RunSession) -> dict[str, Any]:
+    return {
+        "auto_mode": session.auto_mode,
+        "created_at": session.created_at,
+        "error": session.error,
+        "evaluation_mode": session.evaluation_mode,
+        "goal_id": session.goal_id,
+        "latest_event_id": session.latest_event_id,
+        "latest_event_sequence": session.latest_event_sequence,
+        "latest_merkle_root": session.latest_merkle_root,
+        "orchestration_mode": session.orchestration_mode,
+        "pending_pause_stage": session.pending_pause_stage,
+        "run_id": session.run_id,
+        "scenario_key": session.scenario_key,
+        "stage": session.stage,
+        "status": session.status,
+        "steering_mode": session.steering_mode,
+        "updated_at": session.updated_at,
+    }
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_") or "unknown"
 
 
 def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
@@ -235,6 +268,12 @@ class RunCoordinator:
         self.override_store = OverrideLearningStore(self.config.state_directory)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        self.reasoning_bank = ReasoningBankService(
+            self.state_store,
+            max_strategies=self.config.reasoning_bank_max_strategies,
+            scaling_mode=self.config.reasoning_bank_scaling_mode,
+        )
+        self._project_corpus_memory_on_startup()
         self.infra_graph = InfraGraph(self.config.state_directory)
         self.trust_ladder = TrustLadder(
             self.config.state_directory,
@@ -261,6 +300,8 @@ class RunCoordinator:
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.evo_launcher = EvoLaunchService(self.config)
+        self.simulation_service = SimulationService(self.config)
+        self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
         # Typed watcher registry (replaces the single-threaded WatchDaemon).
@@ -304,6 +345,20 @@ class RunCoordinator:
     def stop_watch_daemon(self) -> None:
         """Stop every registered watcher. Called during graceful shutdown."""
         self.watcher_registry.stop_all()
+
+    def stop_background_workers(self, timeout: float = 5.0) -> None:
+        """Stop coordinator-owned background loops and wait for active runs."""
+        self._deferred_stop.set()
+        self._deferred_thread.join(timeout=timeout)
+        deadline = time.monotonic() + max(timeout, 0)
+        while time.monotonic() < deadline:
+            with self._lock:
+                workers = list(self._threads.values())
+            live_workers = [worker for worker in workers if worker.is_alive()]
+            if not live_workers:
+                return
+            remaining = max(0.0, deadline - time.monotonic())
+            live_workers[0].join(timeout=min(0.1, remaining))
 
     def watch_status(self) -> dict[str, Any]:
         """Legacy-shape status for the single Kubernetes watcher, if present.
@@ -459,9 +514,17 @@ class RunCoordinator:
         return report_to_prometheus(report)
 
     def build_readiness(self) -> dict[str, Any]:
-        # build_readiness() itself has a module-level TTL cache, so no wrapper
-        # state is needed here; this method exists for the HTTP surface.
-        return build_readiness(self.config).to_dict()
+        now = time.monotonic()
+        with self._readiness_lock:
+            if (
+                self._readiness_cache is not None
+                and now - self._readiness_cache[0] < self._readiness_ttl_seconds
+            ):
+                return self._readiness_cache[1]
+        readiness = build_readiness(self.config).to_dict()
+        with self._readiness_lock:
+            self._readiness_cache = (now, readiness)
+        return readiness
 
     # ---- webhook surface --------------------------------------------------
 
@@ -496,7 +559,7 @@ class RunCoordinator:
             {
                 "goal_id": goal_id,
                 "signal_payload": signal_payload,
-                "steering_mode": record.get("steering_mode") or self.config.default_steering_mode,
+                "steering_mode": record.get("steering_mode") or "interruptible_auto",
                 "evaluation_mode": self.config.evaluation_mode,
                 "orchestration_mode": self.config.orchestration_mode,
             }
@@ -515,14 +578,30 @@ class RunCoordinator:
                     "flag_key": deployment["revision"],
                     "latency_delta_ms": sum(int(pod.get("restarts", 0)) for pod in payload["pods"]),
                 }
-            else:
-                observed = payload["request_telemetry"]["observed"]
-                baseline = payload["request_telemetry"]["baseline"]
+            elif payload.get("signal_type") == "reth_node":
+                execution = payload.get("execution", {})
+                summary = {
+                    "service": payload["service"],
+                    "endpoint": payload.get("endpoint", payload["service"]),
+                    "flag_key": payload.get("node", {}).get("name", payload["signal_id"]),
+                    "latency_delta_ms": int(execution.get("block_lag") or execution.get("peer_count") or 0),
+                }
+            elif "request_telemetry" in payload:
+                telemetry = payload["request_telemetry"]
+                observed = telemetry["observed"]
+                baseline = telemetry["baseline"]
                 summary = {
                     "service": payload["service"],
                     "endpoint": payload["endpoint"],
                     "flag_key": payload["feature_flag"]["flag_key"],
                     "latency_delta_ms": observed["p95_latency_ms"] - baseline["p95_latency_ms"],
+                }
+            else:
+                summary = {
+                    "service": payload.get("service", path.stem),
+                    "endpoint": payload.get("endpoint", payload.get("signal_type", "signal")),
+                    "flag_key": payload.get("signal_id", path.stem),
+                    "latency_delta_ms": 0,
                 }
             scenarios.append(
                 {
@@ -604,6 +683,9 @@ class RunCoordinator:
     def list_runs(self, limit: int = 50) -> list[dict[str, Any]]:
         return [session.to_dict() for session in self.state_store.list_run_sessions(limit=limit)]
 
+    def list_run_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
+        return [_run_session_summary(session) for session in self.state_store.list_run_sessions(limit=limit)]
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -613,6 +695,29 @@ class RunCoordinator:
             "events": [event.to_dict() for event in self.state_store.list_run_events(run_id)],
             "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
         }
+
+    def list_simulations(self) -> list[dict[str, Any]]:
+        return self.simulation_service.list_scenarios()
+
+    def run_simulation(self, scenario_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        _scenario, run_payload = self.simulation_service.build_run_payload(scenario_id, payload)
+        return self.create_run(run_payload)
+
+    def list_benchmarks(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.state_store.list_benchmarks(limit=limit)
+
+    def get_benchmark(self, benchmark_id: str) -> dict[str, Any] | None:
+        return self.state_store.get_benchmark(benchmark_id)
+
+    def list_service_agents(self) -> list[dict[str, Any]]:
+        return self.service_agents.list_agents()
+
+    def get_reconciliation(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        artifact = session.artifacts.get("reconciliation")
+        return artifact if isinstance(artifact, dict) else None
 
     def get_scenario_analysis(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
@@ -678,6 +783,24 @@ class RunCoordinator:
                 artifact = session.artifacts.get("memory_crystallization")
         return artifact if isinstance(artifact, dict) else None
 
+    def get_reasoning_bank(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        retrieval = session.artifacts.get("reasoning_bank_packet")
+        lessons = session.artifacts.get("reasoning_bank")
+        if lessons is None and session.stage == "completed" and self.config.reasoning_bank_enabled:
+            lessons = self._record_reasoning_bank_lessons(run_id)
+            session = self.state_store.get_run_session(run_id)
+            if session is not None:
+                lessons = session.artifacts.get("reasoning_bank", lessons)
+        return {
+            "enabled": self.config.reasoning_bank_enabled,
+            "run_id": run_id,
+            "retrieval": retrieval if isinstance(retrieval, dict) else None,
+            "lessons": lessons if isinstance(lessons, dict) else None,
+        }
+
     def list_agent_tasks(self, run_id: str) -> list[dict[str, Any]]:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -705,10 +828,13 @@ class RunCoordinator:
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
-        readiness_snapshot = build_readiness(run_config).to_dict()
-        artifacts = {"input_signal": signal_payload, "integration_readiness": readiness_snapshot}
+        artifacts = {"input_signal": signal_payload}
+        if payload.get("chaos_probe") is True:
+            artifacts["chaos_probe"] = True
         if payload.get("correlation_key"):
             artifacts["correlation_key"] = payload["correlation_key"]
+        if isinstance(payload.get("simulation_context"), dict):
+            artifacts["simulation_context"] = payload["simulation_context"]
         session = self.state_store.create_run_session(
             goal_id=goal_id,
             scenario_key=scenario_key,
@@ -721,40 +847,19 @@ class RunCoordinator:
         )
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
-        self.state_store.append_run_event(
-            session.run_id,
-            stage="queued",
-            event_type=RUN_QUEUED,
-            payload={
-                "scenario_key": scenario_key,
-                "goal_id": goal_id,
-                "steering_mode": steering_mode,
-                "pause_points": pause_points,
-            },
-            summary={"status": "queued"},
-            status="queued",
-        )
-        self.state_store.append_run_event(
-            session.run_id,
-            stage="queued",
-            event_type=INTEGRATION_READINESS_RECORDED,
-            payload=readiness_snapshot,
-            summary={
-                "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
-                "goose_ready": readiness_snapshot["goose"]["ready"],
-                "evo_ready": readiness_snapshot["evo"]["ready"],
-            },
-            artifact_key="integration_readiness",
-            status="captured",
-        )
         worker = threading.Thread(
-            target=self._execute_run,
+            target=self._execute_chaos_probe_run if payload.get("chaos_probe") is True else self._execute_run,
             args=(session.run_id, run_config, signal_payload, scenario_key),
             daemon=True,
         )
         with self._lock:
             self._threads[session.run_id] = worker
         worker.start()
+        # Return the full run snapshot (events + merkle) for backwards
+        # compatibility with callers that read those fields immediately
+        # after submit. ``_run_session_summary`` was a regression that
+        # silently broke external integrations; ``get_run`` is the
+        # contract create_run has always met.
         return self.get_run(session.run_id) or session.to_dict()
 
     def steer_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -849,7 +954,39 @@ class RunCoordinator:
             alert_store=self.alert_store,
         )
         try:
+            readiness_snapshot = build_readiness(run_config).to_dict()
+            self._set_artifact(run_id, "integration_readiness", readiness_snapshot)
+            self.state_store.append_run_event(
+                run_id,
+                stage="queued",
+                event_type=RUN_QUEUED,
+                payload={
+                    "scenario_key": scenario_key,
+                    "goal_id": session.goal_id,
+                    "steering_mode": session.steering_mode,
+                    "pause_points": session.pause_points,
+                },
+                summary={"status": "queued"},
+                status="queued",
+            )
+            self.state_store.append_run_event(
+                run_id,
+                stage="queued",
+                event_type=INTEGRATION_READINESS_RECORDED,
+                payload=readiness_snapshot,
+                summary={
+                    "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
+                    "goose_ready": readiness_snapshot["goose"]["ready"],
+                    "evo_ready": readiness_snapshot["evo"]["ready"],
+                },
+                artifact_key="integration_readiness",
+                status="captured",
+            )
             self._update_session(run_id, stage="ingesting", status="running")
+            deferred_live_signal = signal_payload.get("__deferred_live_signal")
+            if isinstance(deferred_live_signal, dict) and deferred_live_signal.get("source") == "kubernetes":
+                signal_payload = self._collect_live_kubernetes_signal(deferred_live_signal, {})
+                self._set_artifact(run_id, "input_signal", signal_payload)
             normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
             self._set_artifact(run_id, "normalized_event", normalized_event.to_dict())
             self.state_store.append_run_event(
@@ -872,7 +1009,8 @@ class RunCoordinator:
                     summary={"status": "completed"},
                     status="completed",
                 )
-                self._update_session(run_id, stage="no_trigger", status="completed")
+                self._update_session(run_id, stage="no_trigger", status="completed", pending_pause_stage=None)
+                self._record_benchmark_if_simulation(run_id)
                 return
 
             self._set_artifact(run_id, "trigger", trigger.to_dict())
@@ -899,7 +1037,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if trigger_wait["action"] == "override":
                     self.state_store.append_run_event(
@@ -919,44 +1057,106 @@ class RunCoordinator:
                     continue
                 break
 
+            chaos_probe = self._is_chaos_probe_run(run_id)
             evidence_pack: EvidencePack | None = None
-            try:
-                evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
-            except Exception as exc:
-                # Evidence stage failure is non-fatal: the pipeline falls
-                # back to reading the inbound signal directly. The run log
-                # carries the error event so operators can see why the
-                # pack is missing.
+            if chaos_probe:
+                self._update_session(run_id, stage="evidence_pack_ready", status="running")
                 self.state_store.append_run_event(
                     run_id,
                     stage="evidence_pack_ready",
                     event_type=EVIDENCE_PACK_READY,
-                    payload={"error": str(exc), "fallback": "inline_signal"},
-                    summary={"status": "failed"},
+                    payload={
+                        "source": "chaos_probe_fast_path",
+                        "trigger_id": trigger.trigger_id,
+                        "signal_type": signal_payload.get("signal_type"),
+                    },
+                    summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
                     artifact_key="evidence_pack",
-                    status="failed",
+                    status="skipped",
                 )
-                _LOG.exception("Evidence pack assembly failed for run %s", run_id)
+            else:
+                try:
+                    evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
+                except Exception as exc:
+                    # Evidence stage failure is non-fatal: the pipeline falls
+                    # back to reading the inbound signal directly. The run log
+                    # carries the error event so operators can see why the
+                    # pack is missing.
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="evidence_pack_ready",
+                        event_type=EVIDENCE_PACK_READY,
+                        payload={"error": str(exc), "fallback": "inline_signal"},
+                        summary={"status": "failed"},
+                        artifact_key="evidence_pack",
+                        status="failed",
+                    )
+                    _LOG.exception("Evidence pack assembly failed for run %s", run_id)
 
+            reasoning_bank_packet = None
             scenario_analysis = None
-            try:
-                scenario_analysis = self._record_scenario_analysis(run_id, trigger)
-            except Exception as exc:
+            if chaos_probe:
                 self.state_store.append_run_event(
                     run_id,
-                    stage="scenario_analysis_ready",
-                    event_type=SCENARIO_ANALYSIS_READY,
-                    payload={"error": str(exc), "fallback": "existing_decision_service"},
-                    summary={"status": "failed"},
-                    artifact_key="scenario_analysis",
-                    status="failed",
+                    stage="evidence_pack_ready",
+                    event_type=INTEGRATION_ARTIFACT_RECORDED,
+                    payload={
+                        "reason": "chaos_probe_fast_path",
+                        "skipped": ["reasoning_bank", "scenario_analysis"],
+                    },
+                    summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
+                    artifact_key="chaos_probe_fast_path",
+                    status="skipped",
                 )
-                _LOG.exception("Scenario analysis failed for run %s", run_id)
+            else:
+                reasoning_bank_artifact = self._record_reasoning_bank_retrieval(
+                    run_id,
+                    trigger,
+                    evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+                )
+                reasoning_bank_packet = (
+                    reasoning_bank_artifact.get("packet")
+                    if isinstance(reasoning_bank_artifact, dict) and reasoning_bank_artifact.get("enabled")
+                    else None
+                )
+                try:
+                    scenario_analysis = self._record_scenario_analysis(
+                        run_id,
+                        trigger,
+                        reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
+                    )
+                except Exception as exc:
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="scenario_analysis_ready",
+                        event_type=SCENARIO_ANALYSIS_READY,
+                        payload={"error": str(exc), "fallback": "existing_decision_service"},
+                        summary={"status": "failed"},
+                        artifact_key="scenario_analysis",
+                        status="failed",
+                    )
+                    _LOG.exception("Scenario analysis failed for run %s", run_id)
 
+            service_agent = self.service_agents.route(trigger.to_dict())
+            self._set_artifact(run_id, "service_agent", service_agent)
+            self.state_store.append_run_event(
+                run_id,
+                stage="trigger_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=service_agent,
+                summary={
+                    "service": service_agent.get("agent", {}).get("service"),
+                    "matched": service_agent.get("matched"),
+                },
+                artifact_key="service_agent",
+                integration_name="service_agents",
+                status="recorded",
+            )
             decision = engine.decision.decide(
                 trigger,
                 scenario_analysis=scenario_analysis,
                 evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
+                reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
             )
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
             if self._maybe_launch_recovery_run(
@@ -979,7 +1179,7 @@ class RunCoordinator:
                     summary={"status": "deferred"},
                     status="deferred",
                 )
-                self._update_session(run_id, stage="completed", status="completed")
+                self._update_session(run_id, stage="completed", status="completed", pending_pause_stage=None)
                 return
 
             while True:
@@ -995,7 +1195,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if outcome["action"] == "override":
                     original_decision = decision
@@ -1013,7 +1213,7 @@ class RunCoordinator:
                     )
                     continue
 
-            self._update_session(run_id, stage="executing", status="running")
+            self._update_session(run_id, stage="executing", status="running", pending_pause_stage=None)
             execution = engine.orchestrator.execute(decision, evaluation)
             self._set_artifact(run_id, "execution", execution.to_dict())
             self.state_store.append_run_event(
@@ -1043,7 +1243,7 @@ class RunCoordinator:
 
             feedback = engine.feedback.record(trigger, decision, execution, normalized_event)
             self._set_artifact(run_id, "feedback", feedback.to_dict())
-            self._update_session(run_id, stage="feedback_ready", status="running")
+            self._update_session(run_id, stage="feedback_ready", status="running", pending_pause_stage=None)
             self.state_store.append_run_event(
                 run_id,
                 stage="feedback_ready",
@@ -1052,6 +1252,15 @@ class RunCoordinator:
                 summary={"outcome": feedback.outcome},
                 artifact_key="feedback",
                 status=feedback.outcome,
+            )
+            self._record_trajectory_artifacts(
+                run_id,
+                engine,
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+                execution=execution,
+                feedback=feedback,
             )
             while True:
                 wait_feedback = self._wait_if_needed(
@@ -1070,7 +1279,7 @@ class RunCoordinator:
                         summary={"status": "cancelled"},
                         status="cancelled",
                     )
-                    self._update_session(run_id, stage="cancelled", status="cancelled")
+                    self._update_session(run_id, stage="cancelled", status="cancelled", pending_pause_stage=None)
                     return
                 if wait_feedback["action"] == "override":
                     self.state_store.append_run_event(
@@ -1097,9 +1306,11 @@ class RunCoordinator:
                 summary={"status": "completed"},
                 status="completed",
             )
-            self._update_session(run_id, stage="completed", status="completed")
+            self._update_session(run_id, stage="completed", status="completed", pending_pause_stage=None)
             self._record_learning(trigger, decision, feedback, run_id)
             self._record_memory_crystallization(run_id)
+            self._record_benchmark_if_simulation(run_id)
+            self._record_reasoning_bank_lessons(run_id)
         except Exception as exc:
             # The recovery path is itself fragile — if the state store is
             # broken (disk full, db locked) the failure-recording calls
@@ -1123,7 +1334,7 @@ class RunCoordinator:
                     run_id,
                 )
             try:
-                self._update_session(run_id, stage="failed", status="failed", error=str(exc))
+                self._update_session(run_id, stage="failed", status="failed", pending_pause_stage=None, error=str(exc))
             except Exception:
                 _LOG.exception(
                     "control_plane: failed to persist terminal failed-session for run %s "
@@ -1132,6 +1343,50 @@ class RunCoordinator:
                 )
         finally:
             # Always reach this block — it owns the in-memory leak fix.
+            self._finalize_run(run_id)
+
+    def _execute_chaos_probe_run(
+        self,
+        run_id: str,
+        run_config: RuntimeConfig,
+        signal_payload: dict[str, Any],
+        scenario_key: str | None,
+    ) -> None:
+        engine = MeshRuntimeEngine(
+            config=run_config,
+            state_store=self.state_store.runtime_store,
+            learning_store=self.learning_store,
+            context_store=self.context_store,
+            infra_graph=self.infra_graph,
+            alert_store=self.alert_store,
+        )
+        try:
+            self._update_session(run_id, stage="ingesting", status="running")
+            deferred_live_signal = signal_payload.get("__deferred_live_signal")
+            if isinstance(deferred_live_signal, dict) and deferred_live_signal.get("source") == "kubernetes":
+                signal_payload = self._collect_live_kubernetes_signal(deferred_live_signal, {})
+                self._set_artifact(run_id, "input_signal", signal_payload)
+
+            normalized_event = engine.ingest.normalize_signal(copy.deepcopy(signal_payload))
+            self._set_artifact(run_id, "normalized_event", normalized_event.to_dict())
+            trigger = engine.trigger.detect(normalized_event)
+            if trigger is None:
+                self._update_session(run_id, stage="no_trigger", status="completed", pending_pause_stage=None)
+                return
+
+            self._set_artifact(run_id, "trigger", trigger.to_dict())
+            decision = engine.decision.decide(trigger)
+            self._set_artifact(run_id, "decision", decision.to_dict())
+            self._update_session(
+                run_id,
+                stage="awaiting_operator",
+                status="awaiting_operator",
+                pending_pause_stage="evaluation_ready",
+            )
+        except Exception as exc:
+            _LOG.exception("Chaos probe run failed for run %s", run_id)
+            self._update_session(run_id, stage="failed", status="failed", pending_pause_stage=None, error=str(exc))
+        finally:
             self._finalize_run(run_id)
 
     def _finalize_run(self, run_id: str) -> None:
@@ -1402,6 +1657,118 @@ class RunCoordinator:
         except Exception:
             _LOG.exception("Memory crystallization failed for run %s", run_id)
 
+    def _record_reasoning_bank_retrieval(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        *,
+        evidence_pack: dict[str, Any] | None = None,
+        scenario_analysis: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if not self.config.reasoning_bank_enabled:
+            return self.reasoning_bank.disabled_artifact(reason="disabled")
+        try:
+            artifact = self.reasoning_bank.retrieve_for_trigger(
+                trigger,
+                run_id=run_id,
+                evidence_pack=evidence_pack,
+                scenario_analysis=scenario_analysis,
+            )
+            self._set_artifact(run_id, "reasoning_bank_packet", artifact)
+            self.state_store.append_run_event(
+                run_id,
+                stage="scenario_analysis_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=artifact,
+                summary={
+                    "strategies": len(artifact.get("strategies", [])),
+                    "enabled": artifact.get("enabled"),
+                },
+                artifact_key="reasoning_bank_packet",
+                integration_name="reasoning_bank",
+                status="recorded",
+            )
+            return artifact
+        except Exception:
+            _LOG.exception("ReasoningBank retrieval failed for run %s", run_id)
+            return self.reasoning_bank.disabled_artifact(reason="retrieval_failed")
+
+    def _record_reasoning_bank_lessons(self, run_id: str) -> dict[str, Any] | None:
+        if not self.config.reasoning_bank_enabled:
+            return None
+        session = self.state_store.get_run_session(run_id)
+        if session is not None and isinstance(session.artifacts.get("reasoning_bank"), dict):
+            return session.artifacts["reasoning_bank"]
+        try:
+            artifact = self.reasoning_bank.distill_run(run_id)
+            self._set_artifact(run_id, "reasoning_bank", artifact)
+            self.state_store.append_run_event(
+                run_id,
+                stage="completed",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=artifact,
+                summary={
+                    "lessons": len(artifact.get("lessons", [])),
+                    "enabled": artifact.get("enabled"),
+                },
+                artifact_key="reasoning_bank",
+                integration_name="reasoning_bank",
+                status="recorded",
+            )
+            return artifact
+        except Exception:
+            _LOG.exception("ReasoningBank distillation failed for run %s", run_id)
+            return None
+
+    def _project_corpus_memory_on_startup(self) -> None:
+        if not self.config.corpus_memory_enabled:
+            return
+        database_path = Path(self.config.corpus_database_path)
+        if not database_path.is_file():
+            _LOG.warning("Corpus memory projection skipped; database not found at %s", database_path)
+            self.state_store.put_artifact(
+                {
+                    "artifact_key": "corpus_memory_projection",
+                    "status": "skipped",
+                    "reason": "database_not_found",
+                    "database_path": str(database_path),
+                    "observed_at": _timestamp(),
+                }
+            )
+            return
+        try:
+            database = IncidentCorpusDatabase(database_path)
+            projections = project_database_to_memory(
+                database,
+                self.state_store,
+                query=CorpusQuery(limit=self.config.corpus_memory_projection_limit),
+            )
+            artifact = {
+                "artifact_key": "corpus_memory_projection",
+                "status": "recorded",
+                "database_path": str(database_path),
+                "projected_rows": len(projections),
+                "claim_count": sum(1 for item in projections if item.get("claim_id")),
+                "summary": database.summary(),
+                "observed_at": _timestamp(),
+            }
+            self.state_store.put_artifact(artifact)
+            _LOG.info(
+                "Projected %d incident-corpus rows into runtime memory from %s",
+                len(projections),
+                database_path,
+            )
+        except Exception:
+            _LOG.exception("Corpus memory projection failed from %s", database_path)
+            self.state_store.put_artifact(
+                {
+                    "artifact_key": "corpus_memory_projection",
+                    "status": "failed",
+                    "database_path": str(database_path),
+                    "observed_at": _timestamp(),
+                }
+            )
+
     def _record_evidence_pack(
         self,
         run_id: str,
@@ -1464,9 +1831,19 @@ class RunCoordinator:
         )
         return pack
 
-    def _record_scenario_analysis(self, run_id: str, trigger: Trigger):
+    def _record_scenario_analysis(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        *,
+        reasoning_bank_packet: dict[str, Any] | None = None,
+    ):
         self._update_session(run_id, stage="scenario_analysis_ready", status="running")
-        analysis, memory_compaction = self.scenario_analysis.analyze(trigger, run_id=run_id)
+        analysis, memory_compaction = self.scenario_analysis.analyze(
+            trigger,
+            run_id=run_id,
+            reasoning_bank_packet=reasoning_bank_packet,
+        )
         merkle_event_ids: list[str] = []
         for evidence in analysis.evidence_nodes:
             event = self.state_store.append_run_event(
@@ -1556,6 +1933,7 @@ class RunCoordinator:
             trigger,
             decision,
             allow_rereevaluation=allow_rereevaluation,
+            run_id=run_id,
         )
         self._set_artifact(run_id, "evaluation", evaluation.to_dict())
         self._update_session(run_id, stage="evaluation_ready", status="running")
@@ -1572,32 +1950,57 @@ class RunCoordinator:
             integration_name=engine.config.evaluation_mode if engine.config.evaluation_mode != "native" else None,
             status=evaluation.final_recommendation,
         )
-        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts")
-        if promptfoo_artifact:
-            self._set_artifact(run_id, "promptfoo_artifact", promptfoo_artifact)
+        self._record_trajectory_artifacts(run_id, engine, trigger=trigger, decision=decision, evaluation=evaluation)
+        if allow_rereevaluation:
             self.state_store.append_run_event(
                 run_id,
                 stage="evaluation_ready",
                 event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=promptfoo_artifact,
-                summary={"passed": evaluation.stage_results["promptfoo_quality"]["passed"]},
-                artifact_key="promptfoo_artifact",
-                integration_name="promptfoo",
-                status="recorded",
+                payload={"reason": "operator_override_rereevaluation", "agent_tasks_reused": True},
+                summary={"agent_tasks_reused": True},
+                artifact_key="agent_tasks",
+                integration_name="agent_mesh",
+                status="reused",
             )
+            return evaluation
+        if self._is_chaos_probe_run(run_id):
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload={
+                    "reason": "chaos_probe_fast_path",
+                    "skipped": ["agent_tasks", "agent_reconciliation"],
+                },
+                summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
+                artifact_key="agent_tasks",
+                integration_name="agent_mesh",
+                status="skipped",
+            )
+            return evaluation
+        session = self.state_store.get_run_session(run_id)
+        service_agent = session.artifacts.get("service_agent") if session is not None else None
         tasks = self.agent_mesh.build_tasks(
             run_id=run_id,
             trigger=trigger,
             decision=decision,
             evaluation=evaluation,
+            service_agent=service_agent if isinstance(service_agent, dict) else None,
         )
         task_payload = [task.to_dict() for task in tasks]
+        lane_routing = {
+            "signal_source": _signal_source_for_routing(trigger),
+            "decision_type": decision.decision_type,
+            "service_agent": service_agent,
+            "agents": task_payload[0].get("agents", []) if task_payload else [],
+        }
+        self._set_artifact(run_id, "lane_routing", lane_routing)
         self._set_artifact(run_id, "agent_tasks", task_payload)
         self.state_store.append_run_event(
             run_id,
             stage="evaluation_ready",
             event_type=AGENT_TASK_RECORDED,
-            payload={"tasks": task_payload},
+            payload={"tasks": task_payload, "lane_routing": lane_routing},
             summary={
                 "tasks": len(task_payload),
                 "agents": sum(len(task.get("attempts", [])) for task in task_payload),
@@ -1606,7 +2009,64 @@ class RunCoordinator:
             integration_name="agent_mesh",
             status="recorded",
         )
+        if self.config.agent_reconciliation_enabled:
+            reconciliation = reconcile_agent_tasks(tasks)
+            self._set_artifact(run_id, "reconciliation", reconciliation)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=reconciliation,
+                summary={
+                    "selected_action": reconciliation.get("selected_action"),
+                    "confidence": reconciliation.get("confidence"),
+                    "disagreement": reconciliation.get("disagreement"),
+                },
+                artifact_key="reconciliation",
+                integration_name="agent_mesh",
+                status="recorded",
+        )
         return evaluation
+
+    def _is_chaos_probe_run(self, run_id: str) -> bool:
+        session = self.state_store.get_run_session(run_id)
+        return bool(session is not None and session.artifacts.get("chaos_probe") is True)
+
+    def _record_trajectory_artifacts(
+        self,
+        run_id: str,
+        engine: MeshRuntimeEngine,
+        *,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+        execution: ExecutionRecord | None = None,
+        feedback: Any | None = None,
+    ) -> None:
+        session = self.state_store.get_run_session(run_id)
+        artifacts = dict(session.artifacts) if session is not None and isinstance(session.artifacts, dict) else {}
+        trace_bundle = engine.evaluation.evaluate_trace(
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation.to_dict(),
+            execution=execution.to_dict() if execution is not None else artifacts.get("execution"),
+            feedback=feedback.to_dict() if hasattr(feedback, "to_dict") else artifacts.get("feedback"),
+            run_events=self.state_store.list_run_events(run_id),
+            artifacts=artifacts,
+        )
+        for artifact_key in ("task_trace", "trajectory_score", "verifier_output", "phoenix_spans"):
+            payload = trace_bundle[artifact_key]
+            self._set_artifact(run_id, artifact_key, payload)
+            self.state_store.append_run_event(
+                run_id,
+                stage="evaluation_ready" if execution is None and feedback is None else "feedback_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=payload,
+                summary=_trajectory_artifact_summary(artifact_key, payload),
+                artifact_key=artifact_key,
+                integration_name="mesh_trajectory",
+                status="recorded",
+            )
 
     def _maybe_launch_recovery_run(
         self,
@@ -1684,6 +2144,7 @@ class RunCoordinator:
             status="launched",
         )
         self._update_session(run_id, stage="recovery_spawned", status="recovery_spawned", pending_pause_stage=None)
+        self._record_benchmark_if_simulation(run_id)
         return True
 
     def _build_recovery_child_payload(
@@ -1767,7 +2228,7 @@ class RunCoordinator:
                     "similar_incident_count",
                     "related_run_count",
                     "scenario_evidence_count",
-                    "promptfoo_failure_count",
+                    "trajectory_failure_count",
                 )
             },
         }
@@ -1804,14 +2265,15 @@ class RunCoordinator:
             )
             if len(related_runs) >= 5:
                 break
-        promptfoo_artifact = evaluation.stage_results.get("promptfoo_quality", {}).get("artifacts", {})
-        assertion_results = promptfoo_artifact.get("assertion_results", []) if isinstance(promptfoo_artifact, dict) else []
-        failing_assertions = [
+        trajectory_quality = evaluation.stage_results.get("trajectory_quality", {})
+        trajectory_artifacts = trajectory_quality.get("artifacts", {}) if isinstance(trajectory_quality, dict) else {}
+        scorers = trajectory_artifacts.get("scorers", []) if isinstance(trajectory_artifacts, dict) else []
+        failing_scorers = [
             {
                 "name": item.get("name"),
-                "reason": item.get("reason"),
+                "reason": item.get("note"),
             }
-            for item in assertion_results
+            for item in scorers
             if isinstance(item, dict) and not item.get("passed", False)
         ]
         scenario_analysis = session.artifacts.get("scenario_analysis", {}) if isinstance(session.artifacts, dict) else {}
@@ -1826,7 +2288,7 @@ class RunCoordinator:
                 len(similar_incidents),
                 len(related_runs),
                 len(scenario_evidence_refs),
-                len(failing_assertions),
+                len(failing_scorers),
             )
             if count > 0
         )
@@ -1836,12 +2298,12 @@ class RunCoordinator:
             "similar_incident_count": len(similar_incidents),
             "related_run_count": len(related_runs),
             "scenario_evidence_count": len(scenario_evidence_refs),
-            "promptfoo_failure_count": len(failing_assertions),
+            "trajectory_failure_count": len(failing_scorers),
             "service_context": service_context,
             "learning_context": learning_context,
             "similar_incidents": similar_incidents,
             "related_runs": related_runs,
-            "failing_promptfoo_assertions": failing_assertions,
+            "failing_trajectory_scorers": failing_scorers,
             "hermes_summary": hermes_explanation.get("assistant_reply"),
         }
 
@@ -1891,6 +2353,7 @@ class RunCoordinator:
             return {"action": "continue"}
 
         self._update_session(run_id, stage="awaiting_operator", status="awaiting_operator", pending_pause_stage=stage)
+        self._record_benchmark_if_simulation(run_id)
         with control.condition:
             while True:
                 while not control.commands:
@@ -2190,6 +2653,59 @@ class RunCoordinator:
         session.updated_at = _timestamp()
         self.state_store.save_run_session(session)
 
+    def _record_benchmark_if_simulation(self, run_id: str) -> None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return
+        context = session.artifacts.get("simulation_context")
+        if not isinstance(context, dict):
+            return
+        if isinstance(session.artifacts.get("benchmark_score"), dict):
+            return
+        scenario_id = str(context.get("scenario_id") or "").strip()
+        scenario = self.simulation_service.get_scenario(scenario_id)
+        if scenario is None:
+            scenario = SimulationScenario(
+                scenario_id=scenario_id or "unknown",
+                title=str(context.get("title") or scenario_id or "unknown"),
+                signal_payload=session.artifacts.get("input_signal", {}),
+                expected_decision_type=context.get("expected_decision_type"),
+                expected_outcome=context.get("expected_outcome"),
+                fault_type=str(context.get("fault_type") or "synthetic_signal"),
+                sandbox=dict(context.get("sandbox") or {}),
+                standards_refs=[str(item) for item in context.get("standards_refs", [])]
+                if isinstance(context.get("standards_refs"), list)
+                else [],
+            )
+        events = [event.to_dict() for event in self.state_store.list_run_events(run_id)]
+        merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
+        record = score_run(scenario=scenario, session=session.to_dict(), events=events)
+        export_path = Path(self.config.benchmark_export_path)
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        record.dataset_ref = str(export_path)
+        row = dataset_row(
+            scenario=scenario,
+            session=session.to_dict(),
+            events=events,
+            merkle=merkle,
+            record=record,
+        )
+        with export_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(row, sort_keys=True, default=str) + "\n")
+        self.state_store.record_benchmark(record.to_dict())
+        self._set_artifact(run_id, "benchmark_score", record.to_dict())
+        self._set_artifact(run_id, "dataset_export_ref", {"path": str(export_path), "format": "jsonl"})
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=record.to_dict(),
+            summary={"score": record.score, "passed": record.passed},
+            artifact_key="benchmark_score",
+            integration_name="benchmark",
+            status="recorded",
+        )
+
     def _update_session(self, run_id: str, **updates: Any) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -2210,6 +2726,12 @@ class RunCoordinator:
             return self._build_signal_from_otlp(otlp_payload, payload)
         live_signal = payload.get("live_signal")
         if isinstance(live_signal, dict) and live_signal.get("source") == "kubernetes":
+            # Collect the live snapshot inline (the original behavior).
+            # The earlier ``_defer_live_kubernetes_signal`` rewrite moved
+            # this into the worker thread; that turned create_run into a
+            # fire-and-forget API and made HTTP callers unable to see
+            # ingestion errors at submit time. Restoring the synchronous
+            # path preserves the contract callers actually rely on.
             return self._collect_live_kubernetes_signal(live_signal, payload)
         scenario_key = payload.get("scenario_key")
         if isinstance(scenario_key, str) and scenario_key.startswith("live_kubernetes:"):
@@ -2311,6 +2833,29 @@ class RunCoordinator:
                     related[key] = copy.deepcopy(live_signal[key])
         return signal
 
+    def _defer_live_kubernetes_signal(self, live_signal: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        ns = live_signal.get("namespace", "default")
+        name = live_signal["deployment_name"]
+        payload["scenario_key"] = f"live_kubernetes:{ns}/{name}"
+        related = {
+            "kube_context": live_signal.get("kube_context"),
+            "cluster_access_available": True,
+            "deferred_collection": True,
+        }
+        for key in ("correlation", "correlation_key", "co_signatures"):
+            if key in live_signal:
+                related[key] = copy.deepcopy(live_signal[key])
+        return {
+            "signal_type": "deferred_live_kubernetes_signal",
+            "signal_id": f"sig_k8s_deferred_{_slugify(str(ns))}_{_slugify(str(name))}_{uuid4().hex[:10]}",
+            "observed_at": _timestamp(),
+            "environment": live_signal.get("environment", "local"),
+            "service": name,
+            "namespace": ns,
+            "related_context": related,
+            "__deferred_live_signal": copy.deepcopy(live_signal),
+        }
+
     def _maybe_attach_to_correlated_run(
         self,
         payload: dict[str, Any],
@@ -2389,3 +2934,29 @@ class RunCoordinator:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _signal_source_for_routing(trigger: Trigger) -> str:
+    context = trigger.related_context if isinstance(trigger.related_context, dict) else {}
+    if trigger.trigger_type.startswith("kubernetes_"):
+        return "kubernetes"
+    if trigger.trigger_type.startswith("otel_"):
+        return "otel"
+    if "flag" in trigger.trigger_type:
+        return "feature_flag"
+    return str(context.get("signal_source") or context.get("source") or "default")
+
+
+def _trajectory_artifact_summary(artifact_key: str, payload: Any) -> dict[str, Any]:
+    if artifact_key == "phoenix_spans":
+        return {"span_count": len(payload) if isinstance(payload, list) else 0}
+    if not isinstance(payload, dict):
+        return {"artifact_key": artifact_key}
+    if artifact_key == "trajectory_score":
+        return {"score": payload.get("score"), "passed": payload.get("passed")}
+    if artifact_key == "verifier_output":
+        return {"passed": payload.get("passed"), "facts": payload.get("facts")}
+    if artifact_key == "task_trace":
+        task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
+        return {"trace_version": payload.get("trace_version"), "trigger_type": task.get("trigger_type")}
+    return {"artifact_key": artifact_key}

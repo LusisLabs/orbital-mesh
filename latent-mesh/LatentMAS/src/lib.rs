@@ -5,3 +5,4 @@ pub mod data;
 pub mod eval;
 pub mod prompts;
 pub mod run;
+pub mod tokenizer;

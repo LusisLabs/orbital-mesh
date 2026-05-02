@@ -9,6 +9,7 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from .control_plane_models import IntegrationReadiness, IntegrationStatus
 
 DEFAULT_GITNEXUS_PORT = 4747
 _READINESS_TTL_SECONDS = 10.0
+_DEFAULT_READINESS_PROBE_TIMEOUT_SECONDS = 5.0
 _readiness_lock = threading.Lock()
 _readiness_cache: dict[tuple, tuple[float, IntegrationReadiness]] = {}
 # GitNexus exposes `/api/heartbeat` as SSE (long-lived); use `/api/info` for probes.
@@ -122,12 +124,19 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
                 return entry[1]
     resolved = resolve_integrations_config(runtime_config)
     checked_at = _timestamp()
-    promptfoo_status = _command_status("promptfoo", resolved.promptfoo_command)
-    hermes_status = _command_status("hermes", resolved.hermes_command)
-    goose_status = _command_status("goose", resolved.goose_command)
-    evo_status = build_evo_status(runtime_config, resolved.evo_command)
-    latentmas_status = _latentmas_status(runtime_config)
-    deepagents_status = _deepagents_status(runtime_config)
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        promptfoo_future = executor.submit(_command_status, "promptfoo", resolved.promptfoo_command)
+        hermes_future = executor.submit(_command_status, "hermes", resolved.hermes_command)
+        goose_future = executor.submit(_command_status, "goose", resolved.goose_command)
+        evo_future = executor.submit(build_evo_status, runtime_config, resolved.evo_command)
+        latentmas_future = executor.submit(_latentmas_status, runtime_config)
+        deepagents_future = executor.submit(_deepagents_status, runtime_config)
+        promptfoo_status = promptfoo_future.result()
+        hermes_status = hermes_future.result()
+        goose_status = goose_future.result()
+        evo_status = evo_future.result()
+        latentmas_status = latentmas_future.result()
+        deepagents_status = deepagents_future.result()
     readiness = IntegrationReadiness(
         checked_at=checked_at,
         promptfoo=promptfoo_status,
@@ -270,8 +279,9 @@ def _command_status(name: str, command: str | None) -> IntegrationStatus:
     binary = executable if os.path.isabs(executable) else shutil.which(executable)
     if binary is None and not Path(executable).exists():
         return IntegrationStatus(name=name, ready=False, detail="command not found", command=command)
+    timeout = _readiness_probe_timeout_seconds()
     if name == "goose":
-        ok, detail = _smoke_check(command, ["--version"])
+        ok, detail = _smoke_check(command, ["--version"], timeout=timeout)
         primary_route, fallback_route = _goose_routes(command)
         warnings = _goose_warnings(command)
         profile_detail = _describe_goose_command(command)
@@ -287,7 +297,7 @@ def _command_status(name: str, command: str | None) -> IntegrationStatus:
             warnings=warnings,
         )
     else:
-        ok, detail = _smoke_check_with_fallback(command, [["--healthcheck"], ["--version"]])
+        ok, detail = _smoke_check_with_fallback(command, [["--healthcheck"], ["--version"]], timeout=timeout)
     return IntegrationStatus(name=name, ready=ok, detail=detail, command=command)
 
 
@@ -412,14 +422,29 @@ def _smoke_check(
     return True, output
 
 
-def _smoke_check_with_fallback(command: str | None, arg_sets: list[list[str]]) -> tuple[bool, str]:
+def _smoke_check_with_fallback(
+    command: str | None,
+    arg_sets: list[list[str]],
+    *,
+    timeout: int | float = 20,
+) -> tuple[bool, str]:
     last_detail = "command not configured"
     for extra_args in arg_sets:
-        ok, detail = _smoke_check(command, extra_args)
+        ok, detail = _smoke_check(command, extra_args, timeout=timeout)
         if ok:
             return ok, detail
         last_detail = detail
     return False, last_detail
+
+
+def _readiness_probe_timeout_seconds() -> float:
+    raw = os.getenv("MESH_READINESS_PROBE_TIMEOUT_SECONDS")
+    if not raw:
+        return _DEFAULT_READINESS_PROBE_TIMEOUT_SECONDS
+    try:
+        return max(0.1, float(raw))
+    except ValueError:
+        return _DEFAULT_READINESS_PROBE_TIMEOUT_SECONDS
 
 
 def _resolve_promptfoo_command(command: str | None) -> str | None:

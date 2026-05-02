@@ -36,10 +36,24 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def tearDown(self) -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            with self.server.coordinator._lock:
+                active_workers = list(self.server.coordinator._threads.values())
+            if not any(worker.is_alive() for worker in active_workers):
+                break
+            time.sleep(0.05)
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
         self.temp_dir.cleanup()
+
+    def test_scenarios_api_lists_non_latency_fixtures(self) -> None:
+        payload = self._request("GET", "/api/scenarios")
+        scenario_keys = {scenario["key"] for scenario in payload["scenarios"]}
+
+        self.assertIn("reth_peer_starvation", scenario_keys)
+        self.assertIn("reth_sync_stalled_disk_pressure", scenario_keys)
 
     def test_research_sessions_api_lists_manifest_sessions(self) -> None:
         empty = self._request("GET", "/api/research-sessions")
@@ -197,6 +211,26 @@ class ControlPlaneApiTests(unittest.TestCase):
         )
         self.assertIn("AI Run Insight", insights["content"])
         self.assertIn("```mermaid", visualization["content"])
+
+    def test_runs_summary_api_does_not_expand_artifacts(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+
+        listing = self._request("GET", "/api/runs?summary=1")
+        matching = [item for item in listing["runs"] if item["run_id"] == run["run_id"]]
+
+        self.assertEqual(len(matching), 1)
+        self.assertNotIn("artifacts", matching[0])
+        self.assertNotIn("events", matching[0])
+        self.assertNotIn("merkle", matching[0])
 
     def test_interruptible_auto_executes_without_operator_pause(self) -> None:
         run = self._request(

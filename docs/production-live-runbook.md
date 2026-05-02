@@ -245,7 +245,7 @@ Goose is bundled in the mesh image. If `/api/readiness` reports Goose unavailabl
 
 If `/api/readiness` reports Deep Agents warnings, verify `MESH_AGENT_FABRIC_MODE`, the selected `MESH_DEEPAGENTS_MODEL`, the provider API key for that model family, and that `/app/.mesh-runtime-state/deepagents` is writable by the container user.
 
-Hermes runs as a dedicated sidecar in the all-in-one stack and is reached through `MESH_HERMES_COMMAND=${MESH_STACK_HERMES_COMMAND:-docker exec ... mesh-intelligence-hermes-stack /opt/venv/bin/hermes}`. If readiness still reports Hermes unavailable, verify the Docker socket mount, the Hermes container health, and the configured stack-scoped Hermes command.
+Hermes runs as a dedicated sidecar in the all-in-one stack and is reached through `MESH_HERMES_COMMAND=${MESH_STACK_HERMES_EXEC_COMMAND:-/usr/local/bin/compose_hermes_exec.sh}`. If readiness still reports Hermes unavailable, verify the Docker socket mount, the Hermes service health for the active Compose project, and the configured stack-scoped Hermes command.
 
 Deep Agents is still proposal-only in this topology. Do not widen it into direct Kubernetes access, direct repo writes, or Mesh actuation.
 

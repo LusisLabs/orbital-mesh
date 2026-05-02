@@ -79,7 +79,7 @@ Snapshot: master @ `1f0ba35` (post PRs #19 & #20).
 | Source | Path / trigger | Code | What it produces |
 |--------|----------------|------|------------------|
 | Manual / replay | `POST /api/runs` | [control_plane_server.py:435](../../control_plane_server.py) → `coordinator.create_run` ([control_plane.py:669](../../services/control_plane.py)) | Direct signal payload (`signal_payload`, `live_signal`, or `scenario_key`) |
-| Vendor webhook | `POST /api/webhooks/{source_id}` | [control_plane_server.py:476](../../control_plane_server.py) → `WebhookIngestService` ([services/ingest/webhook_service.py](../../services/ingest/webhook_service.py)) | `AlertEvent` → `build_signal_from_alert` → `create_run` (when `auto_run=true` & `action=fire`) |
+| Vendor webhook | `POST /api/webhooks/{source_id}` | [control_plane_server.py:476](../../control_plane_server.py) → `WebhookIngestService` ([services/ingest/webhook_service.py](../../services/ingest/webhook_service.py)) | `AlertEvent` → `build_signal_from_alert` → `create_run` (when `auto_run=true` & `action=fire`) → `signal_type=webhook_alert` ingest/trigger/decision lane |
 | Watcher poll | per-tick poll | `KubernetesWatcher.tick()` → `_poll_target` ([services/watchers/kubernetes.py:78,119](../../services/watchers/kubernetes.py)) → `coordinator.create_run` | `live_signal` payload built from `collect_kubernetes_signal` (kubectl) |
 | Cross-signal correlation | piggybacks on watcher signals | `SignalCorrelator.correlate` ([services/signal_correlator.py:59](../../services/signal_correlator.py)) | Adds `live_signal.correlation` (`none|same_namespace|cascading|blast_wave`) |
 
@@ -107,7 +107,7 @@ Field extraction is JSONPath-ish (`extract_path` / `_resolve_field`) with `defau
 1. `validate_payload("kubernetes-signal.schema.json", raw_signal)` (line 21)
 2. Seed `related_context` defaults: `active_suppression`, `incident_owned_by_human`, `known_upstream_outage`, `active_incidents=0`, `similar_prior_cases=0`, `rollbacks_last_24h=0`, `cluster_access_available=True`
 3. `_enrich_from_learning(service, endpoint)` — non-destructive: only raises `similar_prior_cases / rollbacks_last_24h / regressions_last_7d` when currently zero (line 128)
-4. `summarize_kubernetes_logs(logs, events, pods)` ([services/ingest/kubernetes_summary.py](../../services/ingest/kubernetes_summary.py)) — extracts `error_signatures`, `likely_layer`, `primary_symptom`
+4. `summarize_kubernetes_logs(logs, events, pods)` ([services/ingest/kubernetes_summary.py](../../services/ingest/kubernetes_summary.py)) — extracts `error_signatures`, `likely_layer`, `primary_symptom`; `pods` may be empty when a deployment is intentionally scaled to zero.
 5. Emits `EventEnvelope(event_type="normalized_signal", payload=…)` carrying deployment/pods/events/logs/log_summary/related_context
 
 ### 3b. Feature-flag path
@@ -115,6 +115,12 @@ Field extraction is JSONPath-ish (`extract_path` / `_resolve_field`) with `defau
 1. Seed defaults: `active_suppression`, `incident_owned_by_human`, `known_upstream_outage`, `conflicting_signals`, `high_business_impact`, `rollbacks_last_24h`, `regressions_last_7d`, `multi_service_impact`, `feature_flag_credentials_available`, `audit_logging_available`
 2. Same `_enrich_from_learning` call but with `flag_key` extra
 3. Emits `EventEnvelope` carrying `feature_flag`, `request_telemetry`, `deployment`, `comparison_window`, `segment`, `related_context`
+
+### 3c. Webhook path (`signal_type == "webhook_alert"`)
+
+1. Preserve the raw `alert_event` plus normalized `webhook.{source_id,alert_id,action,severity,title,description,labels,annotations}`
+2. Seed incident-routing context: `webhook_source_id`, `webhook_alert_id`, `webhook_source_type`, `severity`, `incident_credentials_available`, `audit_logging_available`
+3. Default segment to `{customer_tier:"system", region:<label or unknown>}` so policy and vault surfaces treat webhook runs as first-class sessions
 
 ---
 
@@ -243,7 +249,7 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 | approval required before execution | `autonomy_tier == approval_required` | no |
 | recent rollback cooldown conflict | `rollbacks_last_24h>0` AND autonomous | no |
 | decision routes to human review | `decision_type == escalate` | no |
-| promptfoo quality gate did not pass | adapter passed=False | no |
+| trajectory quality gate did not pass | behavioral scorer failed | no |
 | confidence below minimum threshold | conf < `rollback.minimum_confidence` (0.75) | no |
 | risk level is high | `decision.risk.level == high` | no |
 | action is not idempotent | action ∉ `autonomy.idempotent_actions` | no |
@@ -427,11 +433,20 @@ def status(self) -> dict[str, Any]: ...
 Per-target gates (`_poll_target`):
 1. Active-run dedup — skip if prior run still in-flight (`coordinator.get_run`)
 2. Cooldown — skip if `time.monotonic() - last_run_time < cooldown_seconds`
-3. Actionable check — `rollout_status ∈ {degraded, failed}` OR any `pod.ready=False` OR `pod.restarts>0`
+3. Actionable check — same predicate as `TriggerService._detect_kubernetes_trigger()`: failed rollout, failing pods (`restarts > 0` or hard failing container state), or degraded rollout plus hard error signatures. Deployments with `desired_replicas == 0` are treated as healthy absence and do not trigger remediation solely because no pods exist.
 4. Error-signature dedup — skip if `error_sig == last_error_signature`
 5. Enqueue: `coordinator.create_run({"live_signal": {…}, "steering_mode": "interruptible_auto"})`
 
 Compat shim (`services/watchers/compat.py`): if `MESH_WATCH_TARGETS` set but `MESH_WATCHER_CONFIG_PATH` not, registers a single `legacy-k8s` watcher with byte-identical legacy behavior.
+
+### 14a. Live feedback verification
+
+When `MESH_FEEDBACK_PROMETHEUS_ENABLED=true` and `MESH_PROMETHEUS_URL` is set, the feedback stage overlays live Prometheus samples onto `post_action_observations` for the `10m` and `30m` windows. Query templates are configurable via:
+
+- `MESH_FEEDBACK_PROMETHEUS_LATENCY_QUERY`
+- `MESH_FEEDBACK_PROMETHEUS_ERROR_RATE_QUERY`
+
+Both templates accept `{service}` and `{window}` placeholders. If Prometheus returns no data or errors, Mesh falls back to the signal-carried observations and still completes the run.
 
 ---
 

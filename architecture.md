@@ -29,7 +29,8 @@ flowchart LR
     decision --> hypothesis[HypothesisEngine]
     decision --> observer[LlmObserver — OpenAI-compatible]
     decision --> evaluation[EvaluationService]
-    evaluation --> promptfoo[Promptfoo Bridge]
+    evaluation --> trajectory[Task Trace + Behavioral Scorers]
+    evaluation --> verifier[Deterministic Verifier]
     evaluation -->|execute| orchestrator[OrchestratorService]
     evaluation -->|human_review or reject| operator[Operator Review Route]
     orchestrator --> goose[Goose Bridge]
@@ -103,7 +104,8 @@ This topology is not the production template. It intentionally uses a privileged
   one-way only — it can promote toward `escalate` but never demote an escalation.
 - `LlmObserver` (in `services/observer/`) is an optional second-opinion layer that reviews the
   deterministic decision and emits a typed verdict. See *AI reasoning layer* below.
-- `EvaluationService` merges policy and business gates with Promptfoo-backed quality artifacts.
+- `EvaluationService` merges policy and business gates with Mesh-native trajectory scoring:
+  `task -> trace -> verifier -> scorer -> memory`.
 - `OrchestratorService` executes only approved actions and attaches Goose-backed review artifacts.
 - `FeedbackService` evaluates `T+10m` and `T+30m` outcomes and writes bounded world-model updates.
 
@@ -166,7 +168,7 @@ Telemetry is **not** pushed service-by-service over HTTP. One **`POST /api/runs`
 | 3 | `EvidenceService.assemble` | `Trigger` + signal payload → `EvidencePack` (audited) | `evidence_pack_ready` (emits per-probe events) |
 | 4 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
 | 5 | `DecisionService.decide` | `Trigger` + analysis + `EvidencePack` → `Decision` | `decision_ready` (calls `HypothesisEngine` and, if enabled, `LlmObserver`) |
-| 6 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` | `evaluation_ready` (may invoke Promptfoo bridge when not `native`) |
+| 6 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` plus `task_trace`, `trajectory_score`, `verifier_output`, `phoenix_spans` | `evaluation_ready` |
 | — | *Operator gate* | If approval mode or failed auto conditions: **`awaiting_operator`** until `POST .../steer` | `awaiting_operator` |
 | 7 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
 | 8 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 6) |

@@ -58,6 +58,12 @@
     },
     "world_model_updates": {
       "type": "object"
+    },
+    "quality_measurements": {
+      "type": [
+        "object",
+        "null"
+      ]
     }
   },
   "additionalProperties": false

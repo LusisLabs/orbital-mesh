@@ -5,21 +5,22 @@ import sys
 
 from shared.mesh_runtime import Decision, Trigger
 
-from .promptfoo_adapter import evaluate_decision_contract
+from .mesh_eval import evaluate_native_mesh
 
 
 def main() -> None:
     payload = json.load(sys.stdin)
     trigger = Trigger.from_dict(payload["trigger"])
     decision = Decision.from_dict(payload["decision"])
-    result = evaluate_decision_contract(trigger, decision, mode="cli")
+    result = evaluate_native_mesh(trigger=trigger, decision=decision)
+    trajectory_score = result["trajectory_score"]
     json.dump(
         {
-            "passed": result.passed,
-            "score": result.score,
-            "notes": result.notes,
-            "mode": result.mode,
-            "artifacts": result.artifacts,
+            "passed": trajectory_score["passed"],
+            "score": trajectory_score["score"],
+            "notes": trajectory_score["notes"],
+            "mode": "native_mesh_eval_cli",
+            "artifacts": result,
         },
         sys.stdout,
         indent=2,
