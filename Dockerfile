@@ -106,7 +106,6 @@ ENV MESH_SERVER_HOST=0.0.0.0 \
 COPY --from=web /repo/web/dist ./web/dist
 COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py setup_integrations.py ./
 COPY scripts/compose_mesh_entrypoint.sh /usr/local/bin/compose_mesh_entrypoint.sh
-COPY mesh_brain ./mesh_brain
 COPY shared ./shared
 COPY services ./services
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
