@@ -508,11 +508,23 @@ class EvidenceService:
                 missing_fields=list(self._required_fields),
             )
 
-        # Pack source: ``live_probe`` if the runner enriched the input,
-        # ``inline_signal`` if it returned an unchanged identity result.
-        source = "live_probe" if enriched is not signal_payload else "inline_signal"
+        # Pack source: ``live_probe`` if the runner attempted an external
+        # lookup, ``inline_signal`` for the identity runner.
+        source = (
+            "live_probe"
+            if enriched is not signal_payload or any(probe.source != "inline" for probe in probes)
+            else "inline_signal"
+        )
 
         sufficient, missing = self._check_sufficiency(enriched)
+        failed_live_probes = [
+            probe.name
+            for probe in probes
+            if not probe.success and probe.source in {"configured_targets", "json_rpc", "filesystem", "systemd", "posture"}
+        ]
+        if failed_live_probes:
+            sufficient = False
+            missing = sorted(set([*missing, *failed_live_probes]))
 
         return EvidencePack(
             pack=enriched,

@@ -29,7 +29,8 @@
         "escalate",
         "investigate_and_patch",
         "rollback_deployment",
-        "restart_deployment"
+        "restart_deployment",
+        "restart_systemd_service"
       ]
     },
     "confidence": { "type": "number" },

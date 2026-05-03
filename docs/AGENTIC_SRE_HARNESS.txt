@@ -1,0 +1,611 @@
+MESH AGENTIC SRE WORK HARNESS
+=============================
+
+Purpose
+-------
+This is the living implementation harness for evolving Mesh from a bounded
+remediation control plane into a bounded, auditable AI-SRE system. It maps the
+work, records active implementation checkpoints, and tracks validation as the
+work proceeds.
+
+The core invariant is stable:
+
+  Mesh may become agentic in investigation, hypothesis testing, arbitration,
+  and learning. Mesh must remain bounded, policy-gated, operator-steerable, and
+  auditable for production mutations.
+
+
+Current Mesh Architecture Map
+-----------------------------
+Existing runtime spine:
+
+  IngestService
+    -> TriggerService
+    -> EvidenceService
+    -> ScenarioAnalysisService
+    -> DecisionService
+    -> EvaluationService
+    -> operator gate
+    -> OrchestratorService
+    -> FeedbackService
+    -> learning, vault, Merkle, memory
+
+Important current strengths:
+
+  - Signals are normalized before downstream stages read them.
+  - EvidenceService promotes a signal from a lead into an audited evidence pack.
+  - ScenarioAnalysisService emits evidence nodes and subdecisions.
+  - DecisionService owns the bounded decision vocabulary.
+  - EvaluationService enforces policy and quality gates before execution.
+  - OrchestratorService owns bounded side effects.
+  - FeedbackService records outcomes for learning.
+  - AgentMeshService records proposal artifacts but does not own production
+    side effects.
+
+Known current limitations:
+
+  - Investigation is mostly implicit in evidence and scenario analysis.
+  - Hypothesis generation is deterministic and template-heavy.
+  - Agent lanes mostly review or propose after a decision exists.
+  - Confidence is partly heuristic and not fully calibrated by learned priors.
+  - Parallel read-only evidence gathering is not yet a first-class stage.
+
+
+Target AI-SRE Architecture
+--------------------------
+Target runtime spine:
+
+  alert/correlation
+    -> context assembly
+    -> audited evidence pack
+    -> read-only InvestigationService
+    -> scenario analysis and memory synthesis
+    -> bounded decision
+    -> SRE judge and policy evaluation
+    -> trust ladder / operator gate
+    -> bounded execution or proposal artifact
+    -> feedback learning
+
+Target system capabilities:
+
+  - Triage every eligible alert as a lead, not a truth.
+  - Build a scoped incident context from telemetry, topology, memory, and recent
+    change history.
+  - Form multiple hypotheses and test them with read-only probes.
+  - Stop investigation when uncertainty is low enough, the probe budget is
+    exhausted, or more evidence is unlikely to change the bounded decision.
+  - Route specialized agents by signal source and service domain.
+  - Reconcile agent disagreement before recommending a bounded action.
+  - Learn from feedback without bypassing policy.
+
+
+Workstream Roadmap
+------------------
+W0 - Harness and first investigation contract
+  Status: completed first slice.
+  Goal: add this harness and a conservative deterministic InvestigationService
+  stage after EvidenceService and before ScenarioAnalysisService.
+
+W1 - InvestigationService v1
+  Goal: add read-only investigation reports with probe results, citations,
+  uncertainty, and stop reasons.
+  Scope: deterministic built-in probes only.
+  Out of scope: LLM-generated probe plans, live shell execution, mutating tools.
+
+W2 - Bayesian decision confidence
+  Goal: replace caller-supplied causality confidence and fixed confidence nudges
+  with learned, auditable priors from FeedbackService outcomes.
+
+W3 - Agent routing and arbitration
+  Goal: route agents by signal source and service scope, then reconcile proposal
+  disagreement instead of selecting the first successful attempt.
+
+W4 - Read-only probe registry
+  Goal: introduce pluggable read-only tools for Prometheus, logs, traces,
+  Kubernetes, Git/deploy metadata, and runbooks.
+
+W5 - SRE eval harness
+  Status: in progress.
+  Goal: score investigation quality, root-cause accuracy, unsafe-action
+  avoidance, and decision stability across synthetic and fixture incidents.
+
+
+External Agentic-SRE Pattern Notes
+----------------------------------
+OpenSRE pattern:
+  Treat incident response as a scored environment, not only a chatbot or
+  workflow. Useful benchmark axes are root-cause accuracy, evidence grounding,
+  unsafe-action avoidance, remediation quality, and time-to-useful-decision.
+
+Resolve.ai / agentic ops pattern:
+  Separate investigation, diagnosis, and execution. Agents can collect and
+  summarize evidence, but production-changing actions remain approval-gated and
+  auditable.
+
+Loghub / AIOps corpus pattern:
+  Public log corpora are useful for breadth in log anomaly recognition and
+  evidence extraction. They are not sufficient alone for full production SRE
+  evaluation because they usually lack topology, deploy metadata, policy,
+  operator intent, and recovery observations. Mesh should ingest them as
+  provenance-rich scenario seeds, then score them separately from full incident
+  fixtures.
+
+AIOpsLab pattern:
+  A comprehensive AIOps agent benchmark separates the agent interface from the
+  service environment, injects faults, generates workloads, exports telemetry,
+  and evaluates agents against reproducible scenarios. Mesh should converge on
+  the same separation: scenario generation, runtime execution, scoring, and
+  reports are distinct layers.
+
+Benchmark design implication:
+  Mesh architecture iterations must produce comparable scorecards across a
+  stable golden suite and larger generated corpora. A high score requires both
+  correct bounded decisions and grounded reasoning artifacts; agentic behavior
+  that is not cited, reproducible, and policy-safe should not improve the score.
+
+
+Active Checkpoint
+-----------------
+Checkpoint: W5 external agent backend slice.
+Date: 2026-05-03.
+
+Before implementation of W5 external agent backend:
+
+  Planned files:
+    - services/benchmark/backends.py
+    - services/benchmark/runner.py
+    - services/benchmark/models.py
+    - services/benchmark/__main__.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - docs/CODEX_RUN_SUMMARY.md
+
+  Intended behavior:
+    - Keep Mesh as the default benchmark backend.
+    - Add an OpenSRE CLI backend that invokes opensre investigate -i INPUT.
+    - Convert benchmark scenarios into non-leaky alert JSON for OpenSRE.
+    - Normalize OpenSRE CLI output back into the benchmark outcome shape so the
+      same scoring model can grade it.
+    - Disable OpenSRE telemetry for benchmark runs by default.
+
+  Risk:
+    - OpenSRE public-alpha CLI/API behavior may change.
+    - Generic Mesh fixture JSON may not perfectly match OpenSRE's preferred
+      alert schemas.
+    - Text-output parsing is weaker than a structured OpenSRE JSON report; use
+      it only until OpenSRE exposes or documents stable machine output.
+
+After implementation of W5 external agent backend:
+
+  Actual behavior added:
+    - Added services/benchmark/backends.py with MeshBackend and
+      OpenSreCliBackend.
+    - BenchmarkRunConfig now accepts backend, opensre_command, and
+      backend_timeout_seconds.
+    - CLI now supports:
+        python -m services.benchmark run --suite golden --backend opensre-cli
+    - OpenSRE backend writes a non-leaky alert payload to a temp file and runs:
+        uvx opensre --json investigate -i INPUT -o OUTPUT
+    - OpenSRE telemetry is disabled by default for benchmark runs via
+      OPENSRE_NO_TELEMETRY and OPENSRE_ANALYTICS_DISABLED.
+    - OpenSRE JSON/report output is normalized into the benchmark outcome shape
+      with decision inference, investigation report, citations, and feedback
+      stub.
+    - Setup/backend failures now receive zero safety, latency, and learning
+      credit so fast failures do not look like fast investigations.
+
+  Local score status:
+    - uvx can fetch the OpenSRE CLI on this machine.
+    - A real OpenSRE benchmark attempt without provider credentials scored
+      8.00 / 100 because OpenSRE defaulted to anthropic and ANTHROPIC_API_KEY
+      was not set.
+    - This is an environment/setup score, not an OpenSRE capability score.
+    - Fake-command regression test proves the adapter can score an OpenSRE-like
+      report when the command exists.
+
+  Remaining gaps:
+    - Provide LLM_PROVIDER and matching provider key in environment variables.
+    - Prefer structured OpenSRE output if/when a stable JSON report flag is
+      available.
+
+Previous checkpoint: W5 repeated-run and comparison slice.
+
+Date: 2026-05-03.
+
+Before implementation of W5 repeated-run and comparison:
+
+  Planned files:
+    - services/benchmark/models.py
+    - services/benchmark/runner.py
+    - services/benchmark/compare.py
+    - services/benchmark/report.py
+    - services/benchmark/__main__.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - docs/CODEX_RUN_SUMMARY.md
+
+  Intended behavior:
+    - Add repeated-run benchmark execution so nondeterministic agentic behavior
+      can be measured with mean, standard deviation, min, and max score.
+    - Add a compare command that diffs two benchmark output directories by
+      scorecard, dimension, and scenario.
+    - Keep the default single-run path unchanged for fast local checks.
+    - Write comparison artifacts as JSON and Markdown.
+
+  Risk:
+    - Repeated runs can hide scenario-level failures if only aggregate means are
+      reported.
+    - Compare output can be misleading if suites or scenario sets differ; the
+      command must surface additions/removals explicitly.
+
+After implementation of W5 repeated-run and comparison:
+
+  Actual behavior added:
+    - BenchmarkRunConfig now accepts repeat=N and records each scenario attempt
+      with an iteration number.
+    - BenchmarkScorecard now records scenario_count, scenario_attempt_count,
+      iteration_count, weighted_score_stddev, weighted_score_min, and
+      weighted_score_max.
+    - Benchmark reports now include attempts, iterations, score stddev, and an
+      iteration column in scenario results.
+    - Added services.benchmark.compare to diff benchmark artifacts by weighted
+      score, dimension scores, pass rate, unsafe-action rate, p95 latency, and
+      per-scenario score.
+    - Added CLI:
+        python -m services.benchmark run --suite golden --repeat 3
+        python -m services.benchmark compare BASELINE_DIR CANDIDATE_DIR
+    - Compare writes comparison.json and comparison.md into the candidate run
+      directory by default.
+
+  CLI smoke results:
+    - Repeated single-scenario run:
+        python3 -m services.benchmark run --suite golden
+        --scenario-id feature_flag_latency_disable --repeat 2
+        score=93.50, attempts=2, iterations=2, stddev=0.0000.
+    - Comparison smoke:
+        python3 -m services.benchmark compare BASELINE_DIR CANDIDATE_DIR
+        wrote comparison artifacts and surfaced the added Kubernetes scenario.
+
+  Remaining gaps:
+    - No CI score threshold gate yet.
+    - No confidence interval over larger repeated stochastic suites yet.
+    - No containerized benchmark environment yet.
+    - No locked/hidden eval set yet.
+
+Previous checkpoint: W5 benchmark harness first slice.
+
+Date: 2026-05-02.
+
+Before implementation of W5:
+
+  Planned files:
+    - services/benchmark/
+    - benchmarks/scenarios/golden/*.json
+    - benchmarks/corpora/loghub_manifest.json
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - docs/CODEX_RUN_SUMMARY.md
+
+  Intended behavior:
+    - Add a repeatable architecture benchmark harness that runs Mesh against a
+      golden SRE scenario corpus.
+    - Score each architecture iteration on safety, decision correctness,
+      investigation grounding, recovery outcome, latency, and learning hooks.
+    - Emit machine-readable JSON/JSONL plus a human-readable Markdown report.
+    - Add a Loghub corpus adapter that can turn local downloaded logs into
+      benchmark scenarios without requiring live network access in tests.
+    - Keep live production access out of the benchmark path.
+
+  Risk:
+    - Benchmark scoring can become vanity metrics if it only rewards current
+      deterministic behavior.
+    - Loghub is a log analytics corpus, not a production incident corpus; the
+      adapter must preserve provenance and avoid pretending log snippets are
+      full end-to-end incidents.
+
+After implementation of W5 first slice:
+
+  Actual behavior added:
+    - services.benchmark now loads suite scenarios, runs MeshRuntimeEngine in
+      native evaluation/orchestration mode, scores outcomes, and writes
+      benchmark.json, scorecard.json, scenario-results.jsonl, and report.md.
+    - Golden suite now contains feature-flag latency, Kubernetes crash-loop
+      patch, and long-tail OTel unknown-metric scenarios.
+    - Score dimensions are weighted: safety 25%, decision 20%, investigation
+      20%, recovery 15%, latency 10%, learning 10%.
+    - Loghub adapter can extract local corpus files into provenance-rich
+      OTel-style benchmark scenarios without network access.
+    - CLI entry points:
+        python -m services.benchmark run --suite golden
+        python -m services.benchmark extract-loghub --dataset DATASET
+
+  Initial measured baseline:
+    - Golden suite score: 69.00 / 100.
+    - Pass rate: 66.67%.
+    - Unsafe action rate: 0.00%.
+    - Exposed gap: otel_unmatched_metric_escalate currently errors on unknown
+      metric shape before producing a clean escalate decision.
+
+  Remaining gaps:
+    - No external corpus files are checked in; Loghub extraction expects a
+      local downloaded corpus.
+    - No architecture-to-architecture comparison command yet.
+    - No calibration over repeated runs or confidence intervals yet.
+    - Unknown OTel metric handling should cleanly escalate instead of surfacing
+      a pipeline error.
+
+Previous checkpoint: W0/W1 first slice.
+
+Before W0/W1 implementation:
+
+  Planned files:
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - services/investigation/
+    - shared/mesh_runtime/contracts.py
+    - shared/mesh_runtime/schemas/investigation-*.schema.json
+    - services/runtime.py
+    - services/control_plane.py
+    - services/scenario_analysis/service.py
+    - services/decision/service.py
+    - shared/mesh_runtime/run_events.py
+    - tests/test_investigation_service.py
+
+  Intended behavior:
+    - Add investigation_ready as a stage after evidence_pack_ready and before
+      scenario_analysis_ready.
+    - Produce investigation_report as a run artifact.
+    - Keep all investigation probes read-only.
+    - Feed investigation findings into scenario analysis and decision reasoning
+      as advisory evidence only.
+    - Continue the existing deterministic path if investigation fails.
+
+  Risk:
+    - This touches already-dirty runtime and control-plane files.
+    - The first slice must not change final decisions for existing fixtures when
+      no new actionable investigation finding is present.
+
+After implementation:
+
+  Actual behavior added:
+    - InvestigationService now creates a deterministic read-only plan and report.
+    - Runtime emits investigation_ready between evidence and scenario analysis.
+    - Control plane stores investigation_report and records an investigation
+      event.
+    - Scenario analysis records investigation as advisory evidence.
+    - Decision reasoning includes investigation report metadata without changing
+      the bounded decision result.
+    - Web run graph ordering and icons recognize the new stage.
+
+  Remaining gaps:
+    - No LLM planner yet.
+    - No live external observability probes yet.
+    - No Bayesian posterior integration yet.
+    - No agent-lane arbitration yet.
+
+
+Change Ledger
+-------------
+2026-05-02 W0/W1 first slice
+  - Added living harness document.
+  - Added InvestigationPlan, InvestigationProbeResult, and InvestigationReport
+    contracts plus schemas.
+  - Added services/investigation with deterministic built-in read-only probes.
+  - Wired MeshRuntimeEngine and RunCoordinator to emit investigation_ready.
+  - Added ScenarioAnalysisService advisory consumption of investigation_report.
+  - Added DecisionService advisory reasoning attachment.
+  - Added unit tests for report validation, runtime stage order, advisory
+    scenario consumption, and failure fallback.
+
+2026-05-02 W5 benchmark harness first slice
+  - Added services/benchmark with scenario loading, scoring, report rendering,
+    CLI execution, and Loghub extraction.
+  - Added benchmarks/scenarios/golden with three initial scenario definitions.
+  - Added benchmarks/corpora/loghub_manifest.json with corpus provenance and
+    adapter usage.
+  - Added tests/test_benchmark_harness.py.
+  - Captured the first golden-suite score and the long-tail OTel failure as a
+    concrete next improvement target.
+
+2026-05-03 W5 repeated-run and comparison slice
+  - Added repeat=N benchmark execution and per-attempt iteration tracking.
+  - Added scorecard min/max/stddev fields for repeated runs.
+  - Added services.benchmark.compare plus CLI comparison command.
+  - Added comparison.json and comparison.md artifacts.
+  - Added tests for repeated-run statistics and run comparison.
+
+2026-05-03 W5 external agent backend slice
+  - Added OpenSRE CLI backend support to the benchmark harness.
+  - Added backend-aware scenario result rows.
+  - Added non-leaky Mesh scenario to OpenSRE alert conversion.
+  - Added fake OpenSRE command test coverage.
+  - Switched default OpenSRE command to uvx opensre and JSON output mode.
+  - Confirmed real OpenSRE score is not available locally until provider
+    credentials are exported.
+
+
+Open Decisions
+--------------
+OD-001: LLM planner contract
+  Default: do not add until deterministic InvestigationService is stable.
+
+OD-002: live probe registry shape
+  Default: keep probes read-only, typed, timeout-bounded, and cited.
+
+OD-003: investigation stop policy
+  Default: v1 uses deterministic probe-budget stop reasons; later versions add
+  expected value of information and uncertainty plateauing.
+
+OD-004: UI tab for investigation
+  Default: v1 surfaces investigation through events/artifacts; a dedicated
+  inspector tab can be added after the artifact shape stabilizes.
+
+OD-005: benchmark pass/fail gates
+  Default: v1 records scorecards but does not fail CI on score thresholds until
+  the golden suite is stable and reviewed.
+
+OD-006: corpus grading tiers
+  Default: keep full incident fixtures, generated log-corpus scenarios, and live
+  chaos scenarios in separate suites so Loghub breadth does not masquerade as
+  production recovery validation.
+
+
+Validation Matrix
+-----------------
+Contract validation:
+  - InvestigationReport.from_dict accepts service output.
+  - Probe result contracts validate each deterministic probe output.
+
+Runtime validation:
+  - run_events includes investigation_ready.
+  - investigation_ready occurs before scenario_analysis_ready.
+  - final fixture decision remains stable when investigation adds no action.
+
+Control-plane validation:
+  - Run artifacts include investigation_report.
+  - investigation failure records a failed report and continues.
+  - Merkle/event stream includes investigation_ready.
+
+Safety validation:
+  - InvestigationService performs no shell execution.
+  - InvestigationService has no actuator imports.
+  - InvestigationService never returns a production action.
+
+Benchmark validation:
+  - Golden scenario files load into BenchmarkScenario contracts.
+  - Scorecard weights sum to 1.0 and cover safety, decision, investigation,
+    recovery, latency, and learning.
+  - Benchmark runs write JSON, JSONL, and Markdown artifacts.
+  - Unsafe action scoring is explicit and test-covered.
+  - Loghub extraction preserves corpus, dataset, path, line, and context.
+  - Repeated runs preserve per-attempt scenario rows and aggregate min/max/stddev.
+  - Compare command surfaces score, dimension, latency, unsafe-action, and
+    scenario-level deltas.
+  - OpenSRE backend can be tested with a fake CLI command and scored through the
+    same benchmark rubric.
+
+Current validation status:
+  - PASS: python3 -m unittest tests.test_benchmark_harness -v.
+  - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest
+    pytest tests/test_benchmark_harness.py tests/test_investigation_service.py
+    after OpenSRE backend changes.
+  - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark
+    tests/test_benchmark_harness.py after OpenSRE backend changes.
+  - PASS: python3 -m py_compile services/benchmark/*.py
+    tests/test_benchmark_harness.py after OpenSRE backend changes.
+  - ENVIRONMENT FAILURE: python3 -m services.benchmark run --suite golden
+    --scenario-id feature_flag_latency_disable --backend opensre-cli completed
+    the benchmark harness but scored only the missing opensre executable error.
+  - PASS: python3 -m services.benchmark run --suite golden --scenario-id
+    feature_flag_latency_disable --repeat 2 --output /tmp/mesh-benchmark-repeat.
+  - PASS: python3 -m services.benchmark compare
+    /tmp/mesh-benchmark-repeat/bench_20260503T141658091645Z
+    /tmp/mesh-benchmark-candidate/bench_20260503T141701928712Z.
+  - PASS: python3 -m services.benchmark run --suite golden --output
+    /tmp/mesh-benchmark-smoke.
+  - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest
+    pytest tests/test_benchmark_harness.py tests/test_investigation_service.py.
+  - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark
+    tests/test_benchmark_harness.py.
+  - PASS: python3 -m py_compile services/benchmark/*.py
+    tests/test_benchmark_harness.py.
+  - PARTIAL: targeted strict mypy for services/benchmark still imports the
+    broader runtime graph and reports existing strictness/export errors across
+    shared runtime and service modules; local benchmark typing issues found in
+    that run were cleaned up.
+  - PASS: python3 -m unittest tests.test_investigation_service -v.
+  - PASS: python3 -m py_compile services/investigation/service.py
+    services/runtime.py services/control_plane.py services/scenario_analysis/service.py
+    services/decision/service.py shared/mesh_runtime/contracts.py.
+  - PASS: targeted ruff check for the touched Python files after rerunning
+    uvx with /tmp caches and network approval.
+  - PARTIAL: tests.test_loop_behaviors + tests.test_pipeline pass except
+    tests.test_loop_behaviors.LoopBehaviorTests.test_kubernetes_probe_failure_alone_escalates,
+    where current code returns defer_until but the existing test expects
+    escalate.
+  - PARTIAL: tests.test_control_plane runs with elevated local-server binding
+    permission, but currently reports a missing recovery artifact in the
+    interruptible-auto recovery-child test and temp-dir cleanup races from
+    background work.
+  - PARTIAL: npm --prefix web run build reaches typecheck, then Vite fails with
+    crypto.getRandomValues unavailable in the active Node runtime.
+  - PARTIAL: targeted mypy still reports broad pre-existing strictness/export
+    errors across imported modules; not isolated to this first investigation
+    slice.
+
+
+File / Change Map
+-----------------
+docs/AGENTIC_SRE_HARNESS.txt
+  Living work harness and change map.
+
+services/investigation/service.py
+  Deterministic read-only investigation stage.
+
+shared/mesh_runtime/contracts.py
+  Investigation contracts.
+
+shared/mesh_runtime/schemas/investigation-*.schema.json
+  JSON Schema source of truth for investigation contracts.
+
+services/runtime.py
+  Synchronous pipeline wiring for investigation_ready.
+
+services/control_plane.py
+  Long-lived run coordinator wiring for investigation_ready and artifacts.
+
+services/scenario_analysis/service.py
+  Advisory investigation evidence node and subdecision.
+
+services/decision/service.py
+  Advisory investigation metadata attached to decision reasoning.
+
+web/src/lib/runGraph.ts and web/src/lib/format.ts
+  New stage ordering and icon/tone support.
+
+tests/test_investigation_service.py
+  First-slice behavior coverage.
+
+services/benchmark/
+  Architecture benchmark runner, scoring model, report renderer, CLI, and
+  Loghub extraction adapter.
+
+services/benchmark/compare.py
+  Benchmark artifact comparison and Markdown/JSON delta reports.
+
+services/benchmark/backends.py
+  Mesh runtime backend and OpenSRE CLI backend.
+
+benchmarks/scenarios/golden/
+  Stable first golden suite for architecture-iteration scoring.
+
+benchmarks/corpora/loghub_manifest.json
+  Public corpus provenance and local extraction command template.
+
+tests/test_benchmark_harness.py
+  Benchmark loading, scoring, artifact writing, and Loghub extraction coverage.
+
+
+Safety Invariants
+-----------------
+The implementation must preserve these invariants:
+
+  - Bounded action vocabulary remains owned by DecisionService.
+  - Policy/evaluation gates remain mandatory before execution.
+  - Investigation is read-only.
+  - Investigation failure is non-fatal.
+  - Agentic components may promote caution but must not bypass policy.
+  - Memory is advisory unless verified and promoted by Mesh-owned stores.
+  - Existing dirty worktree changes are not reverted.
+
+
+Next Edit Instructions
+----------------------
+When continuing this work:
+
+  1. Read this file first.
+  2. Add a new checkpoint before touching code.
+  3. Record intended files and risks.
+  4. Implement the slice.
+  5. Update the checkpoint with actual behavior, tests, and remaining gaps.
+  6. Keep docs/CODEX_RUN_SUMMARY.md as the broad historical run summary, not
+     as this detailed work harness.

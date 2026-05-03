@@ -71,6 +71,8 @@ class RuntimeConfig:
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
+    run_worker_count: int = 4
+    run_queue_size: int = 100
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     hermes_command_timeout_seconds: int = 180
@@ -103,6 +105,7 @@ class RuntimeConfig:
     latentmas_use_vllm: bool = False
     latentmas_max_artifact_chars: int = 20_000
     agent_fabric_mode: str = "native"
+    agent_tasks_mode: str = "async"
     agent_mesh_task_timeout_seconds: float = 15.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
@@ -135,6 +138,15 @@ class RuntimeConfig:
     observer_secondary_base_url: str = ""
     observer_secondary_api_key: str = ""
     observer_secondary_model: str = ""
+    sre_judge_enabled: bool = False
+    sre_judge_provider: str = "openai"
+    sre_judge_base_url: str = ""
+    sre_judge_api_key: str = ""
+    sre_judge_model: str = ""
+    sre_judge_secondary_provider: str = ""
+    sre_judge_secondary_base_url: str = ""
+    sre_judge_secondary_api_key: str = ""
+    sre_judge_secondary_model: str = ""
     correlation_enabled: bool = True
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
@@ -206,6 +218,7 @@ class RuntimeConfig:
     # "rpc_url": "http://127.0.0.1:8899", "host": "vault-prod-07",
     # "service": "solana-validator.service"}
     bare_metal_node_targets: tuple[dict[str, str], ...] = ()
+    vault_mirror_mode: str = "async"
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -219,6 +232,10 @@ class RuntimeConfig:
                 "agent_mesh_task_timeout_seconds must be > 0, "
                 f"got {self.agent_mesh_task_timeout_seconds}"
             )
+        if self.run_worker_count <= 0:
+            raise ValueError(f"run_worker_count must be > 0, got {self.run_worker_count}")
+        if self.run_queue_size <= 0:
+            raise ValueError(f"run_queue_size must be > 0, got {self.run_queue_size}")
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.reasoning_bank_max_strategies < 1:
@@ -273,6 +290,8 @@ class RuntimeConfig:
             ),
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
+            run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
+            run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             hermes_command=os.getenv("MESH_HERMES_COMMAND") or None,
             hermes_command_timeout_seconds=int(os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS", "180")),
@@ -314,6 +333,7 @@ class RuntimeConfig:
             latentmas_use_vllm=os.getenv("MESH_LATENTMAS_USE_VLLM", "").lower() in ("1", "true", "yes"),
             latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
             agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
+            agent_tasks_mode=_normalize_agent_tasks_mode(os.getenv("MESH_AGENT_TASKS_MODE", "async")),
             agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
@@ -400,6 +420,7 @@ class RuntimeConfig:
             load_balancer_drain_timeout_seconds=int(os.getenv("MESH_LOAD_BALANCER_DRAIN_TIMEOUT_SECONDS", "60")),
             load_balancer_max_active_connections=int(os.getenv("MESH_LOAD_BALANCER_MAX_ACTIVE_CONNECTIONS", "0")),
             bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
+            vault_mirror_mode=_normalize_vault_mirror_mode(os.getenv("MESH_VAULT_MIRROR_MODE", "async")),
             observer_enabled=os.getenv("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes"),
             observer_base_url=os.getenv("MESH_OBSERVER_BASE_URL", ""),
             observer_api_key=os.getenv("MESH_OBSERVER_API_KEY", ""),
@@ -411,6 +432,15 @@ class RuntimeConfig:
             observer_secondary_base_url=os.getenv("MESH_OBSERVER_SECONDARY_BASE_URL", ""),
             observer_secondary_api_key=os.getenv("MESH_OBSERVER_SECONDARY_API_KEY", ""),
             observer_secondary_model=os.getenv("MESH_OBSERVER_SECONDARY_MODEL", ""),
+            sre_judge_enabled=os.getenv("MESH_SRE_JUDGE_ENABLED", "").lower() in ("1", "true", "yes"),
+            sre_judge_provider=os.getenv("MESH_SRE_JUDGE_PROVIDER", "openai").lower(),
+            sre_judge_base_url=os.getenv("MESH_SRE_JUDGE_BASE_URL", ""),
+            sre_judge_api_key=os.getenv("MESH_SRE_JUDGE_API_KEY", ""),
+            sre_judge_model=os.getenv("MESH_SRE_JUDGE_MODEL", ""),
+            sre_judge_secondary_provider=os.getenv("MESH_SRE_JUDGE_SECONDARY_PROVIDER", "").lower(),
+            sre_judge_secondary_base_url=os.getenv("MESH_SRE_JUDGE_SECONDARY_BASE_URL", ""),
+            sre_judge_secondary_api_key=os.getenv("MESH_SRE_JUDGE_SECONDARY_API_KEY", ""),
+            sre_judge_secondary_model=os.getenv("MESH_SRE_JUDGE_SECONDARY_MODEL", ""),
         )
 
 
@@ -448,6 +478,16 @@ def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
 def _normalize_agent_fabric_mode(raw: str) -> str:
     mode = (raw or "native").strip().lower()
     return mode if mode in ("native", "deepagents") else "native"
+
+
+def _normalize_agent_tasks_mode(raw: str) -> str:
+    mode = (raw or "async").strip().lower()
+    return mode if mode in ("off", "async", "blocking") else "async"
+
+
+def _normalize_vault_mirror_mode(raw: str) -> str:
+    mode = (raw or "async").strip().lower()
+    return mode if mode in ("off", "async", "sync") else "async"
 
 
 def _normalize_state_backend(raw: str) -> str:

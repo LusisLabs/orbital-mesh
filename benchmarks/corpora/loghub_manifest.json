@@ -1,0 +1,25 @@
+{
+  "corpus": "Loghub",
+  "purpose": "Offline log-derived SRE benchmark scenario extraction.",
+  "source_urls": [
+    "https://github.com/logpai/loghub",
+    "https://zenodo.org/records/3227177"
+  ],
+  "datasets_of_interest": [
+    "HDFS",
+    "BGL",
+    "OpenStack",
+    "Apache",
+    "Thunderbird",
+    "Linux",
+    "Hadoop",
+    "Spark",
+    "Zookeeper"
+  ],
+  "adapter": "python -m services.benchmark extract-loghub --dataset DATASET --input /path/to/loghub/DATASET --output benchmarks/scenarios/loghub",
+  "notes": [
+    "The adapter reads a local corpus checkout and emits benchmark scenario JSON files.",
+    "The repository keeps the adapter and manifest, not the full public dataset.",
+    "Generated scenarios preserve dataset name, path, line number, and surrounding context for provenance."
+  ]
+}

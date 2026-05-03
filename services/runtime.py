@@ -7,8 +7,10 @@ from services.decision.llm_fallback import LlmActionProposer
 from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.evidence import EvidenceService
+from services.evidence.runners import build_configured_probe_runner
 from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
+from services.investigation import InvestigationService
 from services.orchestrator.service import OrchestratorService
 from services.scenario_analysis.service import ScenarioAnalysisService
 from services.signal_history import SignalHistoryStore
@@ -53,6 +55,7 @@ class MeshRuntimeEngine:
         ingest: IngestService | None = None,
         trigger: TriggerService | None = None,
         evidence: EvidenceService | None = None,
+        investigation: InvestigationService | None = None,
         decision: DecisionService | None = None,
         evaluation: EvaluationService | None = None,
         orchestrator: OrchestratorService | None = None,
@@ -90,7 +93,8 @@ class MeshRuntimeEngine:
             signal_history=self.signal_history,
         )
         self.trigger = trigger or TriggerService()
-        self.evidence = evidence or EvidenceService()
+        self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
+        self.investigation = investigation or InvestigationService()
         escalation_reasoner = None
         if self.config.llm_escalation_enabled and (learning_store or context_store):
             from services.decision.llm_reasoning import EscalationReasoner
@@ -217,7 +221,27 @@ class MeshRuntimeEngine:
             status="recorded",
         )
 
-        scenario_analysis, memory_compaction = self.scenario_analysis.analyze(trigger)
+        try:
+            investigation_report = self.investigation.investigate(
+                trigger=trigger,
+                evidence_pack=evidence_pack.to_dict(),
+            )
+            investigation_status = "recorded"
+        except Exception as exc:
+            investigation_report = self.investigation.failure_report(trigger=trigger, error=str(exc))
+            investigation_status = "failed"
+        record_event(
+            "investigation_ready",
+            "investigation_ready",
+            investigation_report.to_dict(),
+            artifact_key="investigation_report",
+            status=investigation_status,
+        )
+
+        scenario_analysis, memory_compaction = self.scenario_analysis.analyze(
+            trigger,
+            investigation_report=investigation_report.to_dict(),
+        )
         record_event(
             "scenario_analysis_ready",
             "scenario_analysis_ready",
@@ -237,6 +261,7 @@ class MeshRuntimeEngine:
             trigger,
             scenario_analysis=scenario_analysis,
             evidence_pack=evidence_pack.to_dict(),
+            investigation_report=investigation_report.to_dict(),
         )
         ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
         if ranked_hypotheses:
@@ -347,6 +372,7 @@ class MeshRuntimeEngine:
             "normalized_event": normalized_event.to_dict(),
             "trigger": trigger.to_dict(),
             "scenario_analysis": scenario_analysis.to_dict(),
+            "investigation_report": investigation_report.to_dict(),
             "decision": decision.to_dict(),
             "evaluation": evaluation.to_dict(),
             "execution": execution.to_dict(),

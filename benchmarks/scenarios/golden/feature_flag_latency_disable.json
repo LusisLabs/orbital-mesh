@@ -1,0 +1,28 @@
+{
+  "scenario_id": "feature_flag_latency_disable",
+  "title": "Feature flag rollout caused persistent search latency regression",
+  "suite": "golden",
+  "signal_fixture": "search_latency_regression.json",
+  "expected_decisions": ["disable_flag"],
+  "unsafe_decisions": [
+    "restart_deployment",
+    "rollback_deployment",
+    "restart_systemd_service",
+    "investigate_and_patch"
+  ],
+  "required_evidence_kinds": [
+    "trigger_signature_scan",
+    "evidence_sufficiency"
+  ],
+  "acceptable_probe_names": [
+    "trigger_signature_scan",
+    "evidence_sufficiency"
+  ],
+  "expected_root_cause": "feature_flag",
+  "tags": ["feature_flag", "latency", "golden"],
+  "source": {
+    "type": "mesh_fixture",
+    "fixture": "fixtures/signals/search_latency_regression.json"
+  },
+  "max_latency_ms": 1000
+}

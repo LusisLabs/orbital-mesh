@@ -22,6 +22,7 @@ from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 from .mesh_eval import MeshEvalConfig
 from .mesh_eval.runtime import mesh_eval_artifact_with_probe
 from .mesh_evaluator import BehavioralScorer, ContractCheckAdapter, TrajectoryEvaluator, Verifier, temperature_policy_for_trace
+from .sre_judge import LlmSreJudge, LlmSreJudgeConfig, MultiModelSreJudge, NativeSreJudge, SreJudge
 
 
 _LOG = logging.getLogger("mesh.evaluation")
@@ -32,6 +33,7 @@ class EvaluationService:
         self,
         config: RuntimeConfig | None = None,
         state_store: RuntimeStateStore | None = None,
+        sre_judge: SreJudge | None = None,
     ):
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store or RuntimeStateStore(self.config.state_directory)
@@ -40,6 +42,35 @@ class EvaluationService:
         self.scorer = BehavioralScorer()
         self.verifier = Verifier()
         self.mesh_eval_config = MeshEvalConfig.from_env()
+        self.sre_judge = sre_judge or self._build_sre_judge()
+        self._sre_judge_enforces = sre_judge is not None or self.config.sre_judge_enabled
+
+    def _build_sre_judge(self) -> SreJudge:
+        if not self.config.sre_judge_enabled:
+            return NativeSreJudge()
+        primary = LlmSreJudge(
+            LlmSreJudgeConfig(
+                enabled=True,
+                provider=self.config.sre_judge_provider,
+                base_url=self.config.sre_judge_base_url,
+                api_key=self.config.sre_judge_api_key,
+                model=self.config.sre_judge_model,
+                timeout_seconds=self.config.observer_timeout_seconds,
+            )
+        )
+        secondary = None
+        if self.config.sre_judge_secondary_model:
+            secondary = LlmSreJudge(
+                LlmSreJudgeConfig(
+                    enabled=True,
+                    provider=self.config.sre_judge_secondary_provider or self.config.sre_judge_provider,
+                    base_url=self.config.sre_judge_secondary_base_url or self.config.sre_judge_base_url,
+                    api_key=self.config.sre_judge_secondary_api_key or self.config.sre_judge_api_key,
+                    model=self.config.sre_judge_secondary_model,
+                    timeout_seconds=self.config.observer_timeout_seconds,
+                )
+            )
+        return MultiModelSreJudge(primary, secondary)
 
     def evaluate(
         self,
@@ -219,13 +250,48 @@ class EvaluationService:
             blocking_reasons,
             scenario_review_reasons=scenario_review_reasons,
         )
+        preliminary_stage_results = {
+            "schema_validation": schema_validation,
+            "policy_validation": policy_validation,
+            "contract_checks": contract_checks,
+            "trajectory_quality": {
+                "passed": trajectory_score.passed,
+                "score": trajectory_score.score,
+                "notes": trajectory_score.notes,
+                "artifacts": trajectory_score.artifacts,
+            },
+            "behavioral_scores": trajectory_score.artifacts,
+            "verifier": verifier_output,
+            "business_rules": business_rules,
+            "execution_readiness": execution_readiness,
+            "remediation_safety": safety_case.to_dict(),
+            "blocker_analysis": blocker_analysis,
+        }
+        sre_judgment = self.sre_judge.evaluate(
+            trigger=trigger,
+            decision=decision,
+            stage_results=preliminary_stage_results,
+            blocking_reasons=list(blocking_reasons),
+        )
+        if self._sre_judge_enforces and sre_judgment.recommendation in {"human_review", "defer"} and not blocking_reasons:
+            blocking_reasons.append(f"sre judge recommends {sre_judgment.recommendation}")
+        if self._sre_judge_enforces and sre_judgment.recommendation == "reject":
+            blocking_reasons.append("sre judge rejected decision")
+            reject = True
+        blocker_analysis = classify_blocking_reasons(
+            blocking_reasons,
+            scenario_review_reasons=scenario_review_reasons,
+        )
         passed = not blocking_reasons
+        final_recommendation = "reject" if reject else ("execute" if passed else "human_review")
+        if self._sre_judge_enforces and not reject and sre_judgment.recommendation == "defer":
+            final_recommendation = "human_review"
         log_runtime_event(
             "evaluation_completed",
             mode=self.config.evaluation_mode,
             decision_id=decision.decision_id,
             passed=passed,
-            recommendation="reject" if reject else ("execute" if passed else "human_review"),
+            recommendation=final_recommendation,
             blocking_reasons=blocking_reasons,
             auto_recovery=blocker_analysis["can_auto_remediate"],
         )
@@ -233,22 +299,10 @@ class EvaluationService:
             evaluation_id=f"eval_{decision.decision_id}",
             decision_id=decision.decision_id,
             passed=passed,
-            final_recommendation="reject" if reject else ("execute" if passed else "human_review"),
+            final_recommendation=final_recommendation,
             stage_results={
-                "schema_validation": schema_validation,
-                "policy_validation": policy_validation,
-                "contract_checks": contract_checks,
-                "trajectory_quality": {
-                    "passed": trajectory_score.passed,
-                    "score": trajectory_score.score,
-                    "notes": trajectory_score.notes,
-                    "artifacts": trajectory_score.artifacts,
-                },
-                "behavioral_scores": trajectory_score.artifacts,
-                "verifier": verifier_output,
-                "business_rules": business_rules,
-                "execution_readiness": execution_readiness,
-                "remediation_safety": safety_case.to_dict(),
+                **preliminary_stage_results,
+                "sre_judgment": sre_judgment.to_dict(),
                 "blocker_analysis": blocker_analysis,
             },
             blocking_reasons=blocking_reasons,

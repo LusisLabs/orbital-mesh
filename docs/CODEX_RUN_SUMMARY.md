@@ -125,3 +125,161 @@ validation status live in [`docs/integrations.md`](./integrations.md) and
 - `architecture.md` is now aligned with the current runtime, but future large behavior changes should update it in the same run to avoid drift.
 - Empty directories may still remain under `.mesh-runtime-state/`, which is acceptable because the path is ignored and repopulated at runtime.
 - Additional housekeeping could later remove or archive older scaffold-era documents, but those were intentionally kept because they still provide useful historical contract context.
+
+## Run: 2026-05-02 14:47 (+08)
+
+### Scope
+- Added the first agentic-SRE implementation slice: a living work harness plus a conservative read-only investigation stage that runs after evidence assembly and before scenario analysis while preserving bounded execution and policy gates.
+
+### Changes
+- Added `docs/AGENTIC_SRE_HARNESS.txt` as the detailed living harness for the agentic-SRE roadmap, active checkpoint, validation matrix, file map, and safety invariants.
+- Added `InvestigationPlan`, `InvestigationProbeResult`, and `InvestigationReport` contracts with JSON Schemas.
+- Added `services/investigation/` with deterministic built-in read-only probes for evidence sufficiency, trigger signatures, memory context, and topology context.
+- Wired `investigation_ready` into the synchronous runtime and control-plane run coordinator with an `investigation_report` artifact and non-fatal failure handling.
+- Made scenario analysis consume investigation reports as advisory evidence and made decisions attach investigation metadata without bypassing policy.
+- Updated the web run graph stage ordering/icons and added focused investigation tests.
+
+### How It Works Now
+- Runs assemble an evidence pack, then create an investigation report before scenario analysis.
+- The investigation report records a read-only probe plan, probe results, citations, uncertainty, stop reason, safety notes, and a recommendation to continue through the existing Mesh pipeline.
+- Scenario analysis can record the investigation report as advisory evidence; `DecisionService` attaches report metadata to reasoning, but evaluation and actuation remain authoritative.
+- If investigation raises, Mesh records a contract-valid failed report and continues the existing deterministic path.
+
+### Files Touched
+- `docs/AGENTIC_SRE_HARNESS.txt` with the living work harness.
+- `services/investigation/service.py` with the read-only investigation service.
+- `shared/mesh_runtime/contracts.py` and `shared/mesh_runtime/schemas/investigation-*.schema.json` with new contracts.
+- `services/runtime.py`, `services/control_plane.py`, `services/scenario_analysis/service.py`, and `services/decision/service.py` with pipeline wiring.
+- `web/src/lib/runGraph.ts`, `web/src/lib/format.ts`, and `web/src/App.tsx` with stage display support.
+- `tests/test_investigation_service.py` with first-slice coverage.
+
+### Validation
+- `python3 -m unittest tests.test_investigation_service -v`: passed.
+- `python3 -m py_compile services/investigation/service.py services/runtime.py services/control_plane.py services/scenario_analysis/service.py services/decision/service.py shared/mesh_runtime/contracts.py`: passed.
+- `RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check ...`: passed after rerunning with `/tmp` uv caches and network approval.
+- `python3 -m unittest tests.test_loop_behaviors tests.test_pipeline -v`: passed except `test_kubernetes_probe_failure_alone_escalates`, where current code returns `defer_until` while the existing test expects `escalate`.
+- `python3 -m unittest tests.test_control_plane -v`: local-server binding required elevated permission; after rerun, most tests passed but the suite still reported a missing recovery artifact and temp-dir cleanup races from background work.
+- `npm --prefix web run build`: TypeScript reached Vite, then failed with `crypto.getRandomValues is not a function` in the active Node/Vite runtime.
+- Targeted strict mypy still reports broad pre-existing export/type issues across imported modules, not isolated to the investigation slice.
+
+### Risks / Follow-ups
+- The investigation planner is deterministic only; LLM-driven probe planning is intentionally deferred.
+- Live observability probes are not implemented yet.
+- Bayesian priors and agent-lane arbitration remain future workstreams.
+- Control-plane background cleanup/race behavior should be stabilized before treating the full HTTP suite as green.
+
+## Run: 2026-05-02 15:15 (+08)
+
+### Scope
+- Added the first measurable architecture benchmark harness for agentic-SRE iterations, including a golden scenario suite, weighted scorecard output, Markdown reporting, and a Loghub corpus extraction adapter for broader offline log-anomaly scenarios.
+
+### Changes
+- Added `services/benchmark/` with benchmark models, scenario loading, scoring, report rendering, CLI execution, and Loghub extraction.
+- Added `benchmarks/scenarios/golden/` with three initial architecture benchmark scenarios: feature-flag latency disable, Kubernetes crash-loop patch, and unknown OTel metric escalation.
+- Added `benchmarks/corpora/loghub_manifest.json` to document public Loghub provenance and the local extraction workflow.
+- Added `tests/test_benchmark_harness.py` covering suite loading, score weights, benchmark artifact writing, unsafe-action scoring, and Loghub scenario extraction.
+- Updated `docs/AGENTIC_SRE_HARNESS.txt` with external agentic-SRE benchmark patterns, W5 checkpoint results, validation status, and the first measured score.
+
+### How It Works Now
+- `python -m services.benchmark run --suite golden` runs Mesh in native evaluation/orchestration mode against scenario fixtures and writes `benchmark.json`, `scorecard.json`, `scenario-results.jsonl`, and `report.md`.
+- The scorecard measures safety, decision correctness, investigation grounding, recovery, latency, and learning hooks with explicit weights.
+- `python -m services.benchmark extract-loghub --dataset DATASET --input /path/to/loghub/DATASET --output benchmarks/scenarios/loghub` turns local Loghub files into provenance-rich OTel-style benchmark scenarios without network access.
+- The first golden baseline is 69.00 / 100 with 0.00% unsafe-action rate; the long-tail OTel scenario currently exposes an unknown-metric pipeline error instead of clean escalation.
+
+### Files Touched
+- `services/benchmark/*.py` with the benchmark harness implementation.
+- `benchmarks/scenarios/golden/*.json` with the initial scenario corpus.
+- `benchmarks/corpora/loghub_manifest.json` with external corpus metadata.
+- `tests/test_benchmark_harness.py` with focused validation.
+- `docs/AGENTIC_SRE_HARNESS.txt` and `docs/CODEX_RUN_SUMMARY.md` with work log updates.
+
+### Validation
+- `python3 -m unittest tests.test_benchmark_harness -v`: passed.
+- `python3 -m services.benchmark run --suite golden --output /tmp/mesh-benchmark-smoke`: passed, score 69.00 / 100.
+- `PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest tests/test_benchmark_harness.py tests/test_investigation_service.py`: passed, 8 tests.
+- `RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark tests/test_benchmark_harness.py`: passed.
+- `python3 -m py_compile services/benchmark/*.py tests/test_benchmark_harness.py`: passed.
+- Targeted strict mypy still reports existing broader runtime/import strictness issues when importing `services.runtime`; local benchmark typing issues found in that run were cleaned up.
+
+### Risks / Follow-ups
+- Add an architecture comparison command so scorecards can be diffed run-to-run.
+- Fix unknown OTel metric handling so the benchmarked long-tail scenario cleanly escalates.
+- Add larger generated Loghub suites once a local corpus is available, keeping corpus-derived scenarios separate from full incident/recovery fixtures.
+
+## Run: 2026-05-03 22:18 (+08)
+
+### Scope
+- Upgraded the benchmark harness toward industry-style methodology by adding repeated-run statistics and artifact-to-artifact comparison, so architecture iterations can be evaluated by deltas and variance rather than one-off scores.
+
+### Changes
+- Extended `BenchmarkRunConfig` with `repeat` and recorded an `iteration` on every scenario result.
+- Extended `BenchmarkScorecard` with `scenario_attempt_count`, `iteration_count`, `weighted_score_stddev`, `weighted_score_min`, and `weighted_score_max`.
+- Updated Markdown reports to include attempts, iterations, score standard deviation, and per-row iteration numbers.
+- Added `services/benchmark/compare.py` for benchmark directory comparison across weighted score, dimension scores, pass rate, unsafe-action rate, p95 latency, and per-scenario score.
+- Added `python -m services.benchmark compare BASELINE_DIR CANDIDATE_DIR`, writing `comparison.json` and `comparison.md` into the candidate run directory by default.
+- Expanded `tests/test_benchmark_harness.py` with repeated-run and comparison artifact coverage.
+
+### How It Works Now
+- `python -m services.benchmark run --suite golden --repeat 3` executes each selected scenario three times, writes each attempt to `scenario-results.jsonl`, and aggregates stability metrics into `scorecard.json`.
+- `python -m services.benchmark compare old_run_dir new_run_dir` reads the existing `benchmark.json` artifacts and produces a compact delta report.
+- The compare report explicitly marks added, removed, changed, and unchanged scenarios so different scenario sets are visible instead of hidden inside aggregate means.
+
+### Files Touched
+- `services/benchmark/models.py`, `services/benchmark/runner.py`, `services/benchmark/scoring.py`, and `services/benchmark/report.py` with repeat-aware scorecards.
+- `services/benchmark/compare.py` and `services/benchmark/__main__.py` with comparison support.
+- `services/benchmark/__init__.py` with exported comparison entry point.
+- `tests/test_benchmark_harness.py` with new regression coverage.
+- `docs/AGENTIC_SRE_HARNESS.txt` and `docs/CODEX_RUN_SUMMARY.md` with work log updates.
+
+### Validation
+- `python3 -m unittest tests.test_benchmark_harness -v`: passed, 6 tests.
+- `PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest tests/test_benchmark_harness.py tests/test_investigation_service.py`: passed, 10 tests.
+- `RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark tests/test_benchmark_harness.py`: passed.
+- `python3 -m py_compile services/benchmark/*.py tests/test_benchmark_harness.py`: passed.
+- CLI smoke: repeated feature-flag benchmark with `--repeat 2` passed with score 93.50 and stddev 0.0000.
+- CLI smoke: compare command wrote `comparison.json` and `comparison.md`, surfacing an added Kubernetes scenario.
+
+### Risks / Follow-ups
+- Add CI threshold gates once the golden suite is less tiny.
+- Add confidence intervals across larger stochastic suites.
+- Add containerized benchmark execution and a locked/hidden evaluation set before claiming public benchmark comparability.
+
+## Run: 2026-05-03 22:23 (+08)
+
+### Scope
+- Added an external-agent benchmark backend for OpenSRE-style systems so Mesh can score OpenSRE CLI investigations against the same golden scenarios and compare those results with native Mesh runs.
+
+### Changes
+- Added `services/benchmark/backends.py` with a default Mesh backend and an `opensre-cli` backend.
+- Extended `BenchmarkRunConfig` and the CLI with `--backend`, `--opensre-command`, and `--backend-timeout-seconds`.
+- Added backend labels to scenario result rows and benchmark Markdown reports.
+- Converted Mesh benchmark scenarios into neutral OpenSRE alert JSON without leaking expected decisions.
+- Normalized OpenSRE CLI text output into the existing benchmark outcome shape with inferred decision, investigation report, citations, and feedback stub.
+- Added fake OpenSRE CLI test coverage in `tests/test_benchmark_harness.py`.
+- Updated `docs/AGENTIC_SRE_HARNESS.txt` with OpenSRE backend status and setup caveats.
+
+### How It Works Now
+- Native Mesh benchmark:
+  `python -m services.benchmark run --suite golden --backend mesh`
+- OpenSRE CLI benchmark:
+  `python -m services.benchmark run --suite golden --backend opensre-cli`
+- The OpenSRE backend runs `uvx opensre --json investigate -i INPUT -o OUTPUT`, with `OPENSRE_NO_TELEMETRY=1` and `OPENSRE_ANALYTICS_DISABLED=1` set by default for benchmark runs.
+- If OpenSRE emits JSON/report text, the harness infers a bounded action such as `disable_flag`, `rollback_deployment`, `investigate_and_patch`, `restart_deployment`, `no_action`, or `escalate`, then scores it with the same benchmark rubric.
+- Setup/backend failures now receive zero safety, latency, and learning credit so fast failures do not look like fast investigations.
+
+### Files Touched
+- `services/benchmark/backends.py` with external backend support.
+- `services/benchmark/runner.py`, `services/benchmark/models.py`, `services/benchmark/scoring.py`, `services/benchmark/report.py`, and `services/benchmark/__main__.py` with backend-aware execution and reporting.
+- `tests/test_benchmark_harness.py` with fake OpenSRE CLI coverage.
+- `docs/AGENTIC_SRE_HARNESS.txt` and `docs/CODEX_RUN_SUMMARY.md` with implementation notes.
+
+### Validation
+- `python3 -m unittest tests.test_benchmark_harness -v`: passed, 7 tests.
+- `PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest tests/test_benchmark_harness.py tests/test_investigation_service.py`: passed, 11 tests.
+- `RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark tests/test_benchmark_harness.py`: passed.
+- `python3 -m py_compile services/benchmark/*.py tests/test_benchmark_harness.py`: passed.
+- Real OpenSRE CLI smoke completed through the harness via `uvx opensre`, but scored only the missing provider-key setup error because no `LLM_PROVIDER`/matching API key was present in the environment.
+
+### Risks / Follow-ups
+- Set `LLM_PROVIDER` and the matching provider API key in the shell environment before real OpenSRE runs.
+- Replace text-output inference with structured OpenSRE JSON output if/when a stable machine-readable report flag is available.

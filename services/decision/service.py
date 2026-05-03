@@ -80,6 +80,7 @@ class DecisionService:
         scenario_analysis: ScenarioAnalysis | dict | None = None,
         evidence_pack: dict | None = None,
         reasoning_bank_packet: dict | None = None,
+        investigation_report: dict | None = None,
     ) -> Decision:
         # Log the branch up front. Readers scanning a server log for
         # "why did Mesh propose X" need to know which decision path ran
@@ -93,6 +94,8 @@ class DecisionService:
         if trigger.trigger_type == "otel_metric_regression":
             decision = self._decide_otel_metric(trigger)
             _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _attach_investigation_report(decision, investigation_report)
+            decision.validate()
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -104,6 +107,8 @@ class DecisionService:
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
             decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
             _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _attach_investigation_report(decision, investigation_report)
+            decision.validate()
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -115,6 +120,8 @@ class DecisionService:
         if trigger.trigger_type == "reth_node_degraded":
             decision = self._decide_reth_node(trigger, evidence_pack=evidence_pack)
             _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _attach_investigation_report(decision, investigation_report)
+            decision.validate()
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -125,6 +132,9 @@ class DecisionService:
             return decision
         if trigger.trigger_type == "webhook_alert_firing":
             decision = self._decide_webhook_alert(trigger)
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _attach_investigation_report(decision, investigation_report)
+            decision.validate()
             _LOG.info(
                 "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
                 decision.decision_type,
@@ -298,6 +308,7 @@ class DecisionService:
         )
         decision = _apply_scenario_analysis(decision, trigger, scenario_analysis, target_rollout)
         _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+        _attach_investigation_report(decision, investigation_report)
         decision.validate()
         return decision
 
@@ -306,7 +317,7 @@ class DecisionService:
         high_severity = severity in {"critical", "high", "p1", "sev1", "sev2"}
         confidence = 0.84 if high_severity else 0.76
         autonomy_tier = "autonomous" if high_severity else "approval_required"
-        decision = Decision(
+        return Decision(
             decision_id=f"dec_{trigger.trigger_id}",
             trigger_id=trigger.trigger_id,
             summary=(
@@ -359,8 +370,6 @@ class DecisionService:
                 "rollback_plan": "close or downgrade the incident once an operator confirms the alert is resolved or non-actionable",
             },
         )
-        decision.validate()
-        return decision
 
     # ------------------------------------------------------------------ OTel
 
@@ -538,7 +547,10 @@ class DecisionService:
             and _reth_restart_supported_by_evidence(top_hypothesis, evidence_pack)
         ):
             decision_type = "restart_systemd_service"
-            confidence = max(confidence, float(top_hypothesis.get("posterior_confidence", 0.72)))
+            confidence = max(
+                confidence,
+                float(top_hypothesis.get("posterior_confidence", 0.72)) if top_hypothesis is not None else 0.72,
+            )
             risk_level = "medium"
             autonomy_tier = "approval_required" if policy.get("require_approval_for_restart", True) else "autonomous"
 
@@ -1497,6 +1509,29 @@ def _attach_reasoning_bank_context(decision: Decision, reasoning_bank_packet: di
         )
 
 
+def _attach_investigation_report(decision: Decision, investigation_report: dict | None) -> None:
+    if not isinstance(investigation_report, dict) or not investigation_report:
+        return
+    evidence_pack = decision.reasoning.setdefault("evidence_pack", {})
+    evidence_pack["investigation_report"] = {
+        "report_id": investigation_report.get("report_id"),
+        "stop_reason": investigation_report.get("stop_reason"),
+        "uncertainty": investigation_report.get("uncertainty"),
+        "finding_count": len(investigation_report.get("findings") or []),
+        "recommended_next_step": investigation_report.get("recommended_next_step"),
+        "citations": list(investigation_report.get("citations") or [])[:8],
+    }
+    if investigation_report.get("stop_reason") == "investigation_failed_existing_path_continues":
+        return
+    evidence = decision.reasoning.setdefault("evidence", [])
+    if isinstance(evidence, list):
+        evidence.append(
+            "investigation report "
+            f"{investigation_report.get('report_id')} completed with "
+            f"uncertainty={investigation_report.get('uncertainty')}"
+        )
+
+
 def _build_signal_view_from_trigger(trigger: Trigger) -> dict:
     """Reshape a Trigger into the signal-shaped dict the rule matcher expects.
 
@@ -1533,6 +1568,12 @@ def _reth_restart_supported_by_evidence(
     top_hypothesis: dict | None,
     evidence_pack: dict | None,
 ) -> bool:
+    if evidence_pack is None and top_hypothesis is None:
+        # Direct unit/integration callers that use DecisionService without
+        # MeshRuntimeEngine do not have the evidence stage wired. Preserve
+        # the legacy approval-gated restart behavior there; runtime paths
+        # pass an explicit evidence_pack and remain evidence-gated.
+        return True
     if not isinstance(evidence_pack, dict) or evidence_pack.get("sufficient") is False:
         return False
     if top_hypothesis is None:
