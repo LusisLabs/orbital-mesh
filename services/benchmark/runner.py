@@ -19,6 +19,7 @@ from .backends import (
     OpenSreCliBackend,
     SreGymBackend,
 )
+from .artifacts import write_compact_run_artifacts
 from .models import BenchmarkScorecard, ScenarioBenchmarkResult
 from .report import render_markdown_report
 from .scenario_loader import load_signal, load_suite
@@ -52,6 +53,7 @@ class BenchmarkRunConfig:
     control_plane_timeout_seconds: float = 300.0
     attempt_artifact_mode: str = "full"
     runtime_state_mode: str = "full"
+    compact_artifacts: bool = False
     cloudopsbench_root: Path | None = None
     cloudopsbench_ground_truth_mode: str = "hidden"
     sregym_server_url: str = "http://localhost:8000"
@@ -135,7 +137,7 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
 
     scorecard = aggregate_scorecard(config.suite, run_id, results)
     run = BenchmarkRun(run_id=run_id, output_dir=output_dir, scorecard=scorecard, results=results)
-    _write_run(output_dir, run)
+    _write_run(output_dir, run, compact_artifacts=config.compact_artifacts)
     return run
 
 
@@ -256,7 +258,7 @@ def _runtime_config(config: BenchmarkRunConfig, *, state_directory: Path) -> Run
     )
 
 
-def _write_run(output_dir: Path, run: BenchmarkRun) -> None:
+def _write_run(output_dir: Path, run: BenchmarkRun, *, compact_artifacts: bool = False) -> None:
     (output_dir / "benchmark.json").write_text(
         json.dumps(run.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -272,3 +274,10 @@ def _write_run(output_dir: Path, run: BenchmarkRun) -> None:
         render_markdown_report(run.scorecard, run.results),
         encoding="utf-8",
     )
+    if compact_artifacts:
+        write_compact_run_artifacts(
+            output_dir,
+            run_id=run.run_id,
+            scorecard=run.scorecard,
+            results=run.results,
+        )

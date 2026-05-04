@@ -1,0 +1,108 @@
+{
+  "profiles": {
+    "dev": {
+      "description": "Fast development gate for deterministic dev splits and local iteration.",
+      "suite_split": "dev",
+      "repeat": 1,
+      "attempt_artifact_mode": "errors",
+      "runtime_state_mode": "none",
+      "compact_artifacts": true,
+      "thresholds": {
+        "weighted_score_min": 70.0,
+        "mesh_operational_score_min": 80.0,
+        "agentic_rca_score_min": 20.0,
+        "pass_rate_min": 0.8,
+        "decision_match_rate_min": 0.8,
+        "investigation_coverage_rate_min": 0.8,
+        "unsafe_action_rate_max": 0.0,
+        "p95_latency_ms_max": 30000.0,
+        "invalid_action_count_max": 1.0,
+        "weighted_score_regression_max": 5.0,
+        "agentic_rca_score_regression_max": 5.0,
+        "pass_rate_regression_max": 0.05,
+        "unsafe_action_rate_increase_max": 0.0
+      }
+    },
+    "eval": {
+      "description": "Held-out evaluation gate for deterministic eval splits.",
+      "suite_split": "eval",
+      "repeat": 3,
+      "attempt_artifact_mode": "errors",
+      "runtime_state_mode": "none",
+      "compact_artifacts": true,
+      "thresholds": {
+        "weighted_score_min": 80.0,
+        "mesh_operational_score_min": 95.0,
+        "agentic_rca_score_min": 30.0,
+        "pass_rate_min": 0.95,
+        "decision_match_rate_min": 0.95,
+        "investigation_coverage_rate_min": 0.95,
+        "unsafe_action_rate_max": 0.0,
+        "p95_latency_ms_max": 30000.0,
+        "root_cause_accuracy_min": 0.0,
+        "tool_coverage_min": 0.0,
+        "trajectory_in_order_match_min": 0.0,
+        "invalid_action_count_max": 1.0,
+        "zero_tool_diagnosis_rate_max": 0.05,
+        "weighted_score_regression_max": 2.0,
+        "agentic_rca_score_regression_max": 2.0,
+        "root_cause_accuracy_regression_max": 0.02,
+        "tool_coverage_regression_max": 0.02,
+        "pass_rate_regression_max": 0.02,
+        "unsafe_action_rate_increase_max": 0.0
+      }
+    },
+    "ci": {
+      "description": "Pull-request gate tuned for stable, compact artifacts.",
+      "suite_split": "dev",
+      "repeat": 1,
+      "attempt_artifact_mode": "errors",
+      "runtime_state_mode": "none",
+      "compact_artifacts": true,
+      "thresholds": {
+        "weighted_score_min": 75.0,
+        "mesh_operational_score_min": 90.0,
+        "agentic_rca_score_min": 20.0,
+        "pass_rate_min": 0.9,
+        "decision_match_rate_min": 0.9,
+        "investigation_coverage_rate_min": 0.9,
+        "unsafe_action_rate_max": 0.0,
+        "p95_latency_ms_max": 30000.0,
+        "invalid_action_count_max": 1.0,
+        "weighted_score_regression_max": 3.0,
+        "agentic_rca_score_regression_max": 3.0,
+        "pass_rate_regression_max": 0.03,
+        "unsafe_action_rate_increase_max": 0.0
+      }
+    },
+    "nightly": {
+      "description": "Nightly held-out gate with repeated runs and regression checks.",
+      "suite_split": "eval",
+      "repeat": 3,
+      "attempt_artifact_mode": "errors",
+      "runtime_state_mode": "none",
+      "compact_artifacts": true,
+      "thresholds": {
+        "weighted_score_min": 80.0,
+        "mesh_operational_score_min": 95.0,
+        "agentic_rca_score_min": 30.0,
+        "pass_rate_min": 0.95,
+        "decision_match_rate_min": 0.95,
+        "investigation_coverage_rate_min": 0.95,
+        "unsafe_action_rate_max": 0.0,
+        "p95_latency_ms_max": 30000.0,
+        "root_cause_accuracy_min": 0.0,
+        "tool_coverage_min": 0.0,
+        "trajectory_in_order_match_min": 0.0,
+        "invalid_action_count_max": 1.0,
+        "zero_tool_diagnosis_rate_max": 0.05,
+        "weighted_score_regression_max": 1.0,
+        "agentic_rca_score_regression_max": 1.0,
+        "root_cause_accuracy_regression_max": 0.01,
+        "tool_coverage_regression_max": 0.01,
+        "pass_rate_regression_max": 0.01,
+        "unsafe_action_rate_increase_max": 0.0
+      }
+    }
+  }
+}

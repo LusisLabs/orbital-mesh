@@ -2,6 +2,7 @@
 
 from .compare import compare_benchmark_runs
 from .gaps import generate_gap_report
+from .gates import run_benchmark_gate
 from .runner import BenchmarkRunConfig, run_benchmark
 
-__all__ = ["BenchmarkRunConfig", "compare_benchmark_runs", "generate_gap_report", "run_benchmark"]
+__all__ = ["BenchmarkRunConfig", "compare_benchmark_runs", "generate_gap_report", "run_benchmark", "run_benchmark_gate"]

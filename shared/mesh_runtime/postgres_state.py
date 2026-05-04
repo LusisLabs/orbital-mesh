@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import queue
 import threading
+import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +22,10 @@ from .state import RuntimeStateStore
 from .vault import VaultManager
 
 MIGRATION_DIR = Path(__file__).resolve().parents[2] / "migrations" / "postgres"
+_VAULT_FORCE_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator", "recovery_spawned"}
+_FINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "recovery_spawned"}
+_VAULT_QUEUE_SIZE = 256
+_LOG = logging.getLogger("mesh.postgres_state_store")
 
 
 class PostgresStateStore:
@@ -29,10 +36,21 @@ class PostgresStateStore:
         self.database_url = config.database_url
         self.runtime_store = RuntimeStateStore(config.state_directory)
         self.vault = VaultManager(config.vault_path, runtime_config=config)
-        self._vault_queue: queue.Queue[str] | None = None
+        self._last_vault_materialized_at: dict[str, float] = {}
+        self._vault_materialize_lock = threading.Lock()
+        self._vault_materialize_min_interval_seconds = float(
+            os.getenv("MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS", "30")
+        )
+        self._vault_stop = threading.Event()
+        self._vault_queue: queue.Queue[str | None] | None = None
+        self._vault_thread: threading.Thread | None = None
         if config.vault_mirror_mode == "async":
-            self._vault_queue = queue.Queue(maxsize=256)
-            self._vault_thread = threading.Thread(target=self._vault_mirror_loop, daemon=True)
+            self._vault_queue = queue.Queue(maxsize=_VAULT_QUEUE_SIZE)
+            self._vault_thread = threading.Thread(
+                target=self._vault_mirror_loop,
+                daemon=True,
+                name="mesh-postgres-vault-mirror",
+            )
             self._vault_thread.start()
         self._initialize_schema()
 
@@ -148,8 +166,12 @@ class PostgresStateStore:
 
     def save_run_session(self, session: RunSession) -> RunSession:
         with self._connect() as conn:
-            self._save_run_session_tx(conn, session)
-        self._schedule_materialize_vault(session.run_id)
+            session = self._save_run_session_tx(conn, session)
+        terminal = session.stage in _VAULT_FORCE_STAGES or session.status in _VAULT_FORCE_STAGES
+        if terminal:
+            self._materialize_vault(session.run_id, force=True)
+        else:
+            self._schedule_materialize_vault(session.run_id)
         return session
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
@@ -603,8 +625,13 @@ class PostgresStateStore:
             raise RuntimeError("Postgres backend requires psycopg JSON support.") from exc
         return Jsonb(value)
 
-    def _save_run_session_tx(self, conn: Any, session: RunSession) -> None:
+    def _save_run_session_tx(self, conn: Any, session: RunSession) -> RunSession:
+        conn.execute("SELECT run_id FROM runs WHERE run_id = %s FOR UPDATE", (session.run_id,)).fetchone()
         payload = session.to_dict()
+        current = self._get_run_session_tx(conn, session.run_id)
+        if current is not None:
+            payload = _merge_session_snapshot(payload, current.to_dict())
+            session = RunSession(**payload)
         conn.execute(
             """
             INSERT INTO runs (run_id, goal_id, scenario_key, stage, status, created_at, updated_at)
@@ -634,6 +661,7 @@ class PostgresStateStore:
             """,
             (session.run_id, self._jsonb(payload), session.updated_at),
         )
+        return session
 
     def _get_run_session_tx(self, conn: Any, run_id: str) -> RunSession | None:
         row = conn.execute("SELECT snapshot FROM run_snapshots WHERE run_id = %s", (run_id,)).fetchone()
@@ -767,22 +795,35 @@ class PostgresStateStore:
             ).fetchall()
         return [row[0] for row in rows]
 
-    def _materialize_vault(self, run_id: str) -> None:
-        session = self.get_run_session(run_id)
-        if session is None:
-            return
-        goal = None
-        if session.goal_id is not None:
-            for candidate in self.list_goals():
-                if candidate.goal_id == session.goal_id:
-                    goal = candidate
-                    break
-        events = self.list_run_events(run_id)
-        merkle = build_merkle_snapshot(run_id, events)
-        self.vault.write_run_bundle(session, events, merkle, goal)
+    def _materialize_vault(self, run_id: str, *, force: bool = False) -> None:
+        with self._vault_materialize_lock:
+            now = time.monotonic()
+            last_materialized = self._last_vault_materialized_at.get(run_id)
+            if (
+                not force
+                and last_materialized is not None
+                and now - last_materialized < self._vault_materialize_min_interval_seconds
+            ):
+                return
+            session = self.get_run_session(run_id)
+            if session is None:
+                return
+            goal = None
+            if session.goal_id is not None:
+                for candidate in self.list_goals():
+                    if candidate.goal_id == session.goal_id:
+                        goal = candidate
+                        break
+            events = self.list_run_events(run_id)
+            merkle = build_merkle_snapshot(run_id, events)
+            self.vault.write_run_bundle(session, events, merkle, goal)
+            self._last_vault_materialized_at[run_id] = now
 
     def _schedule_materialize_vault(self, run_id: str) -> None:
         if self.config.vault_mirror_mode == "off":
+            return
+        if self._vault_stop.is_set():
+            self._materialize_vault(run_id, force=True)
             return
         if self._vault_queue is None:
             self._materialize_vault(run_id)
@@ -797,15 +838,89 @@ class PostgresStateStore:
         while True:
             run_id = self._vault_queue.get()
             try:
+                if run_id is None:
+                    return
                 self._materialize_vault(run_id)
+            except Exception:
+                _LOG.exception("postgres-state vault materialization failed for run %s", run_id)
             finally:
                 self._vault_queue.task_done()
+
+    def flush_background_tasks(self, timeout: float = 5.0) -> bool:
+        vault_queue = self._vault_queue
+        if vault_queue is None:
+            return True
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while getattr(vault_queue, "unfinished_tasks", 0) > 0:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def close(self, timeout: float = 5.0) -> None:
+        vault_queue = self._vault_queue
+        vault_thread = self._vault_thread
+        if vault_queue is None or vault_thread is None:
+            return
+        if not vault_thread.is_alive():
+            return
+        deadline = time.monotonic() + max(timeout, 0.0)
+        self.flush_background_tasks(timeout=timeout)
+        self._vault_stop.set()
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            vault_queue.put(None, timeout=remaining)
+        except queue.Full:
+            return
+        vault_thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
 
 def _json_payload(value: Any) -> Any:
     if isinstance(value, str):
         return json.loads(value)
     return value
+
+
+def _merge_session_snapshot(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    merged = _preserve_event_cursor(candidate, current)
+    merged = _preserve_final_lifecycle(merged, current)
+    merged["artifacts"] = _merge_artifacts(merged.get("artifacts"), current.get("artifacts"))
+    return merged
+
+
+def _preserve_event_cursor(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    current_sequence = int(current.get("latest_event_sequence") or 0)
+    candidate_sequence = int(candidate.get("latest_event_sequence") or 0)
+    if current_sequence <= candidate_sequence:
+        return candidate
+    merged = dict(candidate)
+    merged["latest_event_id"] = current.get("latest_event_id")
+    merged["latest_event_sequence"] = current_sequence
+    merged["latest_merkle_root"] = current.get("latest_merkle_root")
+    return merged
+
+
+def _preserve_final_lifecycle(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    current_final = current.get("stage") in _FINAL_STAGES or current.get("status") in _FINAL_STAGES
+    candidate_final = candidate.get("stage") in _FINAL_STAGES or candidate.get("status") in _FINAL_STAGES
+    if not current_final or candidate_final:
+        return candidate
+    merged = dict(candidate)
+    for key in ("stage", "status", "pending_pause_stage", "error"):
+        merged[key] = current.get(key)
+    return merged
+
+
+def _merge_artifacts(candidate_raw: Any, current_raw: Any) -> dict[str, Any]:
+    candidate = candidate_raw if isinstance(candidate_raw, dict) else {}
+    current = current_raw if isinstance(current_raw, dict) else {}
+    merged = {**current, **candidate}
+    current_agent_tasks = current.get("agent_tasks")
+    candidate_agent_tasks = candidate.get("agent_tasks")
+    if isinstance(current_agent_tasks, list) and isinstance(candidate_agent_tasks, dict):
+        if candidate_agent_tasks.get("status") == "pending":
+            merged["agent_tasks"] = current_agent_tasks
+    return merged
 
 
 def _timestamp() -> str:
