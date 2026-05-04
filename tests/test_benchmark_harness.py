@@ -549,9 +549,113 @@ class BenchmarkHarnessTest(unittest.TestCase):
                 (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
             )
             self.assertEqual("hidden", artifact["cloudopsbench_ground_truth_mode"])
-            self.assertEqual([], artifact["tool_trajectory"])
+            # Hidden mode hands the snapshot tools to the investigator and
+            # records the calls it actually makes — it does not replay the
+            # expert trajectory. With an empty tool_cache the calls land
+            # invalid, but they still must show up so scoring can credit
+            # tool coverage and so we can see what the agent attempted.
+            tool_calls = artifact["tool_trajectory"]
+            self.assertTrue(tool_calls, "hidden mode should still attempt diagnostic tool calls")
+            self.assertIn("GetResources", {call.get("tool_name") for call in tool_calls})
+            self.assertTrue(all(call.get("valid") is False for call in tool_calls))
+            # Without any cached tool output, the agent has no observed
+            # text to map onto a canonical root cause — the ground truth
+            # must remain hidden.
             self.assertNotIn("incorrect_image_reference", json.dumps(artifact["investigation_report"]))
             self.assertFalse(run.results[0].root_cause_matched)
+
+    def test_cloudopsbench_hidden_mode_drives_tool_loop_and_ranks_root_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "startup" / "25"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service Availability Disruption.",
+                        "result": {
+                            "fault_object": "app/productcatalogservice",
+                            "root_cause": "incorrect_image_reference",
+                        },
+                        "process": {
+                            "path1": [
+                                "GetResources::pods",
+                                "DescribeResource::pods::productcatalogservice",
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"boutique"}': "productcatalogservice 0/1 ImagePullBackOff",
+                        'DescribeResource:{"resource_type":"pods","name":"productcatalogservice","namespace":"boutique"}': "Reason: ErrImagePull manifest unknown",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "boutique/startup/25"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "incorrect_image_reference",
+                        "expert_trajectory": ["GetResources", "DescribeResource"],
+                        "required_tool_families": ["GetResources", "DescribeResource"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "productcatalogservice",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "boutique"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            self.assertEqual("hidden", artifact["cloudopsbench_ground_truth_mode"])
+            tool_calls = artifact["tool_trajectory"]
+            tool_names = {call.get("tool_name") for call in tool_calls}
+            self.assertIn("GetResources", tool_names)
+            self.assertIn("DescribeResource", tool_names)
+            self.assertTrue(any(call.get("valid") for call in tool_calls))
+            # Hidden mode should now achieve > 0 tool coverage.
+            self.assertGreater(result.process_metrics.tool_coverage, 0.0)
+            # The ontology should map ErrImagePull → incorrect_image_reference
+            # and surface it through the investigation report so scoring
+            # can credit root_cause_accuracy.
+            self.assertIn("incorrect_image_reference", json.dumps(artifact["investigation_report"]))
+            self.assertTrue(result.root_cause_matched)
 
     def test_sregym_backend_and_gap_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -172,7 +172,13 @@ class MeshRuntimeEngine:
             active_memory=ActiveMemoryStore(self.config.state_directory),
         )
 
-    def run_sync(self, raw_signal: dict, scenario_name: str = "manual") -> dict:
+    def run_sync(
+        self,
+        raw_signal: dict,
+        scenario_name: str = "manual",
+        *,
+        tool_provider: object | None = None,
+    ) -> dict:
         run_events: list[dict] = []
 
         def record_event(stage: str, event_type: str, payload: dict, **metadata: object) -> None:
@@ -247,6 +253,7 @@ class MeshRuntimeEngine:
             investigation_report = self.investigation.investigate(
                 trigger=trigger,
                 evidence_pack=evidence_pack.to_dict(),
+                tool_provider=tool_provider,
             )
             investigation_status = "recorded"
         except Exception as exc:

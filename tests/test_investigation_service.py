@@ -31,6 +31,7 @@ class FailingInvestigationService(InvestigationService):
         service_context: dict[str, Any] | None = None,
         topology: dict[str, Any] | None = None,
         recent_runs: list[dict[str, Any]] | None = None,
+        tool_provider: Any = None,
     ) -> InvestigationReport:
         raise RuntimeError("forced investigation failure")
 
@@ -112,6 +113,108 @@ class InvestigationServiceTests(unittest.TestCase):
             event for event in result["run_events"] if event["event_type"] == "investigation_ready"
         ]
         self.assertEqual(investigation_events[0]["status"], "failed")
+
+
+class CloudOpsRcaOntologyTests(unittest.TestCase):
+    def test_ontology_ranks_image_pull_failure_above_others(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes([
+            "productcatalogservice 0/1 ImagePullBackOff",
+            "Reason: ErrImagePull manifest unknown",
+        ])
+
+        self.assertTrue(ranked, "expected at least one ranked cause")
+        self.assertEqual(ranked[0].root_cause, "incorrect_image_reference")
+        self.assertGreater(ranked[0].confidence, 0.0)
+
+    def test_ontology_returns_empty_when_no_signals(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes(["pod is healthy", "no events"])
+
+        self.assertEqual(ranked, [])
+
+    def test_ontology_distinguishes_selector_from_taint(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        selector = rank_root_causes(["0/3 nodes are available: 3 didn't match Pod's node affinity/selector"])
+        taint = rank_root_causes(["0/3 nodes are available: 3 had untolerated taint"])
+
+        self.assertTrue(selector and taint)
+        self.assertEqual(selector[0].root_cause, "node_selector_mismatch")
+        self.assertEqual(taint[0].root_cause, "taint_toleration_mismatch")
+
+
+class _StubToolProvider:
+    name = "stub"
+
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self._outputs = outputs
+        self._calls: list[dict[str, Any]] = []
+
+    def available_tools(self) -> tuple[str, ...]:
+        return ("GetResources", "DescribeResource", "GetErrorLogs")
+
+    def invoke(self, tool_name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        record = {
+            "tool_name": tool_name,
+            "args": dict(args or {}),
+            "output_summary": self._outputs.get(tool_name, ""),
+            "valid": tool_name in self._outputs,
+            "status": "completed" if tool_name in self._outputs else "completed",
+            "citation_ids": [f"stub:{tool_name}"],
+        }
+        self._calls.append(record)
+        return {
+            "tool_name": tool_name,
+            "args": record["args"],
+            "output": self._outputs.get(tool_name),
+            "valid": record["valid"],
+            "status": record["status"],
+        }
+
+    def call_records(self) -> list[dict[str, Any]]:
+        return list(self._calls)
+
+
+class InvestigationToolLoopTests(unittest.TestCase):
+    def test_tool_provider_drives_probe_loop_and_emits_ranked_findings(self) -> None:
+        trigger, signal = _trigger_and_signal()
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+        provider = _StubToolProvider({
+            "GetResources": "frontend 0/1 ImagePullBackOff",
+            "DescribeResource": "Reason: ErrImagePull manifest unknown",
+        })
+
+        report = InvestigationService().investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack.to_dict(),
+            tool_provider=provider,
+        )
+
+        names = [probe["name"] for probe in report.probe_results]
+        self.assertIn("GetResources", names)
+        self.assertIn("DescribeResource", names)
+        self.assertEqual(report.stop_reason, "tool_probe_budget_exhausted")
+        ranked = [finding for finding in report.findings if finding.get("kind") == "ranked_root_causes"]
+        self.assertEqual(len(ranked), 1)
+        self.assertEqual(ranked[0]["summary"], "incorrect_image_reference")
+        # Calls were recorded on the provider so the runner can surface
+        # them as tool_trajectory.
+        self.assertGreaterEqual(len(provider.call_records()), 2)
+
+    def test_tool_provider_absent_keeps_deterministic_path(self) -> None:
+        trigger, signal = _trigger_and_signal()
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+
+        report = InvestigationService().investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack.to_dict(),
+        )
+
+        self.assertEqual(report.stop_reason, "deterministic_probe_budget_exhausted")
+        self.assertFalse(any(finding.get("kind") == "ranked_root_causes" for finding in report.findings))
 
 
 if __name__ == "__main__":

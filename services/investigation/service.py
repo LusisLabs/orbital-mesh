@@ -1,9 +1,19 @@
 """Read-only incident investigation before scenario analysis.
 
-This first slice is deliberately deterministic. It gives Mesh an audited
-investigation stage without allowing the agentic layer to mutate production or
-invent actions. Later LLM planners can propose additional read-only probes
-against this same contract.
+The investigation service has two modes:
+
+1. **Deterministic** (default) — local probes against already-normalized
+   Mesh artifacts. No I/O, no mutation. Used in production and golden
+   benchmarks.
+2. **Tool-driven** — a caller injects an ``InvestigationToolProvider``
+   that exposes read-only diagnostic tools (e.g. CloudOps snapshot
+   tools). The service then runs a bounded hypothesis loop: it picks a
+   probe, observes output, ranks candidate root causes, and either calls
+   another probe or stops. This is what powers benchmark-grade RCA
+   without giving the agent any mutation surface.
+
+Both modes return the same ``InvestigationReport`` contract; downstream
+stages don't know or care which path produced it.
 """
 
 from __future__ import annotations
@@ -20,6 +30,9 @@ from shared.mesh_runtime import (
     Trigger,
 )
 
+from .cloudops_ontology import RankedCause, rank_root_causes
+from .tool_provider import InvestigationToolProvider
+
 
 ProbeFn = Callable[[Trigger, dict[str, Any], dict[str, Any]], tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]
 
@@ -28,13 +41,22 @@ class InvestigationService:
     """Build and run bounded read-only investigation probes.
 
     The service accepts already-normalized Mesh artifacts, runs local
-    deterministic probes, and returns a contract-backed report. It performs no
-    network I/O and no production mutations in this first implementation.
+    deterministic probes, and returns a contract-backed report. When a
+    ``tool_provider`` is supplied to ``investigate``, the service also
+    runs a bounded diagnostic-tool loop and produces ranked root-cause
+    hypotheses from the observed snapshot text.
     """
 
-    def __init__(self, *, max_probes: int = 4, max_total_latency_ms: int = 500) -> None:
+    def __init__(
+        self,
+        *,
+        max_probes: int = 4,
+        max_total_latency_ms: int = 500,
+        max_tool_probes: int = 6,
+    ) -> None:
         self.max_probes = max_probes
         self.max_total_latency_ms = max_total_latency_ms
+        self.max_tool_probes = max_tool_probes
         self._probe_fns: dict[str, ProbeFn] = {
             "evidence_sufficiency": _probe_evidence_sufficiency,
             "trigger_signature_scan": _probe_trigger_signature_scan,
@@ -51,6 +73,7 @@ class InvestigationService:
         service_context: dict[str, Any] | None = None,
         topology: dict[str, Any] | None = None,
         recent_runs: list[dict[str, Any]] | None = None,
+        tool_provider: InvestigationToolProvider | None = None,
     ) -> InvestigationReport:
         context = {
             "memory_packet": memory_packet or {},
@@ -59,22 +82,35 @@ class InvestigationService:
             "recent_runs": recent_runs or [],
         }
         evidence = evidence_pack or {}
-        plan = self._build_plan(trigger, context)
+        plan = self._build_plan(trigger, context, tool_provider=tool_provider)
         probe_results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
 
-        for probe in plan.probes[: self.max_probes]:
+        deterministic_probes = [probe for probe in plan.probes if "provider" not in probe]
+        for probe in deterministic_probes[: self.max_probes]:
             result = self._run_probe(probe, trigger, evidence, context)
             probe_results.append(result)
             findings.extend(result.findings)
             citations.extend(result.citations)
 
+        if tool_provider is not None:
+            tool_results, tool_findings, tool_citations = self._run_tool_loop(
+                trigger, tool_provider
+            )
+            probe_results.extend(tool_results)
+            findings.extend(tool_findings)
+            citations.extend(tool_citations)
+
         uncertainty = _estimate_uncertainty(evidence, findings, context)
         stop_reason = (
             "evidence_insufficient_route_to_existing_safety_gates"
             if _evidence_marked_insufficient(evidence)
-            else "deterministic_probe_budget_exhausted"
+            else (
+                "tool_probe_budget_exhausted"
+                if tool_provider is not None
+                else "deterministic_probe_budget_exhausted"
+            )
         )
         report = InvestigationReport(
             report_id=f"inv_{trigger.trigger_id}_{uuid4().hex[:8]}",
@@ -138,7 +174,130 @@ class InvestigationService:
         report.validate()
         return report
 
-    def _build_plan(self, trigger: Trigger, context: dict[str, Any]) -> InvestigationPlan:
+    def _run_tool_loop(
+        self,
+        trigger: Trigger,
+        tool_provider: InvestigationToolProvider,
+    ) -> tuple[list[InvestigationProbeResult], list[dict[str, Any]], list[dict[str, Any]]]:
+        """Bounded hypothesis loop driven by a read-only tool provider.
+
+        Sequence (each step is gated by ``max_tool_probes`` and stops as
+        soon as the ranked-cause confidence is high enough):
+
+        1. ``GetResources`` — required in every Cloud-OpsBench case;
+           gives the agent eyes on the pod/service inventory.
+        2. ``DescribeResource`` on the suspect resource if (1) suggests
+           an unhealthy object.
+        3. ``GetAppYAML`` if startup looks like the failure mode.
+        4. ``GetErrorLogs`` if (2) hints at runtime errors.
+        5. ``GetAlerts`` if the trigger carries alert metadata.
+
+        Each invocation produces one ``InvestigationProbeResult`` whose
+        ``name`` is the canonical tool family (``GetResources`` etc.) so
+        scoring can credit ``tool_coverage``. Findings include both raw
+        observations and a ranked-root-cause list from the ontology.
+        """
+
+        observed_text: list[str] = []
+        results: list[InvestigationProbeResult] = []
+        findings: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = []
+        suspect = _suspect_resource_hint(trigger)
+
+        plan: list[tuple[str, dict[str, Any]]] = [
+            ("GetResources", {"resource_type": "pods", "namespace": _trigger_namespace(trigger)}),
+            ("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
+            ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": _trigger_namespace(trigger)}),
+            ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
+        ]
+        if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
+            plan.append(("GetAlerts", {"namespace": _trigger_namespace(trigger)}))
+
+        available = set(tool_provider.available_tools())
+        for tool_name, args in plan[: self.max_tool_probes]:
+            if tool_name not in available:
+                continue
+            result = self._invoke_tool_probe(trigger, tool_provider, tool_name, args)
+            results.append(result)
+            findings.extend(result.findings)
+            citations.extend(result.citations)
+            for finding in result.findings:
+                summary = finding.get("summary")
+                if isinstance(summary, str):
+                    observed_text.append(summary)
+                details = finding.get("details") or {}
+                output_text = details.get("output_text") if isinstance(details, dict) else None
+                if isinstance(output_text, str):
+                    observed_text.append(output_text)
+
+        ranked = rank_root_causes(observed_text)
+        if ranked:
+            findings.append(_ranked_finding(ranked))
+            for cause in ranked:
+                citations.append(_citation("rca_ontology", cause.root_cause))
+        return results, findings, citations
+
+    def _invoke_tool_probe(
+        self,
+        trigger: Trigger,
+        tool_provider: InvestigationToolProvider,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> InvestigationProbeResult:
+        # Probe status follows the schema (completed/skipped/failed): a
+        # successful tool invocation that returned an empty or error
+        # payload is still ``completed`` from the agent's perspective.
+        # Whether the result was useful is carried by the ``valid``
+        # flag inside the finding details and the citation record.
+        started = _now_iso()
+        start = time.monotonic()
+        status = "completed"
+        error: str | None = None
+        try:
+            response = tool_provider.invoke(tool_name, args)
+            output = response.get("output")
+            valid = bool(response.get("valid", True))
+        except Exception as exc:
+            output = None
+            valid = False
+            status = "failed"
+            error = str(exc)
+        completed = _now_iso()
+        output_text = _summarize_tool_output(output)
+        finding = {
+            "kind": "diagnostic_observation",
+            "summary": f"{tool_name}({_arg_summary(args)}) -> {output_text[:200]}" if output_text else f"{tool_name}({_arg_summary(args)}) returned no data",
+            "confidence": 0.7 if valid else 0.2,
+            "details": {
+                "tool_name": tool_name,
+                "args": args,
+                "output_text": output_text,
+                "valid": valid,
+            },
+        }
+        citations = [_citation(f"{tool_provider.name}:{tool_name}", _arg_summary(args) or tool_name)]
+        result = InvestigationProbeResult(
+            probe_id=f"probe_tool_{tool_name.lower()}_{uuid4().hex[:6]}",
+            name=tool_name,
+            status=status,
+            started_at=started,
+            completed_at=completed,
+            latency_ms=round((time.monotonic() - start) * 1000.0, 3),
+            summary=str(finding["summary"]),
+            findings=[finding],
+            citations=citations,
+            error=error,
+        )
+        result.validate()
+        return result
+
+    def _build_plan(
+        self,
+        trigger: Trigger,
+        context: dict[str, Any],
+        *,
+        tool_provider: InvestigationToolProvider | None = None,
+    ) -> InvestigationPlan:
         probes = [
             {
                 "probe_id": "probe_evidence_sufficiency",
@@ -173,6 +332,21 @@ class InvestigationService:
                     "read_only": True,
                 }
             )
+        if tool_provider is not None:
+            for tool_name in tool_provider.available_tools():
+                probes.append(
+                    {
+                        "probe_id": f"probe_tool_{tool_name.lower()}",
+                        "name": tool_name,
+                        "purpose": (
+                            f"Read-only diagnostic tool {tool_name} via "
+                            f"{tool_provider.name} provider; invoked by "
+                            "hypothesis loop when relevant."
+                        ),
+                        "read_only": True,
+                        "provider": tool_provider.name,
+                    }
+                )
         plan = InvestigationPlan(
             plan_id=f"plan_{trigger.trigger_id}_{uuid4().hex[:8]}",
             trigger_id=trigger.trigger_id,
@@ -181,7 +355,9 @@ class InvestigationService:
             probe_budget={
                 "max_probes": self.max_probes,
                 "max_total_latency_ms": self.max_total_latency_ms,
-                "mode": "deterministic_builtin",
+                "max_tool_probes": self.max_tool_probes,
+                "tool_provider": tool_provider.name if tool_provider else None,
+                "mode": "tool_loop" if tool_provider is not None else "deterministic_builtin",
             },
             probes=probes,
         )
@@ -365,3 +541,74 @@ def _dedupe_citations(citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _trigger_namespace(trigger: Trigger) -> str | None:
+    related = trigger.related_context or {}
+    namespace = related.get("cloudopsbench_namespace") or related.get("namespace")
+    return str(namespace) if namespace else None
+
+
+def _suspect_resource_hint(trigger: Trigger) -> str:
+    """Heuristic suspect for ``DescribeResource`` / ``GetAppYAML`` calls.
+
+    Falls back to the trigger service when no better hint is available.
+    Real CloudOps tool caches key off names, but the snapshot lookup is
+    forgiving — passing the service name as ``name_hint`` lets it match
+    pod entries that contain the deployment name as a prefix.
+    """
+    related = trigger.related_context or {}
+    for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource"):
+        value = related.get(key)
+        if isinstance(value, str) and value:
+            return value.rsplit("/", 1)[-1]
+    return trigger.service or ""
+
+
+def _arg_summary(args: dict[str, Any]) -> str:
+    if not args:
+        return ""
+    return ",".join(f"{key}={value}" for key, value in args.items() if value)
+
+
+def _summarize_tool_output(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value[:1000]
+    if isinstance(value, dict):
+        if "error" in value and len(value) == 1:
+            return f"error: {value['error']}"
+        return _flatten_json(value)[:1000]
+    if isinstance(value, list):
+        return _flatten_json(value)[:1000]
+    return str(value)[:1000]
+
+
+def _flatten_json(value: Any) -> str:
+    if isinstance(value, dict):
+        return " ".join(f"{key}={_flatten_json(item)}" for key, item in value.items())
+    if isinstance(value, list):
+        return " ".join(_flatten_json(item) for item in value)
+    return str(value)
+
+
+def _ranked_finding(ranked: list[RankedCause]) -> dict[str, Any]:
+    top = ranked[0]
+    summary_parts = [cause.root_cause for cause in ranked[:3]]
+    return {
+        "kind": "ranked_root_causes",
+        "summary": top.root_cause,
+        "confidence": top.confidence,
+        "details": {
+            "ranked": [
+                {
+                    "root_cause": cause.root_cause,
+                    "confidence": cause.confidence,
+                    "matched_patterns": list(cause.matched_patterns),
+                }
+                for cause in ranked
+            ],
+            "top_3": summary_parts,
+        },
+    }

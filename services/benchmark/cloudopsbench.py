@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from services.investigation.tool_provider import CloudOpsInvestigationToolProvider
 from services.runtime import MeshRuntimeEngine
 from shared.mesh_runtime.config import RuntimeConfig
 
@@ -81,11 +82,20 @@ class CloudOpsSnapshotRunner:
         snapshot = self._load_snapshot(scenario, raw_signal)
         tools = CloudOpsSnapshotTools(snapshot)
         trajectory = list(scenario.expert_trajectory or snapshot.get("expert_trajectory") or [])
-        tool_trajectory = tools.replay_expert_trajectory(trajectory) if expose_ground_truth else []
+        provider: CloudOpsInvestigationToolProvider | None = None
+        if expose_ground_truth:
+            tool_trajectory = tools.replay_expert_trajectory(trajectory)
+        else:
+            # Hidden mode: hand the snapshot tools to the investigator as a
+            # tool provider. Mesh chooses which tools to call; the recorded
+            # calls become the scored tool_trajectory.
+            provider = CloudOpsInvestigationToolProvider(tools)
+            tool_trajectory = []
         signal = _snapshot_signal(snapshot, raw_signal, expose_ground_truth=expose_ground_truth)
         outcome = MeshRuntimeEngine(config=self.runtime_config).run_sync(
             signal,
             scenario_name=f"cloudopsbench_{scenario.scenario_id}_{iteration}",
+            tool_provider=provider,
         )
         report = outcome.get("investigation_report") if isinstance(outcome.get("investigation_report"), dict) else {}
         report.setdefault("findings", [])
@@ -96,6 +106,8 @@ class CloudOpsSnapshotRunner:
                 {"kind": "cloudopsbench_root_cause", "summary": str(root_cause), "confidence": 1.0}
             ]
             report["citations"] = list(report["citations"]) + [{"source_type": "cloudopsbench_snapshot", "source_ref": scenario.scenario_id}]
+        if provider is not None:
+            tool_trajectory = provider.call_records()
         outcome["backend"] = "cloudopsbench"
         outcome["investigation_report"] = report
         outcome["tool_trajectory"] = tool_trajectory
@@ -293,12 +305,19 @@ def _lookup_cloudops_cache(tools: dict[str, Any], tool_name: str, args: dict[str
     if not candidates:
         return None
     resource_type = str(args.get("resource_type") or "").lower()
-    name_hint = str(args.get("name_hint") or "").lower()
+    # Tool caches in the official CloudOps format key on ``name`` (e.g.
+    # ``"name":"productcatalogservice"``). Older expert-trajectory steps
+    # used ``name_hint``. Accept either so probe-loop callers and
+    # trajectory replay both find their entries.
+    name_hint = str(args.get("name") or args.get("name_hint") or "").lower()
+    namespace = str(args.get("namespace") or "").lower()
     for key, value in candidates:
         lowered = key.lower()
         if resource_type and resource_type not in lowered:
             continue
         if name_hint and name_hint not in lowered:
+            continue
+        if namespace and f'"namespace":"{namespace}"' not in lowered and namespace not in lowered:
             continue
         return value
     if resource_type:
