@@ -38,6 +38,19 @@ jwt-demo.hex
 .idea/
 .vscode/
 
+# Scratch directories. ``.tmp/`` was checked in once with rendered PRD
+# artifacts + PNG diagrams; the convention is local-only scratch.
+# Permanent docs belong in ``docs/`` and are committed there.
+.tmp/
+
+# Stray HTML drops at the repo root (e.g. browser "save page as" output
+# committed by accident). Keeps the root clean. Specific docs that
+# belong here — none today — should live under ``docs/`` instead.
+/*.html
+
+# Watch-daemon scratch state. Per-run output, not source.
+watch_*/
+
 # Local bundles / generated exports
 *.zip
 lusisOS-main/

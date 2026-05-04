@@ -4,6 +4,11 @@ The public datasets here are bootstrap material, not the moat. Mesh's edge is
 the private corpus assembled from production and development node telemetry:
 logs, metrics, traces, probe evidence, run events, operator decisions, and
 post-action feedback.
+
+Single-tenant by design. See ``corpus_store.py`` — the catalog and the
+records it produces share a Mesh deployment's namespace; there is no
+tenant-id predicate. If multi-tenant isolation is ever required, every
+catalog query and downstream corpus row must grow tenant scoping.
 """
 
 from __future__ import annotations
