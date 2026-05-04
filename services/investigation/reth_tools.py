@@ -12,8 +12,8 @@ Each tool is read-only; the implementations are thin wrappers around
 ``services.evidence.reth_probe_registry.snapshot_for_probe`` so the
 existing redaction logic carries over for free.
 
-The planner mirrors the existing hypothesis_engine peer-starvation
-template logic in tool-call form: get peers → if below floor, check
+``RethRulePack`` mirrors the existing hypothesis_engine peer-starvation
+template in native-selector rules: get peers → if below floor, check
 engine API → check recent logs → stop.
 """
 
@@ -29,11 +29,13 @@ from services.evidence.reth_probe_registry import (
 from .harness import (
     InvestigationLoopState,
     LoopDecision,
+    NativeProbeSelector,
+    ObservationIndex,
+    ProbeRule,
     RawToolOutput,
-    ToolCall,
+    RootCauseCandidate,
     ToolDefinition,
     ToolRegistry,
-    make_call,
 )
 
 
@@ -110,21 +112,83 @@ def _summarize_probe_data(probe_name: str, data: dict[str, Any]) -> str:
     return f"{probe_name}: " + " ".join(parts) if parts else f"{probe_name}: empty"
 
 
-class RethLoopPlanner:
-    """Peer-starvation planner driven by observed snapshot data.
+class RethRulePack:
+    """Reth native selector rules for the peer-starvation slice."""
 
-    Sequence:
-    1. ``read_peer_sync`` — establish peer count.
-    2. If peers are below floor, call ``read_consensus_status`` (is the
-       consensus client reachable? local-isolation vs. consensus-disconnect).
-    3. ``read_recent_logs`` — corroborate from recent error signatures.
-    4. Stop with the planner's confidence.
-    """
+    domain: str = RETH_DOMAIN
+    tool_definitions: tuple[ToolDefinition, ...] = RETH_TOOL_DEFINITIONS
+    root_cause_ranker = None
+    sufficient_stop_reason: str = "root_cause_candidate_found"
+    exhausted_stop_reason: str = "evidence_value_exhausted"
+
+    def __init__(self, *, peer_floor: int = 1) -> None:
+        self._peer_floor = peer_floor
+        self.rules: tuple[ProbeRule, ...] = (
+            ProbeRule(
+                name="peer_sync_first",
+                tool_name="read_peer_sync",
+                when=self._needs_peer_sync,
+                build_args=self._empty_args,
+                selection_reason=self._peer_sync_reason,
+                priority=10,
+                confidence=0.5,
+            ),
+            ProbeRule(
+                name="consensus_when_peers_low",
+                tool_name="read_consensus_status",
+                when=self._needs_consensus_status,
+                build_args=self._empty_args,
+                selection_reason=self._consensus_reason,
+                priority=20,
+                confidence=0.55,
+            ),
+            ProbeRule(
+                name="logs_corroboration",
+                tool_name="read_recent_logs",
+                when=self._needs_recent_logs,
+                build_args=self._empty_args,
+                selection_reason=self._logs_reason,
+                priority=30,
+                confidence=0.55,
+            ),
+        )
+
+    def sufficient_root_cause(self, _index: ObservationIndex) -> RootCauseCandidate | None:
+        return None
+
+    def _needs_peer_sync(self, index: ObservationIndex) -> bool:
+        return not index.tool_called("read_peer_sync")
+
+    def _needs_consensus_status(self, index: ObservationIndex) -> bool:
+        return self._peer_count(index) < self._peer_floor
+
+    def _needs_recent_logs(self, _index: ObservationIndex) -> bool:
+        return True
+
+    def _empty_args(self, _index: ObservationIndex) -> dict[str, Any]:
+        return {}
+
+    def _peer_sync_reason(self, _index: ObservationIndex) -> str:
+        return "reth_first_peer_check"
+
+    def _consensus_reason(self, _index: ObservationIndex) -> str:
+        return "reth_peers_below_floor"
+
+    def _logs_reason(self, _index: ObservationIndex) -> str:
+        return "reth_corroborate_logs"
+
+    def _peer_count(self, index: ObservationIndex) -> int:
+        peer_data = index.output_for("read_peer_sync")
+        return int(peer_data.get("peer_count") or 0) if isinstance(peer_data, dict) else 0
+
+
+class RethLoopPlanner:
+    """Compatibility wrapper around ``NativeProbeSelector``."""
 
     domain: str = RETH_DOMAIN
 
     def __init__(self, *, peer_floor: int = 1) -> None:
-        self._peer_floor = peer_floor
+        self._selector = NativeProbeSelector(RethRulePack(peer_floor=peer_floor))
 
     def plan(
         self,
@@ -132,27 +196,4 @@ class RethLoopPlanner:
         state: InvestigationLoopState,
         trigger_context: dict[str, Any],
     ) -> LoopDecision:
-        called = {call.tool_name for call in state.tool_calls}
-        if "read_peer_sync" not in called:
-            return _continue("read_peer_sync", reason="reth_first_peer_check")
-        peer_data = self._peer_sync_data(state)
-        peer_count = int(peer_data.get("peer_count") or 0) if isinstance(peer_data, dict) else 0
-        if peer_count < self._peer_floor and "read_consensus_status" not in called:
-            return _continue("read_consensus_status", reason="reth_peers_below_floor")
-        if "read_recent_logs" not in called:
-            return _continue("read_recent_logs", reason="reth_corroborate_logs")
-        return LoopDecision(action="stop", reason="reth_peer_starvation_plan_complete", confidence=0.6)
-
-    def _peer_sync_data(self, state: InvestigationLoopState) -> dict[str, Any]:
-        for call, result in zip(state.tool_calls, state.tool_results):
-            if call.tool_name == "read_peer_sync" and isinstance(result.output, dict):
-                return result.output
-        return {}
-
-
-def _continue(tool_name: str, *, reason: str) -> LoopDecision:
-    definition = next((d for d in RETH_TOOL_DEFINITIONS if d.name == tool_name), None)
-    if definition is None:
-        raise KeyError(f"reth tool {tool_name} not in registry definitions")
-    call: ToolCall = make_call(tool=definition, args={}, purpose=reason)
-    return LoopDecision(action="continue", next_calls=(call,), reason=reason, confidence=0.5)
+        return self._selector.plan(state=state, trigger_context=trigger_context)

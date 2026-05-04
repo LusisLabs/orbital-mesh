@@ -18,10 +18,9 @@ stages don't know or care which path produced it.
 
 from __future__ import annotations
 
-import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from shared.mesh_runtime import (
@@ -31,11 +30,14 @@ from shared.mesh_runtime import (
     Trigger,
 )
 
+from .cloudops_tools import CLOUDOPS_DOMAIN, CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
 from .cloudops_ontology import RankedCause, rank_root_causes
 from .harness import (
     InvestigationLoopState,
     LoopCritic,
     LoopPlanner,
+    NativeProbeSelector,
+    RawToolOutput,
     ToolRegistry,
     run_investigation_loop,
 )
@@ -43,7 +45,6 @@ from .tool_provider import InvestigationToolProvider
 
 
 ProbeFn = Callable[[Trigger, dict[str, Any], dict[str, Any]], tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]
-ProviderProbeStep = tuple[str, dict[str, Any], str]
 
 
 class InvestigationService:
@@ -236,6 +237,18 @@ class InvestigationService:
             trigger_context={"trigger": trigger.to_dict()},
             max_iterations=self.max_tool_probes + 2,
         )
+        probe_results, findings, citations, root_cause_candidates = self._project_loop_state(state)
+        return state, probe_results, findings, citations, root_cause_candidates
+
+    def _project_loop_state(
+        self,
+        state: InvestigationLoopState,
+    ) -> tuple[
+        list[InvestigationProbeResult],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
         probe_results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
@@ -257,6 +270,7 @@ class InvestigationService:
                     "output_text": result.output_summary,
                     "valid": result.valid,
                     "call_id": call.call_id,
+                    "selection_reason": call.purpose,
                 },
             }
             findings.append(finding)
@@ -286,7 +300,7 @@ class InvestigationService:
             findings.append(_ranked_finding(root_cause_candidates))
             for candidate in root_cause_candidates:
                 citations.append(_citation("rca_ontology", str(candidate.get("root_cause"))))
-        return state, probe_results, findings, citations, root_cause_candidates
+        return probe_results, findings, citations, root_cause_candidates
 
     def _run_tool_loop(
         self,
@@ -299,146 +313,28 @@ class InvestigationService:
         list[dict[str, Any]],
         str,
     ]:
-        """Bounded hypothesis loop driven by a read-only tool provider.
+        """Run provider-backed CloudOps probes through the native selector."""
 
-        The provider-backed path plans one probe at a time from observed
-        evidence. ``GetResources`` is still the first high-value CloudOps
-        observation when available, but follow-up probes are selected
-        only when the inventory, event text, logs, alerts, or trigger
-        metadata create a concrete reason to ask for that evidence. The
-        loop stops once no uncalled available tool is expected to add
-        evidence value, instead of walking a fixed tool order.
-        """
-
-        observed_text: list[str] = []
-        observed_tool_text: list[tuple[str, str]] = []
-        results: list[InvestigationProbeResult] = []
-        findings: list[dict[str, Any]] = []
-        citations: list[dict[str, Any]] = []
-        root_cause_candidates: list[dict[str, Any]] = []
-        available = set(tool_provider.available_tools())
-        called: set[tuple[str, str]] = set()
-        suspect: str | None = None
-        stop_reason = "evidence_value_exhausted"
-
-        def run(tool_name: str, args: dict[str, Any], selection_reason: str) -> str | None:
-            if tool_name not in available or len(results) >= self.max_tool_probes:
-                return None
-            called.add((tool_name, _arg_summary(args)))
-            result = self._invoke_tool_probe(
-                trigger,
-                tool_provider,
-                tool_name,
-                args,
-                selection_reason=selection_reason,
-            )
-            results.append(result)
-            findings.extend(result.findings)
-            citations.extend(result.citations)
-            collected: list[str] = []
-            for finding in result.findings:
-                summary = finding.get("summary")
-                if isinstance(summary, str):
-                    observed_text.append(summary)
-                    collected.append(summary)
-                details = finding.get("details") or {}
-                output_text = details.get("output_text") if isinstance(details, dict) else None
-                if isinstance(output_text, str):
-                    observed_text.append(output_text)
-                    observed_tool_text.append((tool_name, output_text))
-                    collected.append(output_text)
-            return "\n".join(collected) if collected else None
-
-        while len(results) < self.max_tool_probes:
-            next_step = _next_provider_probe(
-                trigger=trigger,
-                available=available,
-                called=called,
-                observed_text=observed_text,
-                suspect=suspect,
-            )
-            if next_step is None:
-                break
-            tool_name, args, selection_reason = next_step
-            collected = run(tool_name, args, selection_reason)
-            if tool_name == "GetResources":
-                suspect = _discover_suspect_resource(collected) or suspect
-            elif suspect is None:
-                suspect = _suspect_resource_hint(trigger) or None
-
-        if len(results) >= self.max_tool_probes:
-            stop_reason = "tool_probe_budget_exhausted"
-
-        ranked = rank_root_causes(observed_text)
-        if ranked:
-            root_cause_candidates = _root_cause_candidates(ranked, observed_tool_text)
-            top_candidate = root_cause_candidates[0]
-            supported_by_multiple_tools = len(top_candidate.get("supporting_tools") or []) >= 2
-            if len(results) >= 2 and supported_by_multiple_tools and ranked[0].confidence >= 0.55:
-                stop_reason = "root_cause_candidate_found"
-
-        if root_cause_candidates:
-            findings.append(_ranked_finding(root_cause_candidates))
-            for candidate in root_cause_candidates:
-                citations.append(_citation("rca_ontology", str(candidate.get("root_cause"))))
-        return results, findings, citations, root_cause_candidates, stop_reason
-
-    def _invoke_tool_probe(
-        self,
-        trigger: Trigger,
-        tool_provider: InvestigationToolProvider,
-        tool_name: str,
-        args: dict[str, Any],
-        *,
-        selection_reason: str | None = None,
-    ) -> InvestigationProbeResult:
-        # Probe status follows the schema (completed/skipped/failed): a
-        # successful tool invocation that returned an empty or error
-        # payload is still ``completed`` from the agent's perspective.
-        # Whether the result was useful is carried by the ``valid``
-        # flag inside the finding details and the citation record.
-        started = _now_iso()
-        start = time.monotonic()
-        status = "completed"
-        error: str | None = None
-        try:
-            response = tool_provider.invoke(tool_name, args)
-            output = response.get("output")
-            valid = bool(response.get("valid", True))
-        except Exception as exc:
-            output = None
-            valid = False
-            status = "failed"
-            error = str(exc)
-        completed = _now_iso()
-        output_text = _summarize_tool_output(output)
-        finding = {
-            "kind": "diagnostic_observation",
-            "summary": f"{tool_name}({_arg_summary(args)}) -> {output_text[:200]}" if output_text else f"{tool_name}({_arg_summary(args)}) returned no data",
-            "confidence": 0.7 if valid else 0.2,
-            "details": {
-                "tool_name": tool_name,
-                "args": args,
-                "output_text": output_text,
-                "valid": valid,
-                "selection_reason": selection_reason,
-            },
-        }
-        citations = [_citation(f"{tool_provider.name}:{tool_name}", _arg_summary(args) or tool_name)]
-        result = InvestigationProbeResult(
-            probe_id=f"probe_tool_{tool_name.lower()}_{uuid4().hex[:6]}",
-            name=tool_name,
-            status=status,
-            started_at=started,
-            completed_at=completed,
-            latency_ms=round((time.monotonic() - start) * 1000.0, 3),
-            summary=str(finding["summary"]),
-            findings=[finding],
-            citations=citations,
-            error=error,
+        registry = _registry_for_tool_provider(tool_provider)
+        selector = NativeProbeSelector(
+            CloudOpsRulePack(trigger),
+            tool_definitions=registry.list_definitions(domain=CLOUDOPS_DOMAIN, mutation_class="read_only"),
         )
-        result.validate()
-        return result
+        state = InvestigationLoopState(
+            trigger_id=trigger.trigger_id,
+            budget_remaining=float(self.max_tool_probes),
+        )
+        run_investigation_loop(
+            state=state,
+            planner=selector,
+            registry=registry,
+            critic=LoopCritic(registry),
+            trigger_context={"trigger": trigger.to_dict()},
+            max_iterations=self.max_tool_probes + 2,
+        )
+        results, findings, citations, root_cause_candidates = self._project_loop_state(state)
+        stop_reason = _provider_stop_reason(state.stop_reason)
+        return results, findings, citations, root_cause_candidates, stop_reason
 
     def _build_plan(
         self,
@@ -581,6 +477,42 @@ class InvestigationService:
         return result
 
 
+def _registry_for_tool_provider(tool_provider: InvestigationToolProvider) -> ToolRegistry:
+    registry = ToolRegistry()
+    definitions = {definition.name: definition for definition in CLOUDOPS_TOOL_DEFINITIONS}
+    for tool_name in tool_provider.available_tools():
+        definition = definitions.get(tool_name)
+        if definition is None:
+            continue
+        registry.register(definition, _make_provider_invoker(tool_provider, tool_name))
+    return registry
+
+
+def _make_provider_invoker(tool_provider: InvestigationToolProvider, tool_name: str) -> Callable[[dict[str, Any]], RawToolOutput]:
+    def invoke(args: dict[str, Any]) -> RawToolOutput:
+        response = tool_provider.invoke(tool_name, args)
+        output = response.get("output") if isinstance(response, dict) else None
+        valid = bool(response.get("valid", True)) if isinstance(response, dict) else False
+        raw_status = str(response.get("status") or "completed").lower() if isinstance(response, dict) else "failed"
+        status: Literal["completed", "failed"] = "failed" if raw_status in {"failed", "error"} else "completed"
+        return RawToolOutput(
+            output=output,
+            output_summary=_summarize_tool_output(output),
+            citations=[_citation(f"{tool_provider.name}:{tool_name}", _arg_summary(args) or tool_name)],
+            valid=valid,
+            redaction_status="clean",
+            status=status,
+        )
+
+    return invoke
+
+
+def _provider_stop_reason(stop_reason: str | None) -> str:
+    if stop_reason == "budget_exhausted":
+        return "tool_probe_budget_exhausted"
+    return stop_reason or "evidence_value_exhausted"
+
+
 def _probe_evidence_sufficiency(
     trigger: Trigger,
     evidence_pack: dict[str, Any],
@@ -717,222 +649,6 @@ def _dedupe_citations(citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _trigger_namespace(trigger: Trigger) -> str | None:
-    related = trigger.related_context or {}
-    namespace = related.get("cloudopsbench_namespace") or related.get("namespace")
-    return str(namespace) if namespace else None
-
-
-_RESOURCE_LINE_RE = re.compile(
-    r"^\s*([a-z][a-z0-9-]+(?:-[a-f0-9]+)?)\s+(\d+)/(\d+)\s+([A-Za-z]+)\b"
-)
-_HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
-
-
-def _discover_suspect_resource(get_resources_text: str | None) -> str | None:
-    """Pull the unhealthy resource name out of ``GetResources`` output.
-
-    Cloud-OpsBench tool caches return ``GetResources`` as ``kubectl get
-    pods``-style text: ``<name> <ready>/<desired> <status> ...``. The
-    suspect for follow-up probes is the first row whose status is not
-    ``Running`` or whose ready count is below desired — that's the pod
-    the operator would describe next. When everything looks healthy the
-    function returns ``None`` and the provider planner stops unless
-    another observed signal justifies a targeted follow-up.
-    """
-
-    if not get_resources_text:
-        return None
-    for line in get_resources_text.splitlines():
-        match = _RESOURCE_LINE_RE.match(line)
-        if not match:
-            continue
-        name, ready, desired, status = match.groups()
-        unhealthy_status = status.lower() not in {"running", "completed", "succeeded"}
-        below_ready = int(ready) < int(desired)
-        if unhealthy_status or below_ready:
-            return _strip_replicaset_suffix(name)
-    return None
-
-
-def _strip_replicaset_suffix(name: str) -> str:
-    """``frontend-7c9f-abc12`` → ``frontend``.
-
-    CloudOps tool caches sometimes key on the deployment name and
-    sometimes on the pod name. Stripping the trailing replicaset/pod
-    suffix lets a single suspect string match either form during
-    substring lookup.
-    """
-
-    parts = name.split("-")
-    while parts and len(parts) > 1 and _HEX_SUFFIX_RE.fullmatch(parts[-1]):
-        parts.pop()
-    return "-".join(parts) if parts else name
-
-
-def _suspect_resource_hint(trigger: Trigger) -> str:
-    """Heuristic suspect for ``DescribeResource`` / ``GetAppYAML`` calls.
-
-    Falls back to the trigger service when no better hint is available.
-    Real CloudOps tool caches key off names, but the snapshot lookup is
-    forgiving — passing the service name as ``name_hint`` lets it match
-    pod entries that contain the deployment name as a prefix.
-    """
-    related = trigger.related_context or {}
-    for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource"):
-        value = related.get(key)
-        if isinstance(value, str) and value:
-            return value.rsplit("/", 1)[-1]
-    return trigger.service or ""
-
-
-def _next_provider_probe(
-    *,
-    trigger: Trigger,
-    available: set[str],
-    called: set[tuple[str, str]],
-    observed_text: list[str],
-    suspect: str | None,
-) -> ProviderProbeStep | None:
-    namespace = _trigger_namespace(trigger)
-    inventory_args = {"resource_type": "pods", "namespace": namespace}
-    if _probe_is_available_uncalled("GetResources", inventory_args, available, called):
-        return (
-            "GetResources",
-            inventory_args,
-            "inventory_discovery: inspect observed resource health before targeted probes",
-        )
-
-    effective_suspect = suspect
-    if effective_suspect is None and _has_probeable_trigger_or_observed_signal(trigger, observed_text):
-        effective_suspect = _suspect_resource_hint(trigger) or None
-
-    explicit_suspect = _has_explicit_suspect_hint(trigger)
-    if effective_suspect:
-        describe_args = {"resource_type": "pods", "name": effective_suspect, "namespace": namespace}
-        if (explicit_suspect or _has_resource_status_signal(observed_text)) and _probe_is_available_uncalled(
-            "DescribeResource",
-            describe_args,
-            available,
-            called,
-        ):
-            reason_prefix = "explicit_suspect_hint" if explicit_suspect else "resource_status_signal"
-            return (
-                "DescribeResource",
-                describe_args,
-                f"{reason_prefix}: inspect events and conditions for {effective_suspect}",
-            )
-
-    for tool_name, args, reason in _evidence_follow_up_plan(trigger, effective_suspect, observed_text):
-        if _probe_is_available_uncalled(tool_name, args, available, called):
-            return tool_name, args, reason
-    return None
-
-
-def _evidence_follow_up_plan(
-    trigger: Trigger,
-    suspect: str | None,
-    observed_text: list[str],
-) -> list[ProviderProbeStep]:
-    namespace = _trigger_namespace(trigger)
-    haystack = "\n".join(observed_text).lower()
-    candidates: list[ProviderProbeStep] = []
-    if _has_alert_signal(trigger, haystack):
-        candidates.append(("GetAlerts", {"namespace": namespace}, "alert_signal: inspect active alert context"))
-    if not suspect:
-        return candidates
-    if _contains_any(haystack, ("imagepullbackoff", "errimagepull", "invalid image", "manifest unknown", "createcontainerconfigerror", "configmap", "secret")):
-        candidates.append(
-            (
-                "GetAppYAML",
-                {"resource_type": "deployment", "name": suspect, "namespace": namespace},
-                f"image_or_config_signal: inspect deployment spec for {suspect}",
-            )
-        )
-    if _contains_any(haystack, ("crashloopbackoff", "back-off", "exception", "stacktrace", "traceback", "panic", "error", "timeout")):
-        candidates.append(
-            (
-                "GetErrorLogs",
-                {"resource_type": "pods", "name": suspect, "namespace": namespace},
-                f"runtime_failure_signal: inspect error logs for {suspect}",
-            )
-        )
-    if _contains_any(haystack, ("no endpoints", "targetport", "connection refused", "dns", "no such host", "name resolution")):
-        candidates.append(
-            (
-                "CheckServiceConnectivity",
-                {"resource_type": "service", "name": suspect, "namespace": namespace},
-                f"network_or_service_signal: verify service connectivity for {suspect}",
-            )
-        )
-    if _contains_any(haystack, ("0/", "unschedulable", "taint", "affinity", "insufficient", "node")):
-        candidates.append(
-            (
-                "GetClusterConfiguration",
-                {"namespace": namespace},
-                "scheduling_signal: inspect cluster and node configuration",
-            )
-        )
-    if _contains_any(haystack, ("warning", "failed", "event")):
-        candidates.append(
-            (
-                "GetRecentLogs",
-                {"resource_type": "pods", "name": suspect, "namespace": namespace},
-                f"event_signal: inspect recent logs for {suspect}",
-            )
-        )
-    return candidates
-
-
-def _probe_is_available_uncalled(
-    tool_name: str,
-    args: dict[str, Any],
-    available: set[str],
-    called: set[tuple[str, str]],
-) -> bool:
-    return tool_name in available and (tool_name, _arg_summary(args)) not in called
-
-
-def _has_probeable_trigger_or_observed_signal(trigger: Trigger, observed_text: list[str]) -> bool:
-    return _has_explicit_suspect_hint(trigger) or _has_resource_status_signal(observed_text)
-
-
-def _has_explicit_suspect_hint(trigger: Trigger) -> bool:
-    related = trigger.related_context or {}
-    return any(
-        isinstance(related.get(key), str) and related.get(key)
-        for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource")
-    )
-
-
-def _has_resource_status_signal(observed_text: list[str]) -> bool:
-    haystack = "\n".join(observed_text).lower()
-    return _contains_any(
-        haystack,
-        (
-            "0/",
-            "imagepullbackoff",
-            "errimagepull",
-            "crashloopbackoff",
-            "createcontainerconfigerror",
-            "pending",
-            "unschedulable",
-            "no endpoints",
-            "failed",
-            "warning",
-        ),
-    )
-
-
-def _has_alert_signal(trigger: Trigger, haystack: str) -> bool:
-    related = trigger.related_context or {}
-    return bool(related.get("cloudopsbench_alert") or related.get("alerts") or "alert" in haystack)
-
-
-def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
-    return any(needle in haystack for needle in needles)
 
 
 def _arg_summary(args: dict[str, Any]) -> str:

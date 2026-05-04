@@ -5,15 +5,12 @@ This module is the first proof that the harness contracts generalize:
 * ``register_cloudops_tools(registry, snapshot_tools)`` registers the
   eight Cloud-OpsBench diagnostic tools as ``ToolDefinition``s, all
   read-only, all backed by the snapshot tool cache.
-* ``CloudOpsLoopPlanner`` is the planner that decides which tool to
-  call next. It mirrors the prior bespoke loop in ``service.py``: start
-  with ``GetResources``, observe the inventory, pick the unhealthy pod,
-  follow up with ``DescribeResource`` / ``GetAppYAML`` / ``GetErrorLogs``
-  on it, optionally ``GetAlerts`` if the trigger carries alert metadata.
+* ``CloudOpsRulePack`` describes typed native probe-selection rules.
+* ``CloudOpsLoopPlanner`` remains as a compatibility wrapper around the
+  shared ``NativeProbeSelector``.
 
-Behavior is intended to match the prior bespoke loop bit-for-bit so the
-benchmark numbers don't move in this phase. The point of the rewrite is
-the shape: domain logic now lives in a planner that the harness drives.
+Domain logic lives in rules; registry, critic, and loop orchestration
+remain shared.
 """
 
 from __future__ import annotations
@@ -23,16 +20,19 @@ from typing import Any
 
 from shared.mesh_runtime import Trigger
 
+from .cloudops_ontology import rank_root_causes
 from .harness import (
     InvestigationLoopState,
     LoopDecision,
     LoopPlanner,
+    NativeProbeSelector,
+    ObservationIndex,
+    ProbeRule,
     RawToolOutput,
-    ToolCall,
     ToolDefinition,
     ToolRegistry,
-    make_call,
 )
+from .harness.native_selector import RootCauseCandidate, RootCauseRanker
 
 
 _RESOURCE_LINE_RE = re.compile(
@@ -117,27 +117,217 @@ def _make_cloudops_invoker(tool_name: str, snapshot_tools: Any):
     return invoke
 
 
+class CloudOpsRulePack:
+    """CloudOps native selector rules over Kubernetes-style observations."""
+
+    domain: str = CLOUDOPS_DOMAIN
+    tool_definitions: tuple[ToolDefinition, ...] = CLOUDOPS_TOOL_DEFINITIONS
+    sufficient_stop_reason: str = "root_cause_candidate_found"
+    exhausted_stop_reason: str = "evidence_value_exhausted"
+
+    def __init__(self, trigger: Trigger) -> None:
+        self._trigger = trigger
+        self._namespace = _trigger_namespace(trigger)
+        self.root_cause_ranker: RootCauseRanker | None = rank_root_causes
+        self.rules: tuple[ProbeRule, ...] = (
+            ProbeRule(
+                name="inventory_discovery",
+                tool_name="GetResources",
+                when=self._needs_inventory,
+                build_args=self._inventory_args,
+                selection_reason=self._inventory_reason,
+                priority=10,
+                confidence=0.6,
+            ),
+            ProbeRule(
+                name="describe_suspect",
+                tool_name="DescribeResource",
+                when=self._should_describe,
+                build_args=self._describe_args,
+                selection_reason=self._describe_reason,
+                priority=20,
+                confidence=0.65,
+            ),
+            ProbeRule(
+                name="alert_context",
+                tool_name="GetAlerts",
+                when=self._has_alert_signal,
+                build_args=self._alerts_args,
+                selection_reason=self._alerts_reason,
+                priority=30,
+                confidence=0.55,
+            ),
+            ProbeRule(
+                name="image_or_config_spec",
+                tool_name="GetAppYAML",
+                when=self._has_image_or_config_signal,
+                build_args=self._app_yaml_args,
+                selection_reason=self._app_yaml_reason,
+                priority=40,
+                confidence=0.65,
+            ),
+            ProbeRule(
+                name="runtime_failure_logs",
+                tool_name="GetErrorLogs",
+                when=self._has_runtime_failure_signal,
+                build_args=self._error_logs_args,
+                selection_reason=self._error_logs_reason,
+                priority=50,
+                confidence=0.7,
+            ),
+            ProbeRule(
+                name="network_service_check",
+                tool_name="CheckServiceConnectivity",
+                when=self._has_network_or_service_signal,
+                build_args=self._connectivity_args,
+                selection_reason=self._connectivity_reason,
+                priority=60,
+                confidence=0.6,
+            ),
+            ProbeRule(
+                name="cluster_configuration_check",
+                tool_name="GetClusterConfiguration",
+                when=self._has_scheduling_signal,
+                build_args=self._cluster_config_args,
+                selection_reason=self._cluster_config_reason,
+                priority=70,
+                confidence=0.6,
+            ),
+            ProbeRule(
+                name="recent_event_logs",
+                tool_name="GetRecentLogs",
+                when=self._has_event_signal,
+                build_args=self._recent_logs_args,
+                selection_reason=self._recent_logs_reason,
+                priority=80,
+                confidence=0.55,
+            ),
+        )
+
+    def sufficient_root_cause(self, index: ObservationIndex) -> RootCauseCandidate | None:
+        top = index.top_root_cause()
+        if top is None or top.confidence < 0.55 or len(top.supporting_tools) < 2:
+            return None
+        if top.root_cause == "crash_loop_backoff" and not index.tool_called("GetErrorLogs"):
+            return None
+        return top
+
+    def _needs_inventory(self, index: ObservationIndex) -> bool:
+        return not index.tool_called("GetResources")
+
+    def _inventory_args(self, _index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "pods", "namespace": self._namespace}
+
+    def _inventory_reason(self, _index: ObservationIndex) -> str:
+        return "inventory_discovery: inspect observed resource health before targeted probes"
+
+    def _should_describe(self, index: ObservationIndex) -> bool:
+        suspect = self._effective_suspect(index)
+        if not suspect:
+            return False
+        return _has_explicit_suspect_hint(self._trigger) or _has_resource_status_signal(index)
+
+    def _describe_args(self, index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "pods", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+
+    def _describe_reason(self, index: ObservationIndex) -> str:
+        suspect = self._effective_suspect(index) or "suspect"
+        reason_prefix = "explicit_suspect_hint" if _has_explicit_suspect_hint(self._trigger) else "resource_status_signal"
+        return f"{reason_prefix}: inspect events and conditions for {suspect}"
+
+    def _has_alert_signal(self, index: ObservationIndex) -> bool:
+        related = self._trigger.related_context or {}
+        return bool(related.get("cloudopsbench_alert") or related.get("alerts") or "alert" in index.haystack)
+
+    def _alerts_args(self, _index: ObservationIndex) -> dict[str, Any]:
+        return {"namespace": self._namespace}
+
+    def _alerts_reason(self, _index: ObservationIndex) -> str:
+        return "alert_signal: inspect active alert context"
+
+    def _has_image_or_config_signal(self, index: ObservationIndex) -> bool:
+        return self._has_suspect(index) and index.contains_any(
+            (
+                "imagepullbackoff",
+                "errimagepull",
+                "invalid image",
+                "manifest unknown",
+                "createcontainerconfigerror",
+                "configmap",
+                "secret",
+            )
+        )
+
+    def _app_yaml_args(self, index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "deployment", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+
+    def _app_yaml_reason(self, index: ObservationIndex) -> str:
+        return f"image_or_config_signal: inspect deployment spec for {self._effective_suspect(index) or 'suspect'}"
+
+    def _has_runtime_failure_signal(self, index: ObservationIndex) -> bool:
+        return self._has_suspect(index) and index.contains_any(
+            ("crashloopbackoff", "back-off", "exception", "stacktrace", "traceback", "panic", "error", "timeout")
+        )
+
+    def _error_logs_args(self, index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "pods", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+
+    def _error_logs_reason(self, index: ObservationIndex) -> str:
+        return f"runtime_failure_signal: inspect error logs for {self._effective_suspect(index) or 'suspect'}"
+
+    def _has_network_or_service_signal(self, index: ObservationIndex) -> bool:
+        return self._has_suspect(index) and index.contains_any(
+            ("no endpoints", "targetport", "connection refused", "dns", "no such host", "name resolution")
+        )
+
+    def _connectivity_args(self, index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "service", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+
+    def _connectivity_reason(self, index: ObservationIndex) -> str:
+        return f"network_or_service_signal: verify service connectivity for {self._effective_suspect(index) or 'suspect'}"
+
+    def _has_scheduling_signal(self, index: ObservationIndex) -> bool:
+        return self._has_suspect(index) and index.contains_any(
+            ("0/", "unschedulable", "taint", "affinity", "insufficient", "node")
+        )
+
+    def _cluster_config_args(self, _index: ObservationIndex) -> dict[str, Any]:
+        return {"namespace": self._namespace}
+
+    def _cluster_config_reason(self, _index: ObservationIndex) -> str:
+        return "scheduling_signal: inspect cluster and node configuration"
+
+    def _has_event_signal(self, index: ObservationIndex) -> bool:
+        return self._has_suspect(index) and index.contains_any(("warning", "failed", "event"))
+
+    def _recent_logs_args(self, index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "pods", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+
+    def _recent_logs_reason(self, index: ObservationIndex) -> str:
+        return f"event_signal: inspect recent logs for {self._effective_suspect(index) or 'suspect'}"
+
+    def _has_suspect(self, index: ObservationIndex) -> bool:
+        return bool(self._effective_suspect(index))
+
+    def _effective_suspect(self, index: ObservationIndex) -> str | None:
+        return (
+            _discover_suspect_resource(index.summary_for("GetResources"))
+            or (
+                _suspect_resource_hint(self._trigger)
+                if _has_probeable_trigger_or_observed_signal(self._trigger, index)
+                else None
+            )
+            or None
+        )
+
+
 class CloudOpsLoopPlanner:
-    """Planner that mirrors the prior bespoke CloudOps loop.
-
-    Sequence (one planned call per iteration):
-
-    1. ``GetResources`` (always, with the trigger namespace).
-    2. After observing 1's output, pick the unhealthy resource name.
-       Use the trigger hint if the inventory looks healthy.
-    3. ``DescribeResource`` on the suspect.
-    4. ``GetAppYAML`` for the suspect.
-    5. ``GetErrorLogs`` for the suspect.
-    6. ``GetAlerts`` if the trigger carries alert metadata.
-    7. Stop.
-    """
+    """Compatibility wrapper around ``NativeProbeSelector``."""
 
     domain: str = CLOUDOPS_DOMAIN
 
     def __init__(self, trigger: Trigger) -> None:
-        self._trigger = trigger
-        self._suspect: str | None = None
-        self._namespace = _trigger_namespace(trigger)
+        self._selector = NativeProbeSelector(CloudOpsRulePack(trigger))
 
     def plan(
         self,
@@ -145,53 +335,7 @@ class CloudOpsLoopPlanner:
         state: InvestigationLoopState,
         trigger_context: dict[str, Any],
     ) -> LoopDecision:
-        called_tool_names = [call.tool_name for call in state.tool_calls]
-        if "GetResources" not in called_tool_names:
-            return _continue_with(_call("GetResources", {"resource_type": "pods", "namespace": self._namespace}))
-        if self._suspect is None:
-            self._suspect = (
-                _discover_suspect_resource(_inventory_text(state))
-                or _suspect_resource_hint(self._trigger)
-                or None
-            )
-        suspect = self._suspect
-        for next_tool, args in self._follow_up_plan(suspect):
-            if next_tool not in called_tool_names:
-                return _continue_with(_call(next_tool, args))
-        if self._has_alert_metadata() and "GetAlerts" not in called_tool_names:
-            return _continue_with(_call("GetAlerts", {"namespace": self._namespace}))
-        return LoopDecision(action="stop", reason="cloudops_plan_complete", confidence=0.5)
-
-    def _follow_up_plan(self, suspect: str | None) -> list[tuple[str, dict[str, Any]]]:
-        if not suspect:
-            return []
-        return [
-            ("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": self._namespace}),
-            ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": self._namespace}),
-            ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": self._namespace}),
-        ]
-
-    def _has_alert_metadata(self) -> bool:
-        related = self._trigger.related_context or {}
-        return bool(related.get("cloudopsbench_alert") or related.get("alerts"))
-
-
-def _continue_with(call: ToolCall) -> LoopDecision:
-    return LoopDecision(action="continue", next_calls=(call,), reason="cloudops_next_step", confidence=0.6)
-
-
-def _call(name: str, args: dict[str, Any]) -> ToolCall:
-    definition = next((d for d in CLOUDOPS_TOOL_DEFINITIONS if d.name == name), None)
-    if definition is None:
-        raise KeyError(f"cloudops tool {name} not in registry definitions")
-    return make_call(tool=definition, args=args, purpose=f"cloudops:{name}")
-
-
-def _inventory_text(state: InvestigationLoopState) -> str | None:
-    for call, result in zip(state.tool_calls, state.tool_results):
-        if call.tool_name == "GetResources":
-            return result.output_summary
-    return None
+        return self._selector.plan(state=state, trigger_context=trigger_context)
 
 
 def _discover_suspect_resource(text: str | None) -> str | None:
@@ -223,6 +367,35 @@ def _suspect_resource_hint(trigger: Trigger) -> str:
         if isinstance(value, str) and value:
             return value.rsplit("/", 1)[-1]
     return trigger.service or ""
+
+
+def _has_probeable_trigger_or_observed_signal(trigger: Trigger, index: ObservationIndex) -> bool:
+    return _has_explicit_suspect_hint(trigger) or _has_resource_status_signal(index)
+
+
+def _has_explicit_suspect_hint(trigger: Trigger) -> bool:
+    related = trigger.related_context or {}
+    return any(
+        isinstance(related.get(key), str) and related.get(key)
+        for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource")
+    )
+
+
+def _has_resource_status_signal(index: ObservationIndex) -> bool:
+    return index.contains_any(
+        (
+            "0/",
+            "imagepullbackoff",
+            "errimagepull",
+            "crashloopbackoff",
+            "createcontainerconfigerror",
+            "pending",
+            "unschedulable",
+            "no endpoints",
+            "failed",
+            "warning",
+        )
+    )
 
 
 def _trigger_namespace(trigger: Trigger) -> str | None:

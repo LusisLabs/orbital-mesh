@@ -17,6 +17,8 @@ Public surface:
   args, duplicate calls, and mutating tools.
 * ``LoopPlanner`` (Protocol) — the domain-specific brain the harness
   asks for the next set of calls.
+* ``ProbeRule``, ``ObservationIndex``, ``NativeProbeSelector`` — the
+  shared native selector substrate used by domain rule packs.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from .contracts import (
 )
 from .critic import LoopCritic
 from .loop import run_investigation_loop
+from .native_selector import NativeProbeSelector, ObservationIndex, ProbeRule, RootCauseCandidate
 from .planner import LoopPlanner
 from .registry import RawToolOutput, ToolRegistry, make_call
 
@@ -40,7 +43,11 @@ __all__ = [
     "LoopDecision",
     "LoopPlanner",
     "LoopRejection",
+    "NativeProbeSelector",
+    "ObservationIndex",
+    "ProbeRule",
     "RawToolOutput",
+    "RootCauseCandidate",
     "ToolCall",
     "ToolDefinition",
     "ToolRegistry",
