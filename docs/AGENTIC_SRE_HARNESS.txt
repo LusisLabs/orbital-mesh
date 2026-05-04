@@ -988,6 +988,34 @@ Remaining gaps:
   - Add selector telemetry before any LLM planner swap point.
   - Keep RCA candidates advisory; policy and evaluation remain authoritative.
 
+Checkpoint: PR B hypothesis RCA wiring started.
+Date: 2026-05-04.
+
+Actual behavior added:
+  - HypothesisEngine.generate accepts investigation_report in addition to the
+    immutable evidence_pack.
+  - Ranked investigation RCA candidates are converted into supporting and
+    disconfirming hypothesis evidence.
+  - High-confidence RCA candidates can improve posterior confidence and create
+    canonical RCA hypotheses.
+  - Kubernetes RCA-driven hypothesis upgrades require approval, preserving the
+    policy safety floor.
+  - CloudOps ontology gained conservative probe, service-port, and PVC-binding
+    signal coverage with unit tests.
+
+Validation status:
+  - PASS: python3 -m unittest tests.test_hypothesis_engine -v.
+  - PASS: python3 -m unittest tests.test_hypothesis_engine_reth -v.
+  - PASS: python3 -m unittest tests.test_investigation_service -v.
+  - PASS: targeted pytest over hypothesis, investigation, and benchmark tests,
+    80 tests.
+  - PASS: Ruff over touched Python files.
+  - PASS: repo strict mypy command.
+
+Blocked validation:
+  - Cloud-OpsBench official dev A@1/A@3 delta was not run because the documented
+    sparse checkout is absent from this worktree. No eval split was used.
+
 
 Validation Matrix
 -----------------

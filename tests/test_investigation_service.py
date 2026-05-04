@@ -145,6 +145,26 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
         self.assertEqual(selector[0].root_cause, "node_selector_mismatch")
         self.assertEqual(taint[0].root_cause, "taint_toleration_mismatch")
 
+    def test_ontology_distinguishes_readiness_from_liveness_probe_failures(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        readiness = rank_root_causes(["Readiness probe failed: HTTP probe failed with statuscode: 503"])
+        liveness = rank_root_causes(["Liveness probe failed: dial tcp 10.1.1.4:8080: connect: connection refused"])
+
+        self.assertTrue(readiness and liveness)
+        self.assertEqual(readiness[0].root_cause, "readiness_probe_failed")
+        self.assertEqual(liveness[0].root_cause, "liveness_probe_failed")
+
+    def test_ontology_covers_service_port_and_pvc_binding_families(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        port = rank_root_causes(["Service target port web does not have a port named web on selected pods"])
+        pvc = rank_root_causes(["pod has unbound immediate PersistentVolumeClaims"])
+
+        self.assertTrue(port and pvc)
+        self.assertEqual(port[0].root_cause, "service_port_mismatch")
+        self.assertEqual(pvc[0].root_cause, "persistent_volume_claim_pending")
+
 
 class _StubToolProvider:
     name = "stub"

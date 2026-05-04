@@ -38,10 +38,10 @@ _RULES: tuple[_Rule, ...] = (
     _Rule("node_selector_mismatch", ("didn't match node selector", "node(s) didn't match pod's node affinity", "didn't match pod's node affinity/selector"), weight=1.2),
     _Rule("node_affinity_mismatch", ("didn't match pod's node affinity", "node affinity rules", "required node affinity")),
     _Rule("taint_toleration_mismatch", ("had untolerated taint", "tolerations don't tolerate", "node had taint")),
-    _Rule("insufficient_resources", ("insufficient cpu", "insufficient memory", "no nodes are available", "0/", "didn't have free ports")),
+    _Rule("insufficient_resources", ("insufficient cpu", "insufficient memory", "no nodes are available", "0/", "didn't have free ports", "exceeded quota")),
     # Service routing
-    _Rule("service_selector_mismatch", ("no endpoints available for service", "endpoints not found", "selector doesn't match", "0 endpoints")),
-    _Rule("service_port_mismatch", ("no port matching", "service port", "targetport")),
+    _Rule("service_selector_mismatch", ("no endpoints available for service", "endpoints not found", "selector doesn't match", "0 endpoints", "endpoints: <none>")),
+    _Rule("service_port_mismatch", ("no port matching", "service port", "targetport", "target port", "does not have a port named")),
     # Secrets / config
     _Rule("missing_secret_binding", ("secret \"", "secret not found", "couldn't find key", "createcontainerconfigerror"), weight=1.1),
     _Rule("missing_configmap", ("configmap \"", "configmap not found", "couldn't find configmap")),
@@ -52,7 +52,8 @@ _RULES: tuple[_Rule, ...] = (
     # Runtime crashes
     _Rule("oom_killed", ("oomkilled", "out of memory", "memory cgroup out of memory")),
     _Rule("crash_loop_backoff", ("crashloopbackoff", "back-off restarting failed container")),
-    _Rule("liveness_probe_failed", ("liveness probe failed", "readiness probe failed")),
+    _Rule("liveness_probe_failed", ("liveness probe failed", "failed liveness probe"), weight=1.4),
+    _Rule("readiness_probe_failed", ("readiness probe failed", "failed readiness probe"), weight=1.4),
     # Network / DNS
     _Rule("pod_network_delay", ("network is unreachable", "no route to host", "i/o timeout", "context deadline exceeded")),
     _Rule("dns_resolution_failure", ("dns lookup failed", "no such host", "name resolution", "no servers could be reached")),
@@ -60,6 +61,7 @@ _RULES: tuple[_Rule, ...] = (
     # Disk / volume
     _Rule("disk_pressure", ("nodehasdiskpressure", "disk pressure", "no space left on device")),
     _Rule("volume_mount_failed", ("failed to mount volume", "mountvolume.setup failed", "unable to mount volumes")),
+    _Rule("persistent_volume_claim_pending", ("pod has unbound immediate persistentvolumeclaims", "unbound persistentvolumeclaims", "persistentvolumeclaim is not bound")),
     # Cluster / node
     _Rule("node_not_ready", ("node not ready", "kubelet stopped posting", "kubelet is not ready")),
 )

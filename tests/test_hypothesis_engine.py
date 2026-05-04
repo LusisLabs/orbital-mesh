@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import tempfile
 import unittest
 from unittest.mock import MagicMock
@@ -228,6 +229,58 @@ class PosteriorComputationTests(unittest.TestCase):
         self.assertGreaterEqual(post, 0.05)
 
 
+class InvestigationReportEvidenceTests(unittest.TestCase):
+    def test_investigation_rca_at_1_becomes_top_hypothesis(self):
+        engine = HypothesisEngine()
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "incorrect_image_reference", "confidence": 0.82},
+            {"rank": 2, "root_cause": "service_selector_mismatch", "confidence": 0.35},
+        ])
+
+        hypotheses = engine.generate(
+            _make_trigger(error_signatures=[]),
+            investigation_report=report,
+        )
+
+        self.assertEqual(hypotheses[0].candidate_cause, "incorrect_image_reference")
+        self.assertEqual(hypotheses[0].recommended_action, "rollback_deployment")
+        self.assertTrue(any("investigation_root_cause_candidate" in item for item in hypotheses[0].supporting_evidence))
+
+    def test_investigation_rca_at_3_is_reflected_in_ranked_hypotheses(self):
+        engine = HypothesisEngine()
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "service_selector_mismatch", "confidence": 0.55},
+            {"rank": 2, "root_cause": "connection_refused", "confidence": 0.45},
+            {"rank": 3, "root_cause": "dns_resolution_failure", "confidence": 0.40},
+        ])
+
+        hypotheses = engine.generate(
+            _make_trigger(error_signatures=[]),
+            investigation_report=report,
+        )
+
+        top_three = [hypothesis.candidate_cause for hypothesis in hypotheses[:3]]
+        self.assertEqual(top_three, ["service_selector_mismatch", "connection_refused", "dns_resolution_failure"])
+
+    def test_investigation_report_is_additive_and_does_not_mutate_inputs(self):
+        engine = HypothesisEngine()
+        evidence_pack = {"pack": {"execution": {"peer_count": 0}}, "sufficient": True}
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "incorrect_image_reference", "confidence": 0.82},
+        ])
+        evidence_before = deepcopy(evidence_pack)
+        report_before = deepcopy(report)
+
+        engine.generate(
+            _make_trigger(error_signatures=["image_pull_failure"]),
+            evidence_pack=evidence_pack,
+            investigation_report=report,
+        )
+
+        self.assertEqual(evidence_pack, evidence_before)
+        self.assertEqual(report, report_before)
+
+
 class DecisionServiceIntegrationTests(unittest.TestCase):
     """Verify the hypothesis engine upgrades escalate but never overrides concrete decisions."""
 
@@ -308,6 +361,38 @@ class DecisionServiceIntegrationTests(unittest.TestCase):
         self.assertEqual(len(hypotheses), 1)
         self.assertEqual(hypotheses[0]["hypothesis_id"], "h1")
 
+    def test_investigation_report_passed_to_hypothesis_engine(self):
+        from services.decision.service import DecisionService
+
+        mock_engine = MagicMock()
+        mock_engine.generate.return_value = [
+            Hypothesis(
+                hypothesis_id="h1", description="d1", candidate_cause="x",
+                recommended_action="escalate",
+                prior_confidence=0.5, posterior_confidence=0.55,
+            ),
+        ]
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "incorrect_image_reference", "confidence": 0.82},
+        ])
+        svc = DecisionService(hypothesis_engine=mock_engine)
+        svc.decide(_make_trigger(error_signatures=["crash_loop"]), investigation_report=report)
+
+        self.assertEqual(mock_engine.generate.call_args.kwargs["investigation_report"], report)
+
+    def test_rca_hypothesis_upgrade_requires_approval(self):
+        from services.decision.service import DecisionService
+
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "incorrect_image_reference", "confidence": 0.82},
+        ])
+        svc = DecisionService(hypothesis_engine=HypothesisEngine())
+        decision = svc.decide(_make_trigger(error_signatures=[]), investigation_report=report)
+
+        self.assertEqual(decision.decision_type, "rollback_deployment")
+        self.assertEqual(decision.autonomy_tier, "approval_required")
+        self.assertTrue(decision.reasoning["evidence_pack"]["hypothesis_upgrade_applied"])
+
     def test_low_posterior_does_not_upgrade_escalate(self):
         """If hypothesis confidence is low, stay at escalate."""
         from services.decision.service import DecisionService
@@ -330,6 +415,26 @@ class DecisionServiceIntegrationTests(unittest.TestCase):
         self.assertFalse(
             decision.reasoning["evidence_pack"]["hypothesis_upgrade_applied"]
         )
+
+def _investigation_report(candidates: list[dict]) -> dict:
+    normalized = []
+    for candidate in candidates:
+        normalized.append(
+            {
+                "rank": candidate["rank"],
+                "root_cause": candidate["root_cause"],
+                "confidence": candidate["confidence"],
+                "matched_patterns": candidate.get("matched_patterns", [candidate["root_cause"]]),
+                "supporting_tools": candidate.get("supporting_tools", ["DescribeResource"]),
+                "citation_ids": [f"rca_ontology:{candidate['root_cause']}"],
+            }
+        )
+    return {
+        "report_id": "inv_test",
+        "root_cause_candidates": normalized,
+        "findings": [{"kind": "ranked_root_causes", "details": {"ranked": normalized}}],
+        "evidence_pack": {"must": "remain immutable if present"},
+    }
 
 
 if __name__ == "__main__":

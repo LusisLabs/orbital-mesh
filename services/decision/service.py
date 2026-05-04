@@ -105,7 +105,11 @@ class DecisionService:
             )
             return decision
         if trigger.trigger_type == "kubernetes_deployment_unhealthy":
-            decision = self._decide_kubernetes(trigger, scenario_analysis=scenario_analysis)
+            decision = self._decide_kubernetes(
+                trigger,
+                scenario_analysis=scenario_analysis,
+                investigation_report=investigation_report,
+            )
             _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _attach_investigation_report(decision, investigation_report)
             decision.validate()
@@ -118,7 +122,11 @@ class DecisionService:
             )
             return decision
         if trigger.trigger_type == "reth_node_degraded":
-            decision = self._decide_reth_node(trigger, evidence_pack=evidence_pack)
+            decision = self._decide_reth_node(
+                trigger,
+                evidence_pack=evidence_pack,
+                investigation_report=investigation_report,
+            )
             _attach_reasoning_bank_context(decision, reasoning_bank_packet)
             _attach_investigation_report(decision, investigation_report)
             decision.validate()
@@ -377,6 +385,7 @@ class DecisionService:
         self,
         trigger: Trigger,
         evidence_pack: dict | None = None,
+        investigation_report: dict | None = None,
     ) -> Decision:
         """Decide on a first-class Reth node health trigger.
 
@@ -529,7 +538,11 @@ class DecisionService:
         top_hypothesis: dict | None = None
         if self.hypothesis_engine is not None:
             try:
-                hypotheses = self.hypothesis_engine.generate(trigger, evidence_pack=evidence_pack)
+                hypotheses = self.hypothesis_engine.generate(
+                    trigger,
+                    evidence_pack=evidence_pack,
+                    investigation_report=investigation_report,
+                )
                 ranked_hypotheses = [h.to_dict() for h in hypotheses]
                 if ranked_hypotheses:
                     top_hypothesis = ranked_hypotheses[0]
@@ -1123,7 +1136,12 @@ class DecisionService:
         decision.validate()
         return decision
 
-    def _decide_kubernetes(self, trigger: Trigger, scenario_analysis: ScenarioAnalysis | dict | None = None) -> Decision:
+    def _decide_kubernetes(
+        self,
+        trigger: Trigger,
+        scenario_analysis: ScenarioAnalysis | dict | None = None,
+        investigation_report: dict | None = None,
+    ) -> Decision:
         """Decide on a Kubernetes deployment trigger using SRE-grade policy.
 
         The previous version of this function was a flat ``if/elif`` tree
@@ -1191,7 +1209,13 @@ class DecisionService:
         hypotheses = []
         if self.hypothesis_engine is not None:
             try:
-                hypotheses = [h.to_dict() for h in self.hypothesis_engine.generate(trigger)]
+                hypotheses = [
+                    h.to_dict()
+                    for h in self.hypothesis_engine.generate(
+                        trigger,
+                        investigation_report=investigation_report,
+                    )
+                ]
             except Exception:
                 hypotheses = []
 
@@ -1330,7 +1354,7 @@ class DecisionService:
         hypothesis_upgrade = False
         if decision_type == "escalate" and hypotheses:
             top = hypotheses[0]
-            allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod"}
+            allowed_upgrades = _LLM_ALLOWED_ACTIONS | {"scale_deployment", "restart_pod", "patch_resources"}
             if (
                 _hypothesis_has_resolved_evidence(top)
                 and top.get("posterior_confidence", 0.0) >= 0.55
@@ -1339,7 +1363,11 @@ class DecisionService:
                 decision_type = top["recommended_action"]
                 confidence = min(top["posterior_confidence"], 0.82)
                 risk_level = "medium"
-                autonomy_tier = "approval_required" if repeated_rollback else "autonomous"
+                autonomy_tier = (
+                    "approval_required"
+                    if repeated_rollback or str(top.get("hypothesis_id", "")).startswith("h_rca_")
+                    else "autonomous"
+                )
                 blast_radius = "single_deployment"
                 hypothesis_upgrade = True
 
