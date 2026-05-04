@@ -323,6 +323,38 @@ _TEMPLATES_BY_SIGNATURE: dict[str, Callable[[], list[Hypothesis]]] = {
 }
 
 
+_RCA_ACTION_BY_CAUSE: dict[str, str] = {
+    "incorrect_image_reference": "rollback_deployment",
+    "image_pull_failure": "rollback_deployment",
+    "invalid_image_command": "rollback_deployment",
+    "oom_killed": "patch_resources",
+    "insufficient_resources": "patch_resources",
+    "crash_loop_backoff": "escalate",
+    "liveness_probe_failed": "escalate",
+    "readiness_probe_failed": "escalate",
+    "missing_secret_binding": "escalate",
+    "missing_configmap": "escalate",
+    "missing_service_account": "escalate",
+    "service_selector_mismatch": "escalate",
+    "service_port_mismatch": "escalate",
+    "dns_resolution_failure": "escalate",
+    "connection_refused": "escalate",
+    "pod_network_delay": "escalate",
+    "persistent_volume_claim_pending": "escalate",
+}
+
+_RCA_SUPPORT_ALIASES: dict[str, frozenset[str]] = {
+    "incorrect_image_reference": frozenset({"bad_image_tag", "image_pull_failure"}),
+    "image_pull_failure": frozenset({"bad_image_tag", "registry_outage"}),
+    "invalid_image_command": frozenset({"bad_image_tag", "recent_deploy"}),
+    "oom_killed": frozenset({"memory_undersize", "recent_deploy"}),
+    "insufficient_resources": frozenset({"memory_undersize"}),
+    "crash_loop_backoff": frozenset({"recent_deploy", "config_change", "transient"}),
+    "liveness_probe_failed": frozenset({"slow_startup", "upstream_outage"}),
+    "readiness_probe_failed": frozenset({"slow_startup", "upstream_outage"}),
+}
+
+
 # Reth predicate kinds — kept as a module-level set so the dispatcher
 # doesn't pay a frozenset construction cost per call.
 _RETH_PREDICATE_KINDS: frozenset[str] = frozenset({
@@ -364,13 +396,16 @@ class HypothesisEngine:
         self,
         trigger: Trigger,
         evidence_pack: dict[str, Any] | None = None,
+        investigation_report: dict[str, Any] | None = None,
     ) -> list[Hypothesis]:
         """Return ranked hypotheses (highest posterior first).
 
         ``evidence_pack`` is the audited Reth/node snapshot from the
         evidence stage. Reth predicates resolve against it; k8s predicates
-        ignore it (they read trigger context and stores). Predicates with
-        no data to read return ``unknown``.
+        ignore it (they read trigger context and stores). Investigation
+        reports are read additively: ranked RCA candidates support or
+        disconfirm hypotheses, but the input evidence artifact is not
+        mutated. Predicates with no data to read return ``unknown``.
         """
         error_signatures = list(trigger.related_context.get("error_signatures", []))
         hypotheses: list[Hypothesis] = []
@@ -397,6 +432,8 @@ class HypothesisEngine:
         # Falsify each hypothesis
         for hypothesis in hypotheses:
             self._evaluate(hypothesis, trigger, evidence_pack)
+        self._apply_investigation_report(hypotheses, investigation_report)
+        for hypothesis in hypotheses:
             hypothesis.posterior_confidence = self._posterior(hypothesis)
 
         hypotheses.sort(key=lambda h: h.posterior_confidence, reverse=True)
@@ -406,8 +443,13 @@ class HypothesisEngine:
         self,
         trigger: Trigger,
         evidence_pack: dict[str, Any] | None = None,
+        investigation_report: dict[str, Any] | None = None,
     ) -> Hypothesis | None:
-        hypotheses = self.generate(trigger, evidence_pack=evidence_pack)
+        hypotheses = self.generate(
+            trigger,
+            evidence_pack=evidence_pack,
+            investigation_report=investigation_report,
+        )
         return hypotheses[0] if hypotheses else None
 
     # ------------------------------------------------------------------
@@ -472,6 +514,72 @@ class HypothesisEngine:
         if kind == "multi_service_image_pull_failure":
             return self._check_multi_service_pull_failure(trigger)
         return "unknown", None
+
+    def _apply_investigation_report(
+        self,
+        hypotheses: list[Hypothesis],
+        investigation_report: dict[str, Any] | None,
+    ) -> None:
+        candidates = _investigation_root_cause_candidates(investigation_report)
+        if not candidates:
+            return
+
+        existing_ids = {hypothesis.hypothesis_id for hypothesis in hypotheses}
+        for candidate in candidates[:3]:
+            root_cause = candidate["root_cause"]
+            hypothesis_id = f"h_rca_{_canonical_id(root_cause)}"
+            if hypothesis_id in existing_ids:
+                continue
+            confidence = float(candidate["confidence"])
+            hypotheses.append(
+                Hypothesis(
+                    hypothesis_id=hypothesis_id,
+                    description=f"Investigation ranked {root_cause} as RCA candidate #{candidate['rank']}",
+                    candidate_cause=root_cause,
+                    recommended_action=_RCA_ACTION_BY_CAUSE.get(root_cause, "escalate"),
+                    prior_confidence=max(0.35, min(confidence, 0.85)),
+                    predicates=[
+                        FalsificationPredicate(
+                            kind="investigation_root_cause_candidate",
+                            arguments={"root_cause": root_cause, "rank": candidate["rank"]},
+                            result="supported",
+                            evidence_ref=_candidate_evidence_ref(candidate),
+                            weight=_candidate_weight(candidate),
+                        )
+                    ],
+                    supporting_evidence=[f"investigation_root_cause_candidate: {_candidate_evidence_ref(candidate)}"],
+                )
+            )
+            existing_ids.add(hypothesis_id)
+
+        top = candidates[0]
+        for hypothesis in hypotheses:
+            matched = any(_candidate_supports_hypothesis(candidate, hypothesis) for candidate in candidates[:3])
+            if matched:
+                best = next(candidate for candidate in candidates[:3] if _candidate_supports_hypothesis(candidate, hypothesis))
+                predicate = FalsificationPredicate(
+                    kind="investigation_root_cause_candidate",
+                    arguments={"root_cause": best["root_cause"], "rank": best["rank"]},
+                    result="supported",
+                    evidence_ref=_candidate_evidence_ref(best),
+                    weight=_candidate_weight(best),
+                )
+                hypothesis.predicates.append(predicate)
+                evidence = f"{predicate.kind}: {predicate.evidence_ref}"
+                if evidence not in hypothesis.supporting_evidence:
+                    hypothesis.supporting_evidence.append(evidence)
+            elif float(top["confidence"]) >= 0.7 and hypothesis.candidate_cause not in {"unknown", "transient"}:
+                predicate = FalsificationPredicate(
+                    kind="investigation_root_cause_candidate",
+                    arguments={"root_cause": top["root_cause"], "rank": top["rank"]},
+                    result="disconfirmed",
+                    evidence_ref=_candidate_evidence_ref(top),
+                    weight=min(0.8, float(top["confidence"])),
+                )
+                hypothesis.predicates.append(predicate)
+                evidence = f"{predicate.kind}: {predicate.evidence_ref}"
+                if evidence not in hypothesis.disconfirming_evidence:
+                    hypothesis.disconfirming_evidence.append(evidence)
 
     # Individual checks -------------------------------------------------
 
@@ -724,3 +832,61 @@ def _age_seconds(event: Any) -> float | None:
         return (datetime.now(timezone.utc) - when).total_seconds()
     except (ValueError, TypeError):
         return None
+
+
+def _investigation_root_cause_candidates(
+    investigation_report: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(investigation_report, dict):
+        return []
+    candidates = investigation_report.get("root_cause_candidates")
+    if not isinstance(candidates, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for index, item in enumerate(candidates, start=1):
+        if not isinstance(item, dict) or not item.get("root_cause"):
+            continue
+        try:
+            confidence = float(item.get("confidence") or 0.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        root_cause = str(item["root_cause"])
+        rank_value = item.get("rank")
+        rank = int(rank_value) if isinstance(rank_value, int) and rank_value > 0 else index
+        normalized.append(
+            {
+                "rank": rank,
+                "root_cause": root_cause,
+                "confidence": max(0.0, min(confidence, 1.0)),
+                "matched_patterns": tuple(str(pattern) for pattern in item.get("matched_patterns") or []),
+                "supporting_tools": tuple(str(tool) for tool in item.get("supporting_tools") or []),
+            }
+        )
+    return sorted(normalized, key=lambda candidate: candidate["rank"])
+
+
+def _candidate_supports_hypothesis(candidate: dict[str, Any], hypothesis: Hypothesis) -> bool:
+    root_cause = str(candidate["root_cause"])
+    if hypothesis.candidate_cause == root_cause:
+        return True
+    aliases = _RCA_SUPPORT_ALIASES.get(root_cause, frozenset())
+    return hypothesis.candidate_cause in aliases
+
+
+def _candidate_weight(candidate: dict[str, Any]) -> float:
+    rank = int(candidate["rank"])
+    rank_bonus = {1: 0.4, 2: 0.2, 3: 0.1}.get(rank, 0.0)
+    return 1.0 + float(candidate["confidence"]) + rank_bonus
+
+
+def _candidate_evidence_ref(candidate: dict[str, Any]) -> str:
+    tools = ",".join(candidate["supporting_tools"]) if candidate["supporting_tools"] else "none"
+    return (
+        f"investigation.root_cause_candidates[{candidate['rank']}]={candidate['root_cause']} "
+        f"confidence={float(candidate['confidence']):.3f} supporting_tools={tools}"
+    )
+
+
+def _canonical_id(value: str) -> str:
+    canonical = "".join(char.lower() if char.isalnum() else "_" for char in value).strip("_")
+    return canonical or "unknown"

@@ -988,6 +988,40 @@ Remaining gaps:
   - Add selector telemetry before any LLM planner swap point.
   - Keep RCA candidates advisory; policy and evaluation remain authoritative.
 
+Checkpoint: PR B hypothesis RCA wiring started.
+Date: 2026-05-04.
+
+Actual behavior added:
+  - HypothesisEngine.generate accepts investigation_report in addition to the
+    immutable evidence_pack.
+  - Ranked investigation RCA candidates are converted into supporting and
+    disconfirming hypothesis evidence.
+  - High-confidence RCA candidates can improve posterior confidence and create
+    canonical RCA hypotheses.
+  - Kubernetes RCA-driven hypothesis upgrades require approval, preserving the
+    policy safety floor.
+  - CloudOps ontology gained conservative probe, service-port, and PVC-binding
+    signal coverage with unit tests.
+  - Dev-only Cloud-OpsBench ontology pass tightened broad false-positive
+    service-account and READY-count patterns, preserved longer describe output
+    for scheduler/event text, and added conservative capacity, anti-affinity,
+    image-pull-secret, and probe port/protocol label families.
+
+Validation status:
+  - PASS: python3 -m unittest tests.test_hypothesis_engine -v.
+  - PASS: python3 -m unittest tests.test_hypothesis_engine_reth -v.
+  - PASS: python3 -m unittest tests.test_investigation_service -v.
+  - PASS: targeted pytest over hypothesis, investigation, and benchmark tests,
+    83 tests.
+  - PASS: uvx ruff check .
+  - PASS: repo strict mypy command.
+  - PASS: npm --prefix web run lint.
+  - PASS: imported official Cloud-OpsBench sparse checkout into full/dev/eval
+    local suites: 656 total cases, 135 dev cases, 521 eval cases.
+  - PASS: full hidden-mode Cloud-OpsBench dev delta against Branch A; A@1
+    improved from 0.0000 to 0.2889 and A@3 from 0.0296 to 0.3481. No eval
+    split was used.
+
 
 Validation Matrix
 -----------------
