@@ -177,6 +177,7 @@ class NativeProbeSelector:
                 action="stop",
                 reason=self._rule_pack.sufficient_stop_reason,
                 confidence=candidate.confidence,
+                debug=_selector_debug(index, mode="native", stop_policy=self._rule_pack.sufficient_stop_reason),
             )
         for rule in sorted(self._rule_pack.rules, key=lambda item: item.priority):
             definition = self._tool_definitions.get(rule.tool_name)
@@ -192,8 +193,124 @@ class NativeProbeSelector:
                 next_calls=(make_call(tool=definition, args=args, purpose=reason),),
                 reason=reason,
                 confidence=rule.confidence,
+                debug=_selector_debug(index, mode="native", selected_rule=rule.name, selected_tool=definition.name),
             )
-        return LoopDecision(action="stop", reason=self._rule_pack.exhausted_stop_reason, confidence=0.0)
+        return LoopDecision(
+            action="stop",
+            reason=self._rule_pack.exhausted_stop_reason,
+            confidence=0.0,
+            debug=_selector_debug(index, mode="native", stop_policy=self._rule_pack.exhausted_stop_reason),
+        )
+
+
+class LlmProbeSelector:
+    """Gated LLM-backed selector behind the same LoopPlanner surface.
+
+    The selector is inert unless ``enabled`` and ``decision_provider`` are both
+    set. This lets callers run it in shadow mode without granting it authority
+    over the actual probe loop.
+    """
+
+    def __init__(
+        self,
+        rule_pack: ProbeRulePack,
+        *,
+        tool_definitions: Iterable[ToolDefinition] | None = None,
+        decision_provider: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        enabled: bool = False,
+    ) -> None:
+        self._rule_pack = rule_pack
+        definitions = tuple(tool_definitions) if tool_definitions is not None else tuple(rule_pack.tool_definitions)
+        self._tool_definitions = {
+            definition.name: definition
+            for definition in definitions
+            if definition.domain == rule_pack.domain
+        }
+        self._decision_provider = decision_provider
+        self._enabled = enabled
+
+    @property
+    def domain(self) -> str:
+        return self._rule_pack.domain
+
+    def plan(
+        self,
+        *,
+        state: InvestigationLoopState,
+        trigger_context: dict[str, Any],
+    ) -> LoopDecision:
+        index = ObservationIndex.from_state(
+            state=state,
+            trigger_context=trigger_context,
+            root_cause_ranker=self._rule_pack.root_cause_ranker,
+        )
+        base_debug = _selector_debug(index, mode="llm", enabled=self._enabled)
+        if not self._enabled or self._decision_provider is None:
+            return LoopDecision(action="stop", reason="llm_selector_disabled", confidence=0.0, debug=base_debug)
+        try:
+            proposed = self._decision_provider(_llm_selector_context(index, self._tool_definitions.values()))
+        except Exception as exc:
+            return LoopDecision(
+                action="stop",
+                reason=f"llm_selector_provider_error:{type(exc).__name__}",
+                confidence=0.0,
+                debug={**base_debug, "error": str(exc)},
+            )
+        action = str(proposed.get("action") or "stop")
+        confidence = float(proposed.get("confidence") or 0.0)
+        reason = str(proposed.get("reason") or "llm_selector_proposed_stop")
+        if action != "continue":
+            return LoopDecision(action="stop", reason=reason, confidence=confidence, debug={**base_debug, "proposal": proposed})
+        tool_name = str(proposed.get("tool_name") or "")
+        definition = self._tool_definitions.get(tool_name)
+        if definition is None:
+            return LoopDecision(
+                action="stop",
+                reason="llm_selector_invalid_tool",
+                confidence=0.0,
+                debug={**base_debug, "proposal": proposed},
+            )
+        args = proposed.get("args") if isinstance(proposed.get("args"), dict) else {}
+        return LoopDecision(
+            action="continue",
+            next_calls=(make_call(tool=definition, args=args, purpose=reason),),
+            reason=reason,
+            confidence=confidence,
+            debug={**base_debug, "proposal": proposed, "selected_tool": tool_name},
+        )
+
+
+class ShadowProbeSelector:
+    """Run a shadow selector beside a primary selector without changing action."""
+
+    def __init__(self, primary: Any, shadow: Any, *, shadow_name: str = "llm") -> None:
+        self._primary = primary
+        self._shadow = shadow
+        self._shadow_name = shadow_name
+
+    @property
+    def domain(self) -> str:
+        return getattr(self._primary, "domain", "")
+
+    def plan(
+        self,
+        *,
+        state: InvestigationLoopState,
+        trigger_context: dict[str, Any],
+    ) -> LoopDecision:
+        primary = self._primary.plan(state=state, trigger_context=trigger_context)
+        try:
+            shadow = self._shadow.plan(state=state, trigger_context=trigger_context)
+            shadow_payload = shadow.to_dict()
+        except Exception as exc:
+            shadow_payload = {"action": "stop", "reason": f"shadow_selector_error:{type(exc).__name__}", "error": str(exc)}
+        return LoopDecision(
+            action=primary.action,
+            next_calls=primary.next_calls,
+            reason=primary.reason,
+            confidence=primary.confidence,
+            debug={**primary.debug, "shadow_selector": self._shadow_name, "shadow_decision": shadow_payload},
+        )
 
 
 def _supporting_tools(
@@ -206,3 +323,50 @@ def _supporting_tools(
         if any(pattern.lower() in output_text.lower() for pattern in matched_patterns)
     }
     return tuple(sorted(tools))
+
+
+def _selector_debug(
+    index: ObservationIndex,
+    *,
+    mode: str,
+    selected_rule: str | None = None,
+    selected_tool: str | None = None,
+    stop_policy: str | None = None,
+    enabled: bool | None = None,
+) -> dict[str, Any]:
+    debug: dict[str, Any] = {
+        "selector_mode": mode,
+        "called_tools": sorted(index.called_tool_names),
+        "observed_text_count": len(index.observed_text),
+        "root_cause_candidates": [
+            candidate.to_dict(rank=rank)
+            for rank, candidate in enumerate(index.root_cause_candidates[:3], start=1)
+        ],
+    }
+    top = index.top_root_cause()
+    debug["top_root_cause"] = top.to_dict(rank=1) if top is not None else None
+    if selected_rule is not None:
+        debug["selected_rule"] = selected_rule
+    if selected_tool is not None:
+        debug["selected_tool"] = selected_tool
+    if stop_policy is not None:
+        debug["stop_policy"] = stop_policy
+    if enabled is not None:
+        debug["enabled"] = enabled
+    return debug
+
+
+def _llm_selector_context(
+    index: ObservationIndex,
+    tool_definitions: Iterable[ToolDefinition],
+) -> dict[str, Any]:
+    return {
+        "trigger_context": dict(index.trigger_context),
+        "called_tools": sorted(index.called_tool_names),
+        "observed_text": list(index.observed_text[-8:]),
+        "root_cause_candidates": [
+            candidate.to_dict(rank=rank)
+            for rank, candidate in enumerate(index.root_cause_candidates[:3], start=1)
+        ],
+        "available_tools": [definition.to_dict() for definition in tool_definitions],
+    }

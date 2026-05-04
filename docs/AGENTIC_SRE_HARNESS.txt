@@ -1022,6 +1022,43 @@ Validation status:
     improved from 0.0000 to 0.2889 and A@3 from 0.0296 to 0.3481. No eval
     split was used.
 
+Checkpoint: PR C telemetry and LLM selector swap point started.
+Date: 2026-05-04.
+
+Actual behavior added:
+  - InvestigationLoopState records planner_decisions with planned calls,
+    approved calls, critic rejections, selector debug, and shadow decisions.
+  - Tool-driven investigation reports emit a planner_telemetry finding instead
+    of changing the InvestigationReport contract shape.
+  - Telemetry details include critic rejections by reason, tool latency by
+    family, valid/invalid result rate, duplicate-call rejection rate,
+    budget-exhaustion rate, evidence-value-exhaustion rate, RCA confidence
+    before planner decisions, final RCA confidence after probes, and planner
+    decision debug artifacts.
+  - NativeProbeSelector remains the default selector and now emits structured
+    debug about selected rules, stop policy, observed text count, called tools,
+    and top RCA candidates.
+  - LlmProbeSelector exists behind the same LoopPlanner contract but is disabled
+    unless explicitly given enabled=True and a decision provider.
+  - ShadowProbeSelector runs a shadow selector beside the primary selector and
+    returns the primary decision unchanged, recording the shadow decision only
+    in debug.
+
+Validation status:
+  - PASS: python3 -m unittest tests.test_investigation_harness -v.
+  - PASS: python3 -m unittest tests.test_investigation_service -v.
+  - PASS: python3 -m py_compile on modified investigation harness/service
+    modules and focused tests.
+  - PASS: targeted pytest over hypothesis, investigation, and benchmark tests,
+    84 tests.
+  - PASS: uvx ruff check .
+  - PASS: repo strict mypy command.
+  - PASS: npm --prefix web run lint.
+
+Remaining gaps:
+  - Keep native selector default; do not route production investigations through
+    LlmProbeSelector without an explicit later gate.
+
 
 Validation Matrix
 -----------------
