@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import time
 from pathlib import Path
 from typing import Any
 
+from services.control_plane import RunCoordinator
 from shared.mesh_runtime import FileStateStore, RunEvent, RunSession, RuntimeConfig
 
 
@@ -33,6 +35,12 @@ def main() -> None:
     if args.reset and state_directory.exists():
         shutil.rmtree(state_directory)
     state_directory.mkdir(parents=True, exist_ok=True)
+
+    if not fixture.exists():
+        if Path(args.fixture) != DEFAULT_FIXTURE:
+            raise FileNotFoundError(f"fixture not found: {fixture}")
+        print(_seed_from_runtime(state_directory))
+        return
 
     payload = json.loads(fixture.read_text(encoding="utf-8"))
     events = payload.pop("events", [])
@@ -63,6 +71,53 @@ def main() -> None:
         encoding="utf-8",
     )
     print(session.run_id)
+
+
+def _seed_from_runtime(state_directory: Path) -> str:
+    config = _runtime_config(state_directory)
+    coordinator = RunCoordinator(config)
+    try:
+        run = coordinator.create_run(
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+                "pause_points": [],
+            }
+        )
+        run_id = run["run_id"]
+        deadline = time.monotonic() + 30
+        terminal = {"completed", "failed", "cancelled", "no_trigger", "recovery_spawned"}
+        while time.monotonic() < deadline:
+            session = coordinator.state_store.get_run_session(run_id)
+            if session is not None and session.stage in terminal:
+                (state_directory / "ui_operator_seed.json").write_text(
+                    json.dumps({"run_id": run_id, "fixture": "generated:search_latency_regression"}, indent=2),
+                    encoding="utf-8",
+                )
+                return run_id
+            time.sleep(0.1)
+        raise TimeoutError(f"seed run {run_id} did not reach a terminal stage")
+    finally:
+        coordinator.stop_background_workers(timeout=5.0)
+
+
+def _runtime_config(state_directory: Path) -> RuntimeConfig:
+    return RuntimeConfig(
+        state_directory=str(state_directory),
+        vault_path=str(state_directory / "vault"),
+        integrations_config_path=str(state_directory / "integrations.json"),
+        research_directory=str(state_directory / "research"),
+        evaluation_mode="native",
+        orchestration_mode="native",
+        promptfoo_command=None,
+        hermes_command=None,
+        goose_command=None,
+        evo_command=None,
+        agent_tasks_mode="off",
+        gitnexus_disable_autostart=True,
+    )
 
 
 def _run_session_payload(payload: dict[str, Any]) -> dict[str, Any]:

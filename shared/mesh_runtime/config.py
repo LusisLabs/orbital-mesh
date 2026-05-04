@@ -71,6 +71,11 @@ class RuntimeConfig:
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
+    readiness_profile: str = "local"
+    operator_identity_required: bool = False
+    operator_header_name: str = "X-Mesh-Operator"
+    operator_roles_header_name: str = "X-Mesh-Roles"
+    force_approval_gate: bool = False
     run_worker_count: int = 4
     run_queue_size: int = 100
     promptfoo_command: str | None = None
@@ -176,6 +181,7 @@ class RuntimeConfig:
     prometheus_url: str | None = None
     prometheus_query_timeout_seconds: float = 10.0
     feedback_prometheus_enabled: bool = False
+    live_feedback_required: bool = False
     feedback_prometheus_latency_query: str = 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000'
     feedback_prometheus_error_rate_query: str = 'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)'
     # Layer 3: LLM-backed decision fallback for OTel signals that don't match
@@ -277,6 +283,7 @@ class RuntimeConfig:
             raise ValueError("reth_investigation_budget_seconds must be > 0")
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
+        self.readiness_profile = _normalize_readiness_profile(self.readiness_profile, self.environment)
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
             self.observer_prompt_cache_mode
         )
@@ -317,6 +324,14 @@ class RuntimeConfig:
             ),
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
+            readiness_profile=_normalize_readiness_profile(
+                os.getenv("MESH_READINESS_PROFILE", ""),
+                os.getenv("MESH_ENVIRONMENT", "local"),
+            ),
+            operator_identity_required=_env_bool("MESH_OPERATOR_IDENTITY_REQUIRED", default=False),
+            operator_header_name=os.getenv("MESH_OPERATOR_HEADER", "X-Mesh-Operator"),
+            operator_roles_header_name=os.getenv("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles"),
+            force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),
             run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
             run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
@@ -399,6 +414,7 @@ class RuntimeConfig:
             prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
             feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            live_feedback_required=_env_bool("MESH_LIVE_FEEDBACK_REQUIRED", default=False),
             feedback_prometheus_latency_query=os.getenv(
                 "MESH_FEEDBACK_PROMETHEUS_LATENCY_QUERY",
                 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000',
@@ -542,6 +558,21 @@ def _normalize_state_backend(raw: str) -> str:
     if backend not in ("file", "postgres"):
         raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
     return backend
+
+
+def _normalize_readiness_profile(raw: str, environment: str = "local") -> str:
+    profile = (raw or "").strip().lower()
+    if not profile:
+        profile = (environment or "local").strip().lower()
+    aliases = {
+        "dev": "local",
+        "development": "local",
+        "prod": "pilot",
+        "production": "pilot",
+        "phase4": "expansion",
+    }
+    profile = aliases.get(profile, profile)
+    return profile if profile in {"local", "staging", "pilot", "expansion"} else "local"
 
 
 def _normalize_prompt_cache_mode(raw: str) -> str:

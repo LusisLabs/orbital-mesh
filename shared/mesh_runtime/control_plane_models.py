@@ -185,11 +185,20 @@ class IntegrationStatus(JsonModel):
     primary_route: str | None = None
     fallback_route: str | None = None
     warnings: list[str] = field(default_factory=list)
+    certification: str = "mock"
+    required_before: str = "local"
+    posture: str = "configured"
 
 
 @dataclass
 class IntegrationReadiness(JsonModel):
     checked_at: str
+    profile: str
+    status: str
+    required_checks: dict[str, Any]
+    optional_checks: dict[str, Any]
+    blockers: list[str]
+    connector_certification: dict[str, Any]
     promptfoo: IntegrationStatus
     hermes: IntegrationStatus
     goose: IntegrationStatus

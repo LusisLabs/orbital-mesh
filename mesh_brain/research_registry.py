@@ -131,6 +131,46 @@ RESEARCH_INFLUENCES: tuple[ResearchInfluence, ...] = (
         risks=("framework overhead", "integration complexity"),
     ),
     ResearchInfluence(
+        name="Nydhal/microgpt.apl",
+        url="https://github.com/Nydhal/microgpt.apl",
+        organization="Nydhal",
+        category="micro_transformer_correctness",
+        planes=("posttraining", "eval_jobs", "serving"),
+        capabilities=(
+            "explicit matrix gradients",
+            "finite-difference gradient checks",
+            "full-sequence attention parity",
+            "KV-style forward parity",
+            "deterministic Adam trajectory",
+        ),
+        adoption_guidance=(
+            "Use as influence for the local model-kernel correctness probe. Do not vendor APL into the runtime; "
+            "keep the Mesh implementation dependency-free and deterministic."
+        ),
+        mvp_relevance="mvp",
+        risks=("toy model scale", "Dyalog APL runtime is not a Mesh production dependency"),
+    ),
+    ResearchInfluence(
+        name="AlexCheema/talos-vs-macbook",
+        url="https://github.com/AlexCheema/talos-vs-macbook",
+        organization="Alex Cheema",
+        category="micro_runtime_benchmark",
+        planes=("serving", "eval_jobs", "model_management"),
+        capabilities=(
+            "tiny batch-1 runtime overhead",
+            "Apple Silicon CPU benchmarking",
+            "Q4.12 fixed-point inference drift",
+            "MLX GPU launch-overhead caution",
+            "hardware-routing benchmark guidance",
+        ),
+        adoption_guidance=(
+            "Use as influence for Mesh Brain runtime guidance and fixed-point drift checks. Do not promote toy-model "
+            "tokens/sec into production claims without measured backend artifacts."
+        ),
+        mvp_relevance="mvp",
+        risks=("microGPT scale does not predict Qwen-class throughput", "hardware measurements are environment-specific"),
+    ),
+    ResearchInfluence(
         name="openai/evals",
         url="https://github.com/openai/evals",
         organization="OpenAI",

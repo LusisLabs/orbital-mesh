@@ -117,6 +117,15 @@ from .model_client import (
     MeshBrainModelClientResult,
     OpenAICompatibleMeshBrainModelClient,
 )
+from .model_kernel_probe import (
+    MicroRuntimeBenchmark,
+    MicroTransformerCorrectnessProbe,
+    ModelKernelProbeResult,
+    run_micro_runtime_benchmark,
+    run_micro_transformer_correctness_probe,
+    run_model_kernel_probe,
+    write_model_kernel_probe_artifacts,
+)
 from .mvp import (
     MeshBrainMVPResult,
     run_private_crops_mvp_e2e,

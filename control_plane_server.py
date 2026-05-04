@@ -22,6 +22,12 @@ from shared.mesh_runtime import RuntimeConfig
 _LOG = logging.getLogger("mesh.control_plane")
 
 
+class AuthorizationError(PermissionError):
+    def __init__(self, message: str, status: HTTPStatus = HTTPStatus.FORBIDDEN):
+        super().__init__(message)
+        self.status = status
+
+
 def _safe_segment(path: str, index: int) -> str | None:
     """Extract a URL path segment by index, returning None if out of bounds."""
     segments = [s for s in path.split("/") if s]
@@ -33,6 +39,12 @@ def _safe_int(value: str, default: int = 0) -> int:
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _roles_for_steering(command: object) -> set[str]:
+    if command in {"approve", "override_decision", "override_execution_parameters"}:
+        return {"approver", "admin"}
+    return {"launcher", "approver", "admin"}
 
 
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +122,12 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
+            return
+        if path == "/api/kill-switch":
+            self._send_json(self.server.coordinator.kill_switch_status())
+            return
+        if path == "/api/pilot/go-no-go":
+            self._send_json(self.server.coordinator.generate_pilot_go_no_go())
             return
         if path == "/api/rules/suggestions":
             # Layer 4 admin surface. Returns [] when rule_learning_enabled is
@@ -467,12 +485,27 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._handle_otlp_metrics(payload)
             return
         if parsed.path == "/api/watch/start":
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             self._send_json(self.server.coordinator.watch_start())
             return
         if parsed.path == "/api/watch/stop":
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             self._send_json(self.server.coordinator.watch_stop())
             return
         if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/start"):
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             name = parsed.path[len("/api/watchers/"):-len("/start")]
             if not name:
                 self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
@@ -486,6 +519,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 )
             return
         if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/stop"):
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             name = parsed.path[len("/api/watchers/"):-len("/stop")]
             if not name:
                 self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
@@ -493,6 +531,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.coordinator.watcher_stop(name))
             return
         if parsed.path == "/api/trust-ladder/override":
+            try:
+                payload["_operator"] = self._authorize({"admin", "approver"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             action_class = str(payload.get("action_class", "")).strip()
             service = str(payload.get("service", "")).strip()
             level = str(payload.get("level", "")).strip()
@@ -521,13 +564,44 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.SERVICE_UNAVAILABLE
             self._send_json(result, status=status)
             return
+        if parsed.path == "/api/policy/simulate":
+            try:
+                payload["_operator"] = self._authorize({"viewer", "launcher", "approver", "admin"})
+                result = self.server.coordinator.simulate_policy(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except KeyError:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(result)
+            return
+        if parsed.path == "/api/kill-switch":
+            try:
+                payload["_operator"] = self._authorize({"admin"})
+                result = self.server.coordinator.apply_kill_switch(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(result)
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
             return
         if parsed.path == "/api/runs":
             try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
                 run = self.server.coordinator.create_run(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
@@ -567,7 +641,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
                 return
             try:
+                payload["_operator"] = self._authorize(_roles_for_steering(payload.get("command")))
                 run = self.server.coordinator.steer_run(run_id, payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             except KeyError:
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -675,6 +753,41 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status=HTTPStatus.ACCEPTED,
         )
 
+    def _operator_context(self) -> dict[str, Any]:
+        identity = (
+            self.headers.get(self.server.config.operator_header_name)
+            or self.headers.get("X-Forwarded-User")
+            or self.headers.get("X-Auth-Request-Email")
+            or ""
+        ).strip()
+        raw_roles = (
+            self.headers.get(self.server.config.operator_roles_header_name)
+            or self.headers.get("X-Mesh-Role")
+            or ""
+        )
+        roles = sorted({role.strip().lower() for role in raw_roles.replace(";", ",").split(",") if role.strip()})
+        if not identity:
+            identity = "anonymous"
+        return {
+            "operator_id": identity,
+            "roles": roles,
+            "source": "proxy_header" if identity != "anonymous" else "local_anonymous",
+            "source_ip": self.client_address[0] if self.client_address else None,
+        }
+
+    def _authorize(self, allowed_roles: set[str]) -> dict[str, Any]:
+        operator = self._operator_context()
+        identity_required = self.server.config.operator_identity_required
+        if not identity_required:
+            return operator
+        if operator["operator_id"] == "anonymous":
+            raise AuthorizationError("operator identity is required", HTTPStatus.UNAUTHORIZED)
+        roles = set(operator.get("roles") or [])
+        if not roles & allowed_roles:
+            allowed = ", ".join(sorted(allowed_roles))
+            raise AuthorizationError(f"operator role required: {allowed}", HTTPStatus.FORBIDDEN)
+        return operator
+
     def log_message(self, format: str, *args: Any) -> None:
         if not self.server.config.access_log_enabled:
             return
@@ -690,7 +803,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "error": "web assets not built",
-                    "detail": "Run `npm install` and `npm run build` in mesh-intelligence/web before opening the browser.",
+                    "detail": "Run `npm --prefix web install` and `npm --prefix web run build` in orbital-mesh before opening the browser.",
                 },
                 status=HTTPStatus.SERVICE_UNAVAILABLE,
             )
@@ -837,7 +950,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Last-Event-ID, Authorization, X-Mesh-Operator, X-Mesh-Roles, X-Mesh-Role, X-Forwarded-User, X-Auth-Request-Email",
+            )
             self.send_header("Access-Control-Max-Age", "86400")
 
     def _read_request_body(self) -> bytes:

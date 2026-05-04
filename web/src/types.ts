@@ -111,10 +111,19 @@ export interface IntegrationStatus {
   primary_route?: string | null;
   fallback_route?: string | null;
   warnings: string[];
+  certification: string;
+  required_before: string;
+  posture: string;
 }
 
 export interface IntegrationReadiness {
   checked_at: string;
+  profile: string;
+  status: string;
+  required_checks: Record<string, any>;
+  optional_checks: Record<string, any>;
+  blockers: string[];
+  connector_certification: Record<string, any>;
   promptfoo: IntegrationStatus;
   hermes: IntegrationStatus;
   goose: IntegrationStatus;
@@ -217,6 +226,66 @@ export interface BenchmarkRecord {
   passed: boolean;
   dimensions: Record<string, any>;
   dataset_ref?: string | null;
+}
+
+export interface PolicySimulationResult {
+  mutates: boolean;
+  source: Record<string, any>;
+  triggered: boolean;
+  trigger?: Record<string, any> | null;
+  evidence_pack?: Record<string, any> | null;
+  scenario_analysis?: Record<string, any> | null;
+  decision?: Record<string, any> | null;
+  evaluation?: Record<string, any> | null;
+  blockers: string[];
+  allowed_action?: Record<string, any> | null;
+  denied_action?: Record<string, any> | null;
+  rollback_path?: string | null;
+}
+
+export interface KillSwitchStatus {
+  watchers: WatcherStatus;
+  live_execution_enabled: boolean;
+  force_approval_gate: boolean;
+  allowed_contexts: string[];
+  allowed_namespaces: string[];
+  actions?: string[];
+  operator?: Record<string, any> | null;
+}
+
+export interface PilotGoNoGoPacket {
+  packet_version: string;
+  generated_at: string;
+  status: string;
+  checks: Record<string, boolean>;
+  missing_evidence: string[];
+  readiness: IntegrationReadiness;
+  observed: {
+    run_count: number;
+    approved_run_ids: string[];
+    live_action_run_ids: string[];
+    denied_action_run_ids: string[];
+    merkle_run_ids: string[];
+  };
+}
+
+export interface TrustLadderEntry {
+  action_class: string;
+  service: string;
+  level: string;
+  previous_level: string;
+  total_runs: number;
+  successful_runs: number;
+  success_rate: number;
+  consecutive_failures: number;
+  promotion_count: number;
+  demotion_count: number;
+  override_count: number;
+  last_outcome?: string | null;
+  last_outcome_at?: string | null;
+  last_level_change_at?: string | null;
+  last_override_at?: string | null;
+  manual_override_reason?: string | null;
 }
 
 export interface ServiceAgentRecord {

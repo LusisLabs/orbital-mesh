@@ -8,6 +8,7 @@ from typing import Any
 
 from .data_plane import build_context_training_data_plane
 from .judge_client import DeterministicMeshBrainJudgeClient, JudgeClientRequest, MeshBrainJudgeClient
+from .model_kernel_probe import ModelKernelProbeResult, run_model_kernel_probe
 from .runtime import DatasetRow, stable_digest, utc_now
 
 
@@ -83,6 +84,7 @@ class QualityTrainingResult:
     preference_stage: QualityTrainingStage
     runtime_evidence: QualityRuntimeEvidence
     eval_comparison: QualityEvalComparison
+    model_kernel_probe: ModelKernelProbeResult
     promotion_gate: dict[str, Any]
     artifact_paths: dict[str, str]
 
@@ -96,6 +98,7 @@ class QualityTrainingResult:
             "preference_stage": self.preference_stage.to_dict(),
             "runtime_evidence": self.runtime_evidence.to_dict(),
             "eval_comparison": self.eval_comparison.to_dict(),
+            "model_kernel_probe": self.model_kernel_probe.to_dict(),
             "promotion_gate": dict(self.promotion_gate),
             "artifact_paths": dict(self.artifact_paths),
         }
@@ -409,6 +412,9 @@ def run_quality_training_plan(
     train_metrics: dict[str, float] | None = None,
     judge_client: MeshBrainJudgeClient | None = None,
     require_runtime_evidence: bool = True,
+    model_kernel_probe: ModelKernelProbeResult | None = None,
+    require_model_kernel_probe: bool = True,
+    model_kernel_benchmark_iterations: int = 2000,
 ) -> QualityTrainingResult:
     output_path = Path(output_directory)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -450,12 +456,18 @@ def run_quality_training_plan(
         red_team_responses=red_team_responses,
         judge_client=judge_client,
     )
+    kernel_probe = model_kernel_probe or run_model_kernel_probe(
+        output_directory=output_path / "model_kernel",
+        benchmark_iterations=model_kernel_benchmark_iterations,
+    )
     promotion_gate = _promotion_gate(
         sft_stage=sft_stage,
         preference_stage=preference_stage,
         runtime_evidence=runtime_evidence,
         comparison=comparison,
         require_runtime_evidence=require_runtime_evidence,
+        model_kernel_probe=kernel_probe,
+        require_model_kernel_probe=require_model_kernel_probe,
     )
     release_decision = str(promotion_gate["decision"])
     status = "completed" if release_decision == "promote" else "blocked"
@@ -470,11 +482,13 @@ def run_quality_training_plan(
             "preference_stage": preference_stage.to_dict(),
             "runtime_evidence": runtime_evidence.to_dict(),
             "eval_comparison": comparison.to_dict(),
+            "model_kernel_probe": kernel_probe.to_dict(),
             "promotion_gate": promotion_gate,
         },
         output_directory=output_path,
     )
     artifact_paths.update(split_paths)
+    artifact_paths.update(kernel_probe.artifact_paths)
     return QualityTrainingResult(
         result_id=result_id,
         status=status,
@@ -484,6 +498,7 @@ def run_quality_training_plan(
         preference_stage=preference_stage,
         runtime_evidence=runtime_evidence,
         eval_comparison=comparison,
+        model_kernel_probe=kernel_probe,
         promotion_gate=promotion_gate,
         artifact_paths=artifact_paths,
     )
@@ -498,6 +513,7 @@ def write_quality_training_result(*, result: dict[str, Any], output_directory: s
         "quality_preference_stage.json": result["preference_stage"],
         "quality_runtime_evidence.json": result["runtime_evidence"],
         "quality_eval_comparison.json": result["eval_comparison"],
+        "quality_model_kernel_probe.json": result["model_kernel_probe"],
         "quality_promotion_gate.json": result["promotion_gate"],
         "quality_training_result.json": result,
     }
@@ -763,6 +779,8 @@ def _promotion_gate(
     runtime_evidence: QualityRuntimeEvidence,
     comparison: QualityEvalComparison,
     require_runtime_evidence: bool,
+    model_kernel_probe: ModelKernelProbeResult,
+    require_model_kernel_probe: bool,
 ) -> dict[str, Any]:
     reasons = []
     if sft_stage.status != "completed" or not sft_stage.gate["passed"]:
@@ -773,6 +791,8 @@ def _promotion_gate(
         reasons.extend(runtime_evidence.gate["reasons"])
     if comparison.decision != "promote":
         reasons.extend(comparison.reasons)
+    if require_model_kernel_probe and model_kernel_probe.release_decision != "pass":
+        reasons.extend([f"model_kernel_{reason}" for reason in model_kernel_probe.gate["reasons"]])
     return {
         "decision": "promote" if not reasons else "block",
         "passed": not reasons,
@@ -785,6 +805,7 @@ def _promotion_gate(
             "adapter_beats_base",
             "adapter_beats_base_by_rubric",
             "no_red_team_regression",
+            "model_kernel_probe_passes",
         ],
         "metrics": {
             "sft_valid_loss_final": sft_stage.metrics["valid_loss_final"],
@@ -795,6 +816,10 @@ def _promotion_gate(
             "rubric_scores": comparison.rubric_scores,
             "red_team_regressions": comparison.red_team_regressions,
             "adapter_file_count": len(runtime_evidence.adapter_files),
+            "model_kernel_max_forward_delta": model_kernel_probe.correctness.max_forward_delta,
+            "model_kernel_max_gradient_relative_error": model_kernel_probe.correctness.max_gradient_relative_error,
+            "model_kernel_q412_max_logit_delta": model_kernel_probe.correctness.q412_max_logit_delta,
+            "model_kernel_reference_tokens_per_second": model_kernel_probe.runtime_benchmark.local_target["tokens_per_second"],
         },
     }
 

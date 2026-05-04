@@ -243,8 +243,13 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
                 "quality_preference_stage",
                 "quality_runtime_evidence",
                 "quality_eval_comparison",
+                "quality_model_kernel_probe",
                 "quality_promotion_gate",
                 "quality_training_result",
+                "model_kernel_correctness",
+                "model_kernel_runtime_benchmark",
+                "model_kernel_gate",
+                "model_kernel_probe_summary",
                 "quality_sft_messages",
                 "quality_preference_pairs",
                 "quality_eval_prompts",
@@ -272,6 +277,8 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
         self.assertEqual(result.runtime_evidence.status, "completed")
         self.assertEqual(result.preference_stage.method, "orpo")
         self.assertEqual(result.promotion_gate["decision"], "promote")
+        self.assertEqual(result.model_kernel_probe.release_decision, "pass")
+        self.assertIn("model_kernel_max_gradient_relative_error", result.promotion_gate["metrics"])
 
 
 def _corpus_row(row_id: str) -> dict[str, object]:

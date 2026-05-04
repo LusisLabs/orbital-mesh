@@ -160,6 +160,12 @@ production integrations in release notes or readiness output. Paths classified
 as intentional safety defaults are acceptable only when their operational docs
 state the enablement flags, allowlists, and failure behavior.
 
+`GET /api/readiness` exposes a machine-readable `connector_certification` map.
+Certification states are documented in
+[`production-hardening-records.md`](production-hardening-records.md) and are
+separate from live probe readiness: a connector can be reachable while still
+classified as `proposal-only`, `unfinished`, or `mock`.
+
 ## Evo proposal lane
 
 Use a globally installed `evo-hq-cli`:

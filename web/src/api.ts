@@ -3,8 +3,11 @@ import type {
   HealthSnapshot,
   IntegrationReadiness,
   EvidenceGraph,
+  KillSwitchStatus,
   MerkleProof,
   MerkleSnapshot,
+  PilotGoNoGoPacket,
+  PolicySimulationResult,
   ScenarioAnalysis,
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
@@ -16,6 +19,7 @@ import type {
   ServiceAgentRecord,
   SimulationScenarioRecord,
   SystemSnapshot,
+  TrustLadderEntry,
   VaultTreeEntry,
   WatcherStatus,
 } from "./types";
@@ -59,6 +63,32 @@ export const api = {
 
   getReadiness(baseUrl: string) {
     return request<IntegrationReadiness>(baseUrl, "/api/readiness");
+  },
+
+  getKillSwitch(baseUrl: string) {
+    return request<KillSwitchStatus>(baseUrl, "/api/kill-switch");
+  },
+
+  applyKillSwitch(baseUrl: string, payload: Record<string, unknown>) {
+    return request<KillSwitchStatus>(baseUrl, "/api/kill-switch", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  simulatePolicy(baseUrl: string, payload: Record<string, unknown>) {
+    return request<PolicySimulationResult>(baseUrl, "/api/policy/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPilotGoNoGo(baseUrl: string) {
+    return request<PilotGoNoGoPacket>(baseUrl, "/api/pilot/go-no-go");
+  },
+
+  getTrustLadder(baseUrl: string) {
+    return request<{ entries: TrustLadderEntry[] }>(baseUrl, "/api/trust-ladder");
   },
 
   getScenarios(baseUrl: string) {

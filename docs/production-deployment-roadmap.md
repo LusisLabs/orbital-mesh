@@ -193,28 +193,28 @@ Exit gates:
 
 | Capability | Required before | Status |
 | --- | --- | --- |
-| Authenticated ingress and operator identity | any external human test | Missing in app; must be enforced by proxy first. |
-| RBAC roles for viewer, launcher, approver, admin | production pilot | Not built into app. Proxy identity plus app-level role checks needed. |
-| Tiered readiness profiles | private staging | `/api/readiness` exists; profile-specific required/optional gates need implementation. |
-| Policy simulator | private staging | Replay paths exist through run creation and fixtures; mutation-free simulator UX/API is backlog. |
-| Evidence graph as primary run surface | local production-like e2e | Evidence and subdecision graph APIs exist; UI should make the graph the main inspection path. |
-| Executable invariant suite | local production-like e2e | Add tests that prove authority boundaries cannot be bypassed. |
-| Distributed-systems fault tests | local production-like e2e | Cover duplicate signals, clock skew, delayed feedback, dependency timeout, queue backpressure, and partial network failure. |
-| Threat model and abuse-case register | private staging | Required before any external operator access. Findings need owner, decision, expiry, and compensating control. |
-| Data classification and retention controls | private staging | Signals, prompts, logs, traces, vault notes, exports, and model outputs need explicit handling rules. |
-| Supply-chain provenance | private staging | SBOM, image digest, pinned dependency record, vulnerability scan, and build provenance are backlog. |
-| Pilot go/no-go generator | production pilot | Needed as a signed deployment packet generated from readiness, smoke, policy, approval, and rollback evidence. |
-| Connector certification matrix | private staging | Integration classification exists in docs; machine-readable certification state is backlog. |
-| Failure-mode library | private staging | Fixtures and chaos tests exist; explicit product library and UI replay catalog are backlog. |
+| Authenticated ingress and operator identity | any external human test | App accepts proxy identity headers and records operators; authenticated TLS/SSO proxy remains required before external access. |
+| RBAC roles for viewer, launcher, approver, admin | production pilot | App-level role checks are implemented for mutating paths; proxy identity remains the trust boundary. |
+| Tiered readiness profiles | private staging | Implemented in `/api/readiness` for `local`, `staging`, `pilot`, and `expansion`. |
+| Policy simulator | private staging | Mutation-free API exists for fixture, captured-run, and inline-signal replay; UI surface is present for operator inspection. |
+| Evidence graph as primary run surface | local production-like e2e | UI defaults to evidence-first run inspection with graph and proof surfaces. |
+| Executable invariant suite | local production-like e2e | Focused production cut-list tests cover readiness, role gates, simulator non-mutation, kill switch, feedback gates, and proposal-lane isolation. |
+| Distributed-systems fault tests | local production-like e2e | Focused tests cover duplicate/correlated signals, delayed deferred runs, queue backpressure, and packaging drift; broader clock-skew and partial-network coverage remains. |
+| Threat model and abuse-case register | private staging | Initial authority-boundary register is documented; owner/expiry tracking remains before external staging. |
+| Data classification and retention controls | private staging | Initial classification table is documented; enforceable retention, redaction, and deletion controls remain. |
+| Supply-chain provenance | private staging | Required fields are documented; SBOM, vulnerability scan, image digest, and CI provenance generation remain. |
+| Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, and rollback evidence. |
+| Connector certification matrix | private staging | Machine-readable certification states are exposed in `/api/readiness` and documented. |
+| Failure-mode library | private staging | Core denied-action and fault tests exist; explicit product library and UI replay catalog remain. |
 | Operator trust ladder UI | private staging | Trust ladder store/API exists; visible autonomy rationale is backlog. |
-| Kill-switch panel | production pilot | Runtime flags and watcher controls exist; consolidated operator panel is backlog. |
-| Disaster recovery drills | production pilot | Restore state, rotate keys, recover from observability outage, and replay corrupted events against declared RPO/RTO. |
-| Release provenance packet | production pilot | Record commit, image digest, policy hashes, migration version, env profile, and deployer identity. |
+| Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
+| Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
+| Release provenance packet | production pilot | Required fields are documented; generation from CI artifacts remains. |
 | Pilot SLO and error budget | production pilot | Needed to bound acceptable failure, latency, and degradation during real-user testing. |
-| Enterprise evaluation kit | private staging | Package the one-command stack, sample run export, architecture brief, security boundary brief, benchmark method, and pilot rubric. |
+| Enterprise evaluation kit | private staging | Initial kit is documented in `docs/evaluation-kits.md`; sample export packaging and formal benchmark packet remain. |
 | Reference architectures | private staging | Need deployment guides for Kubernetes platforms, private cloud, GPU/AI infrastructure, regulated enterprise, and air-gapped/VPC-only environments. |
-| Startup and developer evaluation path | private staging | Need a five-minute local demo, thirty-minute staging guide, sample fixtures, and no-procurement trial artifact. |
-| Community and open-source motion | private staging | Need contribution guide, issue templates, public roadmap, governance notes, examples, and clear community-vs-commercial boundaries. |
+| Startup and developer evaluation path | private staging | Initial five-minute and thirty-minute paths are documented in `docs/evaluation-kits.md`; sample export artifact remains. |
+| Community and open-source motion | private staging | Governance and community/commercial boundaries are documented in `docs/community-governance.md`; issue templates and example catalog remain. |
 | Cloud and ecosystem marketplaces | production expansion | Need packaging for Docker, Helm, Terraform, Kubernetes, and major cloud marketplace listings once production controls are real. |
 | Partner/MSP/SI program | production expansion | Need managed-deployment playbook, support boundaries, partner certification, and escalation model. |
 | Segment pricing and packaging | production expansion | Need packaging for community/local proof, startup/team, production platform, regulated/private deployment, and partner-managed deployment. |
@@ -224,13 +224,13 @@ Exit gates:
 | Durable external audit sink | compliance reliance | Local audit seam only. |
 | External incident adapter | production incident creation | Local deterministic seam only. |
 | Real feature flag provider adapter | production flag rollback | Local deterministic seam only. |
-| Postgres default production store | multi-operator production | Store code exists; production default and migration gate need validation. |
+| Postgres default production store | multi-operator production | Production-like compose now defaults Mesh to Postgres and restart proof passed in-container; migration gate and load validation remain. |
 | Backup and restore automation | private staging | Runbook exists; rehearsal evidence required. |
-| Live Prometheus feedback | production action validation | Supported when configured; must be mandatory for pilot services. |
+| Live Prometheus feedback | production action validation | Pilot readiness requires live feedback; current local proof uses Kubernetes re-harvest, while Prometheus service metrics remain deployment-specific. |
 | Watcher ownership and pause controls | production watchers | Watcher registry exists; operator ownership workflow needs polish. |
 | Run export for postmortems | production pilot | Vault and API exist; one-click/export packaging remains backlog. |
-| Role-stamped approvals | production pilot | Needs identity propagation into steering/audit records. |
-| Integration readiness contract per deployment tier | private staging | Readiness exists; tier-specific required/optional profiles needed. |
+| Role-stamped approvals | production pilot | Implemented; approvals record operator id, roles, source, and event id. |
+| Integration readiness contract per deployment tier | private staging | Implemented in `/api/readiness` with required checks, optional checks, blockers, and connector certification. |
 | Load and concurrency testing | production expansion | Not a current release gate. |
 | Mesh Brain sustained training proof | model-serving production | Gap report says real posttraining is not ready. |
 | MoE training and serving lane | any MoE claim | Not deployable; research only. |
@@ -371,6 +371,9 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 - No "best in the world" claim in public material unless backed by external benchmark evidence. Use the defensible claim: bounded, auditable, operator-steerable production remediation.
 
 ## Immediate Cut List
+
+Execution record for the first hardening slice: [`production-hardening-records.md`](production-hardening-records.md).
+Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`community-governance.md`](community-governance.md), [`design-partner-packet.md`](design-partner-packet.md), and [`postgres-restart-proof.md`](postgres-restart-proof.md).
 
 1. Normalize orbital-mesh naming across docs and image tags.
 2. Add tiered readiness profiles: local, staging, pilot, expansion.

@@ -11,6 +11,7 @@
 - hardware-aware serving-route selection;
 - runtime tool-policy enforcement, approval routing, audit events, and trace-to-dataset export;
 - Mesh-compatible observability records for model, adapter, engine, tenant, task type, token, cache, eval, and policy-route labels;
+- a deterministic model-kernel probe for micro-transformer math, fixed-point drift, and tiny batch-1 runtime guidance;
 - a private AI CROPS MVP orchestration that proves the PRD acceptance path end to end.
 
 This slice does not start vLLM, SGLang, Dynamo, MLX, or llama.cpp. It produces the registry state and routing decisions that later service adapters can consume.
@@ -250,6 +251,8 @@ The registry currently covers:
 - MegaBlocks for MoE and block-sparse expert-routing influence;
 - Google Research as a broad research reference corpus;
 - Google DeepMind OpenSpiel and Acme for RL environment and agent-loop structure;
+- Nydhal/microgpt.apl for explicit micro-transformer math and gradient-check discipline;
+- AlexCheema/talos-vs-macbook for tiny batch-1 runtime-overhead and fixed-point drift guidance;
 - OpenAI evals and EleutherAI lm-evaluation-harness for eval registry and benchmark-harness influence.
 
 `research_capability_report()` proves which sources cover required capabilities for a plane. `research_adoption_plan()` keeps open-ended RL and MoE work deferred from the MVP unless a later phase explicitly promotes that work.
@@ -311,6 +314,30 @@ The smoke writes `live_serving_execution.json`, `live_smoke_gate.json`, `live_re
 `mesh_brain.backend_matrix` runs the same live smoke across multiple OpenAI-compatible targets and writes `backend_matrix_results.json` plus `backend_matrix_summary.json`. The aggregate status is `block` if any backend blocks, `manual_review` if any backend needs review, and `pass` only when every enabled backend is promotable or canary-eligible.
 
 `mesh_brain.live_feedback` turns blocked or manual-review live runs into data-plane feedback. It emits the existing five dataset row families from the failed/manual run context, including SFT, preference, RL trajectory, eval, and red-team rows. Promoted or canary-eligible runs are recorded as skipped feedback and do not create training rows.
+
+## Model Kernel Probe
+
+`mesh_brain.model_kernel_probe` integrates bounded lessons from `Nydhal/microgpt.apl` and `AlexCheema/talos-vs-macbook` without vendoring either project or adding runtime dependencies. The probe is intentionally tiny and deterministic. It is a Mesh Brain gate, not a production throughput benchmark.
+
+The correctness probe checks:
+
+- full-sequence causal attention versus token-by-token KV-style forward parity;
+- explicit matrix gradients against finite-difference gradients;
+- one Adam step reduces the fixed reference loss;
+- Q4.12 fixed-point weight quantization stays below the configured logit-drift threshold.
+
+The runtime probe executes only a pure-Python local reference and records guidance targets for Apple Silicon native CPU, MLX GPU, and Q4.12 fixed-point paths. Those guidance rows are profile-only until a real backend smoke or load artifact measures the target environment.
+
+Run it directly:
+
+```bash
+PYTHONPATH=. python3 -m mesh_brain.run_model_kernel_probe \
+  --output .mesh-runtime-state/mesh-brain/model-kernel-probe \
+  --benchmark-iterations 2000 \
+  --json
+```
+
+It writes `model_kernel_correctness.json`, `model_kernel_runtime_benchmark.json`, `model_kernel_gate.json`, and `model_kernel_probe_summary.json`. `run_quality_training_plan()` now runs this probe by default and includes `quality_model_kernel_probe.json`; promotion is blocked if the model-kernel gate fails.
 
 `mesh_brain.readiness_gaps` writes an explicit readiness report for the remaining non-MVP work. It marks live smoke ready, but full posttraining execution and MoE training/serving not ready until longer quality-training jobs and sparse-expert proofs exist.
 

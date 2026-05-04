@@ -280,8 +280,18 @@
     "IntegrationReadiness": {
       "additionalProperties": false,
       "properties": {
+        "blockers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "checked_at": {
           "type": "string"
+        },
+        "connector_certification": {
+          "additionalProperties": {},
+          "type": "object"
         },
         "deepagents": {
           "$ref": "#/$defs/IntegrationStatus"
@@ -301,10 +311,24 @@
         "latentmas": {
           "$ref": "#/$defs/IntegrationStatus"
         },
+        "optional_checks": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "profile": {
+          "type": "string"
+        },
         "promptfoo": {
           "$ref": "#/$defs/IntegrationStatus"
         },
+        "required_checks": {
+          "additionalProperties": {},
+          "type": "object"
+        },
         "state_path": {
+          "type": "string"
+        },
+        "status": {
           "type": "string"
         },
         "vault_path": {
@@ -313,6 +337,12 @@
       },
       "required": [
         "checked_at",
+        "profile",
+        "status",
+        "required_checks",
+        "optional_checks",
+        "blockers",
+        "connector_certification",
         "promptfoo",
         "hermes",
         "goose",
@@ -328,6 +358,9 @@
     "IntegrationStatus": {
       "additionalProperties": false,
       "properties": {
+        "certification": {
+          "type": "string"
+        },
         "command": {
           "anyOf": [
             {
@@ -354,6 +387,9 @@
         "name": {
           "type": "string"
         },
+        "posture": {
+          "type": "string"
+        },
         "primary_route": {
           "anyOf": [
             {
@@ -366,6 +402,9 @@
         },
         "ready": {
           "type": "boolean"
+        },
+        "required_before": {
+          "type": "string"
         },
         "url": {
           "anyOf": [
@@ -392,7 +431,10 @@
         "url",
         "primary_route",
         "fallback_route",
-        "warnings"
+        "warnings",
+        "certification",
+        "required_before",
+        "posture"
       ],
       "type": "object"
     },

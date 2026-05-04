@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -30,6 +30,7 @@ GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 HERMES_BRIDGE_MODULE = "services.orchestrator.hermes_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
+_PROFILE_ORDER = {"local": 0, "staging": 1, "pilot": 2, "expansion": 3}
 
 
 @dataclass
@@ -110,6 +111,22 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.goose_command,
         runtime_config.evo_command,
         runtime_config.gitnexus_sidecar_url,
+        runtime_config.readiness_profile,
+        runtime_config.operator_identity_required,
+        runtime_config.state_backend,
+        runtime_config.database_url,
+        runtime_config.force_approval_gate,
+        runtime_config.kubernetes_live_execution_enabled,
+        runtime_config.kubernetes_allowed_contexts,
+        runtime_config.kubernetes_allowed_namespaces,
+        runtime_config.otel_receiver_enabled,
+        runtime_config.otel_receiver_token,
+        runtime_config.feedback_prometheus_enabled,
+        runtime_config.prometheus_url,
+        runtime_config.live_feedback_required,
+        runtime_config.feature_flag_credentials_available,
+        runtime_config.incident_credentials_available,
+        runtime_config.audit_logging_available,
         runtime_config.latentmas_enabled,
         runtime_config.latentmas_url,
         runtime_config.latentmas_model_name,
@@ -137,8 +154,63 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         evo_status = evo_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+    promptfoo_status = _with_certification(
+        promptfoo_status,
+        "staging-ready" if promptfoo_status.ready else "mock",
+        required_before="staging",
+        posture="evaluation gate",
+    )
+    hermes_status = _with_certification(
+        hermes_status,
+        "read-only" if hermes_status.ready else "mock",
+        required_before="staging",
+        posture="proposal lane",
+    )
+    goose_status = _with_certification(
+        goose_status,
+        "read-only" if goose_status.ready else "mock",
+        required_before="staging",
+        posture="review lane",
+    )
+    evo_status = _with_certification(
+        evo_status,
+        "proposal-only" if evo_status.ready else "mock",
+        required_before="pilot",
+        posture="scoped repo proposal lane",
+    )
+    latentmas_status = _with_certification(
+        latentmas_status,
+        "proposal-only" if latentmas_status.ready else "disabled",
+        required_before="pilot",
+        posture="model-lifecycle advisory lane",
+    )
+    deepagents_status = _with_certification(
+        deepagents_status,
+        "proposal-only" if deepagents_status.ready else "disabled",
+        required_before="pilot",
+        posture="sandboxed proposal fabric",
+    )
+    connector_certification = _connector_certification(runtime_config, resolved)
+    profile, required_checks, optional_checks, blockers = _profile_checks(
+        runtime_config,
+        {
+            "promptfoo": promptfoo_status,
+            "hermes": hermes_status,
+            "goose": goose_status,
+            "evo": evo_status,
+            "latentmas": latentmas_status,
+            "deepagents": deepagents_status,
+        },
+        connector_certification,
+    )
     readiness = IntegrationReadiness(
         checked_at=checked_at,
+        profile=profile,
+        status="ready" if not blockers else "blocked",
+        required_checks=required_checks,
+        optional_checks=optional_checks,
+        blockers=blockers,
+        connector_certification=connector_certification,
         promptfoo=promptfoo_status,
         hermes=hermes_status,
         goose=goose_status,
@@ -152,6 +224,160 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
     with _readiness_lock:
         _readiness_cache[cache_key] = (now, readiness)
     return readiness
+
+
+def _with_certification(
+    status: IntegrationStatus,
+    certification: str,
+    *,
+    required_before: str,
+    posture: str,
+) -> IntegrationStatus:
+    return replace(
+        status,
+        certification=certification,
+        required_before=required_before,
+        posture=posture,
+    )
+
+
+def _connector_certification(
+    runtime_config: RuntimeConfig,
+    resolved: IntegrationsConfig,
+) -> dict[str, Any]:
+    kubernetes_allowlisted = bool(runtime_config.kubernetes_allowed_contexts and runtime_config.kubernetes_allowed_namespaces)
+    kubernetes_state = (
+        "pilot-ready"
+        if runtime_config.kubernetes_live_execution_enabled and kubernetes_allowlisted
+        else ("read-only" if kubernetes_allowlisted else "mock")
+    )
+    otel_state = (
+        "staging-ready"
+        if runtime_config.otel_receiver_enabled and bool(runtime_config.otel_receiver_token)
+        else ("read-only" if runtime_config.prometheus_url else "mock")
+    )
+    return {
+        "kubernetes": {
+            "state": kubernetes_state,
+            "required_before": "pilot",
+            "detail": "Live execution requires explicit context and namespace allowlists.",
+        },
+        "webhooks": {
+            "state": "read-only",
+            "required_before": "staging",
+            "detail": "Webhook sources are accepted only through registered HMAC sources.",
+        },
+        "otel": {
+            "state": otel_state,
+            "required_before": "staging",
+            "detail": "OTLP ingest requires a bearer token when enabled; Prometheus feedback is read-only.",
+        },
+        "promptfoo": {
+            "state": "staging-ready" if resolved.promptfoo_command else "mock",
+            "required_before": "staging",
+            "detail": "Compatibility bridge; Mesh-native evaluation remains authoritative.",
+        },
+        "feature_flag_adapter": {
+            "state": "unfinished" if runtime_config.feature_flag_credentials_available else "disabled",
+            "required_before": "pilot",
+            "detail": "Local deterministic seam. Disable for pilot until a real provider adapter is certified.",
+        },
+        "incident_adapter": {
+            "state": "unfinished" if runtime_config.incident_credentials_available else "disabled",
+            "required_before": "pilot",
+            "detail": "Local deterministic seam. Disable for pilot until a real incident provider is certified.",
+        },
+        "audit_sink": {
+            "state": "mock" if runtime_config.audit_logging_available else "disabled",
+            "required_before": "pilot",
+            "detail": "Local audit seam. Mirror to durable external storage before compliance reliance.",
+        },
+        "deepagents": {
+            "state": "proposal-only" if runtime_config.agent_fabric_mode == "deepagents" else "disabled",
+            "required_before": "pilot",
+            "detail": "Sandbox lane cannot mutate production or write repos directly.",
+        },
+        "evo": {
+            "state": "proposal-only" if resolved.evo_command else "mock",
+            "required_before": "pilot",
+            "detail": "Operator-launched scoped repo proposal lane.",
+        },
+    }
+
+
+def _profile_checks(
+    runtime_config: RuntimeConfig,
+    statuses: dict[str, IntegrationStatus],
+    connector_certification: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
+    profile = runtime_config.readiness_profile
+    optional_checks = {
+        name: {
+            "ready": status.ready,
+            "certification": status.certification,
+            "detail": status.detail,
+        }
+        for name, status in statuses.items()
+    }
+    required_checks: dict[str, Any] = {
+        "state_path_configured": bool(runtime_config.state_directory),
+        "vault_path_configured": bool(runtime_config.vault_path),
+        "security_headers_enabled": runtime_config.security_headers_enabled,
+    }
+    if _profile_at_least(profile, "staging"):
+        required_checks.update(
+            {
+                "operator_identity_required": runtime_config.operator_identity_required,
+                "otel_ingest_protected": (
+                    not runtime_config.otel_receiver_enabled
+                    or bool(runtime_config.otel_receiver_token)
+                ),
+                "live_execution_allowlisted": (
+                    not runtime_config.kubernetes_live_execution_enabled
+                    or bool(
+                        runtime_config.kubernetes_allowed_contexts
+                        and runtime_config.kubernetes_allowed_namespaces
+                    )
+                ),
+                "audit_logging_available": runtime_config.audit_logging_available,
+            }
+        )
+    if _profile_at_least(profile, "pilot"):
+        live_feedback_required = runtime_config.live_feedback_required or _profile_at_least(profile, "pilot")
+        live_feedback_source_configured = bool(
+            runtime_config.feedback_prometheus_enabled
+            and runtime_config.prometheus_url
+        ) or runtime_config.kubernetes_live_execution_enabled
+        required_checks.update(
+            {
+                "state_backend_postgres": runtime_config.state_backend == "postgres",
+                "database_url_configured": bool(runtime_config.database_url),
+                "force_approval_gate": runtime_config.force_approval_gate
+                or runtime_config.default_steering_mode == "approval_gate",
+                "live_feedback_required": live_feedback_required,
+                "live_feedback_source_configured": live_feedback_source_configured,
+                "unfinished_feature_flag_adapter_disabled": not runtime_config.feature_flag_credentials_available,
+                "unfinished_incident_adapter_disabled": not runtime_config.incident_credentials_available,
+            }
+        )
+    if _profile_at_least(profile, "expansion"):
+        required_checks.update(
+            {
+                "postgres_required_for_multi_operator": runtime_config.state_backend == "postgres",
+                "external_audit_sink_certified": connector_certification.get("audit_sink", {}).get("state")
+                in {"pilot-ready", "production-ready"},
+            }
+        )
+    blockers = [
+        name
+        for name, passed in required_checks.items()
+        if isinstance(passed, bool) and not passed
+    ]
+    return profile, required_checks, optional_checks, blockers
+
+
+def _profile_at_least(profile: str, minimum: str) -> bool:
+    return _PROFILE_ORDER.get(profile, 0) >= _PROFILE_ORDER.get(minimum, 0)
 
 
 def invalidate_readiness_cache() -> None:

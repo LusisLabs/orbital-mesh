@@ -114,6 +114,7 @@ ALLOWED_STEERING_COMMANDS = {
 _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_execution_parameters"})
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
+_AGENT_TASK_TERMINAL_SETTLE_SECONDS = 1.0
 _LOG = logging.getLogger("mesh.control_plane")
 
 
@@ -144,6 +145,22 @@ def _slugify(value: str) -> str:
 
 def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
+
+
+def _operator_context(payload: dict[str, Any]) -> dict[str, Any] | None:
+    raw = payload.get("_operator")
+    if not isinstance(raw, dict):
+        return None
+    operator_id = str(raw.get("operator_id") or "").strip()
+    if not operator_id:
+        return None
+    roles = raw.get("roles")
+    return {
+        "operator_id": operator_id,
+        "roles": [str(role) for role in roles] if isinstance(roles, list) else [],
+        "source": str(raw.get("source") or "unknown"),
+        "source_ip": raw.get("source_ip"),
+    }
 
 
 def _validate_steering_command(session: RunSession, command_type: str, command_payload: dict[str, Any]) -> None:
@@ -311,6 +328,7 @@ class RunCoordinator:
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._agent_task_threads: dict[str, threading.Thread] = {}
         self._run_worker_stop = threading.Event()
         self._run_queue: queue.Queue[tuple[str, RuntimeConfig, dict[str, Any], str | None]] = queue.Queue(
             maxsize=self.config.run_queue_size
@@ -440,6 +458,49 @@ class RunCoordinator:
         self.watcher_registry.stop(name)
         return self._watcher_detail(name)
 
+    def kill_switch_status(self) -> dict[str, Any]:
+        return {
+            "watchers": self.watchers_status(),
+            "live_execution_enabled": self.config.kubernetes_live_execution_enabled,
+            "force_approval_gate": self.config.force_approval_gate,
+            "default_steering_mode": self.config.default_steering_mode,
+            "allowed_contexts": list(self.config.kubernetes_allowed_contexts),
+            "allowed_namespaces": list(self.config.kubernetes_allowed_namespaces),
+        }
+
+    def apply_kill_switch(self, payload: dict[str, Any]) -> dict[str, Any]:
+        operator = _operator_context(payload)
+        actions: list[str] = []
+        stop_watchers = payload.get("stop_watchers") is True or payload.get("watchers") in {"stop", "pause"}
+        if stop_watchers:
+            self.watcher_registry.stop_all()
+            actions.append("watchers_stopped")
+        if payload.get("disable_live_execution") is True or payload.get("live_execution_enabled") is False:
+            self.config.kubernetes_live_execution_enabled = False
+            actions.append("live_execution_disabled")
+        if payload.get("clear_namespace_allowlist") is True:
+            self.config.kubernetes_allowed_namespaces = ()
+            actions.append("namespace_allowlist_cleared")
+        if payload.get("force_approval_gate") is True:
+            self.config.force_approval_gate = True
+            self.config.default_steering_mode = "approval_gate"
+            with self._lock:
+                for control in self.controls.values():
+                    with control.condition:
+                        control.auto_mode = False
+                        control.pause_points.add("evaluation_ready")
+                        control.condition.notify_all()
+            actions.append("approval_gate_forced")
+        artifact = {
+            "artifact_key": "kill_switch",
+            "status": "applied" if actions else "no_op",
+            "actions": actions,
+            "operator": operator,
+            "recorded_at": _timestamp(),
+        }
+        self.state_store.put_artifact(artifact)
+        return {**self.kill_switch_status(), "actions": actions, "operator": operator}
+
     def _watcher_detail(self, name: str) -> dict[str, Any]:
         watcher = self.watcher_registry.get(name)
         if watcher is None:
@@ -558,6 +619,122 @@ class RunCoordinator:
         with self._readiness_lock:
             self._readiness_cache = (now, readiness)
         return readiness
+
+    def simulate_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
+        signal_payload, source = self._resolve_policy_simulation_signal(payload)
+        from services.decision.service import DecisionService
+        from services.evaluation.service import EvaluationService
+        from services.ingest.service import IngestService
+        from services.trigger.service import TriggerService
+        from shared.mesh_runtime.state import RegistrationResult
+
+        class DryRunEvaluationStore:
+            def register_evaluation(self, trigger_id: str, decision_id: str) -> RegistrationResult:
+                return RegistrationResult(
+                    accepted=True,
+                    record={"trigger_id": trigger_id, "decision_id": decision_id, "dry_run": True},
+                )
+
+        normalized = IngestService().normalize_signal(copy.deepcopy(signal_payload))
+        trigger = TriggerService().detect(normalized)
+        if trigger is None:
+            return {
+                "mutates": False,
+                "source": source,
+                "triggered": False,
+                "decision": None,
+                "evaluation": None,
+                "blockers": [],
+                "allowed_action": None,
+                "denied_action": None,
+                "rollback_path": None,
+            }
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal_payload)
+        scenario_analysis, _memory = ScenarioAnalysisService(state_store=None).analyze(trigger, run_id=None)
+        decision = DecisionService().decide(
+            trigger,
+            scenario_analysis=scenario_analysis,
+            evidence_pack=evidence_pack.to_dict(),
+        )
+        evaluation = EvaluationService(
+            config=replace(self.config, evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode)),
+            state_store=DryRunEvaluationStore(),
+        ).evaluate(trigger, decision)
+        execution_plan = copy.deepcopy(decision.execution_plan)
+        allowed_action = execution_plan if evaluation.passed and evaluation.final_recommendation == "execute" else None
+        denied_action = execution_plan if allowed_action is None else None
+        return {
+            "mutates": False,
+            "source": source,
+            "triggered": True,
+            "trigger": trigger.to_dict(),
+            "evidence_pack": evidence_pack.to_dict(),
+            "scenario_analysis": scenario_analysis.to_dict(),
+            "decision": decision.to_dict(),
+            "evaluation": evaluation.to_dict(),
+            "blockers": list(evaluation.blocking_reasons),
+            "allowed_action": allowed_action,
+            "denied_action": denied_action,
+            "rollback_path": execution_plan.get("rollback_plan"),
+        }
+
+    def generate_pilot_go_no_go(self) -> dict[str, Any]:
+        readiness = self.build_readiness()
+        runs = self.state_store.list_run_sessions(limit=100)
+        observed_runs = [session for session in runs if session.latest_event_sequence > 0]
+        event_sets = {
+            session.run_id: self.state_store.list_run_events(session.run_id)
+            for session in observed_runs
+        }
+        approved_runs = [
+            session for session in observed_runs
+            if any(
+                event.event_type == STEERING_COMMAND
+                and event.payload.get("command_type") == "approve"
+                for event in event_sets.get(session.run_id, [])
+            )
+        ]
+        live_action_runs = [
+            session for session in observed_runs
+            if isinstance(session.artifacts.get("execution"), dict)
+            and isinstance(session.artifacts["execution"].get("external_refs"), dict)
+            and session.artifacts["execution"]["external_refs"].get("live_execution") is True
+        ]
+        denied_action_runs = [
+            session for session in observed_runs
+            if isinstance(session.artifacts.get("evaluation"), dict)
+            and session.artifacts["evaluation"].get("blocking_reasons")
+        ]
+        merkle_runs = [session for session in observed_runs if session.latest_merkle_root]
+        checks = {
+            "readiness_green": readiness.get("status") == "ready",
+            "observed_run_evidence": bool(observed_runs),
+            "operator_approval_observed": bool(approved_runs),
+            "live_action_proof_observed": bool(live_action_runs),
+            "denied_action_proof_observed": bool(denied_action_runs),
+            "merkle_proof_observed": bool(merkle_runs),
+            "rollback_plan_observed": any(
+                isinstance(session.artifacts.get("decision"), dict)
+                and bool(session.artifacts["decision"].get("execution_plan", {}).get("rollback_plan"))
+                for session in observed_runs
+            ),
+        }
+        missing = [name for name, passed in checks.items() if not passed]
+        return {
+            "packet_version": "pilot.go_no_go.v1",
+            "generated_at": _timestamp(),
+            "status": "go" if not missing else "blocked",
+            "checks": checks,
+            "missing_evidence": missing,
+            "readiness": readiness,
+            "observed": {
+                "run_count": len(observed_runs),
+                "approved_run_ids": [session.run_id for session in approved_runs],
+                "live_action_run_ids": [session.run_id for session in live_action_runs],
+                "denied_action_run_ids": [session.run_id for session in denied_action_runs],
+                "merkle_run_ids": [session.run_id for session in merkle_runs],
+            },
+        }
 
     # ---- webhook surface --------------------------------------------------
 
@@ -723,6 +900,11 @@ class RunCoordinator:
         session = self.state_store.get_run_session(run_id)
         if session is None:
             return None
+        if session.stage in TERMINAL_STAGES:
+            self._settle_agent_tasks_before_terminal(run_id)
+            session = self.state_store.get_run_session(run_id)
+            if session is None:
+                return None
         latest_sequence = int(session.latest_event_sequence or 0)
         after_sequence = max(0, latest_sequence - 200)
         events = self.state_store.list_run_events(run_id, after_sequence=after_sequence)
@@ -856,7 +1038,10 @@ class RunCoordinator:
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._run_worker_stop.is_set():
             raise RuntimeError("run coordinator is stopped")
+        operator = _operator_context(payload)
         steering_mode = payload.get("steering_mode", self.config.default_steering_mode)
+        if self.config.force_approval_gate:
+            steering_mode = "approval_gate"
         auto_mode = steering_mode == "interruptible_auto"
         raw_pause_points = (
             payload["pause_points"]
@@ -876,6 +1061,8 @@ class RunCoordinator:
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
         artifacts = {"input_signal": signal_payload}
+        if operator is not None:
+            artifacts["operator"] = operator
         if payload.get("chaos_probe") is True:
             artifacts["chaos_probe"] = True
         if payload.get("correlation_key"):
@@ -905,8 +1092,9 @@ class RunCoordinator:
                 "goal_id": goal_id,
                 "steering_mode": steering_mode,
                 "pause_points": pause_points,
+                "operator": operator,
             },
-            summary={"status": "queued"},
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
             status="queued",
         )
         self.state_store.append_run_event(
@@ -956,13 +1144,14 @@ class RunCoordinator:
         command_type = payload.get("command")
         if command_type not in ALLOWED_STEERING_COMMANDS:
             raise ValueError(f"unsupported steering command: {command_type}")
+        operator = _operator_context(payload)
         session = self.state_store.get_run_session(run_id)
         if session is None:
             # Run doesn't exist at all — surface as 404 from the HTTP
             # handler. Distinct from "run is terminal but exists",
             # handled below.
             raise KeyError(run_id)
-        command_payload = {key: value for key, value in payload.items() if key != "command"}
+        command_payload = {key: value for key, value in payload.items() if key not in {"command", "_operator"}}
         # Run validation against the persisted session BEFORE we look
         # up the in-memory control. A terminal run has its control
         # reaped by ``_finalize_run``; if we checked control first,
@@ -992,8 +1181,8 @@ class RunCoordinator:
             run_id,
             stage=session.stage,
             event_type=STEERING_COMMAND,
-            payload=command.to_dict(),
-            summary={"command": command_type},
+            payload={**command.to_dict(), "operator": operator},
+            summary={"command": command_type, "operator_id": operator.get("operator_id") if operator else None},
             artifact_key="operator_command",
             status="received",
         )
@@ -1005,6 +1194,7 @@ class RunCoordinator:
                 "command_type": command.command_type,
                 "issued_at": command.issued_at,
                 "payload": command.payload,
+                "operator": operator,
             },
         )
         if command_type == "launch_evo":
@@ -1298,6 +1488,7 @@ class RunCoordinator:
 
             if decision.decision_type == "defer_until":
                 self._record_deferred_recheck(run_id, signal_payload, decision)
+                self._settle_agent_tasks_before_terminal(run_id)
                 self.state_store.append_run_event(
                     run_id,
                     stage="completed",
@@ -1425,6 +1616,7 @@ class RunCoordinator:
                     )
                     continue
                 break
+            self._settle_agent_tasks_before_terminal(run_id)
             self.state_store.append_run_event(
                 run_id,
                 stage="completed",
@@ -2271,11 +2463,39 @@ class RunCoordinator:
             self._record_agent_tasks(run_id, trigger, decision, evaluation)
             return
         self._set_artifact(run_id, "agent_tasks", {"status": "pending"})
-        threading.Thread(
-            target=self._record_agent_tasks,
+        thread = threading.Thread(
+            target=self._record_agent_tasks_async,
             args=(run_id, trigger, decision, evaluation),
             daemon=True,
-        ).start()
+        )
+        with self._lock:
+            self._agent_task_threads[run_id] = thread
+        thread.start()
+
+    def _record_agent_tasks_async(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> None:
+        try:
+            self._record_agent_tasks(run_id, trigger, decision, evaluation)
+        finally:
+            with self._lock:
+                if self._agent_task_threads.get(run_id) is threading.current_thread():
+                    self._agent_task_threads.pop(run_id, None)
+
+    def _settle_agent_tasks_before_terminal(self, run_id: str) -> None:
+        session = self.state_store.get_run_session(run_id)
+        tasks = session.artifacts.get("agent_tasks") if session is not None else None
+        if not (isinstance(tasks, dict) and tasks.get("status") == "pending"):
+            return
+        with self._lock:
+            thread = self._agent_task_threads.get(run_id)
+        if thread is None or thread is threading.current_thread():
+            return
+        thread.join(timeout=_AGENT_TASK_TERMINAL_SETTLE_SECONDS)
 
     def _record_agent_tasks(
         self,
@@ -3035,6 +3255,33 @@ class RunCoordinator:
 
     def _normalize_pause_points(self, pause_points: list[str]) -> list[str]:
         return [stage for stage in pause_points if stage in PAUSEABLE_STAGES]
+
+    def _resolve_policy_simulation_signal(self, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        if isinstance(payload.get("signal_payload"), dict):
+            return copy.deepcopy(payload["signal_payload"]), {"type": "inline_signal"}
+        run_id = payload.get("captured_run_id") or payload.get("run_id")
+        if isinstance(run_id, str) and run_id:
+            session = self.state_store.get_run_session(run_id)
+            if session is None:
+                raise KeyError(run_id)
+            signal = session.artifacts.get("input_signal")
+            if not isinstance(signal, dict):
+                raise ValueError(f"run {run_id!r} does not contain an input_signal artifact")
+            return copy.deepcopy(signal), {"type": "captured_run", "run_id": run_id}
+        scenario_key = payload.get("scenario_key")
+        if isinstance(scenario_key, str) and scenario_key:
+            fixture_name = f"{scenario_key}.json"
+            try:
+                return copy.deepcopy(load_fixture("signals", fixture_name)), {
+                    "type": "fixture",
+                    "scenario_key": scenario_key,
+                    "fixture": f"fixtures/signals/{fixture_name}",
+                }
+            except FileNotFoundError as exc:
+                raise ValueError(
+                    f"unknown scenario_key {scenario_key!r}: missing fixtures/signals/{fixture_name}"
+                ) from exc
+        raise ValueError("scenario_key, captured_run_id, run_id, or signal_payload is required")
 
     def _resolve_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(payload.get("signal_payload"), dict):
