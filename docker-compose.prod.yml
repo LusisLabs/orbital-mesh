@@ -8,7 +8,7 @@ services:
         HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
         UV_VERSION: "${UV_VERSION:-0.11.6}"
         GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
-    image: "${MESH_IMAGE:-mesh-intelligence:${MESH_BUILD_VERSION:-dev}}"
+    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
     init: true
     ports:
       - "${MESH_PUBLISH_PORT:-8787}:8787"
@@ -18,7 +18,7 @@ services:
       MESH_ENVIRONMENT: "${MESH_ENVIRONMENT:-production}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
-      HERMES_HOME: /workspace/mesh-intelligence/.hermes-local
+      HERMES_HOME: /workspace/orbital-mesh/.hermes-local
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
@@ -58,7 +58,7 @@ services:
       OPENROUTER_API_KEY: "${OPENROUTER_API_KEY:-}"
     volumes:
       - mesh_runtime_state:/app/.mesh-runtime-state
-      - hermes_home:/workspace/mesh-intelligence/.hermes-local
+      - hermes_home:/workspace/orbital-mesh/.hermes-local
       - goose_config:/root/.config/goose
       - "${MESH_KUBECONFIG_HOST_PATH:?set host kubeconfig path}:/run/secrets/mesh-kubeconfig:ro"
     restart: unless-stopped

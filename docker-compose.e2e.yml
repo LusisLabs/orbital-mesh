@@ -2,7 +2,7 @@ services:
   mesh:
     environment:
       KUBECONFIG: /root/.kube/config
-      MESH_RESEARCH_DIRECTORY: /workspace/mesh-intelligence/.mesh-runtime-state/research
+      MESH_RESEARCH_DIRECTORY: /workspace/orbital-mesh/.mesh-runtime-state/research
       MESH_KUBERNETES_LIVE_EXECUTION_ENABLED: "${MESH_E2E_KUBERNETES_LIVE_EXECUTION_ENABLED:-1}"
       MESH_KUBECTL_COMMAND: "${MESH_KUBECTL_COMMAND:-kubectl}"
       MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS: "${MESH_KUBERNETES_ROLLOUT_TIMEOUT_SECONDS:-120}"

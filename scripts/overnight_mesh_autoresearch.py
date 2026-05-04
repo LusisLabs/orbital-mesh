@@ -52,7 +52,7 @@ from scripts.mesh_showcase_research import holistic_eval_orchestration_pairs  # 
 ARCHIVE_DIRNAME = "_archive"
 PRIOR_EXCERPT_CHARS = 14_000
 
-# Prior must mention mesh-intelligence–relevant substance (blocks unrelated “wireless mesh ROI” drift).
+# Prior must mention orbital-mesh/Mesh-relevant substance (blocks unrelated “wireless mesh ROI” drift).
 _PRIOR_REPO_ANCHORS: tuple[str, ...] = (
     "firstslicepipeline",
     "run_summaries",
@@ -60,6 +60,7 @@ _PRIOR_REPO_ANCHORS: tuple[str, ...] = (
     "matrix_row",
     "mesh_showcase",
     "mesh intelligence",
+    "orbital-mesh",
     "mesh-intelligence",
     "evaluation_mode",
     "orchestration_mode",
@@ -304,7 +305,7 @@ def _run_ollama_fallback_synthesis(session_dir: Path, *, reason: str) -> None:
         # Executive summary
         # Key findings (numbered)
         # Risks and unknowns
-        # Concrete next actions for the mesh-intelligence codebase and operators
+        # Concrete next actions for the orbital-mesh codebase and operators
 
         ## Session brief (manifest question)
 

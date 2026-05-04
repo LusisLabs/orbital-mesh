@@ -3237,7 +3237,7 @@ class RunCoordinator:
 
     def _resolve_fixture_repo_path(self) -> str | None:
         candidates = [
-            Path("/workspace/mesh-intelligence/fixtures/codebases/search_service"),
+            Path("/workspace/orbital-mesh/fixtures/codebases/search_service"),
             Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service",
         ]
         for candidate in candidates:

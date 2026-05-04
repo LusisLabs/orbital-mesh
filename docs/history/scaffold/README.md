@@ -2,7 +2,7 @@
 
 Historical note: this scaffold captures the earlier generic multi-stage concept and is no longer the
 active runtime contract. The implemented MVP is the bounded feature-flag loop documented in
-`mesh-intelligence/first-closed-loop-contract.md`.
+`first-closed-loop-contract.md`.
 
 ## Purpose
 

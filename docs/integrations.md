@@ -1,6 +1,6 @@
 # Integrations
 
-`mesh-intelligence` resolves external tooling through a small integration contract rather than calling vendor CLIs directly from the control plane. `python3 setup_integrations.py` writes the resolved commands to `.mesh-runtime-state/integrations.json`, and the runtime/API report readiness for each integration independently.
+`orbital-mesh` resolves external tooling through a small integration contract rather than calling vendor CLIs directly from the control plane. `python3 setup_integrations.py` writes the resolved commands to `.mesh-runtime-state/integrations.json`, and the runtime/API report readiness for each integration independently.
 
 ## Modes
 
@@ -103,7 +103,7 @@ MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f doc
 
 The lighter developer stack remains `docker-compose.yml`. It starts `mesh`, which bundles Promptfoo, Goose, and Hermes in the application image.
 
-Inside the lighter Compose stack, `mesh` defaults `MESH_HERMES_COMMAND` to `hermes` and persists Hermes state in `/workspace/mesh-intelligence/.hermes-local`.
+Inside the lighter Compose stack, `mesh` defaults `MESH_HERMES_COMMAND` to `hermes` and persists Hermes state in `/workspace/orbital-mesh/.hermes-local`.
 
 Compose provider selection uses namespaced host overrides (`MESH_COMPOSE_GOOSE_PROVIDER`, `MESH_COMPOSE_GOOSE_MODEL`, `MESH_COMPOSE_HERMES_INFERENCE_PROVIDER`, and related variables) before writing container-level `GOOSE_*` / `HERMES_*` environment variables. This prevents stray host-level `GOOSE_PROVIDER=ollama` or `HERMES_INFERENCE_PROVIDER=ollama` values from selecting Ollama automatically.
 
@@ -171,7 +171,7 @@ MESH_EVO_COMMAND=evo
 Or point Mesh at the vendored source checkout when `uv` is available in the runtime:
 
 ```bash
-MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"
+MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"
 ```
 
 The stack image now installs `uv` into `/usr/local/bin`, so this command remains valid after the container drops from `root` to the non-root `mesh` user.

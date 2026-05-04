@@ -1,4 +1,4 @@
-# Agent & contributor guide (mesh-intelligence)
+# Agent & contributor guide (orbital-mesh)
 
 This file captures **how we build and change this repo** so humans and coding agents stay aligned. It is not a product spec; see `architecture.md` and `docs/` for architecture.
 

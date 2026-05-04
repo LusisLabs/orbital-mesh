@@ -160,7 +160,7 @@ Evo readiness is configured with:
 ```bash
 MESH_EVO_COMMAND=evo
 # or
-MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"
+MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"
 ```
 
 Normal run processing does not invoke Evo. Evo commands are only reachable through an explicit steering command.
@@ -299,9 +299,9 @@ Open the `Agents` tab on any run. The panel shows:
 
 ## Codex Plugin
 
-The repo includes a local Codex plugin at `plugins/mesh-intelligence` and a repo marketplace entry at `.agents/plugins/marketplace.json`.
+The repo includes a legacy-named local Codex plugin at `plugins/mesh-intelligence` and a repo marketplace entry at `.agents/plugins/marketplace.json`.
 
-The plugin contributes the `mesh-intelligence` skill. Codex workers using that skill should call the bundled read-only helper:
+The plugin contributes the `mesh-intelligence` compatibility skill. Codex workers using that skill should call the bundled read-only helper:
 
 ```bash
 python3 plugins/mesh-intelligence/skills/mesh-intelligence/scripts/mesh_client.py health

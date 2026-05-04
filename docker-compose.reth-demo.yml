@@ -13,7 +13,7 @@
 #
 # # Network model
 #
-# Both services share a user-defined bridge network ``mesh-demo-net``.
+# Both services share a user-defined bridge network ``orbital-mesh-demo-net``.
 # Mesh polls reth's RPC at ``http://127.0.0.1:18545`` (mapped from the
 # container's 8545). The chaos injector runs ``docker exec`` against
 # the container, plus iptables-style network manipulation on the
@@ -35,10 +35,10 @@
 services:
   reth:
     image: ghcr.io/paradigmxyz/reth:latest
-    container_name: mesh-demo-reth
+    container_name: orbital-mesh-demo-reth
     restart: unless-stopped
     networks:
-      - mesh-demo-net
+      - orbital-mesh-demo-net
     ports:
       - "127.0.0.1:18545:8545"   # HTTP RPC (Mesh polls here)
       - "127.0.0.1:18551:8551"   # Auth RPC (Engine API to Lighthouse)
@@ -73,10 +73,10 @@ services:
 
   lighthouse:
     image: sigp/lighthouse:latest
-    container_name: mesh-demo-lighthouse
+    container_name: orbital-mesh-demo-lighthouse
     restart: unless-stopped
     networks:
-      - mesh-demo-net
+      - orbital-mesh-demo-net
     depends_on:
       reth:
         condition: service_started
@@ -110,9 +110,9 @@ services:
       start_period: 90s
 
 networks:
-  mesh-demo-net:
+  orbital-mesh-demo-net:
     driver: bridge
-    name: mesh-demo-net
+    name: orbital-mesh-demo-net
 
 volumes:
   reth-data:

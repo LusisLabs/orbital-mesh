@@ -4,7 +4,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.latentmas
-    image: "${MESH_LATENTMAS_IMAGE:-mesh-intelligence-latentmas:local}"
+    image: "${MESH_LATENTMAS_IMAGE:-orbital-mesh-latentmas:local}"
     environment:
       MESH_LATENTMAS_URL: "http://0.0.0.0:8791"
       MESH_LATENTMAS_MODEL_NAME: "${MESH_LATENTMAS_MODEL_NAME:-Qwen/Qwen3-4B}"
@@ -17,7 +17,7 @@ services:
       TRANSFORMERS_CACHE: /cache/huggingface
       HF_DATASETS_CACHE: /cache/huggingface
     volumes:
-      - ./:/workspace/mesh-intelligence
+      - ./:/workspace/orbital-mesh
       - latentmas_hf_cache:/cache/huggingface
     ports:
       - "${MESH_LATENTMAS_PUBLISH_PORT:-8791}:8791"

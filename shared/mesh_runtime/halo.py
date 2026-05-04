@@ -102,7 +102,7 @@ def build_halo_span_records(session: RunSession, events: Iterable[RunEvent], mer
             status_message=session.error or str(session.status),
             attributes={
                 "mesh.trace_format": TRACE_FORMAT,
-                "mesh.project": "mesh-intelligence",
+                "mesh.project": "orbital-mesh",
                 "mesh.source": "mesh-run-history",
                 "mesh.run": _run_summary(session),
                 "mesh.harness": {
@@ -152,7 +152,7 @@ def build_halo_trace_record(session: RunSession, events: Iterable[RunEvent], mer
     return {
         "trace_format": TRACE_FORMAT,
         "trace_id": session.run_id,
-        "project": "mesh-intelligence",
+        "project": "orbital-mesh",
         "source": "mesh-run-history",
         "created_at": _timestamp(),
         "run": _run_summary(session),
@@ -200,7 +200,7 @@ def _span_record(
         },
         "resource": {
             "attributes": {
-                "service.name": "mesh-intelligence",
+                "service.name": "orbital-mesh",
                 "deployment.environment": "mesh",
             }
         },

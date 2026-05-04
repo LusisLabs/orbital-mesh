@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
-        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t mesh-intelligence:ci .
+        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .
       - name: Healthcheck smoke test
         run: |
           set -euo pipefail
@@ -86,7 +86,7 @@ jobs:
             -e MESH_ENVIRONMENT=ci \
             -e MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
             -p 8787:8787 \
-            mesh-intelligence:ci
+            orbital-mesh:ci
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8787/api/health > /dev/null; then
               echo "Server healthy after ${i}s"
@@ -106,19 +106,3 @@ jobs:
       - name: Stop container
         if: always()
         run: docker stop mesh-ci || true
-
-  swarmclaw-typecheck:
-    if: ${{ hashFiles('swarmclaw/package.json') != '' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: swarmclaw
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: swarmclaw/package-lock.json
-      - run: npm ci
-      - run: npm run type-check

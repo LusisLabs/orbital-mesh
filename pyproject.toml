@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mesh-intelligence"
+name = "orbital-mesh"
 version = "0.1.0"
-description = "Python multi-service closed-loop platform scaffold"
+description = "Bounded operator control plane and model-lifecycle mesh."
 requires-python = ">=3.11"
 dependencies = [
   "deepagents",

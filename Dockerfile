@@ -76,7 +76,7 @@ RUN groupadd -r mesh && useradd -r -g mesh -d /app mesh
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HERMES_HOME=/workspace/mesh-intelligence/.hermes-local \
+    HERMES_HOME=/workspace/orbital-mesh/.hermes-local \
     PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
@@ -89,7 +89,7 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
   && git checkout --detach FETCH_HEAD \
   && uv venv venv --python 3.11 \
   && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
-  && mkdir -p /opt/venv/bin /workspace/mesh-intelligence/.hermes-local \
+  && mkdir -p /opt/venv/bin /workspace/orbital-mesh/.hermes-local \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /usr/local/bin/hermes \
   && rm -rf /var/lib/apt/lists/* /root/.cache
@@ -108,6 +108,7 @@ COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py 
 COPY scripts/compose_mesh_entrypoint.sh /usr/local/bin/compose_mesh_entrypoint.sh
 COPY shared ./shared
 COPY services ./services
+COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
 RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents

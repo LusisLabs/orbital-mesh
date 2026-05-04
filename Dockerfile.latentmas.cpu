@@ -2,7 +2,7 @@
 # is unavailable. Metal/MPS is macOS-only and does not apply inside Linux containers.
 FROM python:3.11-slim-bookworm
 
-WORKDIR /workspace/mesh-intelligence
+WORKDIR /workspace/orbital-mesh
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

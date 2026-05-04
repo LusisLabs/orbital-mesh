@@ -33,6 +33,7 @@ The first production test must prove:
 | Deep Agents fabric | `services/orchestrator/deepagents_adapter.py` | Proposal-only sandbox lane. No direct kubeconfig, repo writes, or actuation. |
 | Evo | `services/orchestrator/agent_mesh.py`, `docs/integrations.md` | Explicit operator-launched proposal lane for scoped repo patch runs. |
 | Mesh Brain | `mesh_brain/`, `docs/post-training/` | Model-lifecycle plane. Runtime hooks are ready for controlled MVP proof, not broad model-serving production. |
+| Readiness and SLO surfaces | `/api/readiness`, `/api/agent/slo`, `/metrics` | Existing observability base. Needs tier-specific readiness profiles before pilot. |
 | Persistence | `.mesh-runtime-state`, Postgres-backed stores | JSON state is replay-friendly; Postgres projection is required before multi-operator production reliance. |
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
 
@@ -45,7 +46,7 @@ Goal: orbital-mesh is the only active runtime target.
 Exit gates:
 
 - repository name, docs, Docker image tags, and public copy use orbital-mesh consistently;
-- deprecated mesh-intelligence references are either compatibility import paths or documented migration notes;
+- legacy `mesh-intelligence` references are either compatibility import paths or documented migration notes;
 - staged Mesh Brain additions remain covered by package exports, tests, and runtime docs;
 - no production doc claims an unfinished adapter is complete.
 
@@ -65,6 +66,11 @@ Exit gates:
 - smoke seeds a real workload failure and reaches a defensible terminal state;
 - `/api/readiness`, `/api/health`, `/metrics`, run events, vault notes, and Merkle proofs are inspectable;
 - the UI can launch a live Kubernetes run and show stage-by-stage state;
+- the evidence graph is the primary run-inspection surface: signal, trigger, evidence, hypothesis, decision, evaluation, approval, execution, and feedback;
+- a policy simulator can replay fixture and live-captured signals without mutation and show the decision, blockers, allowed action, denied action, and rollback path;
+- the failure-mode library covers denied namespace, stale kubeconfig, LLM unavailable, audit sink unavailable, and at least the core Kubernetes failure modes;
+- executable invariant tests prove that approval, allowlist, policy, evaluation, payload-size, and proposal-lane isolation gates cannot be bypassed;
+- local fault tests cover duplicate signals, delayed feedback, dependency timeout, queue backpressure, and transient network failure;
 - every live actuator call is blocked unless the execution flag and allowlists pass.
 
 Validation:
@@ -81,19 +87,35 @@ Required features:
 
 - authenticated reverse proxy with TLS;
 - operator identity propagated into run creation, steering commands, notes, approvals, and audit events;
+- app-level role enforcement for viewer, launcher, approver, and admin once proxy identity is present;
+- tiered readiness profiles for `local`, `staging`, `pilot`, and `prod`, with required and optional integrations separated;
+- threat model and abuse-case review for every authority boundary: HTTP API, SSE, webhooks, OTel ingest, kubeconfig, LLM keys, proposal lanes, state store, and exported run bundles;
+- data classification, retention, redaction, and deletion rules for signals, logs, traces, prompts, model outputs, vault notes, and exported postmortem bundles;
+- supply-chain record for the built image: pinned dependencies, SBOM, vulnerability scan, base-image digest, and build provenance;
 - least-privilege kubeconfig or in-cluster RBAC limited to staging namespaces;
 - webhook source registration per vendor with HMAC verification;
 - OTel ingest protected by bearer token or private ingress;
+- connector certification states for each integration: mock, read-only, staging-ready, pilot-ready, production-ready;
 - persistent state on encrypted storage;
 - backup and restore rehearsal for state, vault, Merkle proof data, integrations config, and research artifacts;
 - structured logs shipped to the staging log system;
 - Prometheus scrape of `/metrics`;
+- run export packages for postmortem review, including JSON timeline, Markdown summary, evidence artifacts, Merkle proof, and decision/evaluation/execution records;
+- visible trust-ladder state per service and action class, including why autonomy is not higher yet;
+- kill-switch controls for watchers, live execution, namespaces, action classes, and forced approval gate;
+- enterprise evaluation kit: one-command stack, sample run export, architecture brief, security boundary brief, benchmark methodology, and 30-day pilot success rubric;
+- reference architectures for private cloud, Kubernetes platform teams, GPU/AI infrastructure, regulated enterprise, and air-gapped or VPC-only deployments;
+- startup and developer evaluation path: five-minute local demo, thirty-minute staging path, free sample fixtures, small-team runbook, and no-procurement trial artifact;
 - documented rollback for the Mesh service itself.
 
 Exit gates:
 
 - at least three operators complete launch, inspect, approve, override, cancel, and postmortem review paths;
 - at least one Kubernetes watcher path and one webhook or OTel path create real runs;
+- readiness profiles correctly fail when a required staging integration is disabled and stay green when only optional lanes are unavailable;
+- run export and policy simulator outputs are reviewed by an operator who did not launch the run;
+- threat-model findings are either fixed or explicitly accepted with owner, expiry, and compensating control;
+- backup restore meets the stated recovery point and recovery time targets in a rehearsal, not only by documentation;
 - all autonomous production-impacting modes remain disabled in staging until trust-ladder evidence supports elevation;
 - every failed readiness check is visible in the UI and API.
 
@@ -120,15 +142,23 @@ Required features:
 - production backup cadence and restore test;
 - incident response runbook for Mesh outage, bad decision, stuck run, failed actuation, and leaked provider key;
 - kill switch for watchers and live execution;
+- pilot go/no-go generator that emits readiness snapshot, smoke results, allowed-target proof, denied-target proof, operator approvals, backup status, and rollback plan;
+- production-certified connector matrix for the specific pilot integrations;
+- release provenance for the exact image and config running in pilot, including commit, image digest, policy file hashes, migration version, and env profile;
+- production on-call drill for kill switch, rollback, denied action, stuck run, failed dependency, and provider-key rotation;
+- pilot SLO and error budget: availability, run admission latency, evaluation latency, action latency, feedback latency, event persistence lag, and export success rate;
+- design-partner packet: pilot charter, success metrics, data handling terms, integration scope, support model, rollback plan, and executive summary of observed evidence;
 - documented customer/user consent for any real-user-impacting experiment.
 
 Exit gates:
 
 - no unauthenticated access path exists;
 - `/api/readiness` is green for required integrations and explicit about optional or unavailable lanes;
+- the pilot go/no-go packet is generated from observed run evidence, not manually assembled claims;
 - live action proof shows allowlist enforcement on both allowed and denied targets;
 - one approved production action succeeds or cleanly rejects with a human-review route;
 - post-action feedback uses live metrics or live Kubernetes re-harvest, not only fixture observations;
+- production drill evidence shows the operator can stop live execution, pause watchers, revoke a bad target, rotate a key, and restore state inside the declared recovery target;
 - pilot review produces a signed go/no-go record.
 
 ### Phase 4: Production Expansion
@@ -142,6 +172,14 @@ Required features:
 - watcher registry supports multiple named watchers with documented ownership;
 - trust ladder is used per action class and service before autonomy expansion;
 - external incident provider, audit sink, and feature flag provider adapters replace local deterministic seams;
+- connector certification is required for every production integration and every certified connector has a tested degraded-state behavior;
+- the failure-mode library is part of regression CI and includes replayable UI scenarios;
+- formal release gates require SBOM, vulnerability scan, image digest pinning, policy hash diff, migration rehearsal, and rollback rehearsal;
+- disaster recovery drills run on a schedule and include state restore, operator identity failure, observability outage, and corrupted-event replay;
+- enterprise procurement package covers SSO/OIDC/SAML path, audit export, retention controls, data processing boundaries, deployment models, security review answers, and support escalation;
+- public technical proof package is generated from reproducible runs: benchmark report, architecture paper, demo dataset, run export, and limitations statement;
+- distribution channels cover open source/community adoption, cloud marketplaces, startup design partners, platform engineering communities, MSP/SI partners, and self-hosted private deployments;
+- packaging tiers are explicit: community/local proof, startup/team, production platform, regulated/private deployment, and partner-managed deployment;
 - SLO dashboards cover availability, run latency, queue depth, readiness, evaluation rejection rate, action success rate, feedback success rate, and unsafe-action blocks;
 - release train includes migration tests, rollback tests, web contract drift checks, and smoke deployment.
 
@@ -157,6 +195,32 @@ Exit gates:
 | --- | --- | --- |
 | Authenticated ingress and operator identity | any external human test | Missing in app; must be enforced by proxy first. |
 | RBAC roles for viewer, launcher, approver, admin | production pilot | Not built into app. Proxy identity plus app-level role checks needed. |
+| Tiered readiness profiles | private staging | `/api/readiness` exists; profile-specific required/optional gates need implementation. |
+| Policy simulator | private staging | Replay paths exist through run creation and fixtures; mutation-free simulator UX/API is backlog. |
+| Evidence graph as primary run surface | local production-like e2e | Evidence and subdecision graph APIs exist; UI should make the graph the main inspection path. |
+| Executable invariant suite | local production-like e2e | Add tests that prove authority boundaries cannot be bypassed. |
+| Distributed-systems fault tests | local production-like e2e | Cover duplicate signals, clock skew, delayed feedback, dependency timeout, queue backpressure, and partial network failure. |
+| Threat model and abuse-case register | private staging | Required before any external operator access. Findings need owner, decision, expiry, and compensating control. |
+| Data classification and retention controls | private staging | Signals, prompts, logs, traces, vault notes, exports, and model outputs need explicit handling rules. |
+| Supply-chain provenance | private staging | SBOM, image digest, pinned dependency record, vulnerability scan, and build provenance are backlog. |
+| Pilot go/no-go generator | production pilot | Needed as a signed deployment packet generated from readiness, smoke, policy, approval, and rollback evidence. |
+| Connector certification matrix | private staging | Integration classification exists in docs; machine-readable certification state is backlog. |
+| Failure-mode library | private staging | Fixtures and chaos tests exist; explicit product library and UI replay catalog are backlog. |
+| Operator trust ladder UI | private staging | Trust ladder store/API exists; visible autonomy rationale is backlog. |
+| Kill-switch panel | production pilot | Runtime flags and watcher controls exist; consolidated operator panel is backlog. |
+| Disaster recovery drills | production pilot | Restore state, rotate keys, recover from observability outage, and replay corrupted events against declared RPO/RTO. |
+| Release provenance packet | production pilot | Record commit, image digest, policy hashes, migration version, env profile, and deployer identity. |
+| Pilot SLO and error budget | production pilot | Needed to bound acceptable failure, latency, and degradation during real-user testing. |
+| Enterprise evaluation kit | private staging | Package the one-command stack, sample run export, architecture brief, security boundary brief, benchmark method, and pilot rubric. |
+| Reference architectures | private staging | Need deployment guides for Kubernetes platforms, private cloud, GPU/AI infrastructure, regulated enterprise, and air-gapped/VPC-only environments. |
+| Startup and developer evaluation path | private staging | Need a five-minute local demo, thirty-minute staging guide, sample fixtures, and no-procurement trial artifact. |
+| Community and open-source motion | private staging | Need contribution guide, issue templates, public roadmap, governance notes, examples, and clear community-vs-commercial boundaries. |
+| Cloud and ecosystem marketplaces | production expansion | Need packaging for Docker, Helm, Terraform, Kubernetes, and major cloud marketplace listings once production controls are real. |
+| Partner/MSP/SI program | production expansion | Need managed-deployment playbook, support boundaries, partner certification, and escalation model. |
+| Segment pricing and packaging | production expansion | Need packaging for community/local proof, startup/team, production platform, regulated/private deployment, and partner-managed deployment. |
+| Design-partner packet | production pilot | Needed for serious enterprise conversations: charter, success metrics, data handling, integration scope, support model, rollback plan, and evidence summary. |
+| Procurement and security package | production expansion | SSO path, audit export, retention, data boundaries, deployment modes, security answers, and support escalation need one maintained artifact set. |
+| Reproducible public proof package | production expansion | Publish only evidence-backed benchmark reports, architecture paper, demo dataset, run export, and limitations statement. |
 | Durable external audit sink | compliance reliance | Local audit seam only. |
 | External incident adapter | production incident creation | Local deterministic seam only. |
 | Real feature flag provider adapter | production flag rollback | Local deterministic seam only. |
@@ -182,6 +246,99 @@ Use three lanes, not one shared environment:
 | Production pilot | narrow real-user environment | Approval-gated actions on approved services only. |
 
 The production pilot must start in recommendation/approval mode. Autonomy is earned per action class, not enabled globally.
+
+## Product Quality Priorities
+
+These features make the product harder to dismiss because they expose proof instead of asking operators to trust an agent.
+
+| Priority | Product surface | Why it matters |
+| --- | --- | --- |
+| 1 | Identity-first control plane | Real operations require named accountability for every launch, note, override, approval, and execution. |
+| 2 | Evidence graph | The graph is the product's main explanation surface; operators should see why a run moved or stopped without reading raw JSON first. |
+| 3 | Policy simulator | Buyers and service owners need to test policies and signals without mutation before they permit live authority. |
+| 4 | Pilot go/no-go packet | Production entry should be an artifact generated from evidence, not a meeting note. |
+| 5 | Connector certification matrix | "Wired" and "production-ready" must stay separate. Every connector needs a visible maturity state. |
+| 6 | Failure-mode library | The system should prove expected behavior against known bad states, including denied action and degraded integration cases. |
+| 7 | Trust ladder UI | Autonomy must be earned per action and service, with the current ceiling visible to operators. |
+| 8 | Run export package | Teams need portable postmortem evidence for reviews, audits, and vendor/customer conversations. |
+| 9 | Kill-switch panel | Operators need immediate authority to stop watchers, live execution, namespaces, action classes, and autonomy. |
+
+Do not add product surfaces that obscure the core loop. Every new screen or API must reinforce one of three jobs: prove what happened, constrain what can happen next, or help an operator make a bounded decision.
+
+## Enterprise Attention Package
+
+Large platform, AI, hardware, cloud, and regulated-enterprise teams will not respond to a claim. They respond to proof that maps to their operational constraints.
+
+| Audience archetype | Proof to ship |
+| --- | --- |
+| AI lab / model platform | Model-neutral control plane, prompt/tool boundary threat model, proposal-lane isolation, eval-gated actions, and private-model deployment path. |
+| Cloud platform team | Kubernetes, OTel, Prometheus, webhook, IAM/SSO, audit, tenancy, and policy-simulation reference architecture. |
+| GPU / AI infrastructure team | GPU-serving and model-lifecycle lane, hardware-aware routing proof, capacity metrics, and failure-mode evidence for expensive workloads. |
+| Device / private-compute platform | local-first deployment, offline or VPC-only mode, minimal external dependency path, data-retention controls, and Apple Silicon / CPU fallback story. |
+| High-reliability engineering team | kill switch, approval gate, action allowlists, rollback proof, disaster-recovery drill, failure-mode library, and postmortem export. |
+| Regulated enterprise buyer | SSO, RBAC, audit export, retention policy, deployment boundary, support model, vulnerability/SBOM packet, and legal/data-processing boundaries. |
+
+Required artifacts:
+
+- a short technical whitepaper grounded in the actual architecture, not a marketing narrative;
+- a reproducible benchmark report with commands, fixtures, pass/fail gates, and limitations;
+- a five-minute flagship demo path that starts from a real signal and ends with evidence, decision, approval, execution, feedback, and export;
+- a design-partner pilot brief with scope, success metrics, timeline, staffing, support, rollback, data handling, and proof artifacts;
+- reference deployments for local compose, single VM, Kubernetes, private VPC, and air-gapped/offline-adjacent operation;
+- an OpenAPI or equivalent API contract bundle for platform teams that want to inspect integrations before running the stack;
+- a security review packet with threat model, SBOM, vulnerability scan, secret handling, auth boundary, audit model, and known limitations;
+- a public limitations statement that names what is not production-ready yet.
+
+The outreach standard is evidence density. One strong exported run, one reproducible benchmark, and one honest security packet beat broad claims.
+
+## Addressable Market Coverage
+
+Do not treat "enterprise" as one market. The product has to enter through multiple adoption paths while keeping one invariant: bounded authority with evidence.
+
+| Segment | First buyer or user | First value | Required packaging |
+| --- | --- | --- | --- |
+| Individual SRE / platform engineer | Practitioner | Reproduce a production-like failure and inspect the evidence graph locally. | Community image, sample fixtures, five-minute demo, run export. |
+| Startup engineering team | Founder, CTO, infra lead | Add an approval-gated remediation control plane before hiring a full SRE team. | Startup/team tier, simple deployment, Slack/PagerDuty/GitHub path, opinionated defaults. |
+| AI-native startup | AI infra lead | Keep expensive model-serving and agentic workflows bounded, observable, and reviewable. | GPU/AI reference architecture, model-serving lane, capacity and cost telemetry. |
+| Open-source / cloud-native community | Maintainer, contributor | Transparent policy and evidence model that can be inspected, extended, and trusted. | Public examples, contribution guide, plugin surface, roadmap, issue templates. |
+| Mid-market SaaS | VP Engineering, platform lead | Standardize incident response and rollback discipline across teams. | SSO-ready deployment, audit export, connector matrix, run export, support path. |
+| Regulated enterprise | Security, compliance, platform | Prove every action has identity, policy, evidence, approval, and audit trail. | Private deployment, retention controls, SBOM, security packet, procurement artifact. |
+| Managed service provider / systems integrator | Practice lead | Offer customers a repeatable AI operations control plane without custom building it. | Partner playbook, multi-customer isolation model, support escalation, certification. |
+| Cloud marketplace buyer | Platform owner | Try and procure through existing cloud spend. | Hardened image, Helm chart, Terraform module, marketplace listing, quickstart. |
+| Hardware / edge / private-compute team | Infra or device platform lead | Run bounded remediation close to private workloads with minimal external dependency. | Local-first mode, offline-adjacent docs, Apple Silicon/CPU path, VPC-only deployment. |
+| Blockchain / validator operator | Protocol infra operator | Approval-gated node remediation with evidence and restart discipline. | Bare-metal node runbook, SSH/systemd safety envelope, validator-specific failure catalog. |
+
+Market coverage artifacts:
+
+- one landing path per segment, each ending in a working proof rather than a sales form;
+- segment-specific demo fixtures and exported runs;
+- buyer/user map that separates practitioner adoption from economic buyer approval;
+- pricing and packaging boundaries that do not cripple the proof path;
+- integration priority list by segment, not by internal preference;
+- partner-ready deployment runbook for MSPs, SIs, and cloud marketplace installs;
+- public examples that show limitations, denied actions, and failure behavior, not only successful runs.
+
+The wedge is local proof for practitioners, then team safety, then platform governance. Do not start with a procurement-heavy enterprise motion when a small team can validate the core loop in one session.
+
+## Systems Assurance Hardening
+
+This is the extra layer that prevents the roadmap from failing under ordinary production physics.
+
+| Boundary | Hardening requirement |
+| --- | --- |
+| Authority | Every mutating path must prove identity, role, policy allowance, target allowlist, evaluation pass, approval state, and rollback metadata before action. |
+| Invariants | Encode non-bypassable properties as tests: proposal lanes cannot mutate, denied namespaces cannot execute, failed evaluation cannot execute, payload caps hold, and overrides re-enter evaluation. |
+| Time | Treat clocks as unreliable. Use explicit timestamps, monotonic durations where available, replay-safe ordering, expiry on approvals, and bounded waiting at every external dependency. |
+| Delivery | Treat signals and webhooks as at-least-once. Deduplicate by stable fingerprint, record replay attempts, and make action execution idempotent or explicitly non-repeatable. |
+| Dependency failure | Every external dependency must have a timeout, degraded readiness state, operator-visible reason, and fail-closed behavior for authority-bearing paths. |
+| Concurrency | Operators, watchers, and webhooks can race. Lock by run and target, reject conflicting live actions, and surface the winning authority path in the event log. |
+| Capacity | Backpressure must be explicit: queue depth, worker saturation, state-store latency, SSE fanout, artifact size, and export size need limits and metrics. |
+| Security | Threat model every ingress, secret, sandbox, file export, and actuator. Red-team prompt injection and tool-confusion paths as authority attacks, not only model-quality bugs. |
+| Privacy | Classify and redact production logs, prompts, traces, model outputs, vault notes, and exported bundles before retention or training reuse. |
+| Supply chain | Pin and attest build inputs. Record SBOM, vulnerability scan, image digest, dependency lock, policy hashes, and migration version in every release packet. |
+| Recovery | Rehearse restore, key rotation, kill switch, watcher pause, bad-policy rollback, corrupted event replay, and state-store failover before pilot expansion. |
+
+The standard is not "works on the happy path." The standard is "fails closed, explains why, preserves evidence, and lets an operator regain control."
 
 ## Differentiator
 
@@ -218,8 +375,20 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 1. Normalize orbital-mesh naming across docs and image tags.
 2. Add tiered readiness profiles: local, staging, pilot, expansion.
 3. Add operator identity and role checks around run creation and steering.
-4. Make live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
-5. Prove Postgres-backed state for run events, memory, and Merkle roots under restart.
-6. Replace or explicitly disable unfinished feature-flag, incident, and audit adapters for pilot deployments.
-7. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
-8. Write the pilot go/no-go record from observed evidence, not intent.
+4. Make the evidence graph the default run-inspection surface in the UI.
+5. Add a mutation-free policy simulator for fixture and captured signals.
+6. Add connector certification state to readiness and docs.
+7. Add executable invariant tests for authority boundaries and proposal-lane isolation.
+8. Add distributed-systems fault tests for duplicate, delayed, timed-out, and backpressured paths.
+9. Add threat model, data classification, and supply-chain provenance records.
+10. Add a pilot go/no-go packet generator.
+11. Make live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
+12. Prove Postgres-backed state for run events, memory, and Merkle roots under restart.
+13. Replace or explicitly disable unfinished feature-flag, incident, and audit adapters for pilot deployments.
+14. Add a consolidated kill-switch panel before any production pilot.
+15. Package the enterprise evaluation kit and reference architectures from actual working paths.
+16. Package the startup/developer evaluation path with a five-minute demo, thirty-minute staging guide, and sample exported run.
+17. Write community/open-source contribution and governance docs that preserve the commercial boundary.
+18. Write the design-partner packet with pilot scope, success metrics, data handling, rollback, and support model.
+19. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
+20. Write the pilot go/no-go record from observed evidence, not intent.

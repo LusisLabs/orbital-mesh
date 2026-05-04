@@ -5,7 +5,7 @@ ARG UV_VERSION=0.11.6
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HERMES_HOME=/workspace/mesh-intelligence/.hermes-local \
+    HERMES_HOME=/workspace/orbital-mesh/.hermes-local \
     PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
 
 RUN apt-get update \
@@ -18,10 +18,10 @@ RUN apt-get update \
   && git checkout --detach FETCH_HEAD \
   && uv venv venv --python 3.11 \
   && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
-  && mkdir -p /opt/venv/bin /workspace/mesh-intelligence/.hermes-local \
+  && mkdir -p /opt/venv/bin /workspace/orbital-mesh/.hermes-local \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
   && rm -rf /var/lib/apt/lists/* /root/.cache
 
-WORKDIR /workspace/mesh-intelligence
+WORKDIR /workspace/orbital-mesh
 
 CMD ["sleep", "infinity"]

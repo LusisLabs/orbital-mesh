@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="/workspace/mesh-intel"
+REPO_ROOT="/workspace/orbital-mesh"
 KUBECONFIG_SOURCE="${KUBECONFIG:-/mesh-kubeconfig/kubeconfig}"
 export KUBECONFIG="/tmp/mesh-stack-kubeconfig"
 export BASE_URL="${BASE_URL:-http://mesh:8787}"

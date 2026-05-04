@@ -207,7 +207,7 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
         ),
         "evo": (
             "Install `evo-hq-cli` globally or set `MESH_EVO_COMMAND` to a local command such as "
-            "`uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo`. Mesh only probes "
+            "`uv run --project /workspace/orbital-mesh/evo/plugins/evo evo`. Mesh only probes "
             "`evo --version` in this proposal-lane integration."
         ),
     }
