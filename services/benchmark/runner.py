@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import replace
@@ -49,6 +50,8 @@ class BenchmarkRunConfig:
     opensre_command: str = "uvx opensre"
     backend_timeout_seconds: float = 300.0
     control_plane_timeout_seconds: float = 300.0
+    attempt_artifact_mode: str = "full"
+    runtime_state_mode: str = "full"
     cloudopsbench_root: Path | None = None
     cloudopsbench_ground_truth_mode: str = "hidden"
     sregym_server_url: str = "http://localhost:8000"
@@ -84,8 +87,14 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
 
     results: list[ScenarioBenchmarkResult] = []
     for iteration in range(1, config.repeat + 1):
-        backend = _build_backend(config, output_dir=output_dir, iteration=iteration)
+        state_temp: tempfile.TemporaryDirectory[str] | None = None
+        backend_config = config
+        if _uses_runtime_state(config) and _runtime_state_mode(config.runtime_state_mode) == "none":
+            state_temp = tempfile.TemporaryDirectory(prefix=f"mesh-benchmark-state-{iteration}-")
+            backend_config = replace(config, state_directory=Path(state_temp.name))
+        backend: BenchmarkBackend | None = None
         try:
+            backend = _build_backend(backend_config, output_dir=output_dir, iteration=iteration)
             for scenario in scenarios:
                 raw_signal = load_signal(scenario, fixture_root=config.signal_fixture_root)
                 start = time.monotonic()
@@ -99,6 +108,7 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
                     error = str(exc)
                 _write_attempt_artifact(
                     output_dir,
+                    mode=config.attempt_artifact_mode,
                     iteration=iteration,
                     scenario_id=scenario.scenario_id,
                     outcome=outcome,
@@ -116,9 +126,12 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
                     )
                 )
         finally:
-            close = getattr(backend, "close", None)
-            if callable(close):
-                close()
+            if backend is not None:
+                close = getattr(backend, "close", None)
+                if callable(close):
+                    close()
+            if state_temp is not None:
+                state_temp.cleanup()
 
     scorecard = aggregate_scorecard(config.suite, run_id, results)
     run = BenchmarkRun(run_id=run_id, output_dir=output_dir, scorecard=scorecard, results=results)
@@ -129,11 +142,17 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
 def _write_attempt_artifact(
     output_dir: Path,
     *,
+    mode: str,
     iteration: int,
     scenario_id: str,
     outcome: dict[str, Any] | None,
     error: str | None,
 ) -> None:
+    artifact_mode = (mode or "full").strip().lower()
+    if artifact_mode not in {"full", "errors", "none"}:
+        artifact_mode = "full"
+    if artifact_mode == "none" or (artifact_mode == "errors" and not error):
+        return
     artifact_dir = output_dir / "attempt-artifacts" / f"iteration-{iteration}"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = outcome if isinstance(outcome, dict) else {}
@@ -178,6 +197,18 @@ def _build_backend(config: BenchmarkRunConfig, *, output_dir: Path, iteration: i
             ground_truth_mode=config.cloudopsbench_ground_truth_mode,
         )
     raise ValueError(f"unknown benchmark provider/backend: {provider}")
+
+
+def _uses_runtime_state(config: BenchmarkRunConfig) -> bool:
+    provider = config.provider or config.backend
+    return provider in {"mesh", "mesh-control-plane", "mesh-agentic", "cloudopsbench"}
+
+
+def _runtime_state_mode(mode: str) -> str:
+    normalized = (mode or "full").strip().lower()
+    if normalized not in {"full", "none"}:
+        return "full"
+    return normalized
 
 
 def _state_directory(config: BenchmarkRunConfig, *, output_dir: Path, iteration: int) -> Path:

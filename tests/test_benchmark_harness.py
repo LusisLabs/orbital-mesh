@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from services.benchmark.compare import compare_benchmark_runs
+from services.benchmark.cloudopsbench_import import import_cloudopsbench_scenarios
 from services.benchmark.gaps import generate_gap_report
 from services.benchmark.loghub import LoghubExtractionConfig, extract_loghub_scenarios
 from services.benchmark.models import DIMENSION_WEIGHTS, BenchmarkScenario
@@ -59,6 +60,36 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertIn("process_metrics", scorecard)
             self.assertGreater(scorecard["weighted_score"], 0)
             self.assertTrue(all(result.investigation_present for result in run.results))
+
+    def test_attempt_artifact_mode_can_skip_successful_attempt_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="golden",
+                    output_root=Path(tmp),
+                    scenario_ids=("feature_flag_latency_disable",),
+                    state_directory=Path(tmp) / "runtime-state",
+                    attempt_artifact_mode="errors",
+                )
+            )
+
+            self.assertTrue((run.output_dir / "benchmark.json").exists())
+            self.assertFalse((run.output_dir / "attempt-artifacts").exists())
+
+    def test_runtime_state_mode_can_skip_persisted_state_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="golden",
+                    output_root=root / "out",
+                    scenario_ids=("feature_flag_latency_disable",),
+                    runtime_state_mode="none",
+                )
+            )
+
+            self.assertTrue((run.output_dir / "benchmark.json").exists())
+            self.assertFalse((run.output_dir / "runtime-state-1").exists())
 
     def test_control_plane_backend_records_agentic_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -417,6 +448,35 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertEqual("cloudopsbench", result.backend)
             self.assertEqual(1.0, result.process_metrics.tool_coverage)
             self.assertTrue(result.root_cause_matched)
+
+    def test_cloudopsbench_importer_writes_full_and_split_suites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "startup" / "25"
+            case_dir.mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service Availability Disruption.",
+                        "result": {"root_cause": "incorrect_image_reference"},
+                        "process": {"path1": ["GetResources::pods", "DescribeResource::pods::frontend"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text("{}", encoding="utf-8")
+
+            summary = import_cloudopsbench_scenarios(
+                cloudopsbench_root=cloudops_root,
+                output_root=root / "scenarios",
+            )
+
+            self.assertEqual(1, summary.full_count)
+            self.assertTrue((root / "scenarios" / "cloudopsbench_official_full" / "cloudops_boutique_startup_25.json").exists())
+            split_files = list((root / "scenarios").glob("cloudopsbench_official_*_full/cloudops_boutique_startup_25.json"))
+            self.assertEqual(1, len(split_files))
 
     def test_cloudopsbench_hidden_mode_does_not_replay_oracle_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

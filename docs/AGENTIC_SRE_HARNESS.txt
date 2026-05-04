@@ -533,6 +533,123 @@ After implementation:
     - Re-run OpenSRE after provider credits are restored, with the same
       scenario split and tool/input constraints.
 
+Checkpoint: W8 official full Cloud-OpsBench run and compact artifacts.
+Date: 2026-05-04.
+
+Before implementation:
+
+  Planned files:
+    - services/benchmark/runner.py
+    - services/benchmark/__main__.py
+    - services/benchmark/cloudopsbench_import.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - docs/benchmark-results/2026-05-04-official-sre-benchmark.md
+
+  Intended behavior:
+    - Run Mesh against all available official Cloud-OpsBench case metadata in
+      hidden mode, not only the earlier sparse 22-case subset.
+    - Preserve scorecard/report/scenario/gap artifacts without storing
+      gigabytes of per-iteration runtime-state directories.
+    - Add a reusable importer for official Cloud-OpsBench metadata/tool-cache
+      case layouts so the generated suite is reproducible.
+    - Smoke-test OpenSRE before launching a full baseline so model-credit
+      failures do not masquerade as benchmark results.
+    - Recheck SREGym local-kind prerequisites after disk cleanup.
+
+  Risk:
+    - The current Cloud-OpsBench adapter still does not expose an interactive
+      benchmark tool loop to Mesh in hidden mode; a high operational score can
+      coexist with zero RCA/process performance.
+    - OpenSRE requires a funded external model provider.
+    - SREGym requires Docker and Helm, not just disk.
+
+After implementation:
+
+  Actual behavior added:
+    - BenchmarkRunConfig now supports attempt_artifact_mode=full|errors|none.
+    - BenchmarkRunConfig now supports runtime_state_mode=full|none.
+    - CLI now exposes:
+        --attempt-artifact-mode full|errors|none
+        --runtime-state-mode full|none
+    - Added services.benchmark.cloudopsbench_import to generate full/dev/eval
+      suites from official Cloud-OpsBench metadata.json and tool_cache.json
+      case directories.
+    - Compact official runs can keep benchmark.json, scorecard.json,
+      scenario-results.jsonl, report.md, and gap_report.* without preserving
+      bulky runtime-state-N directories.
+
+  Official benchmark assets:
+    - Cloud-OpsBench sparse checkout expanded to 656 official cases:
+        656 metadata.json files
+        656 tool_cache.json files
+        about 694 MB on disk
+    - Full suite: 656 cases.
+    - Deterministic dev split: 135 cases.
+    - Deterministic eval split: 521 cases.
+    - Systems: boutique 452, trainticket 204.
+    - Fault groups: 11.
+    - Distinct root-cause labels: 49.
+
+  Runs captured:
+    - Mesh Cloud-OpsBench official full hidden compact:
+        Run: bench_20260504T092637813921Z
+        Report:
+        .mesh-runtime-state/benchmarks/cloudopsbench-official-full-hidden-mesh-compact/bench_20260504T092637813921Z/report.md
+        Gap report:
+        .mesh-runtime-state/benchmarks/cloudopsbench-official-full-hidden-mesh-compact/bench_20260504T092637813921Z/gap_report.md
+        Cases: 656
+        Attempts: 1968
+        Repeat: 3
+        Weighted score: 93.50
+        Mesh operational score: 100.00
+        Agentic RCA score: 30.00
+        Root-cause accuracy: 0.0000
+        Tool coverage: 0.0000
+        Trajectory match: 0.0000
+        Unsafe action rate: 0.00%
+        P95 latency: 72.62 ms
+        Gap count: 5904
+    - OpenSRE one-case official Cloud-OpsBench smoke:
+        Run: bench_20260504T092421685247Z
+        Score: 8.00
+        Failure cause: Anthropic credit balance too low during OpenSRE planning.
+        Interpretation: environment/provider failure, not a valid OpenSRE
+        capability score.
+
+  SREGym status:
+    - Official local-kind execution remains blocked.
+    - Helm is not installed.
+    - Sandbox docker version is blocked by socket permission.
+    - Outside-sandbox docker version hung for more than 90 seconds and was
+      killed.
+
+  Validation status:
+    - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with
+      pytest pytest tests/test_benchmark_harness.py -q, 18 tests.
+    - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark
+      tests/test_benchmark_harness.py.
+    - PASS: python3 -m services.benchmark.cloudopsbench_import
+      --cloudopsbench-root
+      .mesh-runtime-state/external-benchmarks/Cloud-OpsBench-sparse --output
+      /tmp/mesh-cloudopsbench-import-check produced full=656, dev=135,
+      eval=521, root_causes=49, fault_groups=11.
+
+  Interpretation:
+    - Mesh completed the full official hidden Cloud-OpsBench sweep and is safe
+      under the current bounded escalation policy.
+    - Mesh has not yet solved Cloud-OpsBench RCA; the next measurable target is
+      root_cause_accuracy and tool_coverage, not the weighted score.
+    - OpenSRE and SREGym still need clean environment prerequisites before any
+      comparative claim is possible.
+
+  Remaining gaps:
+    - Add an interactive Cloud-OpsBench read-only tool loop instead of hidden
+      no-tool escalation.
+    - Emit ranked root-cause candidates for A@1/A@3.
+    - Restore a funded provider key or alternate provider for OpenSRE baseline.
+    - Install/repair Docker and Helm before running official SREGym local-kind.
+
 Checkpoint: W5 external agent backend slice.
 Date: 2026-05-03.
 
@@ -809,6 +926,17 @@ Change Ledger
   - Confirmed real OpenSRE score is not available locally until provider
     credentials are exported.
 
+2026-05-04 W8 official full Cloud-OpsBench and compact artifact slice
+  - Expanded official Cloud-OpsBench sparse assets to all 656 metadata/tool-cache
+    cases.
+  - Added compact attempt and runtime-state artifact modes for large sweeps.
+  - Added services.benchmark.cloudopsbench_import for reproducible official
+    suite generation.
+  - Captured a full 656-case hidden Mesh run with repeat=3 and gap report.
+  - Captured an OpenSRE smoke failure caused by Anthropic low credit.
+  - Rechecked SREGym prerequisites and confirmed Docker/Helm still block
+    official local-kind execution.
+
 
 Open Decisions
 --------------
@@ -875,6 +1003,25 @@ Benchmark validation:
     Deep Agents benchmark runs.
 
 Current validation status:
+  - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest
+    pytest tests/test_benchmark_harness.py -q after W8 compact artifact and
+    Cloud-OpsBench importer changes, 18 tests.
+  - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark
+    tests/test_benchmark_harness.py after W8 compact artifact and
+    Cloud-OpsBench importer changes.
+  - PASS: python3 -m services.benchmark.cloudopsbench_import
+    --cloudopsbench-root
+    .mesh-runtime-state/external-benchmarks/Cloud-OpsBench-sparse --output
+    /tmp/mesh-cloudopsbench-import-check.
+  - PASS: python3 -m services.benchmark run --suite cloudopsbench_official_full
+    --provider cloudopsbench --cloudopsbench-ground-truth-mode hidden
+    --repeat 3 --attempt-artifact-mode errors --runtime-state-mode none.
+  - PASS: python3 -m services.benchmark gaps --provider cloudopsbench
+    --run .mesh-runtime-state/benchmarks/cloudopsbench-official-full-hidden-mesh-compact/bench_20260504T092637813921Z.
+  - ENVIRONMENT FAILURE: OpenSRE one-case smoke failed because Anthropic
+    returned low-credit during the planning step.
+  - ENVIRONMENT FAILURE: official SREGym local-kind remains blocked because
+    Helm is missing and Docker hangs outside the sandbox.
   - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
     services/orchestrator/agent_mesh.py
     services/orchestrator/deepagents_adapter.py services/benchmark
@@ -973,7 +1120,8 @@ tests/test_investigation_service.py
 
 services/benchmark/
   Architecture benchmark runner, scoring model, report renderer, CLI, and
-  Loghub extraction adapter.
+  Loghub extraction adapter. Runner supports compact attempt/runtime-state
+  artifact modes for large official sweeps.
 
 services/benchmark/compare.py
   Benchmark artifact comparison and Markdown/JSON delta reports.
@@ -981,6 +1129,10 @@ services/benchmark/compare.py
 services/benchmark/backends.py
   Mesh runtime backend, full control-plane benchmark backend, SREGym/
   Cloud-OpsBench adapters, and OpenSRE CLI backend.
+
+services/benchmark/cloudopsbench_import.py
+  Official Cloud-OpsBench metadata/tool-cache importer for full/dev/eval Mesh
+  benchmark suites.
 
 services/orchestrator/agent_mesh.py
   Agent lane routing and benchmark lane restriction.
