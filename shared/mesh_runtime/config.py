@@ -106,11 +106,13 @@ class RuntimeConfig:
     latentmas_max_artifact_chars: int = 20_000
     agent_fabric_mode: str = "native"
     agent_tasks_mode: str = "async"
+    agent_mesh_agents: tuple[str, ...] = ()
     agent_mesh_task_timeout_seconds: float = 15.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
     mesh_deepagents_max_artifact_chars: int = 20_000
+    mesh_deepagents_max_output_tokens: int = 1024
     sse_max_connection_seconds: int = 1800
     watch_enabled: bool = False
     watch_interval_seconds: int = 60
@@ -218,6 +220,10 @@ class RuntimeConfig:
     # "rpc_url": "http://127.0.0.1:8899", "host": "vault-prod-07",
     # "service": "solana-validator.service"}
     bare_metal_node_targets: tuple[dict[str, str], ...] = ()
+    reth_investigation_planner: str = "native"
+    reth_investigation_probe_timeout_seconds: float = 5.0
+    reth_investigation_budget_seconds: float = 15.0
+    reth_investigation_max_probes: int = 6
     vault_mirror_mode: str = "async"
 
     def __post_init__(self) -> None:
@@ -256,6 +262,14 @@ class RuntimeConfig:
             self.research_directory = str(Path(self.state_directory) / "research")
         if self.corpus_database_path == str(DEFAULT_CORPUS_DATABASE_PATH):
             self.corpus_database_path = str(Path(self.state_directory) / "corpus" / "incident_corpus.sqlite")
+        if self.reth_investigation_planner not in {"native", "llm"}:
+            self.reth_investigation_planner = "native"
+        if self.reth_investigation_probe_timeout_seconds <= 0:
+            raise ValueError("reth_investigation_probe_timeout_seconds must be > 0")
+        if self.reth_investigation_budget_seconds <= 0:
+            raise ValueError("reth_investigation_budget_seconds must be > 0")
+        if self.reth_investigation_max_probes < 1:
+            raise ValueError("reth_investigation_max_probes must be >= 1")
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -334,6 +348,7 @@ class RuntimeConfig:
             latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
             agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
             agent_tasks_mode=_normalize_agent_tasks_mode(os.getenv("MESH_AGENT_TASKS_MODE", "async")),
+            agent_mesh_agents=_csv_env("MESH_AGENT_MESH_AGENTS"),
             agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
@@ -342,6 +357,7 @@ class RuntimeConfig:
                 default=str(DEFAULT_DEEPAGENTS_WORKSPACE),
             ),
             mesh_deepagents_max_artifact_chars=int(os.getenv("MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS", "20000")),
+            mesh_deepagents_max_output_tokens=int(os.getenv("MESH_DEEPAGENTS_MAX_OUTPUT_TOKENS", "1024")),
             watch_enabled=os.getenv("MESH_WATCH_ENABLED", "").lower() in ("1", "true", "yes"),
             watch_interval_seconds=int(os.getenv("MESH_WATCH_INTERVAL_SECONDS", "60")),
             watch_cooldown_seconds=int(os.getenv("MESH_WATCH_COOLDOWN_SECONDS", "300")),
@@ -420,6 +436,14 @@ class RuntimeConfig:
             load_balancer_drain_timeout_seconds=int(os.getenv("MESH_LOAD_BALANCER_DRAIN_TIMEOUT_SECONDS", "60")),
             load_balancer_max_active_connections=int(os.getenv("MESH_LOAD_BALANCER_MAX_ACTIVE_CONNECTIONS", "0")),
             bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
+            reth_investigation_planner=os.getenv("MESH_RETH_INVESTIGATION_PLANNER", "native").lower(),
+            reth_investigation_probe_timeout_seconds=float(
+                os.getenv("MESH_RETH_PROBE_TIMEOUT_SECONDS", "5.0")
+            ),
+            reth_investigation_budget_seconds=float(
+                os.getenv("MESH_RETH_INVESTIGATION_BUDGET_SECONDS", "15.0")
+            ),
+            reth_investigation_max_probes=int(os.getenv("MESH_RETH_INVESTIGATION_MAX_PROBES", "6")),
             vault_mirror_mode=_normalize_vault_mirror_mode(os.getenv("MESH_VAULT_MIRROR_MODE", "async")),
             observer_enabled=os.getenv("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes"),
             observer_base_url=os.getenv("MESH_OBSERVER_BASE_URL", ""),

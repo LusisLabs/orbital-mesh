@@ -147,6 +147,23 @@ class InvestigationReport(ContractModel):
 
 
 @dataclass
+class RcaReport(ContractModel):
+    schema_name: ClassVar[str] = "rca-report.schema.json"
+    report_id: str
+    trigger_id: str
+    created_at: str
+    likely_cause: str
+    confidence: float
+    supporting_evidence: list[str]
+    disconfirming_evidence: list[str]
+    ruled_out_causes: list[str]
+    unknowns: list[str]
+    evidence_checked: list[dict[str, Any]]
+    recommended_next_step: str
+    safety_reason: str
+
+
+@dataclass
 class MemoryCompactionRecord(ContractModel):
     schema_name: ClassVar[str] = "memory-compaction.schema.json"
     compaction_id: str

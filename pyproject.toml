@@ -36,6 +36,8 @@ packages = [
   "services.ingest",
   "services.trigger",
   "services.evidence",
+  "services.investigation",
+  "services.benchmark",
   "services.decision",
   "services.evaluation",
   "services.evaluation.mesh_eval",

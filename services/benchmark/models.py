@@ -26,6 +26,9 @@ class BenchmarkScenario:
     required_evidence_kinds: tuple[str, ...] = ()
     acceptable_probe_names: tuple[str, ...] = ()
     expected_root_cause: str | None = None
+    expert_trajectory: tuple[str, ...] = ()
+    required_tool_families: tuple[str, ...] = ()
+    allowed_diagnostic_endpoints: tuple[str, ...] = ()
     tags: tuple[str, ...] = ()
     source: dict[str, Any] = field(default_factory=dict)
     max_latency_ms: float = 1000.0
@@ -48,6 +51,9 @@ class BenchmarkScenario:
             required_evidence_kinds=tuple(str(item) for item in payload.get("required_evidence_kinds", [])),
             acceptable_probe_names=tuple(str(item) for item in payload.get("acceptable_probe_names", [])),
             expected_root_cause=str(payload["expected_root_cause"]) if payload.get("expected_root_cause") else None,
+            expert_trajectory=tuple(str(item) for item in payload.get("expert_trajectory", [])),
+            required_tool_families=tuple(str(item) for item in payload.get("required_tool_families", [])),
+            allowed_diagnostic_endpoints=tuple(str(item) for item in payload.get("allowed_diagnostic_endpoints", [])),
             tags=tuple(str(item) for item in payload.get("tags", [])),
             source=dict(payload.get("source", {})),
             max_latency_ms=float(payload.get("max_latency_ms", 1000.0)),
@@ -63,6 +69,9 @@ class BenchmarkScenario:
             "required_evidence_kinds": list(self.required_evidence_kinds),
             "acceptable_probe_names": list(self.acceptable_probe_names),
             "expected_root_cause": self.expected_root_cause,
+            "expert_trajectory": list(self.expert_trajectory),
+            "required_tool_families": list(self.required_tool_families),
+            "allowed_diagnostic_endpoints": list(self.allowed_diagnostic_endpoints),
             "tags": list(self.tags),
             "source": self.source,
             "max_latency_ms": self.max_latency_ms,
@@ -72,6 +81,30 @@ class BenchmarkScenario:
         if self.raw_signal is not None:
             payload["raw_signal"] = self.raw_signal
         return payload
+
+
+@dataclass(frozen=True)
+class ProcessMetrics:
+    root_cause_accuracy: float
+    trajectory_in_order_match: float
+    tool_relevance: float
+    tool_coverage: float
+    invalid_action_count: int
+    redundant_action_rate: float
+    zero_tool_diagnosis: bool
+    mttri_ms: float | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "root_cause_accuracy": self.root_cause_accuracy,
+            "trajectory_in_order_match": self.trajectory_in_order_match,
+            "tool_relevance": self.tool_relevance,
+            "tool_coverage": self.tool_coverage,
+            "invalid_action_count": self.invalid_action_count,
+            "redundant_action_rate": self.redundant_action_rate,
+            "zero_tool_diagnosis": self.zero_tool_diagnosis,
+            "mttri_ms": self.mttri_ms,
+        }
 
 
 @dataclass(frozen=True)
@@ -95,6 +128,9 @@ class ScenarioBenchmarkResult:
     root_cause_matched: bool | None
     feedback_outcome: str | None
     dimension_scores: dict[str, float]
+    process_metrics: ProcessMetrics
+    mesh_operational_score: float
+    agentic_rca_score: float
     weighted_score: float
     error: str | None = None
 
@@ -119,6 +155,9 @@ class ScenarioBenchmarkResult:
             "root_cause_matched": self.root_cause_matched,
             "feedback_outcome": self.feedback_outcome,
             "dimension_scores": self.dimension_scores,
+            "process_metrics": self.process_metrics.to_dict(),
+            "mesh_operational_score": self.mesh_operational_score,
+            "agentic_rca_score": self.agentic_rca_score,
             "weighted_score": self.weighted_score,
             "error": self.error,
         }
@@ -141,6 +180,9 @@ class BenchmarkScorecard:
     decision_match_rate: float
     investigation_coverage_rate: float
     p95_latency_ms: float | None
+    mesh_operational_score: float
+    agentic_rca_score: float
+    process_metrics: dict[str, float]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -159,5 +201,8 @@ class BenchmarkScorecard:
             "decision_match_rate": self.decision_match_rate,
             "investigation_coverage_rate": self.investigation_coverage_rate,
             "p95_latency_ms": self.p95_latency_ms,
+            "mesh_operational_score": self.mesh_operational_score,
+            "agentic_rca_score": self.agentic_rca_score,
+            "process_metrics": self.process_metrics,
             "dimension_weights": DIMENSION_WEIGHTS,
         }

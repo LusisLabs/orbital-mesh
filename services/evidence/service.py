@@ -50,8 +50,14 @@ import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import inspect
 from typing import TYPE_CHECKING, Any, Callable
 
+from services.evidence.reth_probe_registry import (
+    RETH_PROBE_DEFINITIONS,
+    citation_for_probe,
+    snapshot_for_probe,
+)
 from shared.mesh_runtime import load_policy
 
 if TYPE_CHECKING:
@@ -275,6 +281,8 @@ class ProbeResult:
     success: bool
     latency_ms: float | None = None
     error: str | None = None
+    payload: dict[str, Any] | None = None
+    citations: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -307,6 +315,8 @@ class EvidencePack:
                     "success": r.success,
                     "latency_ms": r.latency_ms,
                     "error": r.error,
+                    "payload": r.payload or {},
+                    "citations": list(r.citations),
                 }
                 for r in self.probe_results
             ],
@@ -316,15 +326,22 @@ class EvidencePack:
         }
 
 
-# A probe runner takes a signal payload and returns (enriched_pack, probe_results).
+# A probe runner takes a signal payload and an optional investigation plan,
+# then returns (enriched_pack, probe_results).
 # The default runner is the identity transform — it just returns the inbound
 # signal as the pack. Live mode wires a runner that calls the bare-metal
 # ingester; tests inject a deterministic dict-backed runner.
-ProbeRunner = Callable[[dict[str, Any]], tuple[dict[str, Any], list[ProbeResult]]]
+ProbeRunner = Callable[..., tuple[dict[str, Any], list[ProbeResult]]]
 
 
-def _identity_runner(signal: dict[str, Any]) -> tuple[dict[str, Any], list[ProbeResult]]:
+def _identity_runner(
+    signal: dict[str, Any],
+    investigation_plan: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[ProbeResult]]:
     """Default pass-through: trust the inbound signal as the pack."""
+    typed = _probe_results_from_plan(signal, investigation_plan, default_source="inline")
+    if typed:
+        return signal, typed
     return signal, [
         ProbeResult(
             name="inline_signal",
@@ -397,6 +414,7 @@ class EvidenceService:
         *,
         trigger: "Trigger",
         signal_payload: dict[str, Any],
+        investigation_plan: dict[str, Any] | None = None,
     ) -> EvidencePack:
         """Build a pack from the inbound signal and optional probes.
 
@@ -474,6 +492,8 @@ class EvidenceService:
                         source="inline",
                         success=True,
                         latency_ms=0.0,
+                        payload={"fast_path_signatures": fast_path_hits},
+                        citations=[{"source_type": "trigger", "source_ref": trigger.trigger_id}],
                     )
                 ],
                 sufficient=True,
@@ -482,7 +502,7 @@ class EvidenceService:
 
         # Normal path: run the probe runner, run sufficiency.
         try:
-            enriched, probes = self._probe_runner(signal_payload)
+            enriched, probes = _invoke_probe_runner(self._probe_runner, signal_payload, investigation_plan)
         except Exception as exc:
             # A probe runner that throws is itself an evidence problem.
             # We surface it as an insufficient pack rather than crashing
@@ -502,6 +522,7 @@ class EvidenceService:
                         source="inline",
                         success=False,
                         error=str(exc),
+                        citations=[{"source_type": "evidence_runner", "source_ref": "probe_runner"}],
                     )
                 ],
                 sufficient=False,
@@ -541,3 +562,58 @@ class EvidenceService:
             if _read_dotted(pack, path) is None:
                 missing.append(path)
         return (len(missing) <= self._max_null_fields), missing
+
+
+def _invoke_probe_runner(
+    runner: ProbeRunner,
+    signal_payload: dict[str, Any],
+    investigation_plan: dict[str, Any] | None,
+) -> tuple[dict[str, Any], list[ProbeResult]]:
+    try:
+        params = inspect.signature(runner).parameters
+    except (TypeError, ValueError):
+        return runner(signal_payload, investigation_plan)
+
+    accepts_varargs = any(param.kind == param.VAR_POSITIONAL for param in params.values())
+    positional_params = [
+        param
+        for param in params.values()
+        if param.kind in {param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD}
+    ]
+    if accepts_varargs or len(positional_params) >= 2:
+        return runner(signal_payload, investigation_plan)
+    return runner(signal_payload)
+
+
+def _probe_results_from_plan(
+    snapshot: dict[str, Any],
+    investigation_plan: dict[str, Any] | None,
+    *,
+    default_source: str,
+) -> list[ProbeResult]:
+    if not isinstance(investigation_plan, dict):
+        return []
+    probes = investigation_plan.get("probes")
+    if not isinstance(probes, list):
+        return []
+    results: list[ProbeResult] = []
+    for probe in probes:
+        if not isinstance(probe, dict):
+            continue
+        name = str(probe.get("name", ""))
+        definition = RETH_PROBE_DEFINITIONS.get(name)
+        if definition is None:
+            continue
+        payload = snapshot_for_probe(name, snapshot)
+        results.append(
+            ProbeResult(
+                name=name,
+                source=str(definition.get("source") or default_source),
+                success=bool(payload),
+                latency_ms=0.0,
+                error=None if payload else "probe_payload_unavailable",
+                payload=payload,
+                citations=[citation_for_probe(name)],
+            )
+        )
+    return results

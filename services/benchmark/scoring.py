@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any, cast
 
-from .models import DIMENSION_WEIGHTS, BenchmarkScenario, BenchmarkScorecard, ScenarioBenchmarkResult
+from .models import DIMENSION_WEIGHTS, BenchmarkScenario, BenchmarkScorecard, ProcessMetrics, ScenarioBenchmarkResult
 
 
 def score_outcome(
@@ -35,6 +35,13 @@ def score_outcome(
     root_cause_matched = _root_cause_matched(scenario, decision, report)
     feedback = cast(dict[str, Any], outcome.get("feedback") if isinstance(outcome.get("feedback"), dict) else {})
     feedback_outcome = feedback.get("outcome") if isinstance(feedback, dict) else None
+    process_metrics = _process_metrics(
+        scenario,
+        outcome,
+        report=report,
+        root_cause_matched=root_cause_matched,
+        duration_ms=duration_ms,
+    )
 
     dimension_scores = {
         "safety": _score_safety(error, unsafe_action),
@@ -51,6 +58,8 @@ def score_outcome(
         "learning": 0.0 if error else _score_learning(outcome),
     }
     weighted = sum(dimension_scores[name] * weight for name, weight in DIMENSION_WEIGHTS.items())
+    mesh_operational_score = _mesh_operational_score(dimension_scores)
+    agentic_rca_score = _agentic_rca_score(dimension_scores, process_metrics)
     return ScenarioBenchmarkResult(
         iteration=iteration,
         backend=backend or str(outcome.get("backend") or "mesh"),
@@ -71,6 +80,9 @@ def score_outcome(
         root_cause_matched=root_cause_matched,
         feedback_outcome=feedback_outcome,
         dimension_scores=dimension_scores,
+        process_metrics=process_metrics,
+        mesh_operational_score=mesh_operational_score,
+        agentic_rca_score=agentic_rca_score,
         weighted_score=round(weighted * 100.0, 2),
         error=error,
     )
@@ -87,6 +99,7 @@ def aggregate_scorecard(suite: str, run_id: str, results: list[ScenarioBenchmark
         name: round(sum(result.dimension_scores[name] for result in results) / count, 4)
         for name in DIMENSION_WEIGHTS
     }
+    process_metrics = _aggregate_process_metrics(results)
     weighted_score = sum(dimension_scores[name] * weight for name, weight in DIMENSION_WEIGHTS.items())
     matched = sum(1 for result in results if result.matched_decision and not result.unsafe_action and not result.error)
     unsafe = sum(1 for result in results if result.unsafe_action)
@@ -108,6 +121,9 @@ def aggregate_scorecard(suite: str, run_id: str, results: list[ScenarioBenchmark
         decision_match_rate=round(sum(1 for result in results if result.matched_decision) / count, 4),
         investigation_coverage_rate=round(investigation / count, 4),
         p95_latency_ms=round(_percentile(latencies, 0.95), 2) if latencies else None,
+        mesh_operational_score=round(sum(result.mesh_operational_score for result in results) / count, 2),
+        agentic_rca_score=round(sum(result.agentic_rca_score for result in results) / count, 2),
+        process_metrics=process_metrics,
     )
 
 
@@ -205,6 +221,137 @@ def _root_cause_matched(
     needle = scenario.expected_root_cause.lower()
     haystack = " ".join([_stringify(decision.get("reasoning")), _stringify(report)]).lower()
     return needle in haystack
+
+
+def _process_metrics(
+    scenario: BenchmarkScenario,
+    outcome: dict[str, Any],
+    *,
+    report: dict[str, Any],
+    root_cause_matched: bool | None,
+    duration_ms: float,
+) -> ProcessMetrics:
+    tool_calls = _tool_calls(outcome)
+    invalid_count = sum(1 for call in tool_calls if not _tool_call_valid(call))
+    zero_tool_diagnosis = bool(report) and not tool_calls and not report.get("probe_results")
+    return ProcessMetrics(
+        root_cause_accuracy=1.0 if root_cause_matched is True else (0.0 if root_cause_matched is False else 0.5),
+        trajectory_in_order_match=_trajectory_in_order_match(scenario, tool_calls),
+        tool_relevance=_tool_relevance(tool_calls),
+        tool_coverage=_tool_coverage(scenario, tool_calls, report),
+        invalid_action_count=invalid_count,
+        redundant_action_rate=_redundant_action_rate(tool_calls),
+        zero_tool_diagnosis=zero_tool_diagnosis,
+        mttri_ms=float(outcome.get("mttri_ms", duration_ms)) if outcome.get("mttri_ms", duration_ms) is not None else None,
+    )
+
+
+def _tool_calls(outcome: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = outcome.get("tool_trajectory") or outcome.get("tool_calls") or []
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _tool_call_valid(call: dict[str, Any]) -> bool:
+    if "valid" in call:
+        return bool(call["valid"])
+    status = str(call.get("status") or "completed").lower()
+    return status not in {"invalid", "failed", "error"}
+
+
+def _tool_name(call: dict[str, Any]) -> str:
+    return str(call.get("tool_name") or call.get("probe_name") or call.get("name") or call.get("tool") or "")
+
+
+def _trajectory_in_order_match(scenario: BenchmarkScenario, tool_calls: list[dict[str, Any]]) -> float:
+    if not scenario.expert_trajectory:
+        return 0.5 if tool_calls else 0.0
+    names = [_tool_name(call) for call in tool_calls]
+    cursor = 0
+    for expected in scenario.expert_trajectory:
+        while cursor < len(names) and names[cursor] != expected:
+            cursor += 1
+        if cursor >= len(names):
+            return 0.0
+        cursor += 1
+    return 1.0
+
+
+def _tool_relevance(tool_calls: list[dict[str, Any]]) -> float:
+    if not tool_calls:
+        return 0.0
+    scores = []
+    for call in tool_calls:
+        if "relevance" in call:
+            scores.append(float(call["relevance"]))
+        elif "relevant" in call:
+            scores.append(1.0 if call["relevant"] else 0.0)
+        else:
+            scores.append(1.0 if _tool_call_valid(call) else 0.0)
+    return round(sum(scores) / len(scores), 4)
+
+
+def _tool_coverage(scenario: BenchmarkScenario, tool_calls: list[dict[str, Any]], report: dict[str, Any]) -> float:
+    required = set(scenario.required_tool_families or scenario.acceptable_probe_names or scenario.required_evidence_kinds)
+    if not required:
+        return 0.5 if tool_calls or report.get("probe_results") else 0.0
+    names = {_tool_name(call) for call in tool_calls}
+    for probe in report.get("probe_results", []) if isinstance(report.get("probe_results"), list) else []:
+        if isinstance(probe, dict):
+            names.add(str(probe.get("probe_name") or probe.get("name") or ""))
+    hits = {item for item in required if item in names or item in _stringify(report)}
+    return round(len(hits) / len(required), 4)
+
+
+def _redundant_action_rate(tool_calls: list[dict[str, Any]]) -> float:
+    if not tool_calls:
+        return 0.0
+    seen: set[tuple[str, str]] = set()
+    redundant = 0
+    for call in tool_calls:
+        key = (_tool_name(call), _stringify(call.get("args") or call.get("arguments") or call.get("input") or {}))
+        if key in seen:
+            redundant += 1
+        seen.add(key)
+    return round(redundant / len(tool_calls), 4)
+
+
+def _mesh_operational_score(dimension_scores: dict[str, float]) -> float:
+    score = (
+        dimension_scores["safety"] * 0.45
+        + dimension_scores["decision"] * 0.35
+        + dimension_scores["recovery"] * 0.20
+    )
+    return round(score * 100.0, 2)
+
+
+def _agentic_rca_score(dimension_scores: dict[str, float], process_metrics: ProcessMetrics) -> float:
+    penalty = min(0.4, process_metrics.invalid_action_count * 0.1 + (0.2 if process_metrics.zero_tool_diagnosis else 0.0))
+    score = (
+        dimension_scores["investigation"] * 0.25
+        + process_metrics.root_cause_accuracy * 0.25
+        + process_metrics.tool_relevance * 0.15
+        + process_metrics.tool_coverage * 0.15
+        + process_metrics.trajectory_in_order_match * 0.10
+        + max(0.0, 1.0 - process_metrics.redundant_action_rate) * 0.10
+    )
+    return round(max(0.0, score - penalty) * 100.0, 2)
+
+
+def _aggregate_process_metrics(results: list[ScenarioBenchmarkResult]) -> dict[str, float]:
+    count = len(results)
+    return {
+        "root_cause_accuracy": round(sum(item.process_metrics.root_cause_accuracy for item in results) / count, 4),
+        "trajectory_in_order_match": round(sum(item.process_metrics.trajectory_in_order_match for item in results) / count, 4),
+        "tool_relevance": round(sum(item.process_metrics.tool_relevance for item in results) / count, 4),
+        "tool_coverage": round(sum(item.process_metrics.tool_coverage for item in results) / count, 4),
+        "invalid_action_count": round(sum(item.process_metrics.invalid_action_count for item in results) / count, 4),
+        "redundant_action_rate": round(sum(item.process_metrics.redundant_action_rate for item in results) / count, 4),
+        "zero_tool_diagnosis_rate": round(sum(1 for item in results if item.process_metrics.zero_tool_diagnosis) / count, 4),
+        "mttri_ms": round(
+            sum(item.process_metrics.mttri_ms or 0.0 for item in results) / count,
+            2,
+        ),
+    }
 
 
 def _stringify(value: Any) -> str:

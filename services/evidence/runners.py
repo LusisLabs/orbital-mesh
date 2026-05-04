@@ -4,7 +4,7 @@ import time
 from typing import Any
 
 from services.ingest.bare_metal_node import BareMetalNodeTarget, RethNodeIngester
-from services.evidence.service import ProbeResult, ProbeRunner
+from services.evidence.service import ProbeResult, ProbeRunner, _probe_results_from_plan
 from shared.mesh_runtime import RuntimeConfig
 
 
@@ -15,15 +15,22 @@ def build_configured_probe_runner(config: RuntimeConfig) -> ProbeRunner:
         if str(raw.get("kind", "")).lower() == "reth"
     ]
 
-    def run(signal: dict[str, Any]) -> tuple[dict[str, Any], list[ProbeResult]]:
+    def run(
+        signal: dict[str, Any],
+        investigation_plan: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], list[ProbeResult]]:
         target = _match_reth_target(signal, targets)
         if target is None:
+            typed = _probe_results_from_plan(signal, investigation_plan, default_source="inline")
+            if typed and all(result.success for result in typed):
+                return signal, typed
             return signal, [
                 ProbeResult(
                     name="reth_target_resolution",
                     source="configured_targets",
                     success=False,
                     error="no_matching_reth_target",
+                    citations=[{"source_type": "config", "source_ref": "MESH_BARE_METAL_NODE_TARGETS"}],
                 )
             ]
 
@@ -38,8 +45,13 @@ def build_configured_probe_runner(config: RuntimeConfig) -> ProbeRunner:
                     success=False,
                     latency_ms=latency_ms,
                     error="reth_ingester_returned_none",
+                    citations=[{"source_type": "target", "source_ref": target.name}],
                 )
             ]
+
+        typed = _probe_results_from_plan(enriched, investigation_plan, default_source="live_probe")
+        if typed:
+            return enriched, typed
 
         return enriched, [
             ProbeResult(
@@ -47,6 +59,8 @@ def build_configured_probe_runner(config: RuntimeConfig) -> ProbeRunner:
                 source="json_rpc",
                 success=True,
                 latency_ms=latency_ms,
+                payload={"target": target.name, "signal_id": enriched.get("signal_id")},
+                citations=[{"source_type": "target", "source_ref": target.name}],
             )
         ]
 

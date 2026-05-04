@@ -19,7 +19,7 @@ from uuid import uuid4
 from services.runtime import MeshRuntimeEngine
 from services.evidence import EvidencePack, EvidenceService
 from services.evidence.runners import build_configured_probe_runner
-from services.investigation import InvestigationService
+from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
 from services.ingest.webhook_service import (
     WebhookIngestService,
     build_signal_from_alert,
@@ -41,6 +41,7 @@ from shared.mesh_runtime import (
     EVALUATION_READY,
     EXECUTION_RECORDED,
     FEEDBACK_RECORDED,
+    HYPOTHESIS_RANKED,
     INTEGRATION_ARTIFACT_RECORDED,
     INTEGRATION_READINESS_RECORDED,
     INVESTIGATION_READY,
@@ -298,6 +299,7 @@ class RunCoordinator:
         # injected by the caller when enrichment is needed.
         self.evidence = EvidenceService(probe_runner=build_configured_probe_runner(self.config))
         self.investigation = InvestigationService()
+        self.reth_planner = RethInvestigationPlanner(self.config)
         self.deferred_runs = DeferredRunStore(self.config.state_directory)
         self._deferred_stop = threading.Event()
         self._deferred_thread = threading.Thread(target=self._deferred_recheck_loop, daemon=True)
@@ -1123,6 +1125,7 @@ class RunCoordinator:
                 break
 
             chaos_probe = self._is_chaos_probe_run(run_id)
+            investigation_plan = None
             evidence_pack: EvidencePack | None = None
             if chaos_probe:
                 self._update_session(run_id, stage="evidence_pack_ready", status="running")
@@ -1140,8 +1143,16 @@ class RunCoordinator:
                     status="skipped",
                 )
             else:
+                investigation_plan = self._record_reth_investigation_plan(run_id, trigger, signal_payload)
                 try:
-                    evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
+                    evidence_pack = self._record_evidence_pack(
+                        run_id,
+                        trigger,
+                        signal_payload,
+                        investigation_plan=(
+                            investigation_plan.to_dict() if investigation_plan is not None else None
+                        ),
+                    )
                 except Exception as exc:
                     # Evidence stage failure is non-fatal: the pipeline falls
                     # back to reading the inbound signal directly. The run log
@@ -1867,6 +1878,8 @@ class RunCoordinator:
         run_id: str,
         trigger: Trigger,
         signal_payload: dict[str, Any],
+        *,
+        investigation_plan: dict[str, Any] | None = None,
     ) -> EvidencePack:
         """Run the evidence stage and stamp the audited pack onto the run.
 
@@ -1888,7 +1901,11 @@ class RunCoordinator:
             status="running",
         )
 
-        pack = self.evidence.assemble(trigger=trigger, signal_payload=signal_payload)
+        pack = self.evidence.assemble(
+            trigger=trigger,
+            signal_payload=signal_payload,
+            investigation_plan=investigation_plan,
+        )
 
         for probe in pack.probe_results:
             self.state_store.append_run_event(
@@ -1901,6 +1918,8 @@ class RunCoordinator:
                     "success": probe.success,
                     "latency_ms": probe.latency_ms,
                     "error": probe.error,
+                    "payload": probe.payload or {},
+                    "citations": list(probe.citations),
                 },
                 summary={"probe": probe.name, "success": probe.success},
                 status="recorded",
@@ -1923,6 +1942,32 @@ class RunCoordinator:
             status="recorded",
         )
         return pack
+
+    def _record_reth_investigation_plan(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        signal_payload: dict[str, Any],
+    ):
+        plan = self.reth_planner.plan(trigger=trigger, signal_payload=signal_payload)
+        if plan is None:
+            return None
+        payload = plan.to_dict()
+        self._set_artifact(run_id, "investigation_plan", payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="evidence_pack_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=payload,
+            summary={
+                "planner": payload.get("probe_budget", {}).get("planner"),
+                "probe_count": len(payload.get("probes", [])),
+            },
+            artifact_key="investigation_plan",
+            integration_name="reth_planner",
+            status="recorded",
+        )
+        return plan
 
     def _record_investigation_report(
         self,
@@ -2075,6 +2120,56 @@ class RunCoordinator:
         decision: Decision,
         allow_rereevaluation: bool = False,
     ) -> EvaluationResult:
+        session = self.state_store.get_run_session(run_id)
+        artifacts = session.artifacts if session is not None and isinstance(session.artifacts, dict) else {}
+        evidence_pack = artifacts.get("evidence_pack", {})
+        rca_report = build_rca_report(
+            trigger=trigger,
+            decision=decision,
+            evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
+        )
+        if rca_report is not None:
+            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+                "report_id": rca_report.report_id,
+                "likely_cause": rca_report.likely_cause,
+                "confidence": rca_report.confidence,
+                "recommended_next_step": rca_report.recommended_next_step,
+            }
+            rca_payload = rca_report.to_dict()
+            self._set_artifact(run_id, "rca_report", rca_payload)
+            self.state_store.append_run_event(
+                run_id,
+                stage="decision_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=rca_payload,
+                summary={
+                    "likely_cause": rca_report.likely_cause,
+                    "confidence": rca_report.confidence,
+                    "recommended_next_step": rca_report.recommended_next_step,
+                },
+                artifact_key="rca_report",
+                integration_name="reth_rca",
+                status="recorded",
+            )
+        ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
+        if ranked_hypotheses:
+            self._set_artifact(run_id, "ranked_hypotheses", ranked_hypotheses)
+            self.state_store.append_run_event(
+                run_id,
+                stage="decision_ready",
+                event_type=HYPOTHESIS_RANKED,
+                payload={
+                    "trigger_id": trigger.trigger_id,
+                    "top_hypothesis": ranked_hypotheses[0],
+                    "ranked_hypotheses": ranked_hypotheses,
+                },
+                summary={
+                    "top_hypothesis": ranked_hypotheses[0].get("hypothesis_id"),
+                    "recommended_action": ranked_hypotheses[0].get("recommended_action"),
+                },
+                artifact_key="ranked_hypotheses",
+                status="recorded",
+            )
         self._set_artifact(run_id, "decision", decision.to_dict())
         self._update_session(run_id, stage="decision_ready", status="running")
         self.state_store.append_run_event(
@@ -3159,3 +3254,16 @@ def _trajectory_artifact_summary(artifact_key: str, payload: Any) -> dict[str, A
         task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
         return {"trace_version": payload.get("trace_version"), "trigger_type": task.get("trigger_type")}
     return {"artifact_key": artifact_key}
+
+
+def _ranked_hypotheses_from_decision(decision: Decision) -> list[dict[str, Any]]:
+    reasoning = decision.reasoning if isinstance(decision.reasoning, dict) else {}
+    ranked = reasoning.get("ranked_hypotheses")
+    if isinstance(ranked, list):
+        return [item for item in ranked if isinstance(item, dict)]
+    evidence_pack = reasoning.get("evidence_pack")
+    if isinstance(evidence_pack, dict):
+        hypotheses = evidence_pack.get("hypotheses")
+        if isinstance(hypotheses, list):
+            return [item for item in hypotheses if isinstance(item, dict)]
+    return []

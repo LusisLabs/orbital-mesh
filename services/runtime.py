@@ -10,7 +10,7 @@ from services.evidence import EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.feedback.service import FeedbackService
 from services.ingest.service import IngestService
-from services.investigation import InvestigationService
+from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
 from services.orchestrator.service import OrchestratorService
 from services.scenario_analysis.service import ScenarioAnalysisService
 from services.signal_history import SignalHistoryStore
@@ -95,6 +95,7 @@ class MeshRuntimeEngine:
         self.trigger = trigger or TriggerService()
         self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
         self.investigation = investigation or InvestigationService()
+        self.reth_planner = RethInvestigationPlanner(self.config)
         escalation_reasoner = None
         if self.config.llm_escalation_enabled and (learning_store or context_store):
             from services.decision.llm_reasoning import EscalationReasoner
@@ -212,7 +213,22 @@ class MeshRuntimeEngine:
             status="recorded",
         )
 
-        evidence_pack = self.evidence.assemble(trigger=trigger, signal_payload=raw_signal)
+        investigation_plan = self.reth_planner.plan(trigger=trigger, signal_payload=raw_signal)
+        if investigation_plan is not None:
+            record_event(
+                "evidence_pack_ready",
+                "integration_artifact_recorded",
+                investigation_plan.to_dict(),
+                artifact_key="investigation_plan",
+                integration_name="reth_planner",
+                status="recorded",
+            )
+
+        evidence_pack = self.evidence.assemble(
+            trigger=trigger,
+            signal_payload=raw_signal,
+            investigation_plan=investigation_plan.to_dict() if investigation_plan is not None else None,
+        )
         record_event(
             "evidence_pack_ready",
             "evidence_pack_ready",
@@ -263,6 +279,26 @@ class MeshRuntimeEngine:
             evidence_pack=evidence_pack.to_dict(),
             investigation_report=investigation_report.to_dict(),
         )
+        rca_report = build_rca_report(
+            trigger=trigger,
+            decision=decision,
+            evidence_pack=evidence_pack.to_dict(),
+        )
+        if rca_report is not None:
+            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+                "report_id": rca_report.report_id,
+                "likely_cause": rca_report.likely_cause,
+                "confidence": rca_report.confidence,
+                "recommended_next_step": rca_report.recommended_next_step,
+            }
+            record_event(
+                "decision_ready",
+                "integration_artifact_recorded",
+                rca_report.to_dict(),
+                artifact_key="rca_report",
+                integration_name="reth_rca",
+                status="recorded",
+            )
         ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
         if ranked_hypotheses:
             record_event(
@@ -372,7 +408,9 @@ class MeshRuntimeEngine:
             "normalized_event": normalized_event.to_dict(),
             "trigger": trigger.to_dict(),
             "scenario_analysis": scenario_analysis.to_dict(),
+            "investigation_plan": investigation_plan.to_dict() if investigation_plan is not None else None,
             "investigation_report": investigation_report.to_dict(),
+            "rca_report": rca_report.to_dict() if rca_report is not None else None,
             "decision": decision.to_dict(),
             "evaluation": evaluation.to_dict(),
             "execution": execution.to_dict(),

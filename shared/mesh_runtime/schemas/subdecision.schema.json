@@ -26,6 +26,9 @@
         "investigate_and_patch",
         "rollback_deployment",
         "restart_deployment",
+        "restart_systemd_service",
+        "scale_deployment",
+        "patch_resources",
         "approval_required"
       ]
     },

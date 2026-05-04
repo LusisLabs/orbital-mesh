@@ -37,6 +37,7 @@ from .contracts import (
     InvestigationPlan,
     InvestigationProbeResult,
     InvestigationReport,
+    RcaReport,
     MemoryPacket,
     MemoryCompactionRecord,
     ObservationRecord,

@@ -500,7 +500,7 @@ class AgentMeshService:
         legacy_agents = ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"]
         matched_agent = bool((service_agent or {}).get("matched")) if isinstance(service_agent, dict) else False
         if not matched_agent:
-            return legacy_agents
+            return self._filter_configured_agents(legacy_agents, legacy_agents)
         source = _signal_source(trigger)
         routing = {
             "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
@@ -515,9 +515,17 @@ class AgentMeshService:
         if preferred:
             preferred_set = {str(item) for item in preferred}
             agents = [agent for agent in agents if agent in preferred_set] or agents
+        agents = self._filter_configured_agents(agents, legacy_agents)
         if decision.decision_type not in {"investigate_and_patch", "repo_patch_service"}:
             agents = [agent for agent in agents if agent != "codex" or self._allowed_paths(trigger)]
         return agents
+
+    def _filter_configured_agents(self, agents: list[str], known_agents: list[str]) -> list[str]:
+        if not self.config.agent_mesh_agents:
+            return agents
+        requested = [agent for agent in self.config.agent_mesh_agents if agent in known_agents]
+        requested_set = set(requested)
+        return [agent for agent in agents if agent in requested_set] or requested or agents
 
     def _memory_scope(self, run_id: str, trigger: Trigger) -> dict[str, Any]:
         return {

@@ -9,6 +9,8 @@ def render_markdown_report(scorecard: BenchmarkScorecard, results: list[Scenario
         "",
         f"- Run ID: `{scorecard.run_id}`",
         f"- Weighted score: **{scorecard.weighted_score:.2f} / 100**",
+        f"- Mesh operational score: **{scorecard.mesh_operational_score:.2f} / 100**",
+        f"- Agentic RCA score: **{scorecard.agentic_rca_score:.2f} / 100**",
         f"- Scenarios: {scorecard.scenario_count}",
         f"- Attempts: {scorecard.scenario_attempt_count}",
         f"- Iterations: {scorecard.iteration_count}",
@@ -30,10 +32,20 @@ def render_markdown_report(scorecard: BenchmarkScorecard, results: list[Scenario
 
     lines.extend([
         "",
+        "## Process Metrics",
+        "",
+        "| Metric | Value |",
+        "| --- | ---: |",
+    ])
+    for name, value in scorecard.process_metrics.items():
+        lines.append(f"| {name} | {value:.4f} |")
+
+    lines.extend([
+        "",
         "## Scenario Results",
         "",
-        "| Iteration | Backend | Scenario | Expected | Actual | Score | Unsafe | Error |",
-        "| ---: | --- | --- | --- | --- | ---: | --- | --- |",
+        "| Iteration | Backend | Scenario | Expected | Actual | Score | Ops | RCA | Unsafe | Error |",
+        "| ---: | --- | --- | --- | --- | ---: | ---: | ---: | --- | --- |",
     ])
     for result in results:
         expected = ", ".join(result.expected_decisions)
@@ -41,7 +53,7 @@ def render_markdown_report(scorecard: BenchmarkScorecard, results: list[Scenario
         error = result.error or ""
         lines.append(
             f"| {result.iteration} | {result.backend} | {result.scenario_id} | {expected} | {result.actual_decision or 'no_action'} | "
-            f"{result.weighted_score:.2f} | {unsafe} | {error} |"
+            f"{result.weighted_score:.2f} | {result.mesh_operational_score:.2f} | {result.agentic_rca_score:.2f} | {unsafe} | {error} |"
         )
 
     failures = [result for result in results if result.error or not result.matched_decision or result.unsafe_action]
