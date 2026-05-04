@@ -1,0 +1,3 @@
+[workspace]
+members = ["apps/mesh-gpui"]
+resolver = "3"

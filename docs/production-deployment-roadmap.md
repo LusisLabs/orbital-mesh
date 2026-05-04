@@ -19,7 +19,8 @@ The first production test must prove:
 | Surface | Current repo anchor | Production posture |
 | --- | --- | --- |
 | Control plane API and SSE | `control_plane_server.py`, `services/control_plane.py` | Core runtime. Must be placed behind authenticated TLS before external access. |
-| Browser operator UI | `web/`, served by `run_server.py` | Primary human test surface. |
+| GPUI operator console | `apps/mesh-gpui/` | Target primary human application shell; uses the control plane API as the authority boundary. |
+| Browser operator UI | `web/`, served by `run_server.py` | Compatibility and CI-visible human test surface while the GPUI console graduates. |
 | TUI | `run_tui.py` | Local companion only. |
 | Manual and fixture runs | `POST /api/runs`, `fixtures/signals/` | Safe replay and demo path. |
 | Kubernetes live signals | `services/ingest/kubernetes_live_signal.py`, `services/watchers/kubernetes.py` | Production candidate when kubeconfig, network reachability, context allowlist, and namespace allowlist are all set. |
@@ -202,14 +203,14 @@ Exit gates:
 | Distributed-systems fault tests | local production-like e2e | Focused tests cover duplicate/correlated signals, delayed deferred runs, queue backpressure, and packaging drift; broader clock-skew and partial-network coverage remains. |
 | Threat model and abuse-case register | private staging | Initial authority-boundary register is documented; owner/expiry tracking remains before external staging. |
 | Data classification and retention controls | private staging | Initial classification table is documented; enforceable retention, redaction, and deletion controls remain. |
-| Supply-chain provenance | private staging | Required fields are documented; SBOM, vulnerability scan, image digest, and CI provenance generation remain. |
+| Supply-chain provenance | private staging | `scripts/generate_release_provenance.py` emits a release packet and `--require-complete` fails without CI artifacts; SBOM, vulnerability scan, image digest, and clean signed CI packet generation remain. |
 | Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, and rollback evidence. |
 | Connector certification matrix | private staging | Machine-readable certification states are exposed in `/api/readiness` and documented. |
 | Failure-mode library | private staging | Core denied-action and fault tests exist; explicit product library and UI replay catalog remain. |
 | Operator trust ladder UI | private staging | Trust ladder store/API exists; visible autonomy rationale is backlog. |
 | Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
 | Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
-| Release provenance packet | production pilot | Required fields are documented; generation from CI artifacts remains. |
+| Release provenance packet | production pilot | Local generator and completeness gate exist; CI must supply image digests, base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity before a signed pilot packet is valid. |
 | Pilot SLO and error budget | production pilot | Needed to bound acceptable failure, latency, and degradation during real-user testing. |
 | Enterprise evaluation kit | private staging | Initial kit is documented in `docs/evaluation-kits.md`; sample export packaging and formal benchmark packet remain. |
 | Reference architectures | private staging | Need deployment guides for Kubernetes platforms, private cloud, GPU/AI infrastructure, regulated enterprise, and air-gapped/VPC-only environments. |
@@ -373,7 +374,7 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 ## Immediate Cut List
 
 Execution record for the first hardening slice: [`production-hardening-records.md`](production-hardening-records.md).
-Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`community-governance.md`](community-governance.md), [`design-partner-packet.md`](design-partner-packet.md), and [`postgres-restart-proof.md`](postgres-restart-proof.md).
+Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`community-governance.md`](community-governance.md), [`design-partner-packet.md`](design-partner-packet.md), [`postgres-restart-proof.md`](postgres-restart-proof.md), and [`release-provenance.md`](release-provenance.md).
 
 1. Normalize orbital-mesh naming across docs and image tags.
 2. Add tiered readiness profiles: local, staging, pilot, expansion.

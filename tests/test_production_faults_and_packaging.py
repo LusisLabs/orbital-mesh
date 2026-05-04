@@ -91,6 +91,10 @@ class ReleasePackagingTests(unittest.TestCase):
                 "scripts/verify_postgres_restart_proof.py",
                 "shared/mesh_runtime/postgres_state.py",
             ],
+            "docs/authenticated-ingress.md": [
+                "control_plane_server.py",
+                "scripts/verify_authenticated_ingress.py",
+            ],
         }
         for doc, refs in docs.items():
             text = (REPO_ROOT / doc).read_text(encoding="utf-8")

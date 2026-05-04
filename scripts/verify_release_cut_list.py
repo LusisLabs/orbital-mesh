@@ -25,6 +25,8 @@ REQUIRED_DOCS = (
     "docs/community-governance.md",
     "docs/design-partner-packet.md",
     "docs/postgres-restart-proof.md",
+    "docs/release-provenance.md",
+    "docs/authenticated-ingress.md",
 )
 
 REQUIRED_SCRIPTS = (
@@ -32,6 +34,8 @@ REQUIRED_SCRIPTS = (
     "scripts/prod_smoke.sh",
     "scripts/e2e_ui_operator.sh",
     "scripts/verify_postgres_restart_proof.py",
+    "scripts/generate_release_provenance.py",
+    "scripts/verify_authenticated_ingress.py",
 )
 
 REQUIRED_API_MARKERS = (
@@ -60,6 +64,41 @@ REQUIRED_MARKERS = {
     "scripts/mesh_agent_operator.py": (
         "MESH_AGENT_OPERATOR_ID",
         "MESH_AGENT_OPERATOR_ROLES",
+    ),
+    "scripts/generate_release_provenance.py": (
+        "mesh.release_provenance.v1",
+        "--require-complete",
+        "base_image_digests",
+        "policy_hashes",
+        "migration_version",
+        "sbom_path",
+        "vulnerability_scan_path",
+    ),
+    "docs/release-provenance.md": (
+        "MESH_IMAGE_DIGEST",
+        "MESH_SBOM_PATH",
+        "MESH_VULNERABILITY_SCAN_PATH",
+    ),
+    "scripts/verify_authenticated_ingress.py": (
+        "mesh.authenticated_ingress_rehearsal.v1",
+        "operator_identity_required=True",
+        "X-Mesh-Operator",
+        "X-Mesh-Roles",
+        "anonymous_run_creation_denied",
+        "viewer_policy_simulation_accepted",
+        "launcher_run_creation_accepted",
+        "approver_approval_accepted",
+        "admin_kill_switch_accepted",
+    ),
+    "docs/authenticated-ingress.md": (
+        "MESH_OPERATOR_IDENTITY_REQUIRED=1",
+        "X-Mesh-Operator",
+        "X-Mesh-Roles",
+        "viewer",
+        "launcher",
+        "approver",
+        "admin",
+        "scripts/verify_authenticated_ingress.py",
     ),
 }
 
@@ -163,6 +202,13 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
         "docs/postgres-restart-proof.md": (
             "scripts/verify_postgres_restart_proof.py",
             "shared/mesh_runtime/postgres_state.py",
+        ),
+        "docs/release-provenance.md": (
+            "scripts/generate_release_provenance.py",
+        ),
+        "docs/authenticated-ingress.md": (
+            "control_plane_server.py",
+            "scripts/verify_authenticated_ingress.py",
         ),
     }
     checks: list[dict[str, Any]] = []

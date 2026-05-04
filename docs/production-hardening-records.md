@@ -21,13 +21,14 @@ Implemented in this slice:
 - design-partner pilot packet;
 - Postgres restart-proof harness for environments with `MESH_DATABASE_URL`;
 - production-like compose defaults for Postgres state, named operator identity, approval-gated smoke, and disabled unfinished feature-flag and incident adapters;
-- release-cut guard for active image names, API markers, docs, compose pilot defaults, and smoke paths.
+- release provenance generator with an explicit `--require-complete` pilot gate;
+- release-cut guard for active image names, API markers, docs, compose pilot defaults, provenance markers, and smoke paths.
 
 Deferred from the immediate list:
 
 - broad historical-doc naming cleanup outside active release paths;
 - production smoke against authenticated TLS ingress;
-- external audit-sink certification, SBOM generation, vulnerability scan, and signed release provenance.
+- external audit-sink certification, SBOM generation, vulnerability scan, image digest capture, and signed CI release packet production.
 
 ## Readiness Profiles
 
@@ -154,7 +155,18 @@ Pilot release packets must include:
 - build command and builder identity;
 - readiness profile and environment.
 
-Until those fields are generated from CI artifacts, pilot readiness remains blocked at the release-packet layer.
+`scripts/generate_release_provenance.py` now emits `mesh.release_provenance.v1` packets. Local developer output is allowed to be `status: incomplete`; pilot release jobs must run with `--require-complete`.
+
+Current local generation returns `status: incomplete` because this worktree is dirty and CI-only artifacts are absent:
+
+- `clean_git_tree`;
+- `image_digest`;
+- `base_image_digests`;
+- `sbom_path`;
+- `vulnerability_scan_path`;
+- `build_command`.
+
+Until those fields are supplied by CI and `--require-complete` exits successfully, pilot readiness remains blocked at the release-packet layer even if `/api/pilot/go-no-go` is `go`.
 
 ## Release Cut Guard
 
@@ -164,14 +176,16 @@ Run:
 scripts/verify_release_cut_list.py --json
 ```
 
-The guard checks active Docker image defaults, required production docs, smoke scripts, API markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, or Postgres restart proof.
+The guard checks active Docker image defaults, required production docs, smoke scripts, API markers, compose pilot defaults, release-provenance markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, Postgres restart proof, or signed CI provenance.
 
 ## Current Validation Evidence
 
 Validated in this slice:
 
-- `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list tests.test_production_faults_and_packaging` passed with `13` tests;
+- `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list tests.test_production_faults_and_packaging` passed with `15` tests;
+- `PYTHONPATH=. python3 -m unittest tests.test_release_provenance tests.test_production_faults_and_packaging` passed with `11` tests;
 - `scripts/verify_release_cut_list.py --json` returned `status: pass`;
+- `scripts/generate_release_provenance.py --json` returned `status: incomplete` with missing CI release gates listed above;
 - `scripts/verify_postgres_restart_proof.py --skip-if-missing --json` returned `status: skipped`;
 - `npm --prefix web run test:e2e` passed with `12` Playwright tests after fixing the portable UI seed path and mobile drawer layering;
 - `npm --prefix web run lint` passed;
@@ -190,4 +204,5 @@ Validated in this slice:
 Still not validated in this environment:
 
 - production smoke against authenticated TLS ingress;
-- external audit-sink certification and signed release provenance from CI artifacts.
+- external audit-sink certification;
+- signed CI release provenance with complete image/base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity.
