@@ -4,6 +4,10 @@ This matrix is the release-facing validation record for the current
 end-to-end wiring cleanup. It separates proven gates from partial gates and
 local environment blockers.
 
+The deployment roadmap is tracked in
+[`docs/production-deployment-roadmap.md`](./production-deployment-roadmap.md);
+this file records validation evidence for those gates.
+
 ## Validation Matrix
 
 | Gate | Command | Current status | Notes |

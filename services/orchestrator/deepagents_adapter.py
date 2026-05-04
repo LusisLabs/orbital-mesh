@@ -342,9 +342,12 @@ def _uses_minimax_openai_compatible_route(model: str) -> bool:
     return False
 
 
-def _resolve_deepagents_model(model: str, *, max_output_tokens: int) -> Any:
+def _resolve_deepagents_model(model: str, *, max_output_tokens: int | None = None) -> Any:
     if model.lower().startswith("anthropic:"):
-        return init_chat_model(model, max_tokens=max_output_tokens)
+        kwargs: dict[str, Any] = {}
+        if max_output_tokens is not None:
+            kwargs["max_tokens"] = max_output_tokens
+        return init_chat_model(model, **kwargs)
     if model.lower().startswith("openai:") and _uses_minimax_openai_compatible_route(model):
         kwargs: dict[str, Any] = {"use_responses_api": False}
         openai_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()

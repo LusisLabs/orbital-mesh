@@ -606,6 +606,9 @@ class FileStateStore:
             self.vault.write_run_bundle(session, events, merkle, goal)
             self._last_vault_materialized_at[run_id] = now
 
+    def materialize_vault(self, run_id: str, *, force: bool = False) -> None:
+        self._materialize_vault(run_id, force=force)
+
     def flush_background_tasks(self, timeout: float = 5.0) -> bool:
         vault_queue = self._vault_queue
         if vault_queue is None:

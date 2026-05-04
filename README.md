@@ -46,6 +46,7 @@ These are the dimensions this codebase is built to support; they match a discipl
   - `goose`
   - `hermes`
 - Reports proposal-lane readiness for Evo and supports explicit operator-triggered Evo bootstrap/status for bounded repo patch runs.
+- Includes `mesh_brain`, the post-training and model-lifecycle plane extracted from Mesh, with data refinery, training job, eval, serving, model-management, and hardware-routing primitives.
 
 ## Runtime Model
 
@@ -117,6 +118,7 @@ mesh-intelligence/
 ├── run_tui.py                       # terminal UI entrypoint
 ├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo config
 ├── swarmclaw/                       # optional Next.js operator stack (separate surface)
+├── mesh_brain/                      # post-training, eval, serving, and model lifecycle plane
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
 │   ├── runtime.py                   # shared stage primitives used by pipeline + coordinator
@@ -137,6 +139,7 @@ mesh-intelligence/
 │   └── state.py
 ├── web/                             # React/Vite browser control plane, retained as parity reference
 ├── purnaOS-main/                    # Purna Labs OS shell and native MeshControl app
+├── docs/post-training/              # Mesh Brain PRD and runtime architecture imported from post-training
 ├── fixtures/
 ├── policies/
 └── tests/
