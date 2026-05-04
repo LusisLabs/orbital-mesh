@@ -402,6 +402,137 @@ After implementation:
     - Add an option to run Deep Agents with one diagnostic lane per scenario
       across the whole golden suite without exceeding model quota.
 
+Checkpoint: W7 official SRE benchmark attempt.
+Date: 2026-05-04.
+
+Before implementation:
+
+  Planned files:
+    - services/benchmark/cloudopsbench.py
+    - services/benchmark/backends.py
+    - services/benchmark/runner.py
+    - services/benchmark/__main__.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+    - docs/benchmark-results/2026-05-04-official-sre-benchmark.md
+
+  Intended behavior:
+    - Stop reporting Cloud-OpsBench adapter sanity as if it were hidden eval.
+    - Add an explicit hidden/oracle ground-truth mode for Cloud-OpsBench.
+    - Keep oracle behavior available only for plumbing tests.
+    - Run official sparse Cloud-OpsBench cases in hidden mode with repeated
+      attempts and a held-out eval split.
+    - Attempt SREGym local-kind setup and record blockers instead of inventing
+      a fixture score.
+
+  Risk:
+    - Hidden-mode Cloud-OpsBench scores will look worse because Mesh does not
+      yet choose benchmark tools interactively.
+    - SREGym requires local Docker, Helm, kind, and enough disk for submodules;
+      local environment issues can block real runs.
+    - OpenSRE baseline depends on external model credits.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOpsSnapshotRunner now defaults to ground_truth_mode=hidden.
+    - Hidden mode does not replay expert trajectories and does not inject
+      official root-cause labels into investigation reports or raw signals.
+    - Oracle mode can be selected with:
+        --cloudopsbench-ground-truth-mode oracle
+      and remains limited to adapter/plumbing validation.
+    - CLI now exposes:
+        --cloudopsbench-ground-truth-mode hidden|oracle
+    - Added a regression test proving hidden mode leaves tool_trajectory empty
+      and does not leak the official root cause into the investigation report.
+    - Added a dated benchmark result document at:
+        docs/benchmark-results/2026-05-04-official-sre-benchmark.md
+
+  Official benchmark assets:
+    - SREGym code clone:
+        .mesh-runtime-state/external-benchmarks/SREGym-code
+        commit 1c96acfd6a4ef624c0ece78d70cfd852e6c5104a
+    - Cloud-OpsBench sparse clone:
+        .mesh-runtime-state/external-benchmarks/Cloud-OpsBench-sparse
+        commit b4454420d8d713eac935050be9dc2b799b534782
+    - Cloud-OpsBench sparse checkout expanded to 22 official cases.
+    - Split:
+        dev: 6 official cases
+        eval: 16 official cases
+
+  Runs captured:
+    - Mesh Cloud-OpsBench hidden eval:
+        Run: bench_20260504T083705604096Z
+        Cases: 16
+        Attempts: 48
+        Repeat: 3
+        Weighted score: 93.50
+        Mesh operational score: 100.00
+        Agentic RCA score: 30.00
+        Root-cause accuracy: 0.0000
+        Tool coverage: 0.0000
+        Trajectory match: 0.0000
+        Unsafe action rate: 0.00%
+    - Mesh Cloud-OpsBench hidden dev:
+        Run: bench_20260504T083715534015Z
+        Cases: 6
+        Attempts: 18
+        Repeat: 3
+        Agentic RCA score: 30.00
+        Root-cause accuracy: 0.0000
+        Tool coverage: 0.0000
+    - OpenSRE alert-only baseline attempt:
+        Run: bench_20260504T082745744637Z
+        Cases: 4
+        Attempts: 12
+        Successful attempts: 8
+        Failed attempts: 4
+        Failure cause: Anthropic credit balance too low during third repeat
+        All-attempt weighted score: 62.33
+        Successful-only weighted mean: 89.50
+        Root-cause accuracy: 0.0000
+        Tool coverage: 0.0000
+
+  SREGym status:
+    - Official local-kind execution was not run.
+    - Docker client exists, but sandbox docker info is blocked by socket
+      permission and outside-sandbox docker info timed out after 8 seconds.
+    - Helm is not installed.
+    - Disk remains effectively full, with about 1.1 GiB available after sparse
+      Cloud-OpsBench expansion.
+    - Full SREGym clone with submodules previously failed because disk was
+      full.
+
+  Validation status:
+    - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with
+      pytest pytest tests/test_benchmark_harness.py -q, 15 tests.
+    - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/benchmark
+      tests/test_benchmark_harness.py.
+    - PASS: TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable .
+      --with deepagents --with mypy mypy --strict --exclude
+      'deepagents/|latent-mesh/LatentMAS/|services/skills/'.
+    - Full pytest attempted: 762 passed, 1 skipped, 9 failed in existing
+      control-plane, Deep Agents, LatentMAS, and state-store tests.
+    - Full ruff attempted: failed because it traversed unrelated untracked
+      .claude/worktrees copies of deepagents and latent-mesh.
+
+  Interpretation:
+    - Mesh is safe and deterministic under hidden Cloud-OpsBench RCA pressure:
+      it escalates instead of mutating.
+    - Mesh does not yet perform official Cloud-OpsBench RCA: root-cause
+      accuracy, tool coverage, and trajectory match are all zero.
+    - The weighted score is not a suitable headline for Cloud-OpsBench because
+      safe escalation can hide the lack of RCA progress. Use agentic RCA score
+      and process metrics as the primary architecture-iteration targets.
+
+  Remaining gaps:
+    - Implement an interactive Cloud-OpsBench probe loop where Mesh chooses
+      read-only snapshot tools and records actual calls.
+    - Emit ranked root-cause candidates for A@1/A@3 scoring.
+    - Fix local SREGym prerequisites: Docker daemon, Helm, and disk headroom.
+    - Re-run OpenSRE after provider credits are restored, with the same
+      scenario split and tool/input constraints.
+
 Checkpoint: W5 external agent backend slice.
 Date: 2026-05-03.
 

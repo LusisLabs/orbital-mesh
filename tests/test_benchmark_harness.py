@@ -328,6 +328,7 @@ class BenchmarkHarnessTest(unittest.TestCase):
                     output_root=root / "out",
                     provider="cloudopsbench",
                     state_directory=root / "state",
+                    cloudopsbench_ground_truth_mode="oracle",
                 )
             )
 
@@ -408,6 +409,7 @@ class BenchmarkHarnessTest(unittest.TestCase):
                     provider="cloudopsbench",
                     cloudopsbench_root=cloudops_root,
                     state_directory=root / "state",
+                    cloudopsbench_ground_truth_mode="oracle",
                 )
             )
 
@@ -415,6 +417,81 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertEqual("cloudopsbench", result.backend)
             self.assertEqual(1.0, result.process_metrics.tool_coverage)
             self.assertTrue(result.root_cause_matched)
+
+    def test_cloudopsbench_hidden_mode_does_not_replay_oracle_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "startup" / "25"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service Availability Disruption.",
+                        "result": {
+                            "fault_object": "app/productcatalogservice",
+                            "root_cause": "incorrect_image_reference",
+                        },
+                        "process": {
+                            "path1": [
+                                "GetResources::pods",
+                                "DescribeResource::pods::productcatalogservice",
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text("{}", encoding="utf-8")
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "boutique/startup/25"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "incorrect_image_reference",
+                        "expert_trajectory": ["GetResources", "DescribeResource"],
+                        "required_tool_families": ["GetResources", "DescribeResource"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            self.assertEqual("hidden", artifact["cloudopsbench_ground_truth_mode"])
+            self.assertEqual([], artifact["tool_trajectory"])
+            self.assertNotIn("incorrect_image_reference", json.dumps(artifact["investigation_report"]))
+            self.assertFalse(run.results[0].root_cause_matched)
 
     def test_sregym_backend_and_gap_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

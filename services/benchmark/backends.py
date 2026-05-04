@@ -98,12 +98,14 @@ class MeshControlPlaneBackend:
 class CloudOpsBenchBackend:
     runtime_config: RuntimeConfig
     cloudopsbench_root: Path | None = None
+    ground_truth_mode: str = "hidden"
     name: str = "cloudopsbench"
 
     def run_scenario(self, scenario: BenchmarkScenario, raw_signal: dict[str, Any], *, iteration: int) -> dict[str, Any]:
         runner = CloudOpsSnapshotRunner(
             runtime_config=self.runtime_config,
             cloudopsbench_root=self.cloudopsbench_root,
+            ground_truth_mode=self.ground_truth_mode,
         )
         return runner.run_scenario(scenario, raw_signal, iteration=iteration)
 

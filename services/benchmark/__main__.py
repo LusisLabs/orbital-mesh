@@ -38,6 +38,7 @@ def main() -> None:
     run_parser.add_argument("--opensre-command", default="uvx opensre")
     run_parser.add_argument("--backend-timeout-seconds", type=float, default=300.0)
     run_parser.add_argument("--cloudopsbench-root", default=None)
+    run_parser.add_argument("--cloudopsbench-ground-truth-mode", choices=("hidden", "oracle"), default="hidden")
     run_parser.add_argument("--sregym-server-url", default="http://localhost:8000")
     run_parser.add_argument("--sregym-target", default="local-kind")
 
@@ -121,6 +122,7 @@ def main() -> None:
             backend_timeout_seconds=args.backend_timeout_seconds,
             control_plane_timeout_seconds=args.control_plane_timeout_seconds,
             cloudopsbench_root=Path(args.cloudopsbench_root) if args.cloudopsbench_root else None,
+            cloudopsbench_ground_truth_mode=args.cloudopsbench_ground_truth_mode,
             sregym_server_url=args.sregym_server_url,
             sregym_target=args.sregym_target,
         )

@@ -72,22 +72,26 @@ class CloudOpsSnapshotTools:
 class CloudOpsSnapshotRunner:
     runtime_config: RuntimeConfig
     cloudopsbench_root: Path | None = None
+    ground_truth_mode: str = "hidden"
 
     def run_scenario(self, scenario: BenchmarkScenario, raw_signal: dict[str, Any], *, iteration: int) -> dict[str, Any]:
+        if self.ground_truth_mode not in {"hidden", "oracle"}:
+            raise ValueError("cloudopsbench ground_truth_mode must be 'hidden' or 'oracle'")
+        expose_ground_truth = self.ground_truth_mode == "oracle"
         snapshot = self._load_snapshot(scenario, raw_signal)
         tools = CloudOpsSnapshotTools(snapshot)
         trajectory = list(scenario.expert_trajectory or snapshot.get("expert_trajectory") or [])
-        tool_trajectory = tools.replay_expert_trajectory(trajectory)
-        signal = _snapshot_signal(snapshot, raw_signal)
+        tool_trajectory = tools.replay_expert_trajectory(trajectory) if expose_ground_truth else []
+        signal = _snapshot_signal(snapshot, raw_signal, expose_ground_truth=expose_ground_truth)
         outcome = MeshRuntimeEngine(config=self.runtime_config).run_sync(
             signal,
             scenario_name=f"cloudopsbench_{scenario.scenario_id}_{iteration}",
         )
-        root_cause = snapshot.get("root_cause") or scenario.expected_root_cause
         report = outcome.get("investigation_report") if isinstance(outcome.get("investigation_report"), dict) else {}
         report.setdefault("findings", [])
         report.setdefault("citations", [])
-        if root_cause:
+        root_cause = snapshot.get("root_cause") or scenario.expected_root_cause
+        if expose_ground_truth and root_cause:
             report["findings"] = list(report["findings"]) + [
                 {"kind": "cloudopsbench_root_cause", "summary": str(root_cause), "confidence": 1.0}
             ]
@@ -96,6 +100,7 @@ class CloudOpsSnapshotRunner:
         outcome["investigation_report"] = report
         outcome["tool_trajectory"] = tool_trajectory
         outcome["mttri_ms"] = 0.0
+        outcome["cloudopsbench_ground_truth_mode"] = self.ground_truth_mode
         return outcome
 
     def _load_snapshot(self, scenario: BenchmarkScenario, raw_signal: dict[str, Any]) -> dict[str, Any]:
@@ -111,7 +116,7 @@ class CloudOpsSnapshotRunner:
             raise FileNotFoundError("Cloud-OpsBench root is required for source.snapshot_file scenarios")
         path = self._resolve_snapshot_path(scenario, str(source_snapshot))
         if path.is_dir():
-            return _load_official_case(path, scenario)
+            return _load_official_case(path, scenario, expose_ground_truth=self.ground_truth_mode == "oracle")
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _resolve_snapshot_path(self, scenario: BenchmarkScenario, source_snapshot: str) -> Path:
@@ -143,14 +148,24 @@ class CloudOpsSnapshotRunner:
         )
 
 
-def _snapshot_signal(snapshot: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+def _snapshot_signal(snapshot: dict[str, Any], fallback: dict[str, Any], *, expose_ground_truth: bool) -> dict[str, Any]:
     signal = snapshot.get("raw_signal")
     if isinstance(signal, dict):
-        return dict(signal)
+        return _redact_ground_truth_from_signal(dict(signal)) if not expose_ground_truth else dict(signal)
     signal = dict(fallback)
     related = signal.setdefault("related_context", {})
-    if isinstance(related, dict) and snapshot.get("root_cause"):
+    if expose_ground_truth and isinstance(related, dict) and snapshot.get("root_cause"):
         related.setdefault("suspected_cause", snapshot["root_cause"])
+    return _redact_ground_truth_from_signal(signal) if not expose_ground_truth else signal
+
+
+def _redact_ground_truth_from_signal(signal: dict[str, Any]) -> dict[str, Any]:
+    related = signal.get("related_context")
+    if isinstance(related, dict):
+        redacted = dict(related)
+        for key in ("suspected_cause", "cloudopsbench_metadata", "cloudopsbench_result", "expected_root_cause"):
+            redacted.pop(key, None)
+        signal["related_context"] = redacted
     return signal
 
 
@@ -162,7 +177,7 @@ def _summarize(value: Any) -> str:
     return json.dumps(value, sort_keys=True)[:500]
 
 
-def _load_official_case(case_path: Path, scenario: BenchmarkScenario) -> dict[str, Any]:
+def _load_official_case(case_path: Path, scenario: BenchmarkScenario, *, expose_ground_truth: bool) -> dict[str, Any]:
     metadata_path = case_path / "metadata.json"
     tool_cache_path = case_path / "tool_cache.json"
     if not metadata_path.exists() or not tool_cache_path.exists():
@@ -177,8 +192,17 @@ def _load_official_case(case_path: Path, scenario: BenchmarkScenario) -> dict[st
     trajectory = _metadata_trajectory(metadata, case_path)
     system, fault_category, case_id = _case_parts(case_path)
     fallback_service = scenario.raw_signal.get("service") if scenario.raw_signal else None
-    service = _metadata_service(metadata) or fallback_service
+    service = (_metadata_service(metadata) if expose_ground_truth else None) or fallback_service
     service = service or "unknown-service"
+    related_context: dict[str, Any] = {
+        "cloudopsbench_namespace": metadata.get("namespace"),
+        "cloudopsbench_query": metadata.get("query"),
+        "cloudopsbench_alert": alert,
+        "audit_logging_available": True,
+    }
+    if expose_ground_truth:
+        related_context["suspected_cause"] = root_cause
+        related_context["cloudopsbench_metadata"] = metadata
     return {
         "raw_signal": {
             "signal_type": "otel_metric_regression",
@@ -193,12 +217,7 @@ def _load_official_case(case_path: Path, scenario: BenchmarkScenario) -> dict[st
                 "baseline_value": 1.0,
                 "observed_value": 0.0,
             },
-            "related_context": {
-                "suspected_cause": root_cause,
-                "cloudopsbench_metadata": metadata,
-                "cloudopsbench_alert": alert,
-                "audit_logging_available": True,
-            },
+            "related_context": related_context,
         },
         "root_cause": root_cause,
         "expert_trajectory": trajectory,

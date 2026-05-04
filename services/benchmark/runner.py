@@ -50,6 +50,7 @@ class BenchmarkRunConfig:
     backend_timeout_seconds: float = 300.0
     control_plane_timeout_seconds: float = 300.0
     cloudopsbench_root: Path | None = None
+    cloudopsbench_ground_truth_mode: str = "hidden"
     sregym_server_url: str = "http://localhost:8000"
     sregym_target: str = "local-kind"
 
@@ -174,6 +175,7 @@ def _build_backend(config: BenchmarkRunConfig, *, output_dir: Path, iteration: i
         return CloudOpsBenchBackend(
             runtime_config=_runtime_config(config, state_directory=state_directory),
             cloudopsbench_root=config.cloudopsbench_root,
+            ground_truth_mode=config.cloudopsbench_ground_truth_mode,
         )
     raise ValueError(f"unknown benchmark provider/backend: {provider}")
 
