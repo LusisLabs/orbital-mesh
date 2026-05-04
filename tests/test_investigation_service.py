@@ -206,6 +206,36 @@ class InvestigationToolLoopTests(unittest.TestCase):
         # them as tool_trajectory.
         self.assertGreaterEqual(len(provider.call_records()), 2)
 
+    def test_tool_loop_uses_get_resources_output_to_pick_describe_target(self) -> None:
+        # Simulates a hidden-mode CloudOps run: the trigger redacts the
+        # service name to "unknown-service", but GetResources output
+        # reveals the unhealthy pod. The loop should describe that pod
+        # rather than blindly using the trigger hint.
+        trigger, signal = _trigger_and_signal()
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+        seen_describe_args: list[dict[str, Any]] = []
+
+        class CapturingProvider(_StubToolProvider):
+            def invoke(self, tool_name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+                if tool_name == "DescribeResource":
+                    seen_describe_args.append(dict(args or {}))
+                return super().invoke(tool_name, args)
+
+        provider = CapturingProvider({
+            "GetResources": "productcatalogservice-7c9f-abc12 0/1 ImagePullBackOff",
+            "DescribeResource": "Reason: ErrImagePull",
+            "GetErrorLogs": "manifest unknown",
+        })
+
+        InvestigationService().investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack.to_dict(),
+            tool_provider=provider,
+        )
+
+        self.assertTrue(seen_describe_args)
+        self.assertEqual(seen_describe_args[0]["name"], "productcatalogservice")
+
     def test_tool_provider_absent_keeps_deterministic_path(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
