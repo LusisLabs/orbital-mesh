@@ -300,6 +300,7 @@ class InvestigationService:
             findings.append(_ranked_finding(root_cause_candidates))
             for candidate in root_cause_candidates:
                 citations.append(_citation("rca_ontology", str(candidate.get("root_cause"))))
+        findings.append(_planner_telemetry_finding(state, root_cause_candidates))
         return probe_results, findings, citations, root_cause_candidates
 
     def _run_tool_loop(
@@ -616,8 +617,9 @@ def _estimate_uncertainty(
         uncertainty -= 0.18
     if evidence_pack.get("sufficient") is False:
         uncertainty += 0.18
-    if findings:
-        uncertainty -= min(len(findings), 4) * 0.03
+    evidentiary_findings = [finding for finding in findings if finding.get("kind") != "planner_telemetry"]
+    if evidentiary_findings:
+        uncertainty -= min(len(evidentiary_findings), 4) * 0.03
     memory_packet = context.get("memory_packet") or {}
     if memory_packet.get("claims") or memory_packet.get("procedures"):
         uncertainty -= 0.04
@@ -717,3 +719,98 @@ def _ranked_finding(candidates: list[dict[str, Any]]) -> dict[str, Any]:
             "top_3": summary_parts,
         },
     }
+
+
+def _planner_telemetry_finding(
+    state: InvestigationLoopState,
+    final_candidates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    planned_call_count = sum(len(decision.get("planned_calls") or []) for decision in state.planner_decisions)
+    rejected_call_count = len(state.rejections)
+    attempted_call_count = planned_call_count or (len(state.tool_calls) + rejected_call_count)
+    duplicate_rejections = sum(1 for rejection in state.rejections if rejection.reason == "duplicate_call")
+    valid_count = sum(1 for result in state.tool_results if result.valid)
+    invalid_count = len(state.tool_results) - valid_count
+    latency_by_family = _tool_latency_by_family(state)
+    details = {
+        "critic_rejections_by_reason": _rejections_by_reason(state),
+        "tool_latency_ms_by_family": latency_by_family,
+        "valid_result_rate": _rate(valid_count, len(state.tool_results)),
+        "invalid_result_rate": _rate(invalid_count, len(state.tool_results)),
+        "duplicate_call_rejection_rate": _rate(duplicate_rejections, attempted_call_count),
+        "budget_exhaustion_rate": 1.0 if state.stop_reason == "budget_exhausted" else 0.0,
+        "evidence_value_exhaustion_rate": 1.0 if state.stop_reason == "evidence_value_exhausted" else 0.0,
+        "rca_confidence_trace": _rca_confidence_trace(state, final_candidates),
+        "planned_call_count": planned_call_count,
+        "accepted_call_count": len(state.tool_calls),
+        "rejected_call_count": rejected_call_count,
+        "stop_reason": state.stop_reason,
+        "planner_decisions": list(state.planner_decisions),
+    }
+    return {
+        "kind": "planner_telemetry",
+        "summary": (
+            f"planner stop={state.stop_reason or 'unknown'} "
+            f"valid_rate={details['valid_result_rate']:.3f} "
+            f"duplicate_rejection_rate={details['duplicate_call_rejection_rate']:.3f}"
+        ),
+        "confidence": 1.0,
+        "details": details,
+    }
+
+
+def _rejections_by_reason(state: InvestigationLoopState) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rejection in state.rejections:
+        counts[rejection.reason] = counts.get(rejection.reason, 0) + 1
+    return counts
+
+
+def _tool_latency_by_family(state: InvestigationLoopState) -> dict[str, dict[str, float | int]]:
+    grouped: dict[str, list[float]] = {}
+    for result in state.tool_results:
+        grouped.setdefault(result.tool_name, []).append(float(result.latency_ms))
+    return {
+        tool_name: {
+            "count": len(values),
+            "avg_ms": round(sum(values) / len(values), 3),
+            "max_ms": round(max(values), 3),
+            "total_ms": round(sum(values), 3),
+        }
+        for tool_name, values in sorted(grouped.items())
+        if values
+    }
+
+
+def _rca_confidence_trace(
+    state: InvestigationLoopState,
+    final_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    trace: list[dict[str, Any]] = []
+    for decision in state.planner_decisions:
+        debug = decision.get("debug") if isinstance(decision.get("debug"), dict) else {}
+        top = debug.get("top_root_cause") if isinstance(debug.get("top_root_cause"), dict) else None
+        trace.append(
+            {
+                "iteration": decision.get("iteration"),
+                "phase": "before_planner_decision",
+                "root_cause": top.get("root_cause") if top else None,
+                "confidence": float(top.get("confidence") or 0.0) if top else 0.0,
+            }
+        )
+    top_final = final_candidates[0] if final_candidates else None
+    trace.append(
+        {
+            "iteration": state.iteration,
+            "phase": "after_probes",
+            "root_cause": top_final.get("root_cause") if top_final else None,
+            "confidence": float(top_final.get("confidence") or 0.0) if top_final else 0.0,
+        }
+    )
+    return trace
+
+
+def _rate(numerator: int, denominator: int) -> float:
+    if denominator <= 0:
+        return 0.0
+    return round(numerator / denominator, 4)

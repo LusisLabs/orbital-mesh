@@ -171,6 +171,7 @@ class InvestigationLoopState:
     observed_text: list[str] = field(default_factory=list)
     ranked_hypotheses: list[dict[str, Any]] = field(default_factory=list)
     rejections: list[LoopRejection] = field(default_factory=list)
+    planner_decisions: list[dict[str, Any]] = field(default_factory=list)
     stop_reason: str | None = None
 
     def record(self, call: ToolCall, result: ToolResult, *, observed: str | None = None) -> None:
@@ -194,6 +195,7 @@ class InvestigationLoopState:
             "tool_results": [result.to_dict() for result in self.tool_results],
             "ranked_hypotheses": list(self.ranked_hypotheses),
             "rejections": [rejection.to_dict() for rejection in self.rejections],
+            "planner_decisions": list(self.planner_decisions),
             "stop_reason": self.stop_reason,
         }
 
@@ -206,6 +208,7 @@ class LoopDecision:
     next_calls: tuple[ToolCall, ...] = ()
     reason: str = ""
     confidence: float = 0.0
+    debug: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -213,6 +216,7 @@ class LoopDecision:
             "next_calls": [call.to_dict() for call in self.next_calls],
             "reason": self.reason,
             "confidence": self.confidence,
+            "debug": dict(self.debug),
         }
 
 

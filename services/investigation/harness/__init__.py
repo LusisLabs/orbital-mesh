@@ -19,6 +19,9 @@ Public surface:
   asks for the next set of calls.
 * ``ProbeRule``, ``ObservationIndex``, ``NativeProbeSelector`` — the
   shared native selector substrate used by domain rule packs.
+* ``LlmProbeSelector``, ``ShadowProbeSelector`` — gated LLM and shadow
+  selectors that use the same planner contract without taking default
+  control.
 """
 
 from __future__ import annotations
@@ -33,7 +36,14 @@ from .contracts import (
 )
 from .critic import LoopCritic
 from .loop import run_investigation_loop
-from .native_selector import NativeProbeSelector, ObservationIndex, ProbeRule, RootCauseCandidate
+from .native_selector import (
+    LlmProbeSelector,
+    NativeProbeSelector,
+    ObservationIndex,
+    ProbeRule,
+    RootCauseCandidate,
+    ShadowProbeSelector,
+)
 from .planner import LoopPlanner
 from .registry import RawToolOutput, ToolRegistry, make_call
 
@@ -43,11 +53,13 @@ __all__ = [
     "LoopDecision",
     "LoopPlanner",
     "LoopRejection",
+    "LlmProbeSelector",
     "NativeProbeSelector",
     "ObservationIndex",
     "ProbeRule",
     "RawToolOutput",
     "RootCauseCandidate",
+    "ShadowProbeSelector",
     "ToolCall",
     "ToolDefinition",
     "ToolRegistry",

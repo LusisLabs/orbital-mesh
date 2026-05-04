@@ -40,10 +40,15 @@ def run_investigation_loop(
             state.stop_reason = "budget_exhausted"
             break
         decision = planner.plan(state=state, trigger_context=context)
+        decision_trace = _decision_trace(state.iteration, decision)
         if decision.action == "stop":
+            state.planner_decisions.append(decision_trace)
             state.stop_reason = decision.reason or "planner_requested_stop"
             break
         filtered, rejections = critic.review(state, decision)
+        decision_trace["approved_calls"] = [call.to_dict() for call in filtered.next_calls]
+        decision_trace["rejections"] = [rejection.to_dict() for rejection in rejections]
+        state.planner_decisions.append(decision_trace)
         state.rejections.extend(rejections)
         if filtered.action == "stop":
             state.stop_reason = filtered.reason or "critic_rejected_all_calls"
@@ -63,3 +68,16 @@ def run_investigation_loop(
     if state.stop_reason is None:
         state.stop_reason = "iteration_cap_reached"
     return state
+
+
+def _decision_trace(iteration: int, decision: Any) -> dict[str, Any]:
+    return {
+        "iteration": iteration,
+        "action": decision.action,
+        "reason": decision.reason,
+        "confidence": decision.confidence,
+        "planned_calls": [call.to_dict() for call in decision.next_calls],
+        "approved_calls": [],
+        "rejections": [],
+        "debug": dict(decision.debug),
+    }

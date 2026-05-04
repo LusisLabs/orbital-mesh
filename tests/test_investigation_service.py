@@ -255,6 +255,14 @@ class InvestigationToolLoopTests(unittest.TestCase):
         self.assertEqual(ranked[0]["summary"], "incorrect_image_reference")
         self.assertEqual(report.root_cause_candidates[0]["root_cause"], "incorrect_image_reference")
         self.assertIn("DescribeResource", report.root_cause_candidates[0]["supporting_tools"])
+        telemetry = [finding for finding in report.findings if finding.get("kind") == "planner_telemetry"]
+        self.assertEqual(len(telemetry), 1)
+        telemetry_details = telemetry[0]["details"]
+        self.assertEqual(telemetry_details["critic_rejections_by_reason"], {})
+        self.assertEqual(telemetry_details["valid_result_rate"], 1.0)
+        self.assertIn("GetResources", telemetry_details["tool_latency_ms_by_family"])
+        self.assertTrue(telemetry_details["rca_confidence_trace"])
+        self.assertTrue(telemetry_details["planner_decisions"])
         # Calls were recorded on the provider so the runner can surface
         # them as tool_trajectory.
         self.assertGreaterEqual(len(provider.call_records()), 2)
@@ -341,6 +349,8 @@ class InvestigationToolLoopTests(unittest.TestCase):
         self.assertEqual([record["tool_name"] for record in provider.call_records()], ["GetResources"])
         self.assertEqual(report.stop_reason, "evidence_value_exhausted")
         self.assertEqual(report.root_cause_candidates, [])
+        telemetry = [finding for finding in report.findings if finding.get("kind") == "planner_telemetry"]
+        self.assertEqual(telemetry[0]["details"]["evidence_value_exhaustion_rate"], 1.0)
 
     def test_tool_provider_absent_keeps_deterministic_path(self) -> None:
         trigger, signal = _trigger_and_signal()

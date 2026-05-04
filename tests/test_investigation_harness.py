@@ -16,7 +16,9 @@ from services.investigation.harness import (
     InvestigationLoopState,
     LoopCritic,
     LoopDecision,
+    LlmProbeSelector,
     RawToolOutput,
+    ShadowProbeSelector,
     ToolCall,
     ToolDefinition,
     ToolRegistry,
@@ -213,6 +215,8 @@ class HarnessLoopTests(unittest.TestCase):
         self.assertEqual(len(state.tool_calls), 1)
         self.assertEqual(state.stop_reason, "critic_rejected_all_calls")
         self.assertEqual(state.rejections[0].reason, "duplicate_call")
+        self.assertEqual(state.planner_decisions[-1]["rejections"][0]["reason"], "duplicate_call")
+        self.assertEqual(state.planner_decisions[-1]["planned_calls"][0]["tool_name"], "same")
 
 
 class CloudOpsNativeSelectorTests(unittest.TestCase):
@@ -287,6 +291,34 @@ class CloudOpsNativeSelectorTests(unittest.TestCase):
 
         self.assertEqual([call.tool_name for call in state.tool_calls], ["GetResources", "DescribeResource"])
         self.assertEqual(state.stop_reason, "root_cause_candidate_found")
+        self.assertEqual(state.planner_decisions[-1]["debug"]["top_root_cause"]["root_cause"], "incorrect_image_reference")
+
+    def test_llm_selector_is_gated_and_shadowed_behind_native_selector(self) -> None:
+        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, CloudOpsRulePack
+
+        rule_pack = CloudOpsRulePack(_cloudops_trigger())
+        disabled = LlmProbeSelector(rule_pack)
+        disabled_decision = disabled.plan(state=InvestigationLoopState(trigger_id="trg"), trigger_context={})
+        self.assertEqual(disabled_decision.action, "stop")
+        self.assertEqual(disabled_decision.reason, "llm_selector_disabled")
+
+        llm = LlmProbeSelector(
+            rule_pack,
+            enabled=True,
+            decision_provider=lambda _context: {
+                "action": "continue",
+                "tool_name": "DescribeResource",
+                "args": {"resource_type": "pods", "name": "shadow", "namespace": "default"},
+                "reason": "shadow_llm_probe",
+                "confidence": 0.42,
+            },
+        )
+        shadowed = ShadowProbeSelector(primary=CloudOpsLoopPlanner(_cloudops_trigger()), shadow=llm)
+        decision = shadowed.plan(state=InvestigationLoopState(trigger_id="trg"), trigger_context={})
+
+        self.assertEqual(decision.next_calls[0].tool_name, "GetResources")
+        self.assertEqual(decision.debug["shadow_decision"]["next_calls"][0]["tool_name"], "DescribeResource")
+        self.assertEqual(decision.debug["shadow_decision"]["reason"], "shadow_llm_probe")
 
 
 class RethPeerStarvationPortTests(unittest.TestCase):
