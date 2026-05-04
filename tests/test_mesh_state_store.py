@@ -59,7 +59,7 @@ class MeshStateStoreTests(unittest.TestCase):
 
     def test_file_store_debounces_running_vault_materialization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", vault_mirror_mode="sync"))
             goal = store.ensure_default_goal()
             with patch.object(store.vault, "write_run_bundle") as write_run_bundle:
                 session = store.create_run_session(
@@ -97,6 +97,108 @@ class MeshStateStoreTests(unittest.TestCase):
                 updated.status = "awaiting_operator"
                 store.save_run_session(updated)
                 self.assertEqual(write_run_bundle.call_count, 2)
+
+    def test_file_store_preserves_latest_event_cursor_when_stale_session_is_saved(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", vault_mirror_mode="off"))
+            goal = store.ensure_default_goal()
+            session = store.create_run_session(
+                goal_id=goal.goal_id,
+                scenario_key="scenario_test",
+                steering_mode="approval_gate",
+                auto_mode=False,
+                pause_points=["evaluation_ready"],
+                evaluation_mode="native",
+                orchestration_mode="native",
+                artifacts={"input_signal": {"service": "search"}},
+            )
+            stale = session
+            event = store.append_run_event(
+                session.run_id,
+                stage="trigger_ready",
+                event_type="trigger_ready",
+                payload={"ok": True},
+                status="recorded",
+            )
+
+            stale.stage = "ingesting"
+            stale.status = "running"
+            store.save_run_session(stale)
+
+            persisted = store.get_run_session(session.run_id)
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.latest_event_id, event.event_id)
+            self.assertEqual(persisted.latest_event_sequence, event.sequence)
+
+    def test_file_store_merges_artifacts_and_preserves_terminal_stage_from_stale_saves(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", vault_mirror_mode="off"))
+            goal = store.ensure_default_goal()
+            session = store.create_run_session(
+                goal_id=goal.goal_id,
+                scenario_key="scenario_test",
+                steering_mode="interruptible_auto",
+                auto_mode=True,
+                pause_points=[],
+                evaluation_mode="native",
+                orchestration_mode="native",
+                artifacts={"input_signal": {"service": "search"}},
+            )
+            stale = store.get_run_session(session.run_id)
+            self.assertIsNotNone(stale)
+            assert stale is not None
+
+            agent_session = store.get_run_session(session.run_id)
+            self.assertIsNotNone(agent_session)
+            assert agent_session is not None
+            agent_session.artifacts["agent_tasks"] = [{"task_id": "task_1", "attempts": []}]
+            store.save_run_session(agent_session)
+
+            terminal = store.get_run_session(session.run_id)
+            self.assertIsNotNone(terminal)
+            assert terminal is not None
+            terminal.stage = "recovery_spawned"
+            terminal.status = "recovery_spawned"
+            terminal.artifacts["recovery"] = {"status": "launched"}
+            store.save_run_session(terminal)
+
+            stale.stage = "evaluation_ready"
+            stale.status = "running"
+            stale.artifacts["agent_tasks"] = {"status": "pending"}
+            stale.artifacts["execution"] = {"status": "succeeded"}
+            store.save_run_session(stale)
+
+            persisted = store.get_run_session(session.run_id)
+            self.assertIsNotNone(persisted)
+            assert persisted is not None
+            self.assertEqual(persisted.stage, "recovery_spawned")
+            self.assertEqual(persisted.status, "recovery_spawned")
+            self.assertEqual(persisted.artifacts["agent_tasks"], [{"task_id": "task_1", "attempts": []}])
+            self.assertEqual(persisted.artifacts["recovery"], {"status": "launched"})
+            self.assertEqual(persisted.artifacts["execution"], {"status": "succeeded"})
+
+    def test_file_store_close_flushes_async_vault_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", vault_mirror_mode="async"))
+            goal = store.ensure_default_goal()
+            with patch.object(store.vault, "write_run_bundle") as write_run_bundle:
+                store.create_run_session(
+                    goal_id=goal.goal_id,
+                    scenario_key="scenario_test",
+                    steering_mode="approval_gate",
+                    auto_mode=False,
+                    pause_points=["evaluation_ready"],
+                    evaluation_mode="native",
+                    orchestration_mode="native",
+                    artifacts={"input_signal": {"service": "search"}},
+                )
+                store.close(timeout=1.0)
+
+            self.assertEqual(write_run_bundle.call_count, 1)
+            self.assertIsNotNone(store._vault_thread)
+            assert store._vault_thread is not None
+            self.assertFalse(store._vault_thread.is_alive())
 
     def test_locked_json_file_read_only_access_does_not_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

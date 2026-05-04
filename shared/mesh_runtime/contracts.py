@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar, TypeVar
 
 from .schema_validation import validate_payload
@@ -144,6 +144,7 @@ class InvestigationReport(ContractModel):
     stop_reason: str
     recommended_next_step: str
     safety_notes: list[str]
+    root_cause_candidates: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

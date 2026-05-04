@@ -35,8 +35,13 @@ class BenchmarkComparison:
     baseline_suite: str
     candidate_suite: str
     weighted_score_delta: float
+    mesh_operational_score_delta: float
+    agentic_rca_score_delta: float
     dimension_deltas: dict[str, float]
+    process_metric_deltas: dict[str, float]
     pass_rate_delta: float
+    decision_match_rate_delta: float
+    investigation_coverage_rate_delta: float
     unsafe_action_rate_delta: float
     p95_latency_delta_ms: float | None
     scenario_deltas: list[ScenarioDelta]
@@ -49,8 +54,13 @@ class BenchmarkComparison:
             "baseline_suite": self.baseline_suite,
             "candidate_suite": self.candidate_suite,
             "weighted_score_delta": self.weighted_score_delta,
+            "mesh_operational_score_delta": self.mesh_operational_score_delta,
+            "agentic_rca_score_delta": self.agentic_rca_score_delta,
             "dimension_deltas": self.dimension_deltas,
+            "process_metric_deltas": self.process_metric_deltas,
             "pass_rate_delta": self.pass_rate_delta,
+            "decision_match_rate_delta": self.decision_match_rate_delta,
+            "investigation_coverage_rate_delta": self.investigation_coverage_rate_delta,
             "unsafe_action_rate_delta": self.unsafe_action_rate_delta,
             "p95_latency_delta_ms": self.p95_latency_delta_ms,
             "scenario_deltas": [delta.to_dict() for delta in self.scenario_deltas],
@@ -84,7 +94,11 @@ def render_comparison_markdown(comparison: BenchmarkComparison) -> str:
         f"- Baseline: `{comparison.baseline_run_id}`",
         f"- Candidate: `{comparison.candidate_run_id}`",
         f"- Weighted score delta: **{comparison.weighted_score_delta:+.2f}**",
+        f"- Mesh operational score delta: {comparison.mesh_operational_score_delta:+.2f}",
+        f"- Agentic RCA score delta: {comparison.agentic_rca_score_delta:+.2f}",
         f"- Pass-rate delta: {comparison.pass_rate_delta:+.2%}",
+        f"- Decision-match-rate delta: {comparison.decision_match_rate_delta:+.2%}",
+        f"- Investigation-coverage delta: {comparison.investigation_coverage_rate_delta:+.2%}",
         f"- Unsafe-action-rate delta: {comparison.unsafe_action_rate_delta:+.2%}",
     ]
     if comparison.p95_latency_delta_ms is not None:
@@ -102,6 +116,15 @@ def render_comparison_markdown(comparison: BenchmarkComparison) -> str:
     ])
     for name, delta in comparison.dimension_deltas.items():
         lines.append(f"| {name} | {delta:+.2%} |")
+    lines.extend([
+        "",
+        "## Process Metric Deltas",
+        "",
+        "| Metric | Delta |",
+        "| --- | ---: |",
+    ])
+    for name, delta in comparison.process_metric_deltas.items():
+        lines.append(f"| {name} | {delta:+.4f} |")
     lines.extend([
         "",
         "## Scenario Deltas",
@@ -143,8 +166,29 @@ def _compare_payloads(baseline: dict[str, Any], candidate: dict[str, Any]) -> Be
             - float(baseline_scorecard.get("weighted_score", 0.0)),
             2,
         ),
+        mesh_operational_score_delta=round(
+            float(candidate_scorecard.get("mesh_operational_score", 0.0))
+            - float(baseline_scorecard.get("mesh_operational_score", 0.0)),
+            2,
+        ),
+        agentic_rca_score_delta=round(
+            float(candidate_scorecard.get("agentic_rca_score", 0.0))
+            - float(baseline_scorecard.get("agentic_rca_score", 0.0)),
+            2,
+        ),
         dimension_deltas=_dimension_deltas(baseline_scorecard, candidate_scorecard),
+        process_metric_deltas=_process_metric_deltas(baseline_scorecard, candidate_scorecard),
         pass_rate_delta=round(float(candidate_scorecard.get("pass_rate", 0.0)) - float(baseline_scorecard.get("pass_rate", 0.0)), 4),
+        decision_match_rate_delta=round(
+            float(candidate_scorecard.get("decision_match_rate", 0.0))
+            - float(baseline_scorecard.get("decision_match_rate", 0.0)),
+            4,
+        ),
+        investigation_coverage_rate_delta=round(
+            float(candidate_scorecard.get("investigation_coverage_rate", 0.0))
+            - float(baseline_scorecard.get("investigation_coverage_rate", 0.0)),
+            4,
+        ),
         unsafe_action_rate_delta=round(
             float(candidate_scorecard.get("unsafe_action_rate", 0.0))
             - float(baseline_scorecard.get("unsafe_action_rate", 0.0)),
@@ -227,6 +271,15 @@ def _scenario_delta(
 def _dimension_deltas(baseline_scorecard: dict[str, Any], candidate_scorecard: dict[str, Any]) -> dict[str, float]:
     baseline = cast(dict[str, Any], baseline_scorecard.get("dimension_scores", {}))
     candidate = cast(dict[str, Any], candidate_scorecard.get("dimension_scores", {}))
+    return {
+        name: round(float(candidate.get(name, 0.0)) - float(baseline.get(name, 0.0)), 4)
+        for name in sorted(set(baseline) | set(candidate))
+    }
+
+
+def _process_metric_deltas(baseline_scorecard: dict[str, Any], candidate_scorecard: dict[str, Any]) -> dict[str, float]:
+    baseline = cast(dict[str, Any], baseline_scorecard.get("process_metrics", {}))
+    candidate = cast(dict[str, Any], candidate_scorecard.get("process_metrics", {}))
     return {
         name: round(float(candidate.get(name, 0.0)) - float(baseline.get(name, 0.0)), 4)
         for name in sorted(set(baseline) | set(candidate))

@@ -1,0 +1,208 @@
+"""Native rule-based probe selector for the investigation loop.
+
+The selector is the shared substrate between deterministic domain logic
+and a future LLM planner: rule packs describe what evidence is valuable,
+while the generic selector turns the first eligible rule into a normal
+``ToolCall`` for the existing registry / critic / loop pipeline.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Iterable, Protocol, Sequence
+
+from .contracts import InvestigationLoopState, LoopDecision, ToolDefinition, _stable_args_signature
+from .registry import make_call
+
+
+class RankedCauseLike(Protocol):
+    root_cause: str
+    confidence: float
+    matched_patterns: tuple[str, ...]
+
+
+RootCauseRanker = Callable[[Iterable[str]], Sequence[RankedCauseLike]]
+RulePredicate = Callable[["ObservationIndex"], bool]
+RuleArgsBuilder = Callable[["ObservationIndex"], dict[str, Any]]
+RuleReasonBuilder = Callable[["ObservationIndex"], str]
+
+
+@dataclass(frozen=True)
+class RootCauseCandidate:
+    root_cause: str
+    confidence: float
+    matched_patterns: tuple[str, ...]
+    supporting_tools: tuple[str, ...]
+
+    def to_dict(self, *, rank: int) -> dict[str, Any]:
+        return {
+            "rank": rank,
+            "root_cause": self.root_cause,
+            "confidence": self.confidence,
+            "matched_patterns": list(self.matched_patterns),
+            "supporting_tools": list(self.supporting_tools),
+            "citation_ids": [f"rca_ontology:{self.root_cause}"],
+        }
+
+
+@dataclass(frozen=True)
+class ObservationIndex:
+    """Derived signal view over the mutable loop state."""
+
+    state: InvestigationLoopState
+    trigger_context: dict[str, Any]
+    called_tool_names: frozenset[str]
+    call_signatures: frozenset[tuple[str, str, str]]
+    observed_text: tuple[str, ...]
+    observed_tool_text: tuple[tuple[str, str], ...]
+    haystack: str
+    root_cause_candidates: tuple[RootCauseCandidate, ...]
+
+    @classmethod
+    def from_state(
+        cls,
+        *,
+        state: InvestigationLoopState,
+        trigger_context: dict[str, Any],
+        root_cause_ranker: RootCauseRanker | None = None,
+    ) -> "ObservationIndex":
+        observed_text = tuple(state.observed_text)
+        observed_tool_text = tuple(
+            (result.tool_name, result.output_summary)
+            for result in state.tool_results
+            if result.output_summary
+        )
+        ranked = tuple(root_cause_ranker(observed_text)) if root_cause_ranker is not None else ()
+        candidates = tuple(
+            RootCauseCandidate(
+                root_cause=cause.root_cause,
+                confidence=cause.confidence,
+                matched_patterns=tuple(cause.matched_patterns),
+                supporting_tools=_supporting_tools(cause.matched_patterns, observed_tool_text),
+            )
+            for cause in ranked
+        )
+        return cls(
+            state=state,
+            trigger_context=dict(trigger_context),
+            called_tool_names=frozenset(call.tool_name for call in state.tool_calls),
+            call_signatures=frozenset(state.call_signatures()),
+            observed_text=observed_text,
+            observed_tool_text=observed_tool_text,
+            haystack="\n".join(observed_text).lower(),
+            root_cause_candidates=candidates,
+        )
+
+    def tool_called(self, tool_name: str) -> bool:
+        return tool_name in self.called_tool_names
+
+    def output_for(self, tool_name: str) -> Any:
+        for call, result in reversed(list(zip(self.state.tool_calls, self.state.tool_results))):
+            if call.tool_name == tool_name:
+                return result.output
+        return None
+
+    def summary_for(self, tool_name: str) -> str | None:
+        for call, result in reversed(list(zip(self.state.tool_calls, self.state.tool_results))):
+            if call.tool_name == tool_name and result.output_summary:
+                return result.output_summary
+        return None
+
+    def contains_any(self, needles: tuple[str, ...]) -> bool:
+        return any(needle in self.haystack for needle in needles)
+
+    def top_root_cause(self) -> RootCauseCandidate | None:
+        return self.root_cause_candidates[0] if self.root_cause_candidates else None
+
+
+@dataclass(frozen=True)
+class ProbeRule:
+    """One typed native rule that can select a diagnostic probe."""
+
+    name: str
+    tool_name: str
+    when: RulePredicate
+    build_args: RuleArgsBuilder
+    selection_reason: RuleReasonBuilder
+    priority: int = 100
+    confidence: float = 0.5
+
+
+class ProbeRulePack(Protocol):
+    domain: str
+    tool_definitions: Sequence[ToolDefinition]
+    rules: Sequence[ProbeRule]
+    root_cause_ranker: RootCauseRanker | None
+    sufficient_stop_reason: str
+    exhausted_stop_reason: str
+
+    def sufficient_root_cause(self, index: ObservationIndex) -> RootCauseCandidate | None: ...
+
+
+class NativeProbeSelector:
+    """LoopPlanner implementation backed by typed probe rules."""
+
+    def __init__(
+        self,
+        rule_pack: ProbeRulePack,
+        *,
+        tool_definitions: Iterable[ToolDefinition] | None = None,
+    ) -> None:
+        self._rule_pack = rule_pack
+        definitions = tuple(tool_definitions) if tool_definitions is not None else tuple(rule_pack.tool_definitions)
+        self._tool_definitions = {
+            definition.name: definition
+            for definition in definitions
+            if definition.domain == rule_pack.domain
+        }
+
+    @property
+    def domain(self) -> str:
+        return self._rule_pack.domain
+
+    def plan(
+        self,
+        *,
+        state: InvestigationLoopState,
+        trigger_context: dict[str, Any],
+    ) -> LoopDecision:
+        index = ObservationIndex.from_state(
+            state=state,
+            trigger_context=trigger_context,
+            root_cause_ranker=self._rule_pack.root_cause_ranker,
+        )
+        candidate = self._rule_pack.sufficient_root_cause(index)
+        if candidate is not None:
+            return LoopDecision(
+                action="stop",
+                reason=self._rule_pack.sufficient_stop_reason,
+                confidence=candidate.confidence,
+            )
+        for rule in sorted(self._rule_pack.rules, key=lambda item: item.priority):
+            definition = self._tool_definitions.get(rule.tool_name)
+            if definition is None or not rule.when(index):
+                continue
+            args = rule.build_args(index)
+            signature = (definition.domain, definition.name, _stable_args_signature(args))
+            if signature in index.call_signatures:
+                continue
+            reason = rule.selection_reason(index)
+            return LoopDecision(
+                action="continue",
+                next_calls=(make_call(tool=definition, args=args, purpose=reason),),
+                reason=reason,
+                confidence=rule.confidence,
+            )
+        return LoopDecision(action="stop", reason=self._rule_pack.exhausted_stop_reason, confidence=0.0)
+
+
+def _supporting_tools(
+    matched_patterns: tuple[str, ...],
+    observed_tool_text: tuple[tuple[str, str], ...],
+) -> tuple[str, ...]:
+    tools = {
+        tool_name
+        for tool_name, output_text in observed_tool_text
+        if any(pattern.lower() in output_text.lower() for pattern in matched_patterns)
+    }
+    return tuple(sorted(tools))

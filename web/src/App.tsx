@@ -38,9 +38,15 @@ import {
   buildKubernetesGraph,
   buildLabyrinthGraph,
   buildMerkleGraph,
+  buildRcaGraph,
   buildRethSignalGraph,
   buildRunGraph,
   toneForStage,
+  type RcaGraphBlocker,
+  type RcaGraphCandidate,
+  type RcaGraphCitation,
+  type RcaGraphInput,
+  type RcaGraphToolCall,
   type RunGraphNode,
 } from "./lib/runGraph";
 import type {
@@ -92,7 +98,7 @@ const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
 } as const;
 
 type RightRailTab = "steering" | InspectorTab;
-type CanvasMode = "labyrinth" | "flow" | "evidence" | "signal" | "merkle" | "artifacts";
+type CanvasMode = "labyrinth" | "flow" | "evidence" | "rca" | "signal" | "merkle" | "artifacts";
 type AppView =
   | "overview"
   | "incidents"
@@ -107,7 +113,7 @@ type AppView =
   | "hermes"
   | "control-plane"
   | "settings";
-type RunDetailTab = "timeline" | "evidence" | "approvals" | "actions" | "audit" | "agents" | "topology";
+type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "audit" | "agents" | "topology";
 type ConnectorState = "ready" | "degraded" | "config-only" | "unsafe" | "stub" | "disconnected";
 
 interface AgentConnectorSummary {
@@ -148,6 +154,19 @@ interface ApprovalQueueItem {
   detail: string;
   stage: string;
   blocked: boolean;
+}
+
+interface ConfidencePoint {
+  id: string;
+  label: string;
+  value: number;
+  detail: string;
+  tone: string;
+}
+
+interface RcaSnapshot extends RcaGraphInput {
+  confidenceMovement: ConfidencePoint[];
+  report: Record<string, any> | null;
 }
 
 const nodeTypes = {
@@ -196,6 +215,8 @@ function canvasModeLabel(mode: CanvasMode): string {
       return "Run Flow";
     case "evidence":
       return "Evidence";
+    case "rca":
+      return "RCA";
     case "signal":
       return "Signal";
     case "merkle":
@@ -215,6 +236,8 @@ function canvasModeIcon(mode: CanvasMode, size = 14): React.ReactNode {
       return <GitBranch size={size} />;
     case "evidence":
       return <Activity size={size} />;
+    case "rca":
+      return <AlertTriangle size={size} />;
     case "signal":
       return <Waves size={size} />;
     case "merkle":
@@ -691,6 +714,28 @@ export default function App() {
     void handleSteer(command, payload);
   }
 
+  const activeEvaluation = activeRun?.artifacts.evaluation as Record<string, any> | undefined;
+  const approvalBlockedEvent = activeRun?.events
+    ?.slice()
+    .reverse()
+    .find((event) => event.event_type === "approval_blocked");
+  const approvalBlockingReasons = (
+    approvalBlockedEvent?.payload?.blocking_reasons ??
+    activeEvaluation?.blocking_reasons ??
+    []
+  ) as string[];
+  const approvalRecommendation = String(
+    approvalBlockedEvent?.payload?.final_recommendation ??
+    activeEvaluation?.final_recommendation ??
+    "",
+  );
+  const approvalCurrentlyBlocked =
+    activeRun?.stage === "awaiting_operator" &&
+    activeRun?.pending_pause_stage === "evaluation_ready" &&
+    approvalRecommendation !== "" &&
+    approvalRecommendation !== "execute";
+  const hermesExplanation = (activeRun?.artifacts?.hermes_explanation ?? null) as Record<string, any> | null;
+
   const flowCanvas = useMemo(
     () => buildRunGraph(activeRun?.events ?? [], selectedEventId),
     [activeRun?.events, selectedEventId],
@@ -733,6 +778,14 @@ export default function App() {
     () => buildEvidenceGraph(evidenceGraph),
     [evidenceGraph],
   );
+  const rcaSnapshot = useMemo(
+    () => buildRcaSnapshot(activeRun, scenarioAnalysis, agentTasks, approvalBlockingReasons),
+    [activeRun, agentTasks, approvalBlockingReasons, scenarioAnalysis],
+  );
+  const rcaCanvas = useMemo(
+    () => buildRcaGraph(rcaSnapshot),
+    [rcaSnapshot],
+  );
   const signalCanvas = useMemo(() => {
     const reth = buildRethSignalGraph(activeSignal);
     return reth.nodes.length > 0 ? reth : buildKubernetesGraph(activeSignal);
@@ -760,6 +813,8 @@ export default function App() {
         return labyrinthCanvas;
       case "evidence":
         return evidenceCanvas;
+      case "rca":
+        return rcaCanvas;
       case "signal":
         return signalCanvas;
       case "merkle":
@@ -770,12 +825,13 @@ export default function App() {
       default:
         return flowCanvas;
     }
-  }, [artifactCanvas, canvasMode, evidenceCanvas, flowCanvas, labyrinthCanvas, merkleCanvas, signalCanvas]);
+  }, [artifactCanvas, canvasMode, evidenceCanvas, flowCanvas, labyrinthCanvas, merkleCanvas, rcaCanvas, signalCanvas]);
   const canvasAvailability = useMemo(
     () => ({
       labyrinth: labyrinthCanvas.nodes.length > 0,
       flow: flowCanvas.nodes.length > 0,
       evidence: evidenceCanvas.nodes.length > 0,
+      rca: rcaCanvas.nodes.length > 0,
       signal: signalCanvas.nodes.length > 0,
       merkle: merkleCanvas.nodes.length > 0,
       artifacts: artifactCanvas.nodes.length > 0,
@@ -786,6 +842,7 @@ export default function App() {
       flowCanvas.nodes.length,
       labyrinthCanvas.nodes.length,
       merkleCanvas.nodes.length,
+      rcaCanvas.nodes.length,
       signalCanvas.nodes.length,
     ],
   );
@@ -795,6 +852,8 @@ export default function App() {
         return "Start or select a run to see the operation map.";
       case "evidence":
         return "This run has no scenario-analysis evidence graph yet.";
+      case "rca":
+        return "This run has no investigation report, tool trajectory, RCA candidates, blockers, or citations yet.";
       case "signal":
         return "This run does not include a Reth or Kubernetes signal.";
       case "merkle":
@@ -824,28 +883,6 @@ export default function App() {
   const activeGoal = goals.find(
     (g) => g.goal_id === (activeRun?.goal_id ?? selectedGoalId),
   ) ?? goals[0] ?? null;
-  const activeEvaluation = activeRun?.artifacts.evaluation as Record<string, any> | undefined;
-  const approvalBlockedEvent = activeRun?.events
-    ?.slice()
-    .reverse()
-    .find((event) => event.event_type === "approval_blocked");
-  const approvalBlockingReasons = (
-    approvalBlockedEvent?.payload?.blocking_reasons ??
-    activeEvaluation?.blocking_reasons ??
-    []
-  ) as string[];
-  const approvalRecommendation = String(
-    approvalBlockedEvent?.payload?.final_recommendation ??
-    activeEvaluation?.final_recommendation ??
-    "",
-  );
-  const approvalCurrentlyBlocked =
-    activeRun?.stage === "awaiting_operator" &&
-    activeRun?.pending_pause_stage === "evaluation_ready" &&
-    approvalRecommendation !== "" &&
-    approvalRecommendation !== "execute";
-  const hermesExplanation = (activeRun?.artifacts?.hermes_explanation ?? null) as Record<string, any> | null;
-
   const readinessItems = readiness
     ? [
         readiness.promptfoo,
@@ -921,6 +958,10 @@ export default function App() {
     }
     if (canvasAvailability.evidence) {
       setCanvasMode("evidence");
+      return;
+    }
+    if (canvasAvailability.rca) {
+      setCanvasMode("rca");
       return;
     }
     if (canvasAvailability.signal) {
@@ -1155,6 +1196,7 @@ export default function App() {
               timelineRef={timelineRef}
               selectedEventId={selectedEventId}
               agentTasks={agentTasks}
+              rcaSnapshot={rcaSnapshot}
               approvalQueue={approvalQueue}
               recentEvidenceEvents={recentEvidenceEvents}
               selectedEventInsights={selectedEventInsights}
@@ -1667,6 +1709,7 @@ function RunsView({
   timelineRef,
   selectedEventId,
   agentTasks,
+  rcaSnapshot,
   approvalQueue,
   recentEvidenceEvents,
   selectedEventInsights,
@@ -1693,6 +1736,7 @@ function RunsView({
   timelineRef: React.RefObject<HTMLDivElement>;
   selectedEventId: string;
   agentTasks: AgentTask[];
+  rcaSnapshot: RcaSnapshot;
   approvalQueue: ApprovalQueueItem[];
   recentEvidenceEvents: RunEventRecord[];
   selectedEventInsights: Array<{ label: string; value: string; tone?: string }>;
@@ -1738,7 +1782,7 @@ function RunsView({
           {activeRun ? <StatusChip label={humanize(activeRun.stage)} tone={toneForStage(activeRun.stage)} /> : null}
         </div>
         <div className="mesh-tab-list" role="tablist" aria-label="Run detail">
-          {(["timeline", "evidence", "approvals", "actions", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
+          {(["timeline", "evidence", "rca", "approvals", "actions", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
             <button key={tab} className={runDetailTab === tab ? "tab active" : "tab"} type="button" onClick={() => onRunDetailTabChange(tab)}>
               {runDetailTabLabel(tab)}
             </button>
@@ -1748,6 +1792,8 @@ function RunsView({
           <TimelineTable run={activeRun} selectedEventId={selectedEventId} timelineRef={timelineRef} onSelectEvent={onSelectEvent} />
         ) : runDetailTab === "evidence" ? (
           <EvidencePanel events={recentEvidenceEvents} selectedEvent={selectedEvent} insights={selectedEventInsights} onJumpContext={onJumpContext} />
+        ) : runDetailTab === "rca" ? (
+          <RcaPanel snapshot={rcaSnapshot} onJumpContext={onJumpContext} onOpenTopology={() => onRunDetailTabChange("topology")} />
         ) : runDetailTab === "approvals" ? (
           <RunApprovalPanel queue={approvalQueue} activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "actions" ? (
@@ -2512,6 +2558,116 @@ function EvidencePanel({
   );
 }
 
+function RcaPanel({
+  snapshot,
+  onJumpContext,
+  onOpenTopology,
+}: {
+  snapshot: RcaSnapshot;
+  onJumpContext: (tab: RightRailTab) => void;
+  onOpenTopology: () => void;
+}) {
+  const topCandidate = snapshot.candidates[0];
+  return (
+    <div className="mesh-detail-grid">
+      <section className="context-panel rca-summary-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Root Cause Analysis</p>
+            <h4>{topCandidate ? topCandidate.cause : "No ranked candidate"}</h4>
+          </div>
+          <StatusChip
+            label={snapshot.stopReason ? humanize(snapshot.stopReason) : "No report"}
+            tone={snapshot.blockers.some((blocker) => blocker.severity === "danger") ? "#ff6b5f" : "#41d6b1"}
+          />
+        </div>
+        <div className="context-stat-grid">
+          <ContextStat label="Tools" value={String(snapshot.tools.length)} />
+          <ContextStat label="Candidates" value={String(snapshot.candidates.length)} />
+          <ContextStat label="Blockers" value={String(snapshot.blockers.length)} />
+          <ContextStat label="Citations" value={String(snapshot.citations.length)} />
+        </div>
+        <div className="context-action-row">
+          <button className="action-button compact" type="button" onClick={onOpenTopology}>RCA graph</button>
+          <button className="action-button compact" type="button" onClick={() => onJumpContext("evidence")}>Evidence inspector</button>
+          <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Audit proof</button>
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<Activity size={14} />} title="Tool Trajectory" />
+        <div className="rca-tool-list">
+          {snapshot.tools.map((tool, index) => (
+            <article key={tool.id} className={`rca-tool-row ${tool.valid ? "valid" : "invalid"}`}>
+              <span className="rca-rank">{index + 1}</span>
+              <div>
+                <strong>{tool.name}</strong>
+                <small>{tool.summary || humanize(tool.status)}</small>
+                {tool.citationIds.length > 0 ? <code>{tool.citationIds.slice(0, 3).join(" / ")}</code> : null}
+              </div>
+              <StatusPill state={tool.valid ? "ready" : "degraded"} label={humanize(tool.status || "recorded")} />
+            </article>
+          ))}
+          {snapshot.tools.length === 0 ? <EmptyState text="No read-only RCA tool calls are recorded." /> : null}
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<AlertTriangle size={14} />} title="Ranked Candidates" />
+        <div className="rca-candidate-grid">
+          {snapshot.candidates.map((candidate) => (
+            <article key={candidate.id} className="rca-candidate-card">
+              <div className="agent-attempt-header">
+                <strong>#{candidate.rank} {candidate.cause}</strong>
+                <span>{formatPercent(candidate.confidence)}</span>
+              </div>
+              {candidate.support.length > 0 ? <p>{candidate.support.slice(0, 4).join(", ")}</p> : null}
+              {candidate.citationIds.length > 0 ? <code>{candidate.citationIds.slice(0, 4).join(" / ")}</code> : null}
+            </article>
+          ))}
+          {snapshot.candidates.length === 0 ? <EmptyState text="No root-cause candidates are ranked yet." /> : null}
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<CircleDot size={14} />} title="Confidence Movement" />
+        <div className="confidence-movement">
+          {snapshot.confidenceMovement.map((point) => (
+            <div key={point.id} className="confidence-step">
+              <span>{point.label}</span>
+              <div className="confidence-track"><i style={{ width: `${Math.round(point.value * 100)}%`, background: point.tone }} /></div>
+              <strong>{Math.round(point.value * 100)}%</strong>
+              <small>{point.detail}</small>
+            </div>
+          ))}
+          {snapshot.confidenceMovement.length === 0 ? <EmptyState text="No confidence-bearing artifacts are recorded." /> : null}
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<ShieldCheck size={14} />} title="Blockers And Audit Citations" />
+        <div className="rca-two-column">
+          <div className="mesh-stack">
+            {snapshot.blockers.map((blocker) => (
+              <div key={blocker.id} className={`inspector-alert ${blocker.severity === "danger" ? "danger" : ""}`}>
+                <AlertTriangle size={14} />
+                <span><strong>{blocker.label}</strong><br />{blocker.detail}</span>
+              </div>
+            ))}
+            {snapshot.blockers.length === 0 ? <EmptyState text="No RCA or evaluation blockers are attached." /> : null}
+          </div>
+          <div className="mesh-stack">
+            {snapshot.citations.map((citation) => (
+              <ContextLink key={citation.id} label={citation.label} value={citation.detail || citation.id} mono />
+            ))}
+            {snapshot.citations.length === 0 ? <EmptyState text="No RCA citations are attached." /> : null}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function RunApprovalPanel({
   queue,
   activeRun,
@@ -2609,7 +2765,7 @@ function TopologyPanel({
     <div className="mesh-topology-shell">
       <div className="mesh-section-header">
         <div className="tab-strip canvas-mode-strip" role="tablist" aria-label="Canvas mode">
-          {(["labyrinth", "flow", "evidence", "signal", "merkle", "artifacts"] as CanvasMode[]).map((mode) => (
+          {(["labyrinth", "flow", "evidence", "rca", "signal", "merkle", "artifacts"] as CanvasMode[]).map((mode) => (
             <button
               key={mode}
               className={canvasMode === mode ? "tab active" : "tab"}
@@ -2704,6 +2860,259 @@ function buildApprovalQueue(run: RunDetail | null, blocked: boolean, reasons: st
     stage: run.pending_pause_stage ?? run.stage,
     blocked,
   }];
+}
+
+function buildRcaSnapshot(
+  run: RunDetail | null,
+  analysis: ScenarioAnalysis | null,
+  tasks: AgentTask[],
+  approvalBlockingReasons: string[],
+): RcaSnapshot {
+  const artifacts = asRecord(run?.artifacts);
+  const report = firstRecord(
+    artifacts.investigation_report,
+    artifacts.rca_report,
+    artifacts.root_cause_analysis,
+  );
+  const tools = buildRcaTools(artifacts, report, tasks);
+  const candidates = buildRcaCandidates(report, analysis);
+  const blockers = buildRcaBlockers(report, artifacts, tools, approvalBlockingReasons);
+  const citations = buildRcaCitations(report, tools, candidates, run);
+  const confidenceMovement = buildConfidenceMovement(report, candidates, artifacts, analysis, tasks);
+
+  return {
+    tools,
+    candidates,
+    blockers,
+    citations,
+    confidenceMovement,
+    report,
+    stopReason: stringField(report, "stop_reason") ?? stringField(report, "status"),
+  };
+}
+
+function buildRcaTools(artifacts: Record<string, any>, report: Record<string, any> | null, tasks: AgentTask[]): RcaGraphToolCall[] {
+  const rawToolCalls = firstArray(
+    artifacts.tool_trajectory,
+    artifacts.tool_calls,
+    artifacts.investigation_tool_trajectory,
+    report?.tool_trajectory,
+  );
+  const source = rawToolCalls.length > 0 ? rawToolCalls : firstArray(report?.probe_results, report?.probes);
+  const tools = source
+    .map((item, index) => {
+      const record = asRecord(item);
+      const name = stringField(record, "tool_name") ?? stringField(record, "probe_name") ?? stringField(record, "name") ?? stringField(record, "tool") ?? `tool-${index + 1}`;
+      const status = stringField(record, "status") ?? (record.error ? "failed" : "recorded");
+      const valid = typeof record.valid === "boolean" ? record.valid : !["failed", "invalid", "error"].includes(status.toLowerCase());
+      const summary =
+        stringField(record, "summary") ??
+        stringField(record, "output_excerpt") ??
+        stringField(record, "error") ??
+        summarizeRecord(record.args ?? record.arguments ?? record.input ?? record.output);
+      return {
+        id: stableId(name, index),
+        name,
+        status,
+        valid,
+        summary,
+        citationIds: stringList(record.citation_ids ?? record.citations ?? record.citation_refs),
+      };
+    })
+    .filter((tool) => tool.name.trim().length > 0);
+
+  if (tools.length > 0) return tools;
+
+  return tasks.flatMap((task, taskIndex) =>
+    (task.attempts ?? []).map((attempt, attemptIndex) => ({
+      id: stableId(`${task.kind}-${attempt.agent}`, taskIndex + attemptIndex),
+      name: `agent_mesh:${attempt.agent}`,
+      status: attempt.status,
+      valid: attempt.status === "completed" && attempt.risk_flags.length === 0,
+      summary: attempt.summary,
+      citationIds: stringList(attempt.citations),
+    })),
+  );
+}
+
+function buildRcaCandidates(report: Record<string, any> | null, analysis: ScenarioAnalysis | null): RcaGraphCandidate[] {
+  const findings = firstArray(report?.findings);
+  const rankedFromFinding = findings.flatMap((finding) => firstArray(asRecord(finding).details?.ranked));
+  const rawCandidates = firstArray(
+    report?.root_cause_candidates,
+    report?.ranked_root_cause_candidates,
+    report?.candidates,
+    rankedFromFinding,
+  );
+  const source = rawCandidates.length > 0
+    ? rawCandidates
+    : findings.filter((finding) => {
+        const kind = String(asRecord(finding).kind ?? "").toLowerCase();
+        return kind.includes("root_cause") || kind.includes("ranked");
+      });
+
+  const candidates = source
+    .map((item, index) => {
+      const record = asRecord(item);
+      const cause =
+        stringField(record, "root_cause") ??
+        stringField(record, "candidate_cause") ??
+        stringField(record, "cause") ??
+        stringField(record, "summary") ??
+        stringField(record, "name") ??
+        `candidate-${index + 1}`;
+      const confidence = numericField(record, "confidence");
+      return {
+        id: stableId(cause, index),
+        rank: Math.max(1, Math.trunc(numericField(record, "rank") ?? index + 1)),
+        cause,
+        confidence,
+        support: stringList(record.supporting_tools ?? record.matched_patterns ?? record.supporting_evidence ?? record.evidence),
+        citationIds: stringList(record.citation_ids ?? record.citations ?? record.citation_refs),
+      };
+    })
+    .filter((candidate) => candidate.cause.trim().length > 0)
+    .sort((left, right) => left.rank - right.rank);
+
+  if (candidates.length > 0) return candidates;
+
+  return (analysis?.subdecisions ?? [])
+    .filter((item) => String(item.kind ?? item.analyzer ?? "").toLowerCase().includes("investigation"))
+    .map((item, index) => {
+      const record = asRecord(item);
+      const cause = stringField(record, "recommendation") ?? stringField(record, "summary") ?? `analysis-${index + 1}`;
+      return {
+        id: stableId(cause, index),
+        rank: index + 1,
+        cause,
+        confidence: numericField(record, "confidence"),
+        support: stringList(record.reasons),
+        citationIds: stringList(record.evidence_refs),
+      };
+    });
+}
+
+function buildRcaBlockers(
+  report: Record<string, any> | null,
+  artifacts: Record<string, any>,
+  tools: RcaGraphToolCall[],
+  approvalBlockingReasons: string[],
+): RcaGraphBlocker[] {
+  const blockers: RcaGraphBlocker[] = approvalBlockingReasons.map((reason, index) => ({
+    id: `evaluation-${index}`,
+    label: "Evaluation blocker",
+    detail: reason,
+    source: "evaluation",
+    severity: "danger",
+  }));
+  const uncertainty = numericField(report, "uncertainty");
+  if (typeof uncertainty === "number" && uncertainty >= 0.35) {
+    blockers.push({
+      id: "investigation-uncertainty",
+      label: "High uncertainty",
+      detail: `${Math.round(uncertainty * 100)}% uncertainty in investigation report`,
+      source: "investigation",
+      severity: "warning",
+    });
+  }
+  const stopReason = stringField(report, "stop_reason") ?? stringField(report, "status");
+  if (stopReason && /fail|blocked|unknown|insufficient/i.test(stopReason)) {
+    blockers.push({
+      id: "investigation-stop",
+      label: "Investigation stop reason",
+      detail: humanize(stopReason),
+      source: "investigation",
+      severity: /fail|blocked/i.test(stopReason) ? "danger" : "warning",
+    });
+  }
+  tools
+    .filter((tool) => !tool.valid)
+    .slice(0, 4)
+    .forEach((tool) => {
+      blockers.push({
+        id: `tool-${tool.id}`,
+        label: `${tool.name} not valid`,
+        detail: tool.summary || humanize(tool.status),
+        source: "tool",
+        severity: tool.status.toLowerCase() === "failed" ? "danger" : "warning",
+      });
+    });
+  const evaluation = asRecord(artifacts.evaluation);
+  stringList(evaluation.blocking_reasons).forEach((reason, index) => {
+    if (blockers.some((blocker) => blocker.detail === reason)) return;
+    blockers.push({
+      id: `evaluation-artifact-${index}`,
+      label: "Evaluation blocker",
+      detail: reason,
+      source: "evaluation",
+      severity: "danger",
+    });
+  });
+  return blockers;
+}
+
+function buildRcaCitations(
+  report: Record<string, any> | null,
+  tools: RcaGraphToolCall[],
+  candidates: RcaGraphCandidate[],
+  run: RunDetail | null,
+): RcaGraphCitation[] {
+  const citations = new Map<string, RcaGraphCitation>();
+  const add = (id: string, label: string, detail = "") => {
+    if (!id || citations.has(id)) return;
+    citations.set(id, { id, label, detail: detail || id });
+  };
+
+  firstArray(report?.citations).forEach((item, index) => {
+    if (typeof item === "string") {
+      add(item, "Report citation", item);
+      return;
+    }
+    const record = asRecord(item);
+    const id = stringField(record, "id") ?? stringField(record, "claim_id") ?? stringField(record, "source_ref") ?? stringField(record, "source") ?? `report-citation-${index}`;
+    const label = stringField(record, "source_type") ?? stringField(record, "source") ?? "Report citation";
+    const detail = stringField(record, "summary") ?? stringField(record, "source_ref") ?? summarizeRecord(record);
+    add(id, humanize(label), detail);
+  });
+  tools.forEach((tool) => tool.citationIds.forEach((id) => add(id, `${tool.name} citation`, id)));
+  candidates.forEach((candidate) => candidate.citationIds.forEach((id) => add(id, `Candidate #${candidate.rank}`, candidate.cause)));
+  (run?.events ?? []).forEach((event) => {
+    if (event.merkle_leaf_hash && event.artifact_key === "investigation_report") {
+      add(event.merkle_leaf_hash, "Merkle leaf", `${event.sequence}: ${humanize(event.event_type)}`);
+    }
+  });
+  return Array.from(citations.values()).slice(0, 14);
+}
+
+function buildConfidenceMovement(
+  report: Record<string, any> | null,
+  candidates: RcaGraphCandidate[],
+  artifacts: Record<string, any>,
+  analysis: ScenarioAnalysis | null,
+  tasks: AgentTask[],
+): ConfidencePoint[] {
+  const points: ConfidencePoint[] = [];
+  const topConfidence = candidates.find((candidate) => typeof candidate.confidence === "number")?.confidence;
+  if (typeof topConfidence === "number") {
+    points.push({ id: "rca-top", label: "Top RCA", value: clamp01(topConfidence), detail: candidates[0]?.cause ?? "candidate", tone: "#41d6b1" });
+  }
+  const uncertainty = numericField(report, "uncertainty");
+  if (typeof uncertainty === "number") {
+    points.push({ id: "investigation", label: "Investigation", value: clamp01(1 - uncertainty), detail: "1 - uncertainty", tone: "#65a7ff" });
+  }
+  const decisionConfidence = numericField(asRecord(artifacts.decision), "confidence");
+  if (typeof decisionConfidence === "number") {
+    points.push({ id: "decision", label: "Decision", value: clamp01(decisionConfidence), detail: stringField(asRecord(artifacts.decision), "decision_type") ?? "decision", tone: "#8d8cff" });
+  }
+  if (typeof analysis?.confidence === "number") {
+    points.push({ id: "scenario-analysis", label: "Scenario", value: clamp01(analysis.confidence), detail: humanize(analysis.suggested_decision_type), tone: "#f2b84b" });
+  }
+  tasks.flatMap((task) => task.attempts).forEach((attempt, index) => {
+    const confidence = numericField(asRecord(attempt.output), "confidence");
+    if (typeof confidence !== "number") return;
+    points.push({ id: `agent-${index}`, label: humanize(attempt.agent), value: clamp01(confidence), detail: humanize(attempt.recommended_action), tone: "#83d37d" });
+  });
+  return points.slice(0, 8);
 }
 
 function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
@@ -3408,6 +3817,74 @@ function formatInsightValue(value: unknown): string {
     return `${Object.keys(value as Record<string, unknown>).length} fields`;
   }
   return "";
+}
+
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, any>) : {};
+}
+
+function firstRecord(...values: unknown[]): Record<string, any> | null {
+  for (const value of values) {
+    const record = asRecord(value);
+    if (Object.keys(record).length > 0) return record;
+  }
+  return null;
+}
+
+function firstArray(...values: unknown[]): any[] {
+  for (const value of values) {
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function stringField(record: Record<string, any> | null | undefined, key: string): string | null {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numericField(record: Record<string, any> | null | undefined, key: string): number | null {
+  const value = record?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() !== "" && Number.isFinite(Number(value))) return Number(value);
+  return null;
+}
+
+function stringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .flatMap((item) => {
+      if (typeof item === "string" || typeof item === "number") return [String(item)];
+      const record = asRecord(item);
+      const id = record.claim_id ?? record.id ?? record.source_ref ?? record.source ?? record.summary ?? record.name;
+      return id == null ? [] : [String(id)];
+    })
+    .filter((item) => item.trim().length > 0);
+}
+
+function summarizeRecord(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value.length > 180 ? `${value.slice(0, 179)}…` : value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return `${value.length} items`;
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, 3);
+    return entries.map(([key, item]) => `${key}:${formatInsightValue(item) || typeof item}`).join(" / ");
+  }
+  return "";
+}
+
+function stableId(value: string, index: number): string {
+  const slug = value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 42);
+  return `${slug || "item"}-${index + 1}`;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function formatPercent(value: number | null): string {
+  return typeof value === "number" ? `${Math.round(clamp01(value) * 100)}%` : "unscored";
 }
 
 function HeaderMetric({

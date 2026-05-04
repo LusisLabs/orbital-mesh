@@ -462,12 +462,13 @@ class InvestigationAnalyzer:
             )
         stop_reason = str(report.get("stop_reason", "unknown"))
         findings = list(report.get("findings", []) or [])
+        root_cause_candidates = list(report.get("root_cause_candidates", []) or [])
         uncertainty = float(report.get("uncertainty", 0.5) or 0.5)
         failed = stop_reason == "investigation_failed_existing_path_continues"
         summary = (
             "Investigation failed; scenario analysis will continue with existing evidence."
             if failed
-            else f"Investigation produced {len(findings)} finding(s) with uncertainty {uncertainty:.2f}."
+            else f"Investigation produced {len(findings)} finding(s), {len(root_cause_candidates)} RCA candidate(s), and uncertainty {uncertainty:.2f}."
         )
         evidence = _evidence(
             payload,
@@ -479,6 +480,7 @@ class InvestigationAnalyzer:
                 "stop_reason": stop_reason,
                 "uncertainty": uncertainty,
                 "finding_count": len(findings),
+                "root_cause_candidates": root_cause_candidates[:5],
                 "citations": list(report.get("citations", []) or [])[:8],
             },
             0.0 if failed else max(0.5, min(1.0 - uncertainty, 0.9)),

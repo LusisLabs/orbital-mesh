@@ -311,6 +311,7 @@ class RunCoordinator:
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._run_worker_stop = threading.Event()
         self._run_queue: queue.Queue[tuple[str, RuntimeConfig, dict[str, Any], str | None]] = queue.Queue(
             maxsize=self.config.run_queue_size
         )
@@ -364,17 +365,33 @@ class RunCoordinator:
 
     def stop_background_workers(self, timeout: float = 5.0) -> None:
         """Stop coordinator-owned background loops and wait for active runs."""
+        self.stop_watch_daemon()
         self._deferred_stop.set()
-        self._deferred_thread.join(timeout=timeout)
         deadline = time.monotonic() + max(timeout, 0)
+        self._deferred_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        drained = False
         while time.monotonic() < deadline:
             with self._lock:
                 workers = list(self._threads.values())
             live_workers = [worker for worker in workers if worker.is_alive()]
-            if not live_workers:
-                return
+            queue_idle = getattr(self._run_queue, "unfinished_tasks", 0) == 0
+            if not live_workers and queue_idle:
+                drained = True
+                break
             remaining = max(0.0, deadline - time.monotonic())
-            live_workers[0].join(timeout=min(0.1, remaining))
+            if live_workers:
+                live_workers[0].join(timeout=min(0.1, remaining))
+            else:
+                time.sleep(min(0.01, remaining))
+        self._run_worker_stop.set()
+        for worker in self._run_workers:
+            if not worker.is_alive():
+                continue
+            worker.join(timeout=max(0.0, deadline - time.monotonic()))
+        if drained:
+            close_state_store = getattr(self.state_store, "close", None)
+            if callable(close_state_store):
+                close_state_store(timeout=max(0.0, deadline - time.monotonic()))
 
     def watch_status(self) -> dict[str, Any]:
         """Legacy-shape status for the single Kubernetes watcher, if present.
@@ -837,6 +854,8 @@ class RunCoordinator:
         return list(tasks) if isinstance(tasks, list) else []
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self._run_worker_stop.is_set():
+            raise RuntimeError("run coordinator is stopped")
         steering_mode = payload.get("steering_mode", self.config.default_steering_mode)
         auto_mode = steering_mode == "interruptible_auto"
         raw_pause_points = (
@@ -920,13 +939,17 @@ class RunCoordinator:
         return self.get_run(session.run_id) or session.to_dict()
 
     def _run_worker_loop(self) -> None:
-        while True:
-            run_id, run_config, signal_payload, scenario_key = self._run_queue.get()
+        while not self._run_worker_stop.is_set() or getattr(self._run_queue, "unfinished_tasks", 0) > 0:
+            try:
+                run_id, run_config, signal_payload, scenario_key = self._run_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
             try:
                 with self._lock:
                     self._threads[run_id] = threading.current_thread()
                 self._execute_run(run_id, run_config, signal_payload, scenario_key)
             finally:
+                self._finalize_run(run_id)
                 self._run_queue.task_done()
 
     def steer_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:

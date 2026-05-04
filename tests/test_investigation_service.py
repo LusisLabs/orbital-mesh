@@ -149,12 +149,13 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
 class _StubToolProvider:
     name = "stub"
 
-    def __init__(self, outputs: dict[str, Any]) -> None:
+    def __init__(self, outputs: dict[str, Any], available_tools: tuple[str, ...] | None = None) -> None:
         self._outputs = outputs
         self._calls: list[dict[str, Any]] = []
+        self._available_tools = available_tools or ("GetResources", "DescribeResource", "GetErrorLogs")
 
     def available_tools(self) -> tuple[str, ...]:
-        return ("GetResources", "DescribeResource", "GetErrorLogs")
+        return self._available_tools
 
     def invoke(self, tool_name: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         record = {
@@ -196,10 +197,12 @@ class InvestigationToolLoopTests(unittest.TestCase):
         names = [probe["name"] for probe in report.probe_results]
         self.assertIn("GetResources", names)
         self.assertIn("DescribeResource", names)
-        self.assertEqual(report.stop_reason, "tool_probe_budget_exhausted")
+        self.assertEqual(report.stop_reason, "root_cause_candidate_found")
         ranked = [finding for finding in report.findings if finding.get("kind") == "ranked_root_causes"]
         self.assertEqual(len(ranked), 1)
         self.assertEqual(ranked[0]["summary"], "incorrect_image_reference")
+        self.assertEqual(report.root_cause_candidates[0]["root_cause"], "incorrect_image_reference")
+        self.assertIn("DescribeResource", report.root_cause_candidates[0]["supporting_tools"])
         # Calls were recorded on the provider so the runner can surface
         # them as tool_trajectory.
         self.assertGreaterEqual(len(provider.call_records()), 2)
@@ -234,6 +237,59 @@ class InvestigationToolLoopTests(unittest.TestCase):
         self.assertTrue(seen_describe_args)
         self.assertEqual(seen_describe_args[0]["name"], "productcatalogservice")
 
+    def test_tool_loop_selects_follow_up_from_observed_signal_and_records_reason(self) -> None:
+        trigger, signal = _trigger_and_signal()
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+        provider = _StubToolProvider(
+            {
+                "GetResources": "checkoutservice-7c9f-abc12 0/1 CrashLoopBackOff",
+                "DescribeResource": "Warning BackOff back-off restarting failed container",
+                "GetErrorLogs": "Traceback RuntimeError: checkout exception",
+                "GetAppYAML": "image: checkout:v1",
+            },
+            available_tools=("GetResources", "DescribeResource", "GetAppYAML", "GetErrorLogs"),
+        )
+
+        report = InvestigationService().investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack.to_dict(),
+            tool_provider=provider,
+        )
+
+        tool_names = [record["tool_name"] for record in provider.call_records()]
+        self.assertEqual(tool_names, ["GetResources", "DescribeResource", "GetErrorLogs"])
+        self.assertNotIn("GetAppYAML", tool_names)
+        reasons = {
+            probe["name"]: probe["findings"][0]["details"]["selection_reason"]
+            for probe in report.probe_results
+            if probe["name"] in {"GetResources", "DescribeResource", "GetErrorLogs"}
+        }
+        self.assertIn("inventory_discovery", reasons["GetResources"])
+        self.assertIn("resource_status_signal", reasons["DescribeResource"])
+        self.assertIn("runtime_failure_signal", reasons["GetErrorLogs"])
+
+    def test_tool_loop_stops_when_evidence_value_is_exhausted(self) -> None:
+        trigger, signal = _trigger_and_signal()
+        evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
+        provider = _StubToolProvider(
+            {
+                "GetResources": "frontend 1/1 Running",
+                "DescribeResource": "no warning events",
+                "GetErrorLogs": "no errors",
+            },
+            available_tools=("GetResources", "DescribeResource", "GetAppYAML", "GetErrorLogs"),
+        )
+
+        report = InvestigationService().investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack.to_dict(),
+            tool_provider=provider,
+        )
+
+        self.assertEqual([record["tool_name"] for record in provider.call_records()], ["GetResources"])
+        self.assertEqual(report.stop_reason, "evidence_value_exhausted")
+        self.assertEqual(report.root_cause_candidates, [])
+
     def test_tool_provider_absent_keeps_deterministic_path(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
@@ -244,6 +300,7 @@ class InvestigationToolLoopTests(unittest.TestCase):
         )
 
         self.assertEqual(report.stop_reason, "deterministic_probe_budget_exhausted")
+        self.assertEqual(report.root_cause_candidates, [])
         self.assertFalse(any(finding.get("kind") == "ranked_root_causes" for finding in report.findings))
 
 

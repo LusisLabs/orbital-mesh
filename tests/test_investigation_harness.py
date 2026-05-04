@@ -11,6 +11,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from shared.mesh_runtime import Trigger
 from services.investigation.harness import (
     InvestigationLoopState,
     LoopCritic,
@@ -183,6 +184,110 @@ class HarnessLoopTests(unittest.TestCase):
         self.assertEqual(len(state.tool_calls), 2)
         self.assertEqual(state.stop_reason, "budget_exhausted")
 
+    def test_loop_stops_when_critic_rejects_duplicate_call(self) -> None:
+        registry = ToolRegistry()
+        defn = _ro_def("same", "demo")
+        registry.register(defn, _make_static_invoker("ok"))
+        critic = LoopCritic(registry)
+
+        class DuplicatePlanner:
+            domain = "demo"
+
+            def plan(self, *, state: InvestigationLoopState, trigger_context: dict[str, Any]) -> LoopDecision:
+                return LoopDecision(
+                    action="continue",
+                    next_calls=(make_call(tool=defn, args={"name": "fixed"}),),
+                    reason="duplicate_probe",
+                    confidence=0.5,
+                )
+
+        state = InvestigationLoopState(trigger_id="t", budget_remaining=5.0)
+        run_investigation_loop(
+            state=state,
+            planner=DuplicatePlanner(),
+            registry=registry,
+            critic=critic,
+            max_iterations=4,
+        )
+
+        self.assertEqual(len(state.tool_calls), 1)
+        self.assertEqual(state.stop_reason, "critic_rejected_all_calls")
+        self.assertEqual(state.rejections[0].reason, "duplicate_call")
+
+
+class CloudOpsNativeSelectorTests(unittest.TestCase):
+    def test_selector_follows_observed_crashloop_signal_and_records_reasons(self) -> None:
+        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+
+        snapshot = _CloudOpsSnapshot(
+            {
+                "GetResources": "checkoutservice-7c9f-abc12 0/1 CrashLoopBackOff",
+                "DescribeResource": "Warning BackOff back-off restarting failed container",
+                "GetErrorLogs": "Traceback RuntimeError: checkout exception",
+            }
+        )
+        registry = ToolRegistry()
+        register_cloudops_tools(registry, snapshot)
+        state = InvestigationLoopState(trigger_id="trg_cloudops", budget_remaining=6.0)
+
+        run_investigation_loop(
+            state=state,
+            planner=CloudOpsLoopPlanner(_cloudops_trigger()),
+            registry=registry,
+            critic=LoopCritic(registry),
+            max_iterations=6,
+        )
+
+        self.assertEqual([call.tool_name for call in state.tool_calls], ["GetResources", "DescribeResource", "GetErrorLogs"])
+        self.assertIn("inventory_discovery", state.tool_calls[0].purpose)
+        self.assertIn("resource_status_signal", state.tool_calls[1].purpose)
+        self.assertIn("runtime_failure_signal", state.tool_calls[2].purpose)
+        self.assertEqual(state.stop_reason, "root_cause_candidate_found")
+
+    def test_selector_stops_when_evidence_value_is_exhausted(self) -> None:
+        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+
+        snapshot = _CloudOpsSnapshot({"GetResources": "frontend 1/1 Running"})
+        registry = ToolRegistry()
+        register_cloudops_tools(registry, snapshot)
+        state = InvestigationLoopState(trigger_id="trg_cloudops", budget_remaining=6.0)
+
+        run_investigation_loop(
+            state=state,
+            planner=CloudOpsLoopPlanner(_cloudops_trigger()),
+            registry=registry,
+            critic=LoopCritic(registry),
+            max_iterations=6,
+        )
+
+        self.assertEqual([call.tool_name for call in state.tool_calls], ["GetResources"])
+        self.assertEqual(state.stop_reason, "evidence_value_exhausted")
+
+    def test_selector_stops_on_sufficient_rca_confidence(self) -> None:
+        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+
+        snapshot = _CloudOpsSnapshot(
+            {
+                "GetResources": "frontend 0/1 ImagePullBackOff",
+                "DescribeResource": "Reason: ErrImagePull manifest unknown",
+                "GetAppYAML": "image: frontend:missing",
+            }
+        )
+        registry = ToolRegistry()
+        register_cloudops_tools(registry, snapshot)
+        state = InvestigationLoopState(trigger_id="trg_cloudops", budget_remaining=6.0)
+
+        run_investigation_loop(
+            state=state,
+            planner=CloudOpsLoopPlanner(_cloudops_trigger()),
+            registry=registry,
+            critic=LoopCritic(registry),
+            max_iterations=6,
+        )
+
+        self.assertEqual([call.tool_name for call in state.tool_calls], ["GetResources", "DescribeResource"])
+        self.assertEqual(state.stop_reason, "root_cause_candidate_found")
+
 
 class RethPeerStarvationPortTests(unittest.TestCase):
     def test_planner_branches_on_peer_count_and_stops_after_logs(self) -> None:
@@ -209,11 +314,48 @@ class RethPeerStarvationPortTests(unittest.TestCase):
 
         names = [call.tool_name for call in state.tool_calls]
         self.assertEqual(names, ["read_peer_sync", "read_consensus_status", "read_recent_logs"])
-        self.assertTrue(state.stop_reason and state.stop_reason.startswith("reth_peer_starvation"))
+        self.assertEqual(state.stop_reason, "evidence_value_exhausted")
+        self.assertEqual(
+            [call.purpose for call in state.tool_calls],
+            ["reth_first_peer_check", "reth_peers_below_floor", "reth_corroborate_logs"],
+        )
         # The consensus probe carries engine_api_reachable=False — observable
         # in the loop's observed_text for downstream hypothesis ranking.
         joined = "\n".join(state.observed_text).lower()
         self.assertIn("engine_api_reachable=false", joined)
+
+
+class _CloudOpsSnapshotCall:
+    def __init__(self, *, valid: bool) -> None:
+        self.valid = valid
+
+
+class _CloudOpsSnapshot:
+    def __init__(self, outputs: dict[str, Any]) -> None:
+        self.outputs = outputs
+        self.calls: list[_CloudOpsSnapshotCall] = []
+
+    def invoke(self, tool_name: str, args: dict[str, Any]) -> Any:
+        valid = tool_name in self.outputs
+        self.calls.append(_CloudOpsSnapshotCall(valid=valid))
+        return self.outputs.get(tool_name, {"error": f"missing {tool_name}"})
+
+
+def _cloudops_trigger() -> Trigger:
+    return Trigger(
+        trigger_id="trg_cloudops",
+        trigger_type="cloudopsbench_case",
+        triggered_at="2026-05-04T00:00:00Z",
+        environment="test",
+        service="frontend",
+        endpoint="/",
+        flag_key=None,
+        current_rollout_pct=None,
+        comparison_window=None,
+        segment={},
+        metrics={},
+        related_context={"namespace": "default"},
+    )
 
 
 def _ro_def(name: str, domain: str, *, args_schema: dict[str, Any] | None = None, budget_cost: float = 1.0) -> ToolDefinition:

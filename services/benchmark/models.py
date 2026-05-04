@@ -86,6 +86,8 @@ class BenchmarkScenario:
 @dataclass(frozen=True)
 class ProcessMetrics:
     root_cause_accuracy: float
+    root_cause_at_1: float
+    root_cause_at_3: float
     trajectory_in_order_match: float
     tool_relevance: float
     tool_coverage: float
@@ -97,6 +99,8 @@ class ProcessMetrics:
     def to_dict(self) -> dict[str, Any]:
         return {
             "root_cause_accuracy": self.root_cause_accuracy,
+            "root_cause_at_1": self.root_cause_at_1,
+            "root_cause_at_3": self.root_cause_at_3,
             "trajectory_in_order_match": self.trajectory_in_order_match,
             "tool_relevance": self.tool_relevance,
             "tool_coverage": self.tool_coverage,

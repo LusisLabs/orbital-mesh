@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -60,6 +61,7 @@ class FinalizeRunCleanupTests(unittest.TestCase):
         self.coord = _make_coordinator(self.tmp.name)
 
     def tearDown(self) -> None:
+        self.coord.stop_background_workers(timeout=1.0)
         self.tmp.cleanup()
 
     def test_finalize_pops_both_threads_and_controls(self) -> None:
@@ -110,6 +112,35 @@ class FinalizeRunCleanupTests(unittest.TestCase):
         self.assertNotIn(drop_id, self.coord.controls)
         self.assertNotIn(drop_id, self.coord._threads)
 
+    def test_stop_background_workers_drains_queued_run_and_stops_workers(self) -> None:
+        started = threading.Event()
+        finished = threading.Event()
+
+        def execute(run_id: str, *_args: object) -> None:
+            started.set()
+            time.sleep(0.05)
+            finished.set()
+
+        with patch.object(self.coord, "_execute_run", side_effect=execute):
+            self.coord.create_run(
+                {
+                    "signal_payload": {
+                        "signal_type": "test",
+                        "signal_id": "sig_stop",
+                        "observed_at": "2026-05-04T00:00:00+00:00",
+                        "environment": "test",
+                        "service": "search",
+                    },
+                    "steering_mode": "interruptible_auto",
+                    "pause_points": [],
+                }
+            )
+            self.coord.stop_background_workers(timeout=2.0)
+
+        self.assertTrue(started.is_set())
+        self.assertTrue(finished.is_set())
+        self.assertTrue(all(not worker.is_alive() for worker in self.coord._run_workers))
+
 
 class RecoveryPathSafetyTests(unittest.TestCase):
     """``_execute_run`` records a terminal ``RUN_FAILED`` event in its
@@ -127,6 +158,7 @@ class RecoveryPathSafetyTests(unittest.TestCase):
         self.coord = _make_coordinator(self.tmp.name)
 
     def tearDown(self) -> None:
+        self.coord.stop_background_workers(timeout=1.0)
         self.tmp.cleanup()
 
     def test_recovery_path_isolates_state_store_failure(self) -> None:
@@ -170,6 +202,7 @@ class GetControlAccessorTests(unittest.TestCase):
         self.coord = _make_coordinator(self.tmp.name)
 
     def tearDown(self) -> None:
+        self.coord.stop_background_workers(timeout=1.0)
         self.tmp.cleanup()
 
     def test_get_control_returns_none_for_unknown_run(self) -> None:

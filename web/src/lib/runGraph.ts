@@ -39,6 +39,46 @@ export interface RunGraphNodeData extends Record<string, unknown> {
 export type RunGraphNode = Node<RunGraphNodeData, "runEvent">;
 export type CanvasGraph = { nodes: RunGraphNode[]; edges: Edge[] };
 
+export interface RcaGraphToolCall {
+  id: string;
+  name: string;
+  status: string;
+  valid: boolean;
+  summary: string;
+  citationIds: string[];
+}
+
+export interface RcaGraphCandidate {
+  id: string;
+  rank: number;
+  cause: string;
+  confidence: number | null;
+  support: string[];
+  citationIds: string[];
+}
+
+export interface RcaGraphBlocker {
+  id: string;
+  label: string;
+  detail: string;
+  source: string;
+  severity: "warning" | "danger";
+}
+
+export interface RcaGraphCitation {
+  id: string;
+  label: string;
+  detail: string;
+}
+
+export interface RcaGraphInput {
+  tools: RcaGraphToolCall[];
+  candidates: RcaGraphCandidate[];
+  blockers: RcaGraphBlocker[];
+  citations: RcaGraphCitation[];
+  stopReason?: string | null;
+}
+
 export function buildRunGraph(events: RunEventRecord[], selectedEventId?: string): CanvasGraph {
   const stageCounts = new Map<string, number>();
   const columnCounts = new Map<number, number>();
@@ -204,6 +244,110 @@ export function buildEvidenceGraph(graph: EvidenceGraph | null | undefined): Can
       edge.kind === "feeds",
     ),
   );
+
+  return { nodes, edges };
+}
+
+export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGraph {
+  if (!input) return { nodes: [], edges: [] };
+  const hasContent = input.tools.length > 0 || input.candidates.length > 0 || input.blockers.length > 0 || input.citations.length > 0;
+  if (!hasContent) return { nodes: [], edges: [] };
+
+  const nodes: RunGraphNode[] = [
+    canvasNode({
+      id: "rca-investigation",
+      kind: "section",
+      title: "Investigation",
+      statusLabel: input.stopReason ? humanizeToken(input.stopReason) : "RCA",
+      preview: `${input.tools.length} tools / ${input.candidates.length} candidates`,
+      accent: "#65a7ff",
+      meta: compact([`${input.blockers.length} blockers`, `${input.citations.length} citations`]),
+      position: { x: 20, y: 210 },
+      artifactKey: "investigation_report",
+    }),
+  ];
+  const edges: Edge[] = [];
+
+  input.tools.slice(0, 10).forEach((tool, index) => {
+    const id = `rca-tool-${tool.id}`;
+    const tone = tool.valid ? "#41d6b1" : "#f2b84b";
+    nodes.push(canvasNode({
+      id,
+      kind: "artifact",
+      title: tool.name,
+      statusLabel: humanizeToken(tool.status || "tool"),
+      preview: tool.summary || "read-only diagnostic call",
+      accent: tone,
+      meta: compact([`#${index + 1}`, ...tool.citationIds.slice(0, 1)]),
+      position: { x: 310, y: 40 + index * 112 },
+      artifactKey: "tool_trajectory",
+    }));
+    edges.push(canvasEdge(`rca-investigation-${id}`, "rca-investigation", id, tone, true));
+  });
+
+  input.candidates.slice(0, 6).forEach((candidate, index) => {
+    const id = `rca-candidate-${candidate.id}`;
+    const confidence = typeof candidate.confidence === "number" ? `${Math.round(candidate.confidence * 100)}%` : "unscored";
+    const tone = candidate.rank === 1 ? "#83d37d" : candidate.rank <= 3 ? "#41d6b1" : "#65a7ff";
+    nodes.push(canvasNode({
+      id,
+      kind: "artifact",
+      title: candidate.cause,
+      statusLabel: `Rank ${candidate.rank}`,
+      preview: `${confidence} confidence${candidate.support.length ? ` / ${candidate.support.slice(0, 2).join(", ")}` : ""}`,
+      accent: tone,
+      meta: compact(candidate.citationIds.slice(0, 2)),
+      position: { x: 650, y: 78 + index * 126 },
+      artifactKey: "investigation_report",
+    }));
+    const linkedTools = input.tools.filter((tool) =>
+      tool.citationIds.some((citationId) => candidate.citationIds.includes(citationId)) ||
+      candidate.support.some((support) => tool.name.toLowerCase().includes(support.toLowerCase())),
+    );
+    const sources = linkedTools.length > 0 ? linkedTools : input.tools.slice(0, 1);
+    sources.forEach((tool) => {
+      edges.push(canvasEdge(`rca-tool-${tool.id}-${id}`, `rca-tool-${tool.id}`, id, tone, candidate.rank <= 3));
+    });
+    if (sources.length === 0) {
+      edges.push(canvasEdge(`rca-investigation-${id}`, "rca-investigation", id, tone, candidate.rank <= 3));
+    }
+  });
+
+  input.blockers.slice(0, 5).forEach((blocker, index) => {
+    const id = `rca-blocker-${blocker.id}`;
+    const tone = blocker.severity === "danger" ? "#ff6b5f" : "#f2b84b";
+    nodes.push(canvasNode({
+      id,
+      kind: "artifact",
+      title: blocker.label,
+      statusLabel: humanizeToken(blocker.source),
+      preview: blocker.detail,
+      accent: tone,
+      meta: [],
+      position: { x: 1000, y: 80 + index * 122 },
+      artifactKey: "evaluation",
+    }));
+    const candidate = input.candidates[index] ?? input.candidates[0];
+    edges.push(canvasEdge(`rca-blocker-${index}`, candidate ? `rca-candidate-${candidate.id}` : "rca-investigation", id, tone, true));
+  });
+
+  input.citations.slice(0, 8).forEach((citation, index) => {
+    const id = `rca-citation-${citation.id}`;
+    nodes.push(canvasNode({
+      id,
+      kind: "merkle",
+      title: citation.label,
+      statusLabel: "Citation",
+      preview: citation.detail,
+      accent: "#8d8cff",
+      meta: compact([citation.id]),
+      position: { x: 1300, y: 50 + index * 104 },
+      artifactKey: "investigation_report",
+    }));
+    const candidate = input.candidates.find((item) => item.citationIds.includes(citation.id)) ?? input.candidates[0];
+    const source = candidate ? `rca-candidate-${candidate.id}` : input.blockers[0] ? `rca-blocker-${input.blockers[0].id}` : "rca-investigation";
+    edges.push(canvasEdge(`${source}-${id}`, source, id, "#8d8cff", true));
+  });
 
   return { nodes, edges };
 }
@@ -471,6 +615,8 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
     ["integration_readiness", "Readiness", "#41d6b1"],
     ["normalized_event", "Normalized Event", "#8d8cff"],
     ["trigger", "Trigger", "#65a7ff"],
+    ["investigation_report", "Investigation", "#41d6b1"],
+    ["tool_trajectory", "Tool Trajectory", "#41d6b1"],
     ["decision", "Decision", "#65a7ff"],
     ["evaluation", "Evaluation", "#f2b84b"],
     ["task_trace", "Task Trace", "#f2b84b"],

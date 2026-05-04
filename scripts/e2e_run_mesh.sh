@@ -32,6 +32,9 @@ import urllib.request
 from urllib.error import URLError
 from http.client import RemoteDisconnected
 
+def as_dict(value):
+    return value if isinstance(value, dict) else {}
+
 base_url = os.environ["BASE_URL"]
 request_timeout_seconds = float(os.environ.get("E2E_RUN_REQUEST_TIMEOUT_SECONDS", "90"))
 long_running_stages = {"scenario_analysis_ready", "evaluation_ready"}
@@ -104,11 +107,14 @@ while True:
         grace = stage_grace_seconds if run.get("stage") in long_running_stages else progress_grace_seconds
         deadline = min(hard_deadline, max(deadline, now + grace))
     if run["stage"] in terminal_stages:
-        artifacts = run.get("artifacts") or {}
-        task_trace = artifacts.get("task_trace") or {}
-        mesh_eval = task_trace.get("mesh_eval") if isinstance(task_trace, dict) else {}
-        latent_mesh = mesh_eval.get("latent_mesh") if isinstance(mesh_eval, dict) else {}
-        tokenizer_probe = latent_mesh.get("tokenizer_probe") if isinstance(latent_mesh, dict) else {}
+        artifacts = as_dict(run.get("artifacts"))
+        task_trace = as_dict(artifacts.get("task_trace"))
+        mesh_eval = as_dict(task_trace.get("mesh_eval"))
+        latent_mesh = as_dict(mesh_eval.get("latent_mesh"))
+        tokenizer_probe = as_dict(latent_mesh.get("tokenizer_probe"))
+        decision = as_dict(artifacts.get("decision"))
+        execution = as_dict(artifacts.get("execution"))
+        feedback = as_dict(artifacts.get("feedback"))
         if os.environ.get("EXPECT_MESH_EVAL_TOKENIZER_PROBE", "0").lower() in {"1", "true", "yes"}:
             if tokenizer_probe.get("status") != "ok":
                 raise SystemExit(f"mesh_eval tokenizer probe did not complete: {tokenizer_probe}")
@@ -117,9 +123,9 @@ while True:
             "scenario_key": run.get("scenario_key"),
             "stage": run["stage"],
             "status": run["status"],
-            "decision_type": (run.get("artifacts") or {}).get("decision", {}).get("decision_type"),
-            "execution_status": (run.get("artifacts") or {}).get("execution", {}).get("status"),
-            "feedback_outcome": (run.get("artifacts") or {}).get("feedback", {}).get("outcome"),
+            "decision_type": decision.get("decision_type"),
+            "execution_status": execution.get("status"),
+            "feedback_outcome": feedback.get("outcome"),
             "mesh_eval_tokenizer_probe": tokenizer_probe,
         }
         print(json.dumps(summary, indent=2))

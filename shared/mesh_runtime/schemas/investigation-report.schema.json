@@ -39,6 +39,10 @@
     "safety_notes": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "root_cause_candidates": {
+      "type": "array",
+      "items": { "type": "object" }
     }
   },
   "additionalProperties": false

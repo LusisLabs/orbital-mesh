@@ -963,6 +963,31 @@ OD-006: corpus grading tiers
   chaos scenarios in separate suites so Loghub breadth does not masquerade as
   production recovery validation.
 
+Checkpoint: RCA tool-loop hardening.
+Date: 2026-05-04.
+
+Actual behavior added:
+  - InvestigationReport now carries root_cause_candidates as a contract field.
+  - Tool-driven investigations can stop with root_cause_candidate_found when
+    read-only probe output supports a high-confidence candidate.
+  - Native selector substrate now exposes ProbeRule, ObservationIndex, and
+    NativeProbeSelector for typed read-only probe planning.
+  - CloudOps and Reth planning logic now live in rule packs; compatibility
+    planners delegate to the shared selector.
+  - Provider-backed CloudOps probing now runs through ToolRegistry,
+    LoopCritic, and run_investigation_loop instead of a separate hand-coded
+    probe loop.
+  - Scenario analysis and decision reasoning preserve the top RCA candidates as
+    advisory evidence.
+  - Benchmark process metrics now include root_cause_at_1 and root_cause_at_3.
+  - Cloud-OpsBench tool-family scoring normalizes expert trajectory entries
+    such as GetResources::pods to the actual GetResources tool call family.
+
+Remaining gaps:
+  - Expand the ontology against the full Cloud-OpsBench dev split.
+  - Add selector telemetry before any LLM planner swap point.
+  - Keep RCA candidates advisory; policy and evaluation remain authoritative.
+
 
 Validation Matrix
 -----------------
@@ -1022,6 +1047,16 @@ Current validation status:
     returned low-credit during the planning step.
   - ENVIRONMENT FAILURE: official SREGym local-kind remains blocked because
     Helm is missing and Docker hangs outside the sandbox.
+  - PASS: python3 -m unittest tests.test_investigation_service -v after RCA
+    tool-loop hardening, 9 tests.
+  - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest
+    pytest tests/test_investigation_service.py tests/test_benchmark_harness.py
+    -q after RCA tool-loop hardening, 32 tests.
+  - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check services/investigation
+    services/benchmark shared/mesh_runtime/contracts.py
+    services/scenario_analysis/service.py services/decision/service.py
+    tests/test_investigation_service.py tests/test_benchmark_harness.py after
+    RCA tool-loop hardening.
   - PASS: RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
     services/orchestrator/agent_mesh.py
     services/orchestrator/deepagents_adapter.py services/benchmark

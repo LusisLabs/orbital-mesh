@@ -67,3 +67,5 @@ Large artifacts should not be stored directly in Postgres. Store URI/path plus c
 Event append is canonical. In Postgres mode, appending an event, updating the latest run snapshot, and recording the corresponding Merkle root happen in one transaction. Snapshots are materialized for fast UI/API reads and are rebuildable from `run_events`.
 
 Vault and Merkle outputs are still produced from the canonical event stream. File mode and Postgres mode both expose the same `MeshStateStore` interface to the control plane.
+
+Both backends preserve the latest event cursor when an older run snapshot is saved after an event append. Run snapshot saves merge artifact keys and do not allow late background writers to roll a final lifecycle stage back to a running stage. Async vault mirrors are flushed during state-store close, and terminal run states force a vault materialization so shutdown does not leave the local audit mirror behind the canonical event stream.

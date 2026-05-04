@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import queue
 import threading
-import os
 import time
 from collections import deque
 from copy import deepcopy
@@ -25,8 +26,10 @@ from .vault import VaultManager
 
 
 _EVENT_CACHE_SIZE = 512
-_TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator"}
+_VAULT_FORCE_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator", "recovery_spawned"}
+_FINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "recovery_spawned"}
 _VAULT_QUEUE_SIZE = 256
+_LOG = logging.getLogger("mesh.file_state_store")
 
 
 def _cache_covers_after(cached: Deque[RunEvent], after_sequence: int) -> bool:
@@ -44,6 +47,11 @@ class FileStateStore:
         self.vault = VaultManager(config.vault_path, runtime_config=config)
         self._goals_path = self.state_directory / "goals.json"
         self._run_sessions_path = self.state_directory / "run_sessions.json"
+        self._run_sessions_archive_path = self.state_directory / "run_sessions.archive.jsonl"
+        self._run_session_file_max_records = max(
+            50,
+            int(os.getenv("MESH_RUN_SESSION_FILE_MAX_RECORDS", "100")),
+        )
         self._run_events_dir = self.state_directory / "run_events"
         self._run_events_dir.mkdir(parents=True, exist_ok=True)
         self._memory_dir = self.state_directory / "memory"
@@ -57,11 +65,6 @@ class FileStateStore:
         self._benchmarks_path = self.state_directory / "benchmarks" / "records.json"
         self._benchmarks_path.parent.mkdir(parents=True, exist_ok=True)
         self._event_append_lock = threading.Lock()
-        self._vault_queue: queue.Queue[str] | None = None
-        if config.vault_mirror_mode == "async":
-            self._vault_queue = queue.Queue(maxsize=_VAULT_QUEUE_SIZE)
-            self._vault_thread = threading.Thread(target=self._vault_mirror_loop, daemon=True)
-            self._vault_thread.start()
         # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
         # JSON from disk + redeserializing is 10-50x more expensive than a
         # deque slice. The tail is bounded per run_id, populated on append
@@ -69,9 +72,21 @@ class FileStateStore:
         self._event_tail_cache: dict[str, Deque[RunEvent]] = {}
         self._event_cache_lock = threading.Lock()
         self._last_vault_materialized_at: dict[str, float] = {}
+        self._vault_materialize_lock = threading.Lock()
         self._vault_materialize_min_interval_seconds = float(
             os.getenv("MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS", "30")
         )
+        self._vault_stop = threading.Event()
+        self._vault_queue: queue.Queue[str | None] | None = None
+        self._vault_thread: threading.Thread | None = None
+        if config.vault_mirror_mode == "async":
+            self._vault_queue = queue.Queue(maxsize=_VAULT_QUEUE_SIZE)
+            self._vault_thread = threading.Thread(
+                target=self._vault_mirror_loop,
+                daemon=True,
+                name="mesh-file-vault-mirror",
+            )
+            self._vault_thread.start()
 
     def ensure_default_goal(self) -> GoalRecord:
         goals = self.list_goals()
@@ -179,17 +194,30 @@ class FileStateStore:
             records = payload.setdefault("runs", [])
             for index, existing in enumerate(records):
                 if existing.get("run_id") == session.run_id:
+                    session_dict = _merge_session_snapshot(session_dict, existing)
                     records[index] = session_dict
                     break
             else:
                 records.insert(0, session_dict)
             records.sort(key=lambda record: record.get("created_at", ""), reverse=True)
-        terminal = session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES
+            if len(records) > self._run_session_file_max_records:
+                archived = records[self._run_session_file_max_records :]
+                payload["runs"] = records[: self._run_session_file_max_records]
+                self._archive_run_session_records(archived)
+        session = RunSession(**session_dict)
+        terminal = session.stage in _VAULT_FORCE_STAGES or session.status in _VAULT_FORCE_STAGES
         if terminal:
             self._materialize_vault(session.run_id, force=True)
         else:
             self._schedule_materialize_vault(session.run_id)
         return session
+
+    def _archive_run_session_records(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        with self._run_sessions_archive_path.open("a", encoding="utf-8") as archive:
+            for record in records:
+                archive.write(json.dumps(record, sort_keys=True) + "\n")
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
         session = RunSession(**snapshot)
@@ -228,13 +256,7 @@ class FileStateStore:
 
         self._append_event_to_cache(run_id, event)
 
-        session = self.get_run_session(run_id)
-        if session is not None:
-            session.latest_event_id = event.event_id
-            session.latest_event_sequence = event.sequence
-            session.latest_merkle_root = self.get_merkle_snapshot(run_id).root_hash
-            session.updated_at = _timestamp()
-            self.save_run_session(session)
+        self._advance_session_event_cursor(run_id, event)
         return event
 
     def append_event(self, run_id: str, event: RunEvent) -> RunEvent:
@@ -247,14 +269,19 @@ class FileStateStore:
                 event.merkle_leaf_hash = leaf_hash_for_payload(event.canonical_payload())
             self._append_event_record(run_id, event)
         self._append_event_to_cache(run_id, event)
+        self._advance_session_event_cursor(run_id, event)
+        return event
+
+    def _advance_session_event_cursor(self, run_id: str, event: RunEvent) -> None:
         session = self.get_run_session(run_id)
         if session is not None:
+            if event.sequence < int(session.latest_event_sequence or 0):
+                return
             session.latest_event_id = event.event_id
             session.latest_event_sequence = event.sequence
             session.latest_merkle_root = self.get_merkle_snapshot(run_id).root_hash
             session.updated_at = _timestamp()
             self.save_run_session(session)
-        return event
 
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:
         with self._event_cache_lock:
@@ -529,6 +556,9 @@ class FileStateStore:
     def _schedule_materialize_vault(self, run_id: str) -> None:
         if self.config.vault_mirror_mode == "off":
             return
+        if self._vault_stop.is_set():
+            self._materialize_vault(run_id, force=True)
+            return
         if self._vault_queue is None:
             self._materialize_vault(run_id)
             return
@@ -544,32 +574,65 @@ class FileStateStore:
         while True:
             run_id = self._vault_queue.get()
             try:
+                if run_id is None:
+                    return
                 self._materialize_vault(run_id)
+            except Exception:
+                _LOG.exception("file-state vault materialization failed for run %s", run_id)
             finally:
                 self._vault_queue.task_done()
 
     def _materialize_vault(self, run_id: str, *, force: bool = False) -> None:
-        now = time.monotonic()
-        last_materialized = self._last_vault_materialized_at.get(run_id)
-        if (
-            not force
-            and last_materialized is not None
-            and now - last_materialized < self._vault_materialize_min_interval_seconds
-        ):
+        with self._vault_materialize_lock:
+            now = time.monotonic()
+            last_materialized = self._last_vault_materialized_at.get(run_id)
+            if (
+                not force
+                and last_materialized is not None
+                and now - last_materialized < self._vault_materialize_min_interval_seconds
+            ):
+                return
+            session = self.get_run_session(run_id)
+            if session is None:
+                return
+            goal = None
+            if session.goal_id is not None:
+                for candidate in self.list_goals():
+                    if candidate.goal_id == session.goal_id:
+                        goal = candidate
+                        break
+            events = self._load_run_events_from_disk(run_id)
+            merkle = build_merkle_snapshot(run_id, events)
+            self.vault.write_run_bundle(session, events, merkle, goal)
+            self._last_vault_materialized_at[run_id] = now
+
+    def flush_background_tasks(self, timeout: float = 5.0) -> bool:
+        vault_queue = self._vault_queue
+        if vault_queue is None:
+            return True
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while getattr(vault_queue, "unfinished_tasks", 0) > 0:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.01)
+        return True
+
+    def close(self, timeout: float = 5.0) -> None:
+        vault_queue = self._vault_queue
+        vault_thread = self._vault_thread
+        if vault_queue is None or vault_thread is None:
             return
-        session = self.get_run_session(run_id)
-        if session is None:
+        if not vault_thread.is_alive():
             return
-        goal = None
-        if session.goal_id is not None:
-            for candidate in self.list_goals():
-                if candidate.goal_id == session.goal_id:
-                    goal = candidate
-                    break
-        events = self._load_run_events_from_disk(run_id)
-        merkle = build_merkle_snapshot(run_id, events)
-        self.vault.write_run_bundle(session, events, merkle, goal)
-        self._last_vault_materialized_at[run_id] = now
+        deadline = time.monotonic() + max(timeout, 0.0)
+        self.flush_background_tasks(timeout=timeout)
+        self._vault_stop.set()
+        remaining = max(0.0, deadline - time.monotonic())
+        try:
+            vault_queue.put(None, timeout=remaining)
+        except queue.Full:
+            return
+        vault_thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
     def _load_learning_outcomes(self) -> list[dict[str, Any]]:
         learning_path = self.state_directory / "learning" / "outcomes.json"
@@ -634,6 +697,48 @@ def _dedupe_events(events: list[RunEvent]) -> list[RunEvent]:
     for event in events:
         by_id[event.event_id] = event
     return list(by_id.values())
+
+
+def _merge_session_snapshot(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    merged = _preserve_event_cursor(candidate, current)
+    merged = _preserve_final_lifecycle(merged, current)
+    merged["artifacts"] = _merge_artifacts(merged.get("artifacts"), current.get("artifacts"))
+    return merged
+
+
+def _preserve_event_cursor(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    current_sequence = int(current.get("latest_event_sequence") or 0)
+    candidate_sequence = int(candidate.get("latest_event_sequence") or 0)
+    if current_sequence <= candidate_sequence:
+        return candidate
+    merged = dict(candidate)
+    merged["latest_event_id"] = current.get("latest_event_id")
+    merged["latest_event_sequence"] = current_sequence
+    merged["latest_merkle_root"] = current.get("latest_merkle_root")
+    return merged
+
+
+def _preserve_final_lifecycle(candidate: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    current_final = current.get("stage") in _FINAL_STAGES or current.get("status") in _FINAL_STAGES
+    candidate_final = candidate.get("stage") in _FINAL_STAGES or candidate.get("status") in _FINAL_STAGES
+    if not current_final or candidate_final:
+        return candidate
+    merged = dict(candidate)
+    for key in ("stage", "status", "pending_pause_stage", "error"):
+        merged[key] = current.get(key)
+    return merged
+
+
+def _merge_artifacts(candidate_raw: Any, current_raw: Any) -> dict[str, Any]:
+    candidate = candidate_raw if isinstance(candidate_raw, dict) else {}
+    current = current_raw if isinstance(current_raw, dict) else {}
+    merged = {**current, **candidate}
+    current_agent_tasks = current.get("agent_tasks")
+    candidate_agent_tasks = candidate.get("agent_tasks")
+    if isinstance(current_agent_tasks, list) and isinstance(candidate_agent_tasks, dict):
+        if candidate_agent_tasks.get("status") == "pending":
+            merged["agent_tasks"] = current_agent_tasks
+    return merged
 
 
 def _relationship_matches(

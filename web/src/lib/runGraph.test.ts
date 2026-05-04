@@ -6,6 +6,7 @@ import {
   buildKubernetesGraph,
   buildLabyrinthGraph,
   buildMerkleGraph,
+  buildRcaGraph,
   buildRethSignalGraph,
   buildRunGraph,
   buildUnifiedGraph,
@@ -266,5 +267,47 @@ describe("runGraph", () => {
     expect(evidence.edges.some((edge) => edge.animated)).toBe(true);
     expect(reth.nodes.map((node) => node.id)).toContain("reth-storage");
     expect(reth.edges.some((edge) => edge.target === "reth-storage" && edge.animated)).toBe(true);
+  });
+
+  it("builds an RCA canvas from tools, candidates, blockers, and citations", () => {
+    const graph = buildRcaGraph({
+      stopReason: "root_cause_candidate_found",
+      tools: [
+        {
+          id: "get-error-logs-1",
+          name: "GetErrorLogs",
+          status: "completed",
+          valid: true,
+          summary: "CrashLoopBackOff in checkout pod",
+          citationIds: ["logs:checkout"],
+        },
+      ],
+      candidates: [
+        {
+          id: "bad-image-1",
+          rank: 1,
+          cause: "bad_container_image",
+          confidence: 0.82,
+          support: ["GetErrorLogs"],
+          citationIds: ["logs:checkout"],
+        },
+      ],
+      blockers: [
+        {
+          id: "uncertainty",
+          label: "High uncertainty",
+          detail: "Needs second signal",
+          source: "investigation",
+          severity: "warning",
+        },
+      ],
+      citations: [{ id: "logs:checkout", label: "Tool citation", detail: "pod logs" }],
+    });
+
+    expect(graph.nodes.map((node) => node.id)).toContain("rca-investigation");
+    expect(graph.nodes.some((node) => node.id.startsWith("rca-tool-"))).toBe(true);
+    expect(graph.nodes.some((node) => node.id.startsWith("rca-candidate-"))).toBe(true);
+    expect(graph.nodes.some((node) => node.id.startsWith("rca-citation-"))).toBe(true);
+    expect(graph.edges.some((edge) => edge.animated)).toBe(true);
   });
 });

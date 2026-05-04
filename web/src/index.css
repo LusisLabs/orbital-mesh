@@ -1988,6 +1988,129 @@ code {
   word-break: break-all;
 }
 
+.rca-summary-panel {
+  border-color: rgba(87, 199, 212, 0.22);
+}
+
+.rca-tool-list,
+.rca-candidate-grid,
+.confidence-movement,
+.rca-two-column {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.rca-two-column {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rca-tool-row,
+.rca-candidate-card {
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid var(--mesh-line-soft, rgba(232, 226, 211, 0.08));
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.rca-tool-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.rca-tool-row.valid {
+  border-color: rgba(65, 214, 177, 0.22);
+}
+
+.rca-tool-row.invalid {
+  border-color: rgba(230, 180, 80, 0.3);
+}
+
+.rca-rank {
+  display: grid;
+  place-items: center;
+  width: 1.55rem;
+  height: 1.55rem;
+  border: 1px solid rgba(232, 226, 211, 0.14);
+  border-radius: 999px;
+  color: var(--muted);
+  font-family: var(--mesh-mono, "IBM Plex Mono", monospace);
+  font-size: 0.68rem;
+}
+
+.rca-tool-row strong,
+.rca-candidate-card strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.rca-tool-row small,
+.rca-candidate-card p,
+.confidence-step small {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.rca-tool-row code,
+.rca-candidate-card code {
+  display: block;
+  overflow: hidden;
+  color: var(--ink-secondary);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+}
+
+.confidence-step {
+  display: grid;
+  grid-template-columns: minmax(78px, 0.7fr) minmax(90px, 1fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.48rem 0;
+  border-bottom: 1px solid rgba(232, 226, 211, 0.06);
+}
+
+.confidence-step span {
+  color: var(--ink-secondary);
+  font-size: 0.76rem;
+}
+
+.confidence-step strong {
+  font-family: var(--mesh-mono, "IBM Plex Mono", monospace);
+  font-size: 0.76rem;
+}
+
+.confidence-step small {
+  grid-column: 1 / -1;
+}
+
+.confidence-track {
+  height: 0.4rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.confidence-track i {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+@media (max-width: 860px) {
+  .rca-two-column {
+    grid-template-columns: 1fr;
+  }
+}
+
 .timeline-panel {
   grid-template-rows: auto auto auto minmax(0, 1fr);
   min-height: 0;

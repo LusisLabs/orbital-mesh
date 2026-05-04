@@ -32,14 +32,16 @@ def score_outcome(
     investigation_present = bool(report) and report.get("status") != "failed"
 
     required_hits = _required_evidence_hits(scenario, report, outcome)
-    root_cause_matched = _root_cause_matched(scenario, decision, report)
+    root_cause_scores = _root_cause_scores(scenario, decision, report)
+    matched_value = root_cause_scores["matched"]
+    root_cause_matched = bool(matched_value) if matched_value is not None else None
     feedback = cast(dict[str, Any], outcome.get("feedback") if isinstance(outcome.get("feedback"), dict) else {})
     feedback_outcome = feedback.get("outcome") if isinstance(feedback, dict) else None
     process_metrics = _process_metrics(
         scenario,
         outcome,
         report=report,
-        root_cause_matched=root_cause_matched,
+        root_cause_scores=root_cause_scores,
         duration_ms=duration_ms,
     )
 
@@ -150,11 +152,12 @@ def _score_investigation(
     ]
     if scenario.acceptable_probe_names:
         probe_names = {
-            str(probe.get("probe_name"))
+            _tool_family(str(probe.get("name") or probe.get("probe_name")))
             for probe in probe_results
-            if isinstance(probe, dict) and probe.get("probe_name")
+            if isinstance(probe, dict) and (probe.get("name") or probe.get("probe_name"))
         }
-        checks.append(1.0 if probe_names.intersection(scenario.acceptable_probe_names) else 0.0)
+        acceptable = {_tool_family(name) for name in scenario.acceptable_probe_names}
+        checks.append(1.0 if probe_names.intersection(acceptable) else 0.0)
     if scenario.required_evidence_kinds:
         checks.append(len(required_hits) / len(scenario.required_evidence_kinds))
     return round(sum(checks) / len(checks), 4)
@@ -211,16 +214,24 @@ def _required_evidence_hits(
     return [kind for kind in scenario.required_evidence_kinds if kind.lower() in haystack]
 
 
-def _root_cause_matched(
+def _root_cause_scores(
     scenario: BenchmarkScenario,
     decision: dict[str, Any],
     report: dict[str, Any],
-) -> bool | None:
+) -> dict[str, float | bool | None]:
     if not scenario.expected_root_cause:
-        return None
-    needle = scenario.expected_root_cause.lower()
+        return {"accuracy": 0.5, "at_1": 0.5, "at_3": 0.5, "matched": None}
+    needle = _normalize_root_cause(scenario.expected_root_cause)
+    candidates = _extract_root_cause_candidates(report)
+    if candidates:
+        normalized = [_normalize_root_cause(candidate) for candidate in candidates]
+        at_1 = 1.0 if normalized and normalized[0] == needle else 0.0
+        at_3 = 1.0 if needle in normalized[:3] else 0.0
+        return {"accuracy": at_1, "at_1": at_1, "at_3": at_3, "matched": bool(at_1)}
     haystack = " ".join([_stringify(decision.get("reasoning")), _stringify(report)]).lower()
-    return needle in haystack
+    matched = scenario.expected_root_cause.lower() in haystack
+    score = 1.0 if matched else 0.0
+    return {"accuracy": score, "at_1": score, "at_3": score, "matched": matched}
 
 
 def _process_metrics(
@@ -228,14 +239,16 @@ def _process_metrics(
     outcome: dict[str, Any],
     *,
     report: dict[str, Any],
-    root_cause_matched: bool | None,
+    root_cause_scores: dict[str, float | bool | None],
     duration_ms: float,
 ) -> ProcessMetrics:
     tool_calls = _tool_calls(outcome)
     invalid_count = sum(1 for call in tool_calls if not _tool_call_valid(call))
     zero_tool_diagnosis = bool(report) and not tool_calls and not report.get("probe_results")
     return ProcessMetrics(
-        root_cause_accuracy=1.0 if root_cause_matched is True else (0.0 if root_cause_matched is False else 0.5),
+        root_cause_accuracy=float(root_cause_scores["accuracy"]),
+        root_cause_at_1=float(root_cause_scores["at_1"]),
+        root_cause_at_3=float(root_cause_scores["at_3"]),
         trajectory_in_order_match=_trajectory_in_order_match(scenario, tool_calls),
         tool_relevance=_tool_relevance(tool_calls),
         tool_coverage=_tool_coverage(scenario, tool_calls, report),
@@ -259,7 +272,7 @@ def _tool_call_valid(call: dict[str, Any]) -> bool:
 
 
 def _tool_name(call: dict[str, Any]) -> str:
-    return str(call.get("tool_name") or call.get("probe_name") or call.get("name") or call.get("tool") or "")
+    return _tool_family(str(call.get("tool_name") or call.get("probe_name") or call.get("name") or call.get("tool") or ""))
 
 
 def _trajectory_in_order_match(scenario: BenchmarkScenario, tool_calls: list[dict[str, Any]]) -> float:
@@ -268,7 +281,8 @@ def _trajectory_in_order_match(scenario: BenchmarkScenario, tool_calls: list[dic
     names = [_tool_name(call) for call in tool_calls]
     cursor = 0
     for expected in scenario.expert_trajectory:
-        while cursor < len(names) and names[cursor] != expected:
+        expected_name = _tool_family(expected)
+        while cursor < len(names) and names[cursor] != expected_name:
             cursor += 1
         if cursor >= len(names):
             return 0.0
@@ -291,13 +305,13 @@ def _tool_relevance(tool_calls: list[dict[str, Any]]) -> float:
 
 
 def _tool_coverage(scenario: BenchmarkScenario, tool_calls: list[dict[str, Any]], report: dict[str, Any]) -> float:
-    required = set(scenario.required_tool_families or scenario.acceptable_probe_names or scenario.required_evidence_kinds)
+    required = {_tool_family(item) for item in (scenario.required_tool_families or scenario.acceptable_probe_names or scenario.required_evidence_kinds)}
     if not required:
         return 0.5 if tool_calls or report.get("probe_results") else 0.0
     names = {_tool_name(call) for call in tool_calls}
     for probe in report.get("probe_results", []) if isinstance(report.get("probe_results"), list) else []:
         if isinstance(probe, dict):
-            names.add(str(probe.get("probe_name") or probe.get("name") or ""))
+            names.add(_tool_family(str(probe.get("name") or probe.get("probe_name") or "")))
     hits = {item for item in required if item in names or item in _stringify(report)}
     return round(len(hits) / len(required), 4)
 
@@ -313,6 +327,44 @@ def _redundant_action_rate(tool_calls: list[dict[str, Any]]) -> float:
             redundant += 1
         seen.add(key)
     return round(redundant / len(tool_calls), 4)
+
+
+def _extract_root_cause_candidates(report: dict[str, Any]) -> list[str]:
+    candidates = report.get("root_cause_candidates")
+    if isinstance(candidates, list):
+        extracted = [
+            str(item.get("root_cause"))
+            for item in candidates
+            if isinstance(item, dict) and item.get("root_cause")
+        ]
+        if extracted:
+            return extracted
+    findings = report.get("findings")
+    if isinstance(findings, list):
+        for finding in findings:
+            if not isinstance(finding, dict) or finding.get("kind") != "ranked_root_causes":
+                continue
+            details = finding.get("details") if isinstance(finding.get("details"), dict) else {}
+            ranked = details.get("ranked") if isinstance(details.get("ranked"), list) else []
+            extracted = [
+                str(item.get("root_cause"))
+                for item in ranked
+                if isinstance(item, dict) and item.get("root_cause")
+            ]
+            if extracted:
+                return extracted
+    return []
+
+
+def _normalize_root_cause(value: str) -> str:
+    normalized = "".join(char.lower() if char.isalnum() else "_" for char in str(value))
+    while "__" in normalized:
+        normalized = normalized.replace("__", "_")
+    return normalized.strip("_")
+
+
+def _tool_family(value: str) -> str:
+    return str(value).split("::", 1)[0]
 
 
 def _mesh_operational_score(dimension_scores: dict[str, float]) -> float:
@@ -341,6 +393,8 @@ def _aggregate_process_metrics(results: list[ScenarioBenchmarkResult]) -> dict[s
     count = len(results)
     return {
         "root_cause_accuracy": round(sum(item.process_metrics.root_cause_accuracy for item in results) / count, 4),
+        "root_cause_at_1": round(sum(item.process_metrics.root_cause_at_1 for item in results) / count, 4),
+        "root_cause_at_3": round(sum(item.process_metrics.root_cause_at_3 for item in results) / count, 4),
         "trajectory_in_order_match": round(sum(item.process_metrics.trajectory_in_order_match for item in results) / count, 4),
         "tool_relevance": round(sum(item.process_metrics.tool_relevance for item in results) / count, 4),
         "tool_coverage": round(sum(item.process_metrics.tool_coverage for item in results) / count, 4),

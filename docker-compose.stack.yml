@@ -656,27 +656,19 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  mesh-ui:
-    build:
-      context: ./purnaOS-main
-      args:
-        NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
-        NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"
-    init: true
-    depends_on:
-      mesh:
-        condition: service_healthy
-    ports:
-      - "${MESH_UI_PUBLISH_PORT:-3000}:3000"
-    environment:
-      NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
-      NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"
-    restart: unless-stopped
-    logging:
-      driver: local
-      options:
-        max-size: "10m"
-        max-file: "3"
+  #########################################################
+  #mesh-ui:
+  #  build:
+  #    context: ./purnaOS-main
+  #    args:
+  #      NEXT_PUBLIC_MESH_API_BASE_URL: "${NEXT_PUBLIC_MESH_API_BASE_URL:-http://mesh:8787}"
+  #      NEXT_PUBLIC_MESH_API_ALLOWLIST: "${NEXT_PUBLIC_MESH_API_ALLOWLIST:-mesh,localhost,127.0.0.1}"
+  #  init: true
+  #  depends_on:
+  #    mesh:
+  #      condition: service_healthy
+  #  ports:
+  #    - "${MESH_UI_PUBLISH_PORT:-3000}:3000"
 
   latentmas:
     build:

@@ -197,9 +197,36 @@ class BenchmarkHarnessTest(unittest.TestCase):
         )
 
         self.assertEqual(1.0, result.process_metrics.root_cause_accuracy)
+        self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+        self.assertEqual(1.0, result.process_metrics.root_cause_at_3)
         self.assertEqual(1.0, result.process_metrics.trajectory_in_order_match)
         self.assertEqual(1.0, result.process_metrics.tool_coverage)
         self.assertGreater(result.agentic_rca_score, 80)
+
+        ranked_third = score_outcome(
+            scenario,
+            {
+                "trigger": {"trigger_id": "trig"},
+                "decision": {"decision_type": "escalate", "reasoning": {}},
+                "investigation_report": {
+                    "status": "completed",
+                    "probe_results": [{"name": "get_services"}],
+                    "citations": ["cloudopsbench:get_services"],
+                    "root_cause_candidates": [
+                        {"rank": 1, "root_cause": "service_selector_mismatch", "confidence": 0.5},
+                        {"rank": 2, "root_cause": "connection_refused", "confidence": 0.3},
+                        {"rank": 3, "root_cause": "dns_failure", "confidence": 0.2},
+                    ],
+                },
+                "tool_trajectory": [{"tool_name": "get_services", "args": {}, "valid": True}],
+                "run_events": [{"artifact_key": "feedback"}],
+            },
+            duration_ms=25,
+            backend="cloudopsbench",
+        )
+        self.assertFalse(ranked_third.root_cause_matched)
+        self.assertEqual(0.0, ranked_third.process_metrics.root_cause_at_1)
+        self.assertEqual(1.0, ranked_third.process_metrics.root_cause_at_3)
 
         zero_tool = score_outcome(
             scenario,
@@ -655,7 +682,13 @@ class BenchmarkHarnessTest(unittest.TestCase):
             # and surface it through the investigation report so scoring
             # can credit root_cause_accuracy.
             self.assertIn("incorrect_image_reference", json.dumps(artifact["investigation_report"]))
+            self.assertEqual(
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+                "incorrect_image_reference",
+            )
             self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_3)
 
     def test_sregym_backend_and_gap_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

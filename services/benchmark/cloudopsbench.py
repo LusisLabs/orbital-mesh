@@ -118,6 +118,16 @@ class CloudOpsSnapshotRunner:
                 {"kind": "cloudopsbench_root_cause", "summary": str(root_cause), "confidence": 1.0}
             ]
             report["citations"] = list(report["citations"]) + [{"source_type": "cloudopsbench_snapshot", "source_ref": scenario.scenario_id}]
+            report["root_cause_candidates"] = [
+                {
+                    "rank": 1,
+                    "root_cause": str(root_cause),
+                    "confidence": 1.0,
+                    "matched_patterns": ["oracle"],
+                    "supporting_tools": [],
+                    "citation_ids": [f"cloudopsbench:{scenario.scenario_id}"],
+                }
+            ]
         if registry is not None:
             tool_trajectory = [call.to_dict() for call in tools.calls]
         outcome["backend"] = "cloudopsbench"
