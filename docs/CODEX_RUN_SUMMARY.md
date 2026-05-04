@@ -372,3 +372,24 @@ validation status live in [`docs/integrations.md`](./integrations.md) and
 - Add constrained-output retry/schema repair for Deep Agents lane responses.
 - Add rate-limit aware lane scheduling before running all six Deep Agents lanes on low TPM keys.
 - Add a separate output-schema-compliance metric so RCA quality and JSON discipline are visible independently.
+
+## Run: 2026-05-04 (RCA tool-loop hardening)
+
+### Scope
+- Tightened the first RCA tool-loop slice so hidden benchmark investigations emit first-class root-cause candidates and benchmark scoring measures A@1/A@3 instead of only substring presence.
+
+### Changes
+- Added `root_cause_candidates` to the `InvestigationReport` contract and schema.
+- Made `InvestigationService` lower uncertainty when a ranked RCA candidate is supported by read-only tool output.
+- Changed tool-loop stop behavior so a sufficiently supported candidate records `root_cause_candidate_found` instead of always exhausting the probe budget.
+- Propagated RCA candidates into scenario-analysis evidence and decision reasoning metadata.
+- Added root-cause A@1 and A@3 process metrics to benchmark scorecards and result artifacts.
+- Normalized Cloud-OpsBench tool-family scoring so expert steps like `GetResources::pods` match actual tool calls like `GetResources`.
+
+### Validation
+- `python3 -m unittest tests.test_investigation_service -v`: passed, 9 tests.
+- `UV_CACHE_DIR=/tmp/uv-cache-mesh-rca UV_TOOL_DIR=/tmp/uv-tools-mesh-rca PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest tests/test_investigation_service.py tests/test_benchmark_harness.py -q`: passed, 32 tests.
+- `RUFF_CACHE_DIR=/tmp/ruff-cache UV_CACHE_DIR=/tmp/uv-cache-mesh-rca UV_TOOL_DIR=/tmp/uv-tools-mesh-rca uvx ruff check services/investigation services/benchmark shared/mesh_runtime/contracts.py services/scenario_analysis/service.py services/decision/service.py tests/test_investigation_service.py tests/test_benchmark_harness.py`: passed.
+
+### Risks / Follow-ups
+- The current RCA loop still uses a deterministic ontology. The next lift is provider-backed probe planning and better Cloud-OpsBench root-cause vocabulary coverage.

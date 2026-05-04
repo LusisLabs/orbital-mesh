@@ -196,10 +196,12 @@ class InvestigationToolLoopTests(unittest.TestCase):
         names = [probe["name"] for probe in report.probe_results]
         self.assertIn("GetResources", names)
         self.assertIn("DescribeResource", names)
-        self.assertEqual(report.stop_reason, "tool_probe_budget_exhausted")
+        self.assertEqual(report.stop_reason, "root_cause_candidate_found")
         ranked = [finding for finding in report.findings if finding.get("kind") == "ranked_root_causes"]
         self.assertEqual(len(ranked), 1)
         self.assertEqual(ranked[0]["summary"], "incorrect_image_reference")
+        self.assertEqual(report.root_cause_candidates[0]["root_cause"], "incorrect_image_reference")
+        self.assertIn("DescribeResource", report.root_cause_candidates[0]["supporting_tools"])
         # Calls were recorded on the provider so the runner can surface
         # them as tool_trajectory.
         self.assertGreaterEqual(len(provider.call_records()), 2)
@@ -214,6 +216,7 @@ class InvestigationToolLoopTests(unittest.TestCase):
         )
 
         self.assertEqual(report.stop_reason, "deterministic_probe_budget_exhausted")
+        self.assertEqual(report.root_cause_candidates, [])
         self.assertFalse(any(finding.get("kind") == "ranked_root_causes" for finding in report.findings))
 
 

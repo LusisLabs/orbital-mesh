@@ -1520,6 +1520,7 @@ def _attach_investigation_report(decision: Decision, investigation_report: dict 
         "finding_count": len(investigation_report.get("findings") or []),
         "recommended_next_step": investigation_report.get("recommended_next_step"),
         "citations": list(investigation_report.get("citations") or [])[:8],
+        "root_cause_candidates": list(investigation_report.get("root_cause_candidates") or [])[:5],
     }
     if investigation_report.get("stop_reason") == "investigation_failed_existing_path_continues":
         return

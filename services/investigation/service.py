@@ -86,6 +86,8 @@ class InvestigationService:
         probe_results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
+        root_cause_candidates: list[dict[str, Any]] = []
+        tool_stop_reason: str | None = None
 
         deterministic_probes = [probe for probe in plan.probes if "provider" not in probe]
         for probe in deterministic_probes[: self.max_probes]:
@@ -95,19 +97,20 @@ class InvestigationService:
             citations.extend(result.citations)
 
         if tool_provider is not None:
-            tool_results, tool_findings, tool_citations = self._run_tool_loop(
+            tool_results, tool_findings, tool_citations, tool_candidates, tool_stop_reason = self._run_tool_loop(
                 trigger, tool_provider
             )
             probe_results.extend(tool_results)
             findings.extend(tool_findings)
             citations.extend(tool_citations)
+            root_cause_candidates.extend(tool_candidates)
 
-        uncertainty = _estimate_uncertainty(evidence, findings, context)
+        uncertainty = _estimate_uncertainty(evidence, findings, context, root_cause_candidates)
         stop_reason = (
             "evidence_insufficient_route_to_existing_safety_gates"
             if _evidence_marked_insufficient(evidence)
             else (
-                "tool_probe_budget_exhausted"
+                tool_stop_reason or "tool_probe_budget_exhausted"
                 if tool_provider is not None
                 else "deterministic_probe_budget_exhausted"
             )
@@ -128,6 +131,7 @@ class InvestigationService:
                 "investigation output is advisory; policy and evaluation remain authoritative",
                 "no production mutation is reachable from this stage",
             ],
+            root_cause_candidates=root_cause_candidates,
         )
         report.validate()
         return report
@@ -170,6 +174,7 @@ class InvestigationService:
                 "investigation failure is non-fatal",
                 "existing deterministic decision path remains authoritative",
             ],
+            root_cause_candidates=[],
         )
         report.validate()
         return report
@@ -178,7 +183,13 @@ class InvestigationService:
         self,
         trigger: Trigger,
         tool_provider: InvestigationToolProvider,
-    ) -> tuple[list[InvestigationProbeResult], list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> tuple[
+        list[InvestigationProbeResult],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+        str,
+    ]:
         """Bounded hypothesis loop driven by a read-only tool provider.
 
         Sequence (each step is gated by ``max_tool_probes`` and stops as
@@ -199,24 +210,25 @@ class InvestigationService:
         """
 
         observed_text: list[str] = []
+        observed_tool_text: list[tuple[str, str]] = []
         results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
+        root_cause_candidates: list[dict[str, Any]] = []
         suspect = _suspect_resource_hint(trigger)
 
-        plan: list[tuple[str, dict[str, Any]]] = [
-            ("GetResources", {"resource_type": "pods", "namespace": _trigger_namespace(trigger)}),
-            ("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-            ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-            ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-        ]
-        if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
-            plan.append(("GetAlerts", {"namespace": _trigger_namespace(trigger)}))
-
         available = set(tool_provider.available_tools())
-        for tool_name, args in plan[: self.max_tool_probes]:
+        called: set[tuple[str, str]] = set()
+        queued = _initial_tool_plan(trigger, suspect)
+        stop_reason = "tool_probe_budget_exhausted"
+        while queued and len(results) < self.max_tool_probes:
+            tool_name, args = queued.pop(0)
             if tool_name not in available:
                 continue
+            call_key = (tool_name, _arg_summary(args))
+            if call_key in called:
+                continue
+            called.add(call_key)
             result = self._invoke_tool_probe(trigger, tool_provider, tool_name, args)
             results.append(result)
             findings.extend(result.findings)
@@ -229,13 +241,23 @@ class InvestigationService:
                 output_text = details.get("output_text") if isinstance(details, dict) else None
                 if isinstance(output_text, str):
                     observed_text.append(output_text)
+                    observed_tool_text.append((tool_name, output_text))
 
-        ranked = rank_root_causes(observed_text)
-        if ranked:
-            findings.append(_ranked_finding(ranked))
-            for cause in ranked:
-                citations.append(_citation("rca_ontology", cause.root_cause))
-        return results, findings, citations
+            ranked = rank_root_causes(observed_text)
+            if ranked:
+                root_cause_candidates = _root_cause_candidates(ranked, observed_tool_text)
+                top_candidate = root_cause_candidates[0]
+                supported_by_multiple_tools = len(top_candidate.get("supporting_tools") or []) >= 2
+                if len(results) >= 2 and supported_by_multiple_tools and ranked[0].confidence >= 0.55:
+                    stop_reason = "root_cause_candidate_found"
+                    break
+            queued.extend(_next_tool_plan(trigger, suspect, observed_text, called))
+
+        if root_cause_candidates:
+            findings.append(_ranked_finding(root_cause_candidates))
+            for candidate in root_cause_candidates:
+                citations.append(_citation("rca_ontology", str(candidate.get("root_cause"))))
+        return results, findings, citations, root_cause_candidates, stop_reason
 
     def _invoke_tool_probe(
         self,
@@ -505,6 +527,7 @@ def _estimate_uncertainty(
     evidence_pack: dict[str, Any],
     findings: list[dict[str, Any]],
     context: dict[str, Any],
+    root_cause_candidates: list[dict[str, Any]] | None = None,
 ) -> float:
     uncertainty = 0.55
     if evidence_pack.get("sufficient") is True:
@@ -516,6 +539,9 @@ def _estimate_uncertainty(
     memory_packet = context.get("memory_packet") or {}
     if memory_packet.get("claims") or memory_packet.get("procedures"):
         uncertainty -= 0.04
+    if root_cause_candidates:
+        top_confidence = float(root_cause_candidates[0].get("confidence") or 0.0)
+        uncertainty -= min(0.20, top_confidence * 0.16)
     return round(max(0.05, min(0.95, uncertainty)), 3)
 
 
@@ -565,6 +591,49 @@ def _suspect_resource_hint(trigger: Trigger) -> str:
     return trigger.service or ""
 
 
+def _initial_tool_plan(trigger: Trigger, suspect: str) -> list[tuple[str, dict[str, Any]]]:
+    namespace = _trigger_namespace(trigger)
+    plan: list[tuple[str, dict[str, Any]]] = [
+        ("GetResources", {"resource_type": "pods", "namespace": namespace}),
+    ]
+    if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
+        plan.append(("GetAlerts", {"namespace": namespace}))
+    plan.append(("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
+    return plan
+
+
+def _next_tool_plan(
+    trigger: Trigger,
+    suspect: str,
+    observed_text: list[str],
+    called: set[tuple[str, str]],
+) -> list[tuple[str, dict[str, Any]]]:
+    namespace = _trigger_namespace(trigger)
+    haystack = "\n".join(observed_text).lower()
+    candidates: list[tuple[str, dict[str, Any]]] = []
+    if any(token in haystack for token in ("imagepullbackoff", "errimagepull", "createcontainerconfigerror", "configmap", "secret")):
+        candidates.append(("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace}))
+    if any(token in haystack for token in ("crashloopbackoff", "back-off", "exception", "error", "connection refused", "timeout")):
+        candidates.append(("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
+        candidates.append(("GetRecentLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
+    if any(token in haystack for token in ("no endpoints", "targetport", "connection refused", "dns", "no such host")):
+        candidates.append(("CheckServiceConnectivity", {"service": suspect, "namespace": namespace}))
+    if any(token in haystack for token in ("0/", "unschedulable", "taint", "affinity", "insufficient", "node")):
+        candidates.append(("GetClusterConfiguration", {"namespace": namespace}))
+    if not candidates:
+        candidates.extend(
+            [
+                ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}),
+                ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace}),
+            ]
+        )
+    return [
+        (tool_name, args)
+        for tool_name, args in candidates
+        if (tool_name, _arg_summary(args)) not in called
+    ]
+
+
 def _arg_summary(args: dict[str, Any]) -> str:
     if not args:
         return ""
@@ -593,22 +662,41 @@ def _flatten_json(value: Any) -> str:
     return str(value)
 
 
-def _ranked_finding(ranked: list[RankedCause]) -> dict[str, Any]:
-    top = ranked[0]
-    summary_parts = [cause.root_cause for cause in ranked[:3]]
+def _root_cause_candidates(
+    ranked: list[RankedCause],
+    observed_tool_text: list[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for index, cause in enumerate(ranked, start=1):
+        supporting_tools = sorted(
+            {
+                tool_name
+                for tool_name, output_text in observed_tool_text
+                if any(pattern.lower() in output_text.lower() for pattern in cause.matched_patterns)
+            }
+        )
+        candidates.append(
+            {
+                "rank": index,
+                "root_cause": cause.root_cause,
+                "confidence": cause.confidence,
+                "matched_patterns": list(cause.matched_patterns),
+                "supporting_tools": supporting_tools,
+                "citation_ids": [f"rca_ontology:{cause.root_cause}"],
+            }
+        )
+    return candidates
+
+
+def _ranked_finding(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    top = candidates[0]
+    summary_parts = [str(candidate.get("root_cause")) for candidate in candidates[:3]]
     return {
         "kind": "ranked_root_causes",
-        "summary": top.root_cause,
-        "confidence": top.confidence,
+        "summary": str(top.get("root_cause")),
+        "confidence": float(top.get("confidence") or 0.0),
         "details": {
-            "ranked": [
-                {
-                    "root_cause": cause.root_cause,
-                    "confidence": cause.confidence,
-                    "matched_patterns": list(cause.matched_patterns),
-                }
-                for cause in ranked
-            ],
+            "ranked": candidates,
             "top_3": summary_parts,
         },
     }

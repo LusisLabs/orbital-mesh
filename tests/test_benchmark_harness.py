@@ -9,6 +9,7 @@ from pathlib import Path
 from services.benchmark.compare import compare_benchmark_runs
 from services.benchmark.cloudopsbench_import import import_cloudopsbench_scenarios
 from services.benchmark.gaps import generate_gap_report
+from services.benchmark.gates import load_gate_profiles, resolve_gate_suite, run_benchmark_gate
 from services.benchmark.loghub import LoghubExtractionConfig, extract_loghub_scenarios
 from services.benchmark.models import DIMENSION_WEIGHTS, BenchmarkScenario
 from services.benchmark.runner import BenchmarkRunConfig, run_benchmark
@@ -60,6 +61,26 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertIn("process_metrics", scorecard)
             self.assertGreater(scorecard["weighted_score"], 0)
             self.assertTrue(all(result.investigation_present for result in run.results))
+
+    def test_compact_run_artifacts_record_scorecard_and_small_result_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="golden",
+                    output_root=Path(tmp),
+                    scenario_ids=("feature_flag_latency_disable",),
+                    state_directory=Path(tmp) / "runtime-state",
+                    compact_artifacts=True,
+                )
+            )
+
+            compact = json.loads((run.output_dir / "benchmark-compact.json").read_text(encoding="utf-8"))
+            rows = (run.output_dir / "scenario-results-compact.jsonl").read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual("mesh.benchmark.compact.v1", compact["schema"])
+            self.assertEqual(run.run_id, compact["run_id"])
+            self.assertEqual(1, compact["result_count"])
+            self.assertEqual(1, len(rows))
+            self.assertIn("agentic_rca_score", json.loads(rows[0]))
 
     def test_attempt_artifact_mode_can_skip_successful_attempt_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -197,9 +218,36 @@ class BenchmarkHarnessTest(unittest.TestCase):
         )
 
         self.assertEqual(1.0, result.process_metrics.root_cause_accuracy)
+        self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+        self.assertEqual(1.0, result.process_metrics.root_cause_at_3)
         self.assertEqual(1.0, result.process_metrics.trajectory_in_order_match)
         self.assertEqual(1.0, result.process_metrics.tool_coverage)
         self.assertGreater(result.agentic_rca_score, 80)
+
+        ranked_third = score_outcome(
+            scenario,
+            {
+                "trigger": {"trigger_id": "trig"},
+                "decision": {"decision_type": "escalate", "reasoning": {}},
+                "investigation_report": {
+                    "status": "completed",
+                    "probe_results": [{"name": "get_services"}],
+                    "citations": ["cloudopsbench:get_services"],
+                    "root_cause_candidates": [
+                        {"rank": 1, "root_cause": "service_selector_mismatch", "confidence": 0.5},
+                        {"rank": 2, "root_cause": "connection_refused", "confidence": 0.3},
+                        {"rank": 3, "root_cause": "dns_failure", "confidence": 0.2},
+                    ],
+                },
+                "tool_trajectory": [{"tool_name": "get_services", "args": {}, "valid": True}],
+                "run_events": [{"artifact_key": "feedback"}],
+            },
+            duration_ms=25,
+            backend="cloudopsbench",
+        )
+        self.assertFalse(ranked_third.root_cause_matched)
+        self.assertEqual(0.0, ranked_third.process_metrics.root_cause_at_1)
+        self.assertEqual(1.0, ranked_third.process_metrics.root_cause_at_3)
 
         zero_tool = score_outcome(
             scenario,
@@ -273,6 +321,63 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertTrue((candidate.output_dir / "comparison.md").exists())
             self.assertTrue(any(delta.status == "added" for delta in comparison.scenario_deltas))
             self.assertIn("decision", comparison.dimension_deltas)
+            self.assertIn("root_cause_accuracy", comparison.process_metric_deltas)
+            self.assertGreaterEqual(comparison.mesh_operational_score_delta, -100.0)
+
+    def test_gate_profiles_resolve_dev_and_eval_suites(self) -> None:
+        profiles = load_gate_profiles()
+
+        self.assertEqual(
+            "cloudopsbench_official_dev_full",
+            resolve_gate_suite("cloudopsbench_official_full", profiles["dev"]),
+        )
+        self.assertEqual(
+            "cloudopsbench_official_eval_full",
+            resolve_gate_suite("cloudopsbench_official_dev_full", profiles["eval"]),
+        )
+        self.assertEqual("golden", resolve_gate_suite("golden", profiles["ci"]))
+
+    def test_benchmark_gate_writes_threshold_and_compact_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gate = run_benchmark_gate(
+                BenchmarkRunConfig(
+                    suite="golden",
+                    output_root=root / "out",
+                    scenario_ids=("feature_flag_latency_disable",),
+                    state_directory=root / "state",
+                ),
+                profile_name="ci",
+                threshold_overrides={"weighted_score_min": 1.0, "pass_rate_min": 0.5},
+                repeat_override=1,
+            )
+
+            self.assertTrue(gate.passed)
+            self.assertTrue((gate.output_dir / "gate.json").exists())
+            self.assertTrue((gate.output_dir / "gate.md").exists())
+            self.assertTrue((gate.output_dir / "benchmark-compact.json").exists())
+            self.assertFalse((gate.output_dir / "attempt-artifacts").exists())
+            payload = json.loads((gate.output_dir / "gate.json").read_text(encoding="utf-8"))
+            self.assertEqual("mesh.benchmark.gate.v1", payload["schema"])
+            self.assertEqual("ci", payload["profile"])
+            self.assertTrue(payload["passed"])
+
+    def test_benchmark_gate_marks_threshold_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            gate = run_benchmark_gate(
+                BenchmarkRunConfig(
+                    suite="golden",
+                    output_root=Path(tmp) / "out",
+                    scenario_ids=("feature_flag_latency_disable",),
+                    state_directory=Path(tmp) / "state",
+                ),
+                profile_name="ci",
+                threshold_overrides={"weighted_score_min": 101.0},
+                repeat_override=1,
+            )
+
+            self.assertFalse(gate.passed)
+            self.assertTrue(any(check.metric == "weighted_score" and not check.passed for check in gate.checks))
 
     def test_opensre_cli_backend_can_be_scored_with_fake_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -655,7 +760,13 @@ class BenchmarkHarnessTest(unittest.TestCase):
             # and surface it through the investigation report so scoring
             # can credit root_cause_accuracy.
             self.assertIn("incorrect_image_reference", json.dumps(artifact["investigation_report"]))
+            self.assertEqual(
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+                "incorrect_image_reference",
+            )
             self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_3)
 
     def test_sregym_backend_and_gap_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
