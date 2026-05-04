@@ -136,6 +136,22 @@ scripts/run_breakthrough_proof.sh
 
 The script checks every configured chaos target before and after the run, executes `mesh-chaos` with `--no-deps`, requires full-axis, substrate, and multi-fault coverage, generates the replay-protected proof bundle, and prints the proof path plus SHA. Use `scripts/run_breakthrough_proof.sh --replay-only` to validate the latest existing proof artifacts without mutating the stack.
 
+For an overnight evidence sweep that combines stack smoke, Mesh Brain control-plane lanes, HTTP autoresearch, production-node probes, simulation benchmarks, replay proof generation, and HALO trace optimization:
+
+```bash
+python3 scripts/run_overnight_mesh_breakthrough_cron.py --duration-seconds 28800 --http-full-matrix
+```
+
+If a `mesh-chaos` or `scripts/run_breakthrough_proof.sh` session is already running against the same stack, run the overnight sweep without starting a duplicate chaos injector:
+
+```bash
+python3 scripts/run_overnight_mesh_breakthrough_cron.py --duration-seconds 28800 --no-start-stack --no-run-compose-chaos --http-full-matrix
+```
+
+The sweep writes `manifest.json`, `report.md`, and lane logs under `.mesh-runtime-state/overnight-breakthrough/<timestamp>/`.
+
+Long autoresearch and chaos sweeps can create many run snapshots. File-backed state keeps the newest `MESH_RUN_SESSION_FILE_MAX_RECORDS` snapshots in `run_sessions.json` (default `100`) and appends older snapshots to `run_sessions.archive.jsonl`; run event files remain under `run_events/`.
+
 ## Smoke Contract
 
 `mesh-smoke` validates the minimum whole-system contract:

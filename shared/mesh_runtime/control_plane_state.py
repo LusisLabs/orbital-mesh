@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import os
 import time
@@ -35,6 +36,11 @@ class FileStateStore:
         self.vault = VaultManager(config.vault_path, runtime_config=config)
         self._goals_path = self.state_directory / "goals.json"
         self._run_sessions_path = self.state_directory / "run_sessions.json"
+        self._run_sessions_archive_path = self.state_directory / "run_sessions.archive.jsonl"
+        self._run_session_file_max_records = max(
+            50,
+            int(os.getenv("MESH_RUN_SESSION_FILE_MAX_RECORDS", "100")),
+        )
         self._run_events_dir = self.state_directory / "run_events"
         self._run_events_dir.mkdir(parents=True, exist_ok=True)
         self._memory_dir = self.state_directory / "memory"
@@ -167,8 +173,19 @@ class FileStateStore:
             else:
                 records.insert(0, session_dict)
             records.sort(key=lambda record: record.get("created_at", ""), reverse=True)
+            if len(records) > self._run_session_file_max_records:
+                archived = records[self._run_session_file_max_records :]
+                payload["runs"] = records[: self._run_session_file_max_records]
+                self._archive_run_session_records(archived)
         self._materialize_vault(session.run_id, force=session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES)
         return session
+
+    def _archive_run_session_records(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        with self._run_sessions_archive_path.open("a", encoding="utf-8") as archive:
+            for record in records:
+                archive.write(json.dumps(record, sort_keys=True) + "\n")
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
         session = RunSession(**snapshot)

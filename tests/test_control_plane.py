@@ -5,13 +5,15 @@ import subprocess
 import tempfile
 import time
 import unittest
+from http import HTTPStatus
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
-from control_plane_server import start_server_in_thread
+from control_plane_server import MeshControlPlaneRequestHandler, start_server_in_thread
 from shared.mesh_runtime.agent_workers import build_agent_attempt
 from shared.mesh_runtime import RuntimeConfig, load_fixture
 from tests.test_kubernetes_live_execution import _write_fake_kubectl
@@ -54,6 +56,34 @@ class ControlPlaneApiTests(unittest.TestCase):
 
         self.assertIn("reth_peer_starvation", scenario_keys)
         self.assertIn("reth_sync_stalled_disk_pressure", scenario_keys)
+
+    def test_send_json_ignores_client_disconnect(self) -> None:
+        class BrokenPipeWriter:
+            def write(self, data: bytes) -> None:
+                raise BrokenPipeError("client closed")
+
+        class FakeHandler:
+            wfile = BrokenPipeWriter()
+            status = HTTPStatus.OK
+
+            def send_response(self, status: HTTPStatus) -> None:
+                self.status = status
+
+            def send_header(self, name: str, value: str) -> None:
+                pass
+
+            def _add_security_headers(self) -> None:
+                pass
+
+            def _add_cors_headers(self) -> None:
+                pass
+
+            def end_headers(self) -> None:
+                pass
+
+        handler = FakeHandler()
+        MeshControlPlaneRequestHandler._send_json(cast(Any, handler), {"runs": []})
+        self.assertEqual(handler.status, HTTPStatus.OK)
 
     def test_research_sessions_api_lists_manifest_sessions(self) -> None:
         empty = self._request("GET", "/api/research-sessions")

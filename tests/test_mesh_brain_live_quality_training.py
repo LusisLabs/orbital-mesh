@@ -9,6 +9,8 @@ from mesh_brain.live_quality_training import (
     _clean_case_from_seed,
     _discover_mesh_corpus_rows,
     _generate_command,
+    _hard_format_prompt,
+    _read_generation_text,
     _live_status,
     _parse_training_metrics,
     _quality_bootstrap_corpus_rows,
@@ -81,6 +83,16 @@ class MeshBrainLiveQualityTrainingTests(unittest.TestCase):
         self.assertIn("--extra-eos-token", command)
         self.assertNotIn("<|im_start|>user", command)
 
+    def test_generation_text_reconstructs_prefill_for_artifacts(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            stdout_path = Path(temp_dir) / "generate.stdout.log"
+            stdout_path.write_text("p95 latency doubled.\nApproval: required.\n", encoding="utf-8")
+
+            text = _read_generation_text(stdout_path)
+
+        self.assertTrue(text.startswith("Evidence: p95 latency doubled."))
+        self.assertIn("Approval: required.", text)
+
     def test_bootstrap_corpus_and_cleanup_are_bounded(self) -> None:
         rows = _quality_bootstrap_corpus_rows()
         with TemporaryDirectory() as temp_dir:
@@ -123,6 +135,20 @@ class MeshBrainLiveQualityTrainingTests(unittest.TestCase):
         self.assertTrue(any("anti_repetition" in row["rationale_labels"] for row in examples["preference_rows"]))
         self.assertNotIn('{"', first["messages"][1]["content"])
         self.assertTrue(any(row["source_kind"] == "reth_kurtosis" for row in examples["provenance"]))
+
+    def test_hard_format_prompt_uses_concrete_targets_not_placeholders(self) -> None:
+        prompt = _hard_format_prompt(
+            {
+                "service": "api",
+                "evidence": "API restart is proposed and requires human approval",
+            }
+        )
+
+        self.assertIn("Evidence: API restart is proposed", prompt)
+        self.assertIn("Bounded remediation: verify the finding for api", prompt)
+        self.assertNotIn("<cite", prompt)
+        self.assertNotIn("<safe", prompt)
+        self.assertNotIn("<state", prompt)
 
     def test_discovers_rows_from_incident_corpus_database(self) -> None:
         with TemporaryDirectory() as temp_dir:

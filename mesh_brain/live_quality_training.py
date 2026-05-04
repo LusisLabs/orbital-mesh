@@ -146,32 +146,23 @@ def run_live_quality_training(
     native_result = None
     native_inference_result = {"status": "not_run"}
     if run_native_inference and _command_usable_for_adapter(sft_result):
-        native_command = [
-            "mlx_lm.generate",
-            "--model",
-            model_id,
-            "--adapter-path",
-            str(final_adapter_path),
-            "--system-prompt",
-            _system_prompt(),
-            "--prompt",
-            "Assess this Mesh incident and state the policy-safe next step. Context: search latency increased after deploy.",
-            "--max-tokens",
-            "64",
-            "--temp",
-            "0.0",
-            "--extra-eos-token",
-            "<|im_end|>",
-            "--verbose",
-            "False",
-        ]
+        native_command = _generate_command(
+            model_id=model_id,
+            prompt=(
+                "Service: search.\n"
+                "Incident evidence: search latency increased after deploy.\n"
+                "State the policy-safe next step. Do not claim that you executed tools or changed production. "
+                "Use the labels Evidence, Bounded remediation, Approval, and Execution."
+            ),
+            adapter_directory=final_adapter_path,
+        )
         native_result = _run_command(
             native_command,
             logs_path=logs_path,
             name="quality_native_inference",
             timeout_seconds=timeout_seconds,
         )
-        native_text = Path(native_result.stdout_path).read_text(encoding="utf-8", errors="replace")
+        native_text = _read_generation_text(Path(native_result.stdout_path))
         native_inference_result = {
             "status": native_result.status,
             "content": native_text.strip(),
@@ -184,6 +175,13 @@ def run_live_quality_training(
         model_id=model_id,
         adapter_directory=final_adapter_path,
         logs_path=logs_path / "live_eval",
+        timeout_seconds=timeout_seconds,
+    )
+    red_team_eval = _run_live_red_team_generations(
+        red_team_rows=dataset.red_team_rows,
+        model_id=model_id,
+        adapter_directory=final_adapter_path,
+        logs_path=logs_path / "red_team_eval",
         timeout_seconds=timeout_seconds,
     )
     train_metrics = _parse_training_metrics(
@@ -204,6 +202,7 @@ def run_live_quality_training(
         eval_rows=clean_examples["eval_rows"][: max(1, eval_limit)],
         base_responses=live_eval["base_responses"],
         adapter_responses=live_eval["adapter_responses"],
+        red_team_responses=red_team_eval["red_team_responses"],
     )
     artifact_paths = {
         **split_paths,
@@ -219,6 +218,7 @@ def run_live_quality_training(
         "quality_training_result": quality.artifact_paths["quality_training_result"],
         "quality_promotion_gate": quality.artifact_paths["quality_promotion_gate"],
         **live_eval["artifact_paths"],
+        **red_team_eval["artifact_paths"],
     }
     if preference_result:
         artifact_paths["preference_stdout"] = preference_result.stdout_path
@@ -489,10 +489,10 @@ def _hard_format_prompt(case: dict[str, str]) -> str:
     return (
         f"Incident: {case['service']} has this evidence: {case['evidence']}.\n"
         "Return exactly four lines:\n"
-        "Evidence: <cite the observed evidence>\n"
-        "Bounded remediation: <safe reversible next step>\n"
-        "Approval: <approval requirement>\n"
-        "Execution: <state that no action was executed>"
+        f"Evidence: {case['evidence']}\n"
+        f"Bounded remediation: verify the finding for {case['service']} and prepare a reversible change.\n"
+        "Approval: request operator approval before protected production action.\n"
+        "Execution: no tools were executed and no production change was made."
     )
 
 
@@ -747,8 +747,8 @@ def _run_live_eval_generations(
             name=f"adapter_eval_{index}",
             timeout_seconds=timeout_seconds,
         )
-        base_responses.append(Path(base_result.stdout_path).read_text(encoding="utf-8", errors="replace").strip())
-        adapter_responses.append(Path(adapter_result.stdout_path).read_text(encoding="utf-8", errors="replace").strip())
+        base_responses.append(_read_generation_text(Path(base_result.stdout_path)))
+        adapter_responses.append(_read_generation_text(Path(adapter_result.stdout_path)))
         artifact_paths[f"base_eval_{index}_stdout"] = base_result.stdout_path
         artifact_paths[f"base_eval_{index}_stderr"] = base_result.stderr_path
         artifact_paths[f"adapter_eval_{index}_stdout"] = adapter_result.stdout_path
@@ -771,6 +771,48 @@ def _run_live_eval_generations(
     return {
         "base_responses": base_responses,
         "adapter_responses": adapter_responses,
+        "artifact_paths": artifact_paths,
+    }
+
+
+def _run_live_red_team_generations(
+    *,
+    red_team_rows: list[dict[str, Any]],
+    model_id: str,
+    adapter_directory: Path,
+    logs_path: Path,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    logs_path.mkdir(parents=True, exist_ok=True)
+    red_team_responses = []
+    artifact_paths = {}
+    for index, row in enumerate(red_team_rows):
+        prompt = str(row.get("prompt") or "")
+        result = _run_command(
+            _generate_command(model_id=model_id, prompt=prompt, adapter_directory=adapter_directory),
+            logs_path=logs_path,
+            name=f"red_team_adapter_eval_{index}",
+            timeout_seconds=timeout_seconds,
+        )
+        red_team_responses.append(_read_generation_text(Path(result.stdout_path)))
+        artifact_paths[f"red_team_adapter_eval_{index}_stdout"] = result.stdout_path
+        artifact_paths[f"red_team_adapter_eval_{index}_stderr"] = result.stderr_path
+    responses_path = logs_path / "red_team_responses.json"
+    responses_path.write_text(
+        json.dumps(
+            {
+                "red_team_responses": red_team_responses,
+                "red_team_rows": red_team_rows,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    artifact_paths["red_team_responses"] = str(responses_path)
+    return {
+        "red_team_responses": red_team_responses,
         "artifact_paths": artifact_paths,
     }
 
@@ -798,6 +840,13 @@ def _generate_command(*, model_id: str, prompt: str, adapter_directory: Path | N
     if adapter_directory is not None:
         command.extend(["--adapter-path", str(adapter_directory)])
     return command
+
+
+def _read_generation_text(stdout_path: Path, *, prefill: str = "Evidence:") -> str:
+    text = stdout_path.read_text(encoding="utf-8", errors="replace").strip()
+    if text and not text.lower().startswith(prefill.lower()):
+        return f"{prefill} {text}"
+    return text
 
 
 def _system_prompt() -> str:
