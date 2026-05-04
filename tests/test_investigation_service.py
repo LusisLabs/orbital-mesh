@@ -152,8 +152,8 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
         liveness = rank_root_causes(["Liveness probe failed: dial tcp 10.1.1.4:8080: connect: connection refused"])
 
         self.assertTrue(readiness and liveness)
-        self.assertEqual(readiness[0].root_cause, "readiness_probe_failed")
-        self.assertEqual(liveness[0].root_cause, "liveness_probe_failed")
+        self.assertEqual(readiness[0].root_cause, "readiness_probe_incorrect_protocol")
+        self.assertEqual(liveness[0].root_cause, "liveness_probe_incorrect_port")
 
     def test_ontology_covers_service_port_and_pvc_binding_families(self) -> None:
         from services.investigation.cloudops_ontology import rank_root_causes
@@ -164,6 +164,38 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
         self.assertTrue(port and pvc)
         self.assertEqual(port[0].root_cause, "service_port_mismatch")
         self.assertEqual(pvc[0].root_cause, "persistent_volume_claim_pending")
+
+    def test_ontology_covers_dev_split_capacity_and_affinity_families(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        cpu = rank_root_causes(["0/4 nodes are available: 3 Insufficient cpu."])
+        memory = rank_root_causes(["0/4 nodes are available: 3 Insufficient memory."])
+        anti_affinity = rank_root_causes(["3 node(s) didn't match pod anti-affinity rules."])
+
+        self.assertTrue(cpu and memory and anti_affinity)
+        self.assertEqual(cpu[0].root_cause, "cpu_capacity_mismatch")
+        self.assertEqual(memory[0].root_cause, "memory_capacity_mismatch")
+        self.assertEqual(anti_affinity[0].root_cause, "pod_anti_affinity_conflict")
+
+    def test_ontology_covers_dev_split_image_pull_secret_family(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes([
+            "Warning FailedToRetrieveImagePullSecret kubelet Unable to retrieve some image pull secrets"
+        ])
+
+        self.assertTrue(ranked)
+        self.assertEqual(ranked[0].root_cause, "missing_image_pull_secret")
+
+    def test_ontology_ignores_normal_service_account_and_ready_counts(self) -> None:
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes([
+            "Service Account: default",
+            "NAME cartservice READY 0/1 STATUS Pending",
+        ])
+
+        self.assertEqual(ranked, [])
 
 
 class _StubToolProvider:

@@ -41,6 +41,7 @@ _RESOURCE_LINE_RE = re.compile(
 _HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
 
 CLOUDOPS_DOMAIN = "cloudops"
+_OUTPUT_SUMMARY_LIMIT = 4000
 
 
 def _build_tool_definitions() -> list[ToolDefinition]:
@@ -408,14 +409,14 @@ def _summarize_output(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, str):
-        return value[:1000]
+        return value[:_OUTPUT_SUMMARY_LIMIT]
     if isinstance(value, dict):
         if "error" in value and len(value) == 1:
             return f"error: {value['error']}"
-        return _flatten_json(value)[:1000]
+        return _flatten_json(value)[:_OUTPUT_SUMMARY_LIMIT]
     if isinstance(value, list):
-        return _flatten_json(value)[:1000]
-    return str(value)[:1000]
+        return _flatten_json(value)[:_OUTPUT_SUMMARY_LIMIT]
+    return str(value)[:_OUTPUT_SUMMARY_LIMIT]
 
 
 def _flatten_json(value: Any) -> str:

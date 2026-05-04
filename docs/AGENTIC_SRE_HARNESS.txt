@@ -1002,19 +1002,25 @@ Actual behavior added:
     policy safety floor.
   - CloudOps ontology gained conservative probe, service-port, and PVC-binding
     signal coverage with unit tests.
+  - Dev-only Cloud-OpsBench ontology pass tightened broad false-positive
+    service-account and READY-count patterns, preserved longer describe output
+    for scheduler/event text, and added conservative capacity, anti-affinity,
+    image-pull-secret, and probe port/protocol label families.
 
 Validation status:
   - PASS: python3 -m unittest tests.test_hypothesis_engine -v.
   - PASS: python3 -m unittest tests.test_hypothesis_engine_reth -v.
   - PASS: python3 -m unittest tests.test_investigation_service -v.
   - PASS: targeted pytest over hypothesis, investigation, and benchmark tests,
-    80 tests.
-  - PASS: Ruff over touched Python files.
+    83 tests.
+  - PASS: uvx ruff check .
   - PASS: repo strict mypy command.
-
-Blocked validation:
-  - Cloud-OpsBench official dev A@1/A@3 delta was not run because the documented
-    sparse checkout is absent from this worktree. No eval split was used.
+  - PASS: npm --prefix web run lint.
+  - PASS: imported official Cloud-OpsBench sparse checkout into full/dev/eval
+    local suites: 656 total cases, 135 dev cases, 521 eval cases.
+  - PASS: full hidden-mode Cloud-OpsBench dev delta against Branch A; A@1
+    improved from 0.0000 to 0.2889 and A@3 from 0.0296 to 0.3481. No eval
+    split was used.
 
 
 Validation Matrix
