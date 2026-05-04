@@ -448,6 +448,8 @@ When `MESH_FEEDBACK_PROMETHEUS_ENABLED=true` and `MESH_PROMETHEUS_URL` is set, t
 
 Both templates accept `{service}` and `{window}` placeholders. If Prometheus returns no data or errors, Mesh falls back to the signal-carried observations and still completes the run.
 
+When Kubernetes live execution is enabled, successful live deployment actions also re-harvest the deployment through the configured `kubectl` command before feedback scoring. The live deployment snapshot overrides stale signal-carried `30m` readiness fields for `rollback_deployment`, `restart_deployment`, and `scale_deployment`, so feedback reflects the actual post-action rollout status rather than the pre-action alert payload.
+
 ---
 
 ## 15. Complete HTTP API surface

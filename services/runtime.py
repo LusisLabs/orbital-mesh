@@ -8,7 +8,7 @@ from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.evidence import EvidenceService
 from services.evidence.runners import build_configured_probe_runner
-from services.feedback.service import FeedbackService
+from services.feedback.service import FeedbackService, KubernetesFeedbackObserver
 from services.ingest.service import IngestService
 from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
 from services.orchestrator.service import OrchestratorService
@@ -41,6 +41,12 @@ def _build_feedback_observer(config: RuntimeConfig):
         latency_query_template=config.feedback_prometheus_latency_query,
         error_rate_query_template=config.feedback_prometheus_error_rate_query,
     )
+
+
+def _build_kubernetes_feedback_observer(config: RuntimeConfig) -> KubernetesFeedbackObserver | None:
+    if not config.kubernetes_live_execution_enabled:
+        return None
+    return KubernetesFeedbackObserver(kubectl_command=config.kubectl_command)
 
 
 class MeshRuntimeEngine:
@@ -164,7 +170,10 @@ class MeshRuntimeEngine:
         )
         self.evaluation = evaluation or EvaluationService(config=self.config, state_store=self.state_store)
         self.orchestrator = orchestrator or OrchestratorService(config=self.config)
-        self.feedback = feedback or FeedbackService(observer=_build_feedback_observer(self.config))
+        self.feedback = feedback or FeedbackService(
+            observer=_build_feedback_observer(self.config),
+            kubernetes_observer=_build_kubernetes_feedback_observer(self.config),
+        )
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=None,
             learning_store=learning_store,

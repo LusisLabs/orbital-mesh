@@ -235,6 +235,47 @@ class KubernetesLiveExecutionTests(unittest.TestCase):
             self.assertEqual(state["actions"][1]["action"], "status")
             self.assertEqual(result["feedback"]["outcome"], "successful")
             self.assertEqual(result["feedback"]["recommended_follow_up"], "record_rollout_recovery")
+            self.assertEqual(result["feedback"]["metric_comparison"]["rollout_status"], "healthy")
+            self.assertEqual(result["feedback"]["metric_comparison"]["ready_replicas"], 3)
+            candidates = result["investigation_report"]["root_cause_candidates"]
+            self.assertTrue(candidates)
+            self.assertEqual(candidates[0]["root_cause"], "crash_loop_backoff")
+            self.assertIn("evidence_pack", candidates[0]["supporting_tools"])
+
+    def test_pipeline_reharvests_kubernetes_feedback_after_live_execution(self) -> None:
+        signal = _raw_kubernetes_signal()
+        signal["post_action_observations"] = {
+            "30m": {
+                "rollout_status": "unknown",
+                "desired_replicas": 3,
+                "ready_replicas": 0,
+                "restart_delta": 4,
+                "new_error_signatures": ["crash_loop"],
+                "measured_at": "2026-04-08T12:35:00Z",
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _, fake_command = _write_fake_kubectl(Path(temp_dir))
+            config = RuntimeConfig(
+                evaluation_mode="native",
+                orchestration_mode="native",
+                state_directory=temp_dir,
+                kubernetes_live_execution_enabled=True,
+                kubectl_command=fake_command,
+                kubernetes_allowed_contexts=("k3d-mesh-e2e",),
+                kubernetes_allowed_namespaces=("search",),
+                kubernetes_rollout_timeout_seconds=5,
+            )
+
+            result = FirstSlicePipeline(config=config).run(signal, scenario_name="live-k8s-reharvest")
+
+            feedback = result["feedback"]
+            self.assertEqual(feedback["outcome"], "successful")
+            self.assertEqual(feedback["recommended_follow_up"], "record_rollout_recovery")
+            self.assertEqual(feedback["metric_comparison"]["rollout_status"], "healthy")
+            self.assertEqual(feedback["metric_comparison"]["ready_replicas"], 3)
+            self.assertEqual(feedback["metric_comparison"]["restart_delta"], 0)
+            self.assertEqual(feedback["prediction_accuracy"]["observed_time_to_effect"], "immediate")
 
 
 def _write_fake_kubectl(temp_path: Path) -> tuple[Path, str]:
