@@ -132,6 +132,14 @@ class InvestigationService:
             citations.extend(tool_citations)
             root_cause_candidates.extend(tool_candidates)
 
+        if not root_cause_candidates:
+            evidence_candidates = _root_cause_candidates_from_evidence(trigger, evidence)
+            if evidence_candidates:
+                root_cause_candidates.extend(evidence_candidates)
+                findings.append(_ranked_finding(root_cause_candidates))
+                for candidate in root_cause_candidates:
+                    citations.append(_citation("rca_ontology", str(candidate.get("root_cause"))))
+
         uncertainty = _estimate_uncertainty(evidence, findings, context, root_cause_candidates)
         if _evidence_marked_insufficient(evidence):
             stop_reason = "evidence_insufficient_route_to_existing_safety_gates"
@@ -604,6 +612,76 @@ def _probe_topology_context(
         "details": {"node_count": len(nodes), "edge_count": len(edges)},
     }
     return str(finding["summary"]), [finding], [_citation("topology", trigger.service)]
+
+
+def _root_cause_candidates_from_evidence(
+    trigger: Trigger,
+    evidence_pack: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if trigger.trigger_type != "kubernetes_deployment_unhealthy":
+        return []
+    observed_text = _kubernetes_evidence_text(evidence_pack)
+    ranked = rank_root_causes(observed_text)
+    if not ranked:
+        return []
+    return _root_cause_candidates(ranked, [("evidence_pack", "\n".join(observed_text))])
+
+
+def _kubernetes_evidence_text(evidence_pack: dict[str, Any]) -> list[str]:
+    pack = evidence_pack.get("pack") if isinstance(evidence_pack.get("pack"), dict) else evidence_pack
+    if not isinstance(pack, dict) or pack.get("signal_type") != "kubernetes_deployment_issue":
+        return []
+    fragments: list[str] = []
+    deployment = pack.get("deployment") if isinstance(pack.get("deployment"), dict) else {}
+    if deployment:
+        fragments.append(
+            " ".join(
+                str(value)
+                for value in (
+                    deployment.get("name"),
+                    deployment.get("rollout_status"),
+                    deployment.get("image"),
+                )
+                if value
+            )
+        )
+    pods = pack.get("pods") if isinstance(pack.get("pods"), list) else []
+    for pod in pods:
+        if isinstance(pod, dict):
+            fragments.append(
+                " ".join(
+                    str(value)
+                    for value in (
+                        pod.get("name"),
+                        pod.get("phase"),
+                        pod.get("container_status"),
+                        pod.get("last_state_reason"),
+                        pod.get("restarts"),
+                    )
+                    if value is not None
+                )
+            )
+    events = pack.get("events") if isinstance(pack.get("events"), list) else []
+    for event in events:
+        if isinstance(event, dict):
+            fragments.append(
+                " ".join(
+                    str(value)
+                    for value in (
+                        event.get("reason"),
+                        event.get("message"),
+                        event.get("type"),
+                    )
+                    if value
+                )
+            )
+    logs = pack.get("logs") if isinstance(pack.get("logs"), list) else []
+    for entry in logs:
+        if isinstance(entry, dict):
+            fragments.append(str(entry.get("message") or ""))
+        elif isinstance(entry, str):
+            fragments.append(entry)
+    return [fragment for fragment in fragments if fragment.strip()]
 
 
 def _estimate_uncertainty(
