@@ -178,6 +178,8 @@ class MeshRuntimeEngine:
         scenario_name: str = "manual",
         *,
         tool_provider: object | None = None,
+        registry: object | None = None,
+        planner: object | None = None,
     ) -> dict:
         run_events: list[dict] = []
 
@@ -254,6 +256,8 @@ class MeshRuntimeEngine:
                 trigger=trigger,
                 evidence_pack=evidence_pack.to_dict(),
                 tool_provider=tool_provider,
+                registry=registry,
+                planner=planner,
             )
             investigation_status = "recorded"
         except Exception as exc:

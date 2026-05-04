@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.investigation.tool_provider import CloudOpsInvestigationToolProvider
+from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+from services.investigation.harness import ToolRegistry
 from services.runtime import MeshRuntimeEngine
 from shared.mesh_runtime.config import RuntimeConfig
 
@@ -82,20 +83,31 @@ class CloudOpsSnapshotRunner:
         snapshot = self._load_snapshot(scenario, raw_signal)
         tools = CloudOpsSnapshotTools(snapshot)
         trajectory = list(scenario.expert_trajectory or snapshot.get("expert_trajectory") or [])
-        provider: CloudOpsInvestigationToolProvider | None = None
+        registry: ToolRegistry | None = None
+        planner: CloudOpsLoopPlanner | None = None
         if expose_ground_truth:
             tool_trajectory = tools.replay_expert_trajectory(trajectory)
         else:
-            # Hidden mode: hand the snapshot tools to the investigator as a
-            # tool provider. Mesh chooses which tools to call; the recorded
-            # calls become the scored tool_trajectory.
-            provider = CloudOpsInvestigationToolProvider(tools)
+            # Hidden mode: hand the snapshot tools to the harness as a
+            # cloudops domain pack. The harness loop selects calls; the
+            # recorded snapshot calls become the scored tool_trajectory.
+            registry = ToolRegistry()
+            register_cloudops_tools(registry, tools)
             tool_trajectory = []
         signal = _snapshot_signal(snapshot, raw_signal, expose_ground_truth=expose_ground_truth)
+        if registry is not None:
+            from services.ingest.service import IngestService
+            from services.trigger.service import TriggerService
+
+            normalized = IngestService().normalize_signal(signal)
+            trigger = TriggerService().detect(normalized)
+            if trigger is not None:
+                planner = CloudOpsLoopPlanner(trigger)
         outcome = MeshRuntimeEngine(config=self.runtime_config).run_sync(
             signal,
             scenario_name=f"cloudopsbench_{scenario.scenario_id}_{iteration}",
-            tool_provider=provider,
+            registry=registry,
+            planner=planner,
         )
         report = outcome.get("investigation_report") if isinstance(outcome.get("investigation_report"), dict) else {}
         report.setdefault("findings", [])
@@ -106,8 +118,8 @@ class CloudOpsSnapshotRunner:
                 {"kind": "cloudopsbench_root_cause", "summary": str(root_cause), "confidence": 1.0}
             ]
             report["citations"] = list(report["citations"]) + [{"source_type": "cloudopsbench_snapshot", "source_ref": scenario.scenario_id}]
-        if provider is not None:
-            tool_trajectory = provider.call_records()
+        if registry is not None:
+            tool_trajectory = [call.to_dict() for call in tools.calls]
         outcome["backend"] = "cloudopsbench"
         outcome["investigation_report"] = report
         outcome["tool_trajectory"] = tool_trajectory
