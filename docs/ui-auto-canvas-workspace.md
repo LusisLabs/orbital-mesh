@@ -4,7 +4,7 @@
 
 The web UI is a self-hosted Mesh agent control console for monitoring, evidence review, approval, agent interaction, integration readiness, and audit continuity. It is Mesh-native, not a clone of VS Code, Cursor, Codex, or Claude Code.
 
-The interface uses the visual language of modern terminal and editor-based agent tools: dense dark surfaces, project/session rails, run-thread workspaces, review/context drawers, transcript blocks, tool-call rows, and a terminal-style runtime strip. The referenced Theme Hook Plugin Manager Cursor/VS Code hooks are used only as a static color-role source for workbench-like tokens such as side bar, editor, panel, input, list, badge, status, diagnostics, git, and terminal roles.
+The interface uses the visual language of modern terminal and editor-based agent tools: dense dark surfaces, project/session rails, run-thread workspaces, review/context drawers, transcript blocks, tool-call rows, and a terminal-style runtime strip. The current static color-role source is the Islands Dark VS Code theme: deep canvas, slightly lifted surfaces, directional glass borders, pill controls, subdued status chrome, and warm diagnostic accents.
 
 The default page is `Overview`. Topology and graph canvases are secondary investigation tools under run detail.
 
@@ -74,9 +74,9 @@ Canvas node clicks keep the context drawer evidence-first: Merkle nodes open aud
 
 ## Visual System
 
-- Static dark tokens are derived from THPM's Cursor/VS Code workbench color mapping; Mesh does not load Omarchy `colors.toml` or vendor THPM shell hooks at runtime.
+- Static dark tokens are adapted from Islands Dark workbench colors. Mesh does not install the VS Code extension, load Custom UI Style, or run upstream installer scripts at runtime.
 - Codicons are used for editor and agent-console semantics where they fit. Existing lucide icons remain for gaps.
-- Surfaces are capped at 8px radius and use dense spacing. Cards are work surfaces, not marketing panels.
+- Surfaces keep Mesh's 8px radius cap while using Islands-style floating spacing, glass borders, focused-list gradients, pill status controls, and compact editor-console density.
 - The bottom runtime strip summarizes local API target, selected run, SSE connection state, integration readiness, and agent readiness.
 - The left workstream rail and bottom runtime strip are wired controls. They route directly to run threads, review queue, Hermes, evidence, agents, integrations, and control-plane diagnostics.
 - The right drawer is a review/context panel for evidence, policy, execution, agents, Merkle audit, code, and research output.

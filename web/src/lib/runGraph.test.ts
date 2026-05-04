@@ -80,9 +80,9 @@ describe("runGraph", () => {
   });
 
   it("assigns stable tones by stage", () => {
-    expect(toneForStage("completed")).toBe("#83d37d");
-    expect(toneForStage("awaiting_operator")).toBe("#f2b84b");
-    expect(toneForStage("failed")).toBe("#ff6b5f");
+    expect(toneForStage("completed")).toBe("#73b00a");
+    expect(toneForStage("awaiting_operator")).toBe("#e8a33e");
+    expect(toneForStage("failed")).toBe("#f75464");
   });
 
   it("builds a kubernetes topology from a live deployment signal", () => {

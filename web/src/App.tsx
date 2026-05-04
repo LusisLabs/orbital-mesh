@@ -2578,7 +2578,7 @@ function RcaPanel({
           </div>
           <StatusChip
             label={snapshot.stopReason ? humanize(snapshot.stopReason) : "No report"}
-            tone={snapshot.blockers.some((blocker) => blocker.severity === "danger") ? "#ff6b5f" : "#41d6b1"}
+            tone={snapshot.blockers.some((blocker) => blocker.severity === "danger") ? "#f75464" : "#2aacb8"}
           />
         </div>
         <div className="context-stat-grid">
@@ -2812,7 +2812,7 @@ function TopologyPanel({
             }}
             proOptions={{ hideAttribution: true }}
           >
-            <Background color="#d9dee7" gap={24} />
+            <Background color="#25262a" gap={24} />
           </ReactFlow>
         ) : (
           <EmptyState text={canvasEmptyMessage} icon={canvasModeIcon(canvasMode, 28)} />
@@ -3094,23 +3094,23 @@ function buildConfidenceMovement(
   const points: ConfidencePoint[] = [];
   const topConfidence = candidates.find((candidate) => typeof candidate.confidence === "number")?.confidence;
   if (typeof topConfidence === "number") {
-    points.push({ id: "rca-top", label: "Top RCA", value: clamp01(topConfidence), detail: candidates[0]?.cause ?? "candidate", tone: "#41d6b1" });
+    points.push({ id: "rca-top", label: "Top RCA", value: clamp01(topConfidence), detail: candidates[0]?.cause ?? "candidate", tone: "#2aacb8" });
   }
   const uncertainty = numericField(report, "uncertainty");
   if (typeof uncertainty === "number") {
-    points.push({ id: "investigation", label: "Investigation", value: clamp01(1 - uncertainty), detail: "1 - uncertainty", tone: "#65a7ff" });
+    points.push({ id: "investigation", label: "Investigation", value: clamp01(1 - uncertainty), detail: "1 - uncertainty", tone: "#548af7" });
   }
   const decisionConfidence = numericField(asRecord(artifacts.decision), "confidence");
   if (typeof decisionConfidence === "number") {
-    points.push({ id: "decision", label: "Decision", value: clamp01(decisionConfidence), detail: stringField(asRecord(artifacts.decision), "decision_type") ?? "decision", tone: "#8d8cff" });
+    points.push({ id: "decision", label: "Decision", value: clamp01(decisionConfidence), detail: stringField(asRecord(artifacts.decision), "decision_type") ?? "decision", tone: "#c77dbb" });
   }
   if (typeof analysis?.confidence === "number") {
-    points.push({ id: "scenario-analysis", label: "Scenario", value: clamp01(analysis.confidence), detail: humanize(analysis.suggested_decision_type), tone: "#f2b84b" });
+    points.push({ id: "scenario-analysis", label: "Scenario", value: clamp01(analysis.confidence), detail: humanize(analysis.suggested_decision_type), tone: "#e8a33e" });
   }
   tasks.flatMap((task) => task.attempts).forEach((attempt, index) => {
     const confidence = numericField(asRecord(attempt.output), "confidence");
     if (typeof confidence !== "number") return;
-    points.push({ id: `agent-${index}`, label: humanize(attempt.agent), value: clamp01(confidence), detail: humanize(attempt.recommended_action), tone: "#83d37d" });
+    points.push({ id: `agent-${index}`, label: humanize(attempt.agent), value: clamp01(confidence), detail: humanize(attempt.recommended_action), tone: "#73b00a" });
   });
   return points.slice(0, 8);
 }
@@ -3435,7 +3435,7 @@ function SteeringConsolePanel({
                   <p className="eyebrow">Hermes Explanation</p>
                   <h4>{humanize(String(hermesExplanation.recommendation ?? "human_review"))}</h4>
                 </div>
-                <StatusChip label="Hermes" tone="#4aa8ff" />
+                <StatusChip label="Hermes" tone="#56a8f5" />
               </div>
               <p className="inspector-muted">{String(hermesExplanation.summary ?? "No explanation available.")}</p>
               {Array.isArray(hermesExplanation.operator_actions) && hermesExplanation.operator_actions.length > 0 && (
@@ -3597,7 +3597,7 @@ function AgentMeshPanel({
             <p className="eyebrow">Agent Mesh</p>
             <h4>{resolvedTasks.length} task{resolvedTasks.length === 1 ? "" : "s"} recorded</h4>
           </div>
-          <StatusChip label="Read Only" tone="#41d6b1" />
+          <StatusChip label="Read Only" tone="#2aacb8" />
         </div>
         <p className="inspector-muted">
           Workers produce proposals and risk signals. Mesh keeps policy, tests, audit, Kubernetes actuation, and production promotion gates.
@@ -3610,7 +3610,7 @@ function AgentMeshPanel({
             <p className="eyebrow">Evo Launch</p>
             <h4>Operator-triggered discovery bootstrap</h4>
           </div>
-          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#f2b84b" : "#41d6b1"} />
+          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#e8a33e" : "#2aacb8"} />
         </div>
         <div className="stack">
           <input
@@ -3691,7 +3691,7 @@ function AgentMeshPanel({
               <p className="eyebrow">{humanize(task.kind)}</p>
               <h4>{task.task_id}</h4>
             </div>
-            <StatusChip label={humanize(task.status)} tone={task.status === "completed" ? "#41d6b1" : "#f2b84b"} />
+            <StatusChip label={humanize(task.status)} tone={task.status === "completed" ? "#2aacb8" : "#e8a33e"} />
           </div>
           <div className="context-stat-grid">
             <ContextStat label="Workers" value={String(task.attempts.length)} />

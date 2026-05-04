@@ -29,7 +29,7 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(overflowing).toEqual([]);
 }
 
-test("applies the Purna Labs Nebula kit end to end", async ({ page }) => {
+test("applies the Islands Dark console kit end to end", async ({ page }) => {
   await openFixture(page);
 
   await expect(page.getByText("Purna Labs OS")).toBeVisible();
@@ -53,14 +53,14 @@ test("applies the Purna Labs Nebula kit end to end", async ({ page }) => {
   });
 
   expect(tokens).toMatchObject({
-    accent: "#3e79bd",
-    bg: "#0b1020",
-    good: "#20a77c",
-    meshBlue: "#3e79bd",
-    meshPurple: "#6d33ab",
+    accent: "#548af7",
+    bg: "#121216",
+    good: "#73b00a",
+    meshBlue: "#548af7",
+    meshPurple: "#c77dbb",
   });
-  expect(tokens.navAccent).toContain("62, 121, 189");
-  expect(tokens.primaryBorder).toBe("rgba(62, 121, 189, 0.52)");
+  expect(tokens.navAccent).toContain("84, 138, 247");
+  expect(tokens.primaryBorder).toBe("rgba(84, 138, 247, 0.52)");
 });
 
 test("loads the Purna console with overview as the default page", async ({ page }) => {

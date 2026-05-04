@@ -20,6 +20,18 @@ const STAGE_ORDER = [
   "no_trigger",
 ];
 
+const GRAPH_TONE = {
+  info: "#548af7",
+  active: "#2aacb8",
+  cyan: "#2aacb8",
+  success: "#73b00a",
+  warn: "#e8a33e",
+  danger: "#f75464",
+  purple: "#c77dbb",
+  functionBlue: "#56a8f5",
+  neutral: "#7a7e85",
+} as const;
+
 export interface RunGraphNodeData extends Record<string, unknown> {
   nodeKind: "run" | "kubernetes" | "merkle" | "artifact" | "section";
   title: string;
@@ -191,7 +203,7 @@ export function buildLabyrinthGraph(crossings: LabyrinthCrossing[], selectedCros
       `labyrinth-${previous.id}-${crossing.id}`,
       previous.id,
       crossing.id,
-      threshold ? "#c9a857" : toneForSeverity(crossing.severity),
+      threshold ? GRAPH_TONE.warn : toneForSeverity(crossing.severity),
       threshold,
     );
   });
@@ -204,7 +216,7 @@ export function buildLabyrinthGraph(crossings: LabyrinthCrossing[], selectedCros
     crossing.evidence_refs.forEach((ref) => {
       const source = evidenceByRef.get(ref);
       if (source && source !== crossing.id) {
-        edges.push(canvasEdge(`evidence-ref-${source}-${crossing.id}`, source, crossing.id, "#8d8cff", true));
+        edges.push(canvasEdge(`evidence-ref-${source}-${crossing.id}`, source, crossing.id, GRAPH_TONE.purple, true));
       }
     });
   });
@@ -217,7 +229,7 @@ export function buildEvidenceGraph(graph: EvidenceGraph | null | undefined): Can
 
   const nodes: RunGraphNode[] = graph.nodes.map((node, index) => {
     const lane = node.type === "evidence" ? 0 : node.type === "subdecision" ? 1 : 2;
-    const tone = node.requires_review ? "#f2b84b" : node.type === "scenario_analysis" ? "#41d6b1" : "#65a7ff";
+    const tone = node.requires_review ? GRAPH_TONE.warn : node.type === "scenario_analysis" ? GRAPH_TONE.active : GRAPH_TONE.info;
     return canvasNode({
       id: node.id,
       kind: node.type === "scenario_analysis" ? "section" : "artifact",
@@ -240,7 +252,7 @@ export function buildEvidenceGraph(graph: EvidenceGraph | null | undefined): Can
       `evidence-${index}-${edge.source}-${edge.target}`,
       edge.source,
       edge.target,
-      edge.kind === "feeds" ? "#41d6b1" : "#8d8cff",
+      edge.kind === "feeds" ? GRAPH_TONE.active : GRAPH_TONE.purple,
       edge.kind === "feeds",
     ),
   );
@@ -260,7 +272,7 @@ export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGr
       title: "Investigation",
       statusLabel: input.stopReason ? humanizeToken(input.stopReason) : "RCA",
       preview: `${input.tools.length} tools / ${input.candidates.length} candidates`,
-      accent: "#65a7ff",
+      accent: GRAPH_TONE.info,
       meta: compact([`${input.blockers.length} blockers`, `${input.citations.length} citations`]),
       position: { x: 20, y: 210 },
       artifactKey: "investigation_report",
@@ -270,7 +282,7 @@ export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGr
 
   input.tools.slice(0, 10).forEach((tool, index) => {
     const id = `rca-tool-${tool.id}`;
-    const tone = tool.valid ? "#41d6b1" : "#f2b84b";
+    const tone = tool.valid ? GRAPH_TONE.active : GRAPH_TONE.warn;
     nodes.push(canvasNode({
       id,
       kind: "artifact",
@@ -288,7 +300,7 @@ export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGr
   input.candidates.slice(0, 6).forEach((candidate, index) => {
     const id = `rca-candidate-${candidate.id}`;
     const confidence = typeof candidate.confidence === "number" ? `${Math.round(candidate.confidence * 100)}%` : "unscored";
-    const tone = candidate.rank === 1 ? "#83d37d" : candidate.rank <= 3 ? "#41d6b1" : "#65a7ff";
+    const tone = candidate.rank === 1 ? GRAPH_TONE.success : candidate.rank <= 3 ? GRAPH_TONE.active : GRAPH_TONE.info;
     nodes.push(canvasNode({
       id,
       kind: "artifact",
@@ -315,7 +327,7 @@ export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGr
 
   input.blockers.slice(0, 5).forEach((blocker, index) => {
     const id = `rca-blocker-${blocker.id}`;
-    const tone = blocker.severity === "danger" ? "#ff6b5f" : "#f2b84b";
+    const tone = blocker.severity === "danger" ? GRAPH_TONE.danger : GRAPH_TONE.warn;
     nodes.push(canvasNode({
       id,
       kind: "artifact",
@@ -339,14 +351,14 @@ export function buildRcaGraph(input: RcaGraphInput | null | undefined): CanvasGr
       title: citation.label,
       statusLabel: "Citation",
       preview: citation.detail,
-      accent: "#8d8cff",
+      accent: GRAPH_TONE.purple,
       meta: compact([citation.id]),
       position: { x: 1300, y: 50 + index * 104 },
       artifactKey: "investigation_report",
     }));
     const candidate = input.candidates.find((item) => item.citationIds.includes(citation.id)) ?? input.candidates[0];
     const source = candidate ? `rca-candidate-${candidate.id}` : input.blockers[0] ? `rca-blocker-${input.blockers[0].id}` : "rca-investigation";
-    edges.push(canvasEdge(`${source}-${id}`, source, id, "#8d8cff", true));
+    edges.push(canvasEdge(`${source}-${id}`, source, id, GRAPH_TONE.purple, true));
   });
 
   return { nodes, edges };
@@ -356,10 +368,10 @@ export function buildRethSignalGraph(signal: Record<string, any> | null | undefi
   if (!signal || signal.signal_type !== "reth_node") return { nodes: [], edges: [] };
 
   const service = String(signal.service ?? signal.node?.name ?? "reth node");
-  const executionTone = Number(signal.execution?.peer_count ?? 0) <= Number(signal.execution?.min_peer_count ?? -1) ? "#f2b84b" : "#83d37d";
-  const storageTone = Number(signal.storage?.disk_used_pct ?? 0) >= 90 ? "#ff6b5f" : "#83d37d";
-  const consensusTone = signal.consensus?.engine_api_reachable === false ? "#ff6b5f" : "#83d37d";
-  const rpcTone = signal.rpc?.http_reachable === false ? "#ff6b5f" : "#65a7ff";
+  const executionTone = Number(signal.execution?.peer_count ?? 0) <= Number(signal.execution?.min_peer_count ?? -1) ? GRAPH_TONE.warn : GRAPH_TONE.success;
+  const storageTone = Number(signal.storage?.disk_used_pct ?? 0) >= 90 ? GRAPH_TONE.danger : GRAPH_TONE.success;
+  const consensusTone = signal.consensus?.engine_api_reachable === false ? GRAPH_TONE.danger : GRAPH_TONE.success;
+  const rpcTone = signal.rpc?.http_reachable === false ? GRAPH_TONE.danger : GRAPH_TONE.info;
 
   const nodes = [
     canvasNode({
@@ -368,7 +380,7 @@ export function buildRethSignalGraph(signal: Record<string, any> | null | undefi
       title: service,
       statusLabel: String(signal.environment ?? "environment"),
       preview: `${signal.node?.client_version ?? signal.node?.network ?? "reth"} / ${signal.node?.deployment_mode ?? "node"}`,
-      accent: "#65a7ff",
+      accent: GRAPH_TONE.info,
       meta: compact([signal.node?.role, signal.related_context?.kurtosis_enclave]),
       position: { x: 40, y: 240 },
       artifactKey: "input_signal",
@@ -422,8 +434,8 @@ export function buildRethSignalGraph(signal: Record<string, any> | null | undefi
   const edges = [
     canvasEdge("reth-service-execution", "reth-service", "reth-execution", executionTone),
     canvasEdge("reth-service-consensus", "reth-service", "reth-consensus", consensusTone),
-    canvasEdge("reth-execution-storage", "reth-execution", "reth-storage", storageTone, storageTone === "#ff6b5f"),
-    canvasEdge("reth-consensus-rpc", "reth-consensus", "reth-rpc", rpcTone, rpcTone === "#ff6b5f"),
+    canvasEdge("reth-execution-storage", "reth-execution", "reth-storage", storageTone, storageTone === GRAPH_TONE.danger),
+    canvasEdge("reth-consensus-rpc", "reth-consensus", "reth-rpc", rpcTone, rpcTone === GRAPH_TONE.danger),
   ];
 
   return { nodes, edges };
@@ -442,7 +454,7 @@ export function buildKubernetesGraph(signal: Record<string, any> | null | undefi
     title: String(signal.cluster ?? "cluster"),
     statusLabel: String(signal.environment ?? "cluster"),
     preview: `${signal.service ?? "service"} in ${signal.namespace ?? "default"}`,
-    accent: "#65a7ff",
+    accent: GRAPH_TONE.info,
     meta: compact([signal.signal_type, signal.observed_at]),
     position: { x: 40, y: 180 },
     artifactKey: "input_signal",
@@ -454,7 +466,7 @@ export function buildKubernetesGraph(signal: Record<string, any> | null | undefi
     title: String(signal.namespace ?? "default"),
     statusLabel: "Namespace",
     preview: `${signal.service ?? "service"} workload`,
-    accent: "#41d6b1",
+    accent: GRAPH_TONE.active,
     meta: compact([`service:${signal.service ?? "unknown"}`]),
     position: { x: 290, y: 180 },
     artifactKey: "input_signal",
@@ -475,11 +487,11 @@ export function buildKubernetesGraph(signal: Record<string, any> | null | undefi
     artifactKey: "input_signal",
   }));
 
-  edges.push(canvasEdge("cluster-namespace", "cluster", "namespace", "#65a7ff"));
+  edges.push(canvasEdge("cluster-namespace", "cluster", "namespace", GRAPH_TONE.info));
   edges.push(canvasEdge("namespace-deployment", "namespace", "deployment", deploymentTone));
 
   (signal.pods ?? []).slice(0, 6).forEach((pod: Record<string, any>, index: number) => {
-    const tone = pod.ready ? "#83d37d" : "#ff6b5f";
+    const tone = pod.ready ? GRAPH_TONE.success : GRAPH_TONE.danger;
     const podId = `pod-${index}`;
     nodes.push(canvasNode({
       id: podId,
@@ -499,7 +511,7 @@ export function buildKubernetesGraph(signal: Record<string, any> | null | undefi
   });
 
   (signal.events ?? []).slice(0, 4).forEach((event: Record<string, any>, index: number) => {
-    const tone = String(event.type ?? "").toLowerCase() === "warning" ? "#f2b84b" : "#65a7ff";
+    const tone = String(event.type ?? "").toLowerCase() === "warning" ? GRAPH_TONE.warn : GRAPH_TONE.info;
     const eventId = `cluster-event-${index}`;
     nodes.push(canvasNode({
       id: eventId,
@@ -534,7 +546,7 @@ export function buildMerkleGraph(
     title: "Merkle Root",
     statusLabel: proof?.valid ? "Verified" : "Snapshot",
     preview: snapshot.root_hash,
-    accent: proof?.valid ? "#83d37d" : "#65a7ff",
+    accent: proof?.valid ? GRAPH_TONE.success : GRAPH_TONE.info,
     meta: compact([`${snapshot.leaf_count} leaves`]),
     position: { x: centerX, y: 20 },
     eventId: proof?.event_id,
@@ -546,19 +558,19 @@ export function buildMerkleGraph(
     title: "Snapshot",
     statusLabel: "Ledger",
     preview: `${snapshot.event_ids.length} event ids tracked`,
-    accent: "#41d6b1",
+    accent: GRAPH_TONE.active,
     meta: compact([snapshot.event_ids[0], snapshot.event_ids[snapshot.event_ids.length - 1]]),
     position: { x: 180, y: 20 },
     eventId: proof?.event_id,
   }));
 
-  edges.push(canvasEdge("merkle-snapshot-root", "merkle-snapshot", "merkle-root", "#41d6b1"));
+  edges.push(canvasEdge("merkle-snapshot-root", "merkle-snapshot", "merkle-root", GRAPH_TONE.active));
 
   let previousId = "merkle-root";
   proof?.proof.forEach((step, index) => {
     const stepId = `merkle-step-${index}`;
     const siblingId = `merkle-sibling-${index}`;
-    const tone = step.position === "left" ? "#65a7ff" : "#f2b84b";
+    const tone = step.position === "left" ? GRAPH_TONE.info : GRAPH_TONE.warn;
     const y = 150 + index * 132;
 
     nodes.push(canvasNode({
@@ -567,7 +579,7 @@ export function buildMerkleGraph(
       title: `Proof Step ${index + 1}`,
       statusLabel: "Branch",
       preview: `combine ${step.position} sibling`,
-      accent: "#41d6b1",
+      accent: GRAPH_TONE.active,
       meta: compact([proof?.event_id ?? undefined]),
       position: { x: centerX, y },
       eventId: proof?.event_id,
@@ -584,7 +596,7 @@ export function buildMerkleGraph(
       eventId: proof?.event_id,
     }));
 
-    edges.push(canvasEdge(`${previousId}-${stepId}`, previousId, stepId, "#41d6b1"));
+    edges.push(canvasEdge(`${previousId}-${stepId}`, previousId, stepId, GRAPH_TONE.active));
     edges.push(canvasEdge(`${siblingId}-${stepId}`, siblingId, stepId, tone, true));
     previousId = stepId;
   });
@@ -596,12 +608,12 @@ export function buildMerkleGraph(
       title: "Selected Leaf",
       statusLabel: proof.event_id,
       preview: proof.leaf_hash,
-      accent: "#83d37d",
+      accent: GRAPH_TONE.success,
       meta: compact([proof.event_id]),
       position: { x: centerX, y: 170 + (proof.proof.length + 1) * 132 },
       eventId: proof.event_id,
     }));
-    edges.push(canvasEdge(`${previousId}-merkle-leaf`, previousId, "merkle-leaf", "#83d37d"));
+    edges.push(canvasEdge(`${previousId}-merkle-leaf`, previousId, "merkle-leaf", GRAPH_TONE.success));
   }
 
   return { nodes, edges };
@@ -611,23 +623,23 @@ export function buildArtifactGraph(run: { artifacts: Record<string, any>; stage:
   if (!run) return { nodes: [], edges: [] };
 
   const orderedArtifacts = [
-    ["input_signal", "Input Signal", "#65a7ff"],
-    ["integration_readiness", "Readiness", "#41d6b1"],
-    ["normalized_event", "Normalized Event", "#8d8cff"],
-    ["trigger", "Trigger", "#65a7ff"],
-    ["investigation_report", "Investigation", "#41d6b1"],
-    ["tool_trajectory", "Tool Trajectory", "#41d6b1"],
-    ["decision", "Decision", "#65a7ff"],
-    ["evaluation", "Evaluation", "#f2b84b"],
-    ["task_trace", "Task Trace", "#f2b84b"],
-    ["trajectory_score", "Trajectory Score", "#f2b84b"],
-    ["verifier_output", "Verifier Output", "#f2b84b"],
-    ["phoenix_spans", "Phoenix Spans", "#f2b84b"],
-    ["hermes_explanation", "Hermes Explanation", "#4aa8ff"],
-    ["execution", "Execution", "#41d6b1"],
-    ["goose_review", "Goose Review", "#57d5c8"],
-    ["hermes_review", "Hermes Review", "#4aa8ff"],
-    ["feedback", "Feedback", "#83d37d"],
+    ["input_signal", "Input Signal", GRAPH_TONE.info],
+    ["integration_readiness", "Readiness", GRAPH_TONE.active],
+    ["normalized_event", "Normalized Event", GRAPH_TONE.purple],
+    ["trigger", "Trigger", GRAPH_TONE.info],
+    ["investigation_report", "Investigation", GRAPH_TONE.active],
+    ["tool_trajectory", "Tool Trajectory", GRAPH_TONE.active],
+    ["decision", "Decision", GRAPH_TONE.info],
+    ["evaluation", "Evaluation", GRAPH_TONE.warn],
+    ["task_trace", "Task Trace", GRAPH_TONE.warn],
+    ["trajectory_score", "Trajectory Score", GRAPH_TONE.warn],
+    ["verifier_output", "Verifier Output", GRAPH_TONE.warn],
+    ["phoenix_spans", "Phoenix Spans", GRAPH_TONE.warn],
+    ["hermes_explanation", "Hermes Explanation", GRAPH_TONE.functionBlue],
+    ["execution", "Execution", GRAPH_TONE.active],
+    ["goose_review", "Goose Review", GRAPH_TONE.cyan],
+    ["hermes_review", "Hermes Review", GRAPH_TONE.functionBlue],
+    ["feedback", "Feedback", GRAPH_TONE.success],
   ] as const;
 
   const nodes: RunGraphNode[] = [];
@@ -701,10 +713,10 @@ export function buildUnifiedGraph(graphs: {
 
   const nodes = [
     ...unifiedSectionNodes([
-      { graph: flow, id: "flow", title: "Run Flow", preview: "Stage-by-stage run event timeline", accent: "#65a7ff" },
-      { graph: kubernetes, id: "kubernetes", title: "Kubernetes", preview: "Cluster, namespace, deployment, pods, and events", accent: "#41d6b1" },
-      { graph: merkle, id: "merkle", title: "Merkle", preview: "Run log root, snapshot, and proof material", accent: "#8d8cff" },
-      { graph: artifacts, id: "artifacts", title: "Artifacts", preview: "Input, readiness, trigger, decision, execution, and feedback records", accent: "#f2b84b" },
+      { graph: flow, id: "flow", title: "Run Flow", preview: "Stage-by-stage run event timeline", accent: GRAPH_TONE.info },
+      { graph: kubernetes, id: "kubernetes", title: "Kubernetes", preview: "Cluster, namespace, deployment, pods, and events", accent: GRAPH_TONE.active },
+      { graph: merkle, id: "merkle", title: "Merkle", preview: "Run log root, snapshot, and proof material", accent: GRAPH_TONE.purple },
+      { graph: artifacts, id: "artifacts", title: "Artifacts", preview: "Input, readiness, trigger, decision, execution, and feedback records", accent: GRAPH_TONE.warn },
     ]),
     ...flow.nodes,
     ...kubernetes.nodes,
@@ -723,17 +735,17 @@ export function buildUnifiedGraph(graphs: {
 }
 
 export function toneForStage(stage: string): string {
-  if (stage === "completed") return "#83d37d";
-  if (stage === "failed" || stage === "cancelled") return "#ff6b5f";
-  if (stage === "awaiting_operator") return "#f2b84b";
-  if (stage === "executing") return "#41d6b1";
+  if (stage === "completed") return GRAPH_TONE.success;
+  if (stage === "failed" || stage === "cancelled") return GRAPH_TONE.danger;
+  if (stage === "awaiting_operator") return GRAPH_TONE.warn;
+  if (stage === "executing") return GRAPH_TONE.active;
   if (
     stage === "evaluation_ready" ||
     stage === "decision_ready" ||
     stage === "scenario_analysis_ready" ||
     stage === "investigation_ready"
-  ) return "#65a7ff";
-  return "#a69f90";
+  ) return GRAPH_TONE.info;
+  return GRAPH_TONE.neutral;
 }
 
 function summarizeEvent(event: RunEventRecord): string {
@@ -911,28 +923,28 @@ function unifiedContextEdges(
     if (typeof key !== "string" || !key) return;
     const artifactNodeId = artifactByKey.get(key);
     if (!artifactNodeId) return;
-    edges.push(canvasEdge(`unified:${node.id}-${artifactNodeId}`, node.id, artifactNodeId, String(node.data.accent || "#65a7ff"), true));
+    edges.push(canvasEdge(`unified:${node.id}-${artifactNodeId}`, node.id, artifactNodeId, String(node.data.accent || GRAPH_TONE.info), true));
   });
 
   const inputSignalNodeId = artifactByKey.get("input_signal");
   if (inputSignalNodeId && nodeIds.has("kubernetes:cluster")) {
-    edges.push(canvasEdge("unified:input-signal-kubernetes", inputSignalNodeId, "kubernetes:cluster", "#65a7ff", true));
+    edges.push(canvasEdge("unified:input-signal-kubernetes", inputSignalNodeId, "kubernetes:cluster", GRAPH_TONE.info, true));
   }
 
   const executionNodeId = artifactByKey.get("execution");
   if (executionNodeId && nodeIds.has("merkle:merkle-root")) {
-    edges.push(canvasEdge("unified:execution-merkle-root", executionNodeId, "merkle:merkle-root", "#41d6b1", true));
+    edges.push(canvasEdge("unified:execution-merkle-root", executionNodeId, "merkle:merkle-root", GRAPH_TONE.active, true));
   } else if (flow.nodes.length > 0 && nodeIds.has("merkle:merkle-root")) {
-    edges.push(canvasEdge("unified:flow-merkle-root", flow.nodes[flow.nodes.length - 1].id, "merkle:merkle-root", "#41d6b1", true));
+    edges.push(canvasEdge("unified:flow-merkle-root", flow.nodes[flow.nodes.length - 1].id, "merkle:merkle-root", GRAPH_TONE.active, true));
   }
 
   return edges;
 }
 
 function kubernetesTone(rolloutStatus?: string): string {
-  if (rolloutStatus === "healthy") return "#83d37d";
-  if (rolloutStatus === "degraded" || rolloutStatus === "failed") return "#ff6b5f";
-  return "#65a7ff";
+  if (rolloutStatus === "healthy") return GRAPH_TONE.success;
+  if (rolloutStatus === "degraded" || rolloutStatus === "failed") return GRAPH_TONE.danger;
+  return GRAPH_TONE.info;
 }
 
 function isKubernetesSignal(signal: Record<string, any> | null | undefined): signal is Record<string, any> {
@@ -965,8 +977,8 @@ function humanizeToken(value: string): string {
 }
 
 function toneForSeverity(severity: string): string {
-  if (severity === "danger") return "#ff6b5f";
-  if (severity === "warning") return "#f2b84b";
-  if (severity === "success") return "#83d37d";
-  return "#65a7ff";
+  if (severity === "danger") return GRAPH_TONE.danger;
+  if (severity === "warning") return GRAPH_TONE.warn;
+  if (severity === "success") return GRAPH_TONE.success;
+  return GRAPH_TONE.info;
 }

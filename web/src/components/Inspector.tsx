@@ -115,9 +115,9 @@ function ResearchTab({
         </div>
       ) : null}
       <div className="inspector-field-row">
-        {status ? <Badge label={status} color="#41d6b1" /> : null}
-        {route ? <Badge label={`route: ${route}`} color="#8b9bb4" /> : null}
-        {model ? <Badge label={model} color="#6b8cae" /> : null}
+        {status ? <Badge label={status} color="#2aacb8" /> : null}
+        {route ? <Badge label={`route: ${route}`} color="#7a7e85" /> : null}
+        {model ? <Badge label={model} color="#548af7" /> : null}
       </div>
       {corpus ? <ResearchCorpusPanel corpus={corpus} compact /> : null}
       {intelligence ? <ResearchIntelligencePanel intelligence={intelligence} /> : null}
@@ -151,9 +151,9 @@ function ResearchCorpusPanel({
   return (
     <Section title="Research Summary">
       <div className="inspector-field-row">
-        <Badge label={`${corpus.sessions_analyzed} analyzed`} color="#41d6b1" />
-        <Badge label={`${corpus.drift_sessions.length} drift sessions`} color="#d76c75" />
-        <Badge label={`${corpus.accepted_anchors.length} accepted anchors`} color="#6b8cae" />
+        <Badge label={`${corpus.sessions_analyzed} analyzed`} color="#2aacb8" />
+        <Badge label={`${corpus.drift_sessions.length} drift sessions`} color="#f75464" />
+        <Badge label={`${corpus.accepted_anchors.length} accepted anchors`} color="#548af7" />
       </div>
       {recurringFlags.length > 0 ? <MiniList title="Recurring flags" items={recurringFlags} inline={compact} /> : null}
       {acceptedAnchors.length > 0 ? <MiniList title="Accepted anchors" items={acceptedAnchors} inline={compact} /> : null}
@@ -170,13 +170,13 @@ function ResearchIntelligencePanel({ intelligence }: { intelligence: ResearchInt
     <Section title="Research Intelligence">
       <div className="inspector-field-row">
         <Badge label={humanize(intelligence.classification)} color={researchClassificationColor(intelligence.classification)} />
-        <Badge label={`repo ${intelligence.repo_grounding_score}`} color="#7fcf9f" />
-        <Badge label={`drift ${intelligence.off_domain_score}`} color="#d7a95e" />
+        <Badge label={`repo ${intelligence.repo_grounding_score}`} color="#73b00a" />
+        <Badge label={`drift ${intelligence.off_domain_score}`} color="#e8a33e" />
       </div>
       {intelligence.flags.length > 0 ? (
         <div className="inspector-field-row">
           {intelligence.flags.map((flag) => (
-            <Badge key={flag} label={humanize(flag)} color="#d76c75" />
+            <Badge key={flag} label={humanize(flag)} color="#f75464" />
           ))}
         </div>
       ) : null}
@@ -225,13 +225,13 @@ function MiniList({ title, items, inline }: { title: string; items: string[]; in
 function researchClassificationColor(classification: ResearchIntelligence["classification"]) {
   switch (classification) {
     case "repo_grounded":
-      return "#7fcf9f";
+      return "#73b00a";
     case "mixed":
-      return "#d7a95e";
+      return "#e8a33e";
     case "off_domain":
-      return "#d76c75";
+      return "#f75464";
     default:
-      return "#8b9bb4";
+      return "#7a7e85";
   }
 }
 
