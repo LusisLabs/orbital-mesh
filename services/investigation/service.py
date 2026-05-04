@@ -18,6 +18,7 @@ stages don't know or care which path produced it.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -31,6 +32,13 @@ from shared.mesh_runtime import (
 )
 
 from .cloudops_ontology import RankedCause, rank_root_causes
+from .harness import (
+    InvestigationLoopState,
+    LoopCritic,
+    LoopPlanner,
+    ToolRegistry,
+    run_investigation_loop,
+)
 from .tool_provider import InvestigationToolProvider
 
 
@@ -74,6 +82,8 @@ class InvestigationService:
         topology: dict[str, Any] | None = None,
         recent_runs: list[dict[str, Any]] | None = None,
         tool_provider: InvestigationToolProvider | None = None,
+        registry: ToolRegistry | None = None,
+        planner: LoopPlanner | None = None,
     ) -> InvestigationReport:
         context = {
             "memory_packet": memory_packet or {},
@@ -82,10 +92,17 @@ class InvestigationService:
             "recent_runs": recent_runs or [],
         }
         evidence = evidence_pack or {}
-        plan = self._build_plan(trigger, context, tool_provider=tool_provider)
+        plan = self._build_plan(
+            trigger,
+            context,
+            tool_provider=tool_provider,
+            registry=registry,
+            planner=planner,
+        )
         probe_results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
+        loop_state: InvestigationLoopState | None = None
 
         deterministic_probes = [probe for probe in plan.probes if "provider" not in probe]
         for probe in deterministic_probes[: self.max_probes]:
@@ -94,7 +111,14 @@ class InvestigationService:
             findings.extend(result.findings)
             citations.extend(result.citations)
 
-        if tool_provider is not None:
+        if registry is not None and planner is not None:
+            loop_state, harness_probes, harness_findings, harness_citations = self._run_harness_loop(
+                trigger, registry, planner
+            )
+            probe_results.extend(harness_probes)
+            findings.extend(harness_findings)
+            citations.extend(harness_citations)
+        elif tool_provider is not None:
             tool_results, tool_findings, tool_citations = self._run_tool_loop(
                 trigger, tool_provider
             )
@@ -103,15 +127,14 @@ class InvestigationService:
             citations.extend(tool_citations)
 
         uncertainty = _estimate_uncertainty(evidence, findings, context)
-        stop_reason = (
-            "evidence_insufficient_route_to_existing_safety_gates"
-            if _evidence_marked_insufficient(evidence)
-            else (
-                "tool_probe_budget_exhausted"
-                if tool_provider is not None
-                else "deterministic_probe_budget_exhausted"
-            )
-        )
+        if _evidence_marked_insufficient(evidence):
+            stop_reason = "evidence_insufficient_route_to_existing_safety_gates"
+        elif loop_state is not None:
+            stop_reason = f"harness_{loop_state.stop_reason or 'completed'}"
+        elif tool_provider is not None:
+            stop_reason = "tool_probe_budget_exhausted"
+        else:
+            stop_reason = "deterministic_probe_budget_exhausted"
         report = InvestigationReport(
             report_id=f"inv_{trigger.trigger_id}_{uuid4().hex[:8]}",
             trigger_id=trigger.trigger_id,
@@ -174,6 +197,83 @@ class InvestigationService:
         report.validate()
         return report
 
+    def _run_harness_loop(
+        self,
+        trigger: Trigger,
+        registry: ToolRegistry,
+        planner: LoopPlanner,
+    ) -> tuple[
+        InvestigationLoopState,
+        list[InvestigationProbeResult],
+        list[dict[str, Any]],
+        list[dict[str, Any]],
+    ]:
+        """Drive the harness loop and project results into the report shape.
+
+        Each ``ToolResult`` from the harness becomes one
+        ``InvestigationProbeResult`` so existing scoring (which reads
+        ``probe_results[*].name``) credits tool coverage. The loop's
+        observed text feeds the ranked-cause ontology unchanged.
+        """
+        state = InvestigationLoopState(
+            trigger_id=trigger.trigger_id,
+            budget_remaining=float(self.max_tool_probes),
+        )
+        critic = LoopCritic(registry)
+        run_investigation_loop(
+            state=state,
+            planner=planner,
+            registry=registry,
+            critic=critic,
+            trigger_context={"trigger": trigger.to_dict()},
+            max_iterations=self.max_tool_probes + 2,
+        )
+        probe_results: list[InvestigationProbeResult] = []
+        findings: list[dict[str, Any]] = []
+        citations: list[dict[str, Any]] = []
+        observed_text: list[str] = list(state.observed_text)
+        for call, result in zip(state.tool_calls, state.tool_results):
+            finding = {
+                "kind": "diagnostic_observation",
+                "summary": (
+                    f"{result.tool_name}({_arg_summary(call.args)}) -> {result.output_summary[:200]}"
+                    if result.output_summary
+                    else f"{result.tool_name}({_arg_summary(call.args)}) returned no data"
+                ),
+                "confidence": 0.7 if result.valid else 0.2,
+                "details": {
+                    "tool_name": result.tool_name,
+                    "domain": result.domain,
+                    "args": call.args,
+                    "output_text": result.output_summary,
+                    "valid": result.valid,
+                    "call_id": call.call_id,
+                },
+            }
+            findings.append(finding)
+            citations.extend(result.citations)
+            harness_status = result.status if result.status in {"completed", "skipped", "failed"} else "completed"
+            probe_results.append(
+                InvestigationProbeResult(
+                    probe_id=call.call_id,
+                    name=result.tool_name,
+                    status=harness_status,
+                    started_at=result.started_at,
+                    completed_at=result.completed_at,
+                    latency_ms=result.latency_ms,
+                    summary=str(finding["summary"]),
+                    findings=[finding],
+                    citations=list(result.citations),
+                    error=result.error,
+                )
+            )
+        ranked = rank_root_causes(observed_text)
+        if ranked:
+            findings.append(_ranked_finding(ranked))
+            for cause in ranked:
+                citations.append(_citation("rca_ontology", cause.root_cause))
+        return state, probe_results, findings, citations
+
     def _run_tool_loop(
         self,
         trigger: Trigger,
@@ -181,20 +281,29 @@ class InvestigationService:
     ) -> tuple[list[InvestigationProbeResult], list[dict[str, Any]], list[dict[str, Any]]]:
         """Bounded hypothesis loop driven by a read-only tool provider.
 
-        Sequence (each step is gated by ``max_tool_probes`` and stops as
-        soon as the ranked-cause confidence is high enough):
+        The loop is adaptive: ``GetResources`` always runs first, and the
+        suspect resource for follow-up probes is *discovered* from its
+        output rather than guessed from the trigger. In hidden-mode
+        snapshots the trigger redacts the real service name, so a fixed
+        plan keyed on ``trigger.service`` would miss the cache. Reading
+        the inventory text and pulling out the unhealthy object's name
+        is what lets ``DescribeResource``/``GetAppYAML``/``GetErrorLogs``
+        actually hit a populated cache key.
 
-        1. ``GetResources`` — required in every Cloud-OpsBench case;
-           gives the agent eyes on the pod/service inventory.
-        2. ``DescribeResource`` on the suspect resource if (1) suggests
-           an unhealthy object.
-        3. ``GetAppYAML`` if startup looks like the failure mode.
-        4. ``GetErrorLogs`` if (2) hints at runtime errors.
-        5. ``GetAlerts`` if the trigger carries alert metadata.
+        Sequence:
+
+        1. ``GetResources`` — gives the agent eyes on the pod/service
+           inventory. Required in every Cloud-OpsBench case.
+        2. *Observe* — pull the most likely unhealthy resource name from
+           the inventory text. Fall back to the trigger hint.
+        3. ``DescribeResource`` on the discovered suspect.
+        4. ``GetAppYAML`` for the same resource.
+        5. ``GetErrorLogs`` for the same resource.
+        6. ``GetAlerts`` if the trigger carries alert metadata.
 
         Each invocation produces one ``InvestigationProbeResult`` whose
         ``name`` is the canonical tool family (``GetResources`` etc.) so
-        scoring can credit ``tool_coverage``. Findings include both raw
+        scoring can credit ``tool_coverage``. Findings include raw
         observations and a ranked-root-cause list from the ontology.
         """
 
@@ -202,33 +311,37 @@ class InvestigationService:
         results: list[InvestigationProbeResult] = []
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
-        suspect = _suspect_resource_hint(trigger)
-
-        plan: list[tuple[str, dict[str, Any]]] = [
-            ("GetResources", {"resource_type": "pods", "namespace": _trigger_namespace(trigger)}),
-            ("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-            ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-            ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": _trigger_namespace(trigger)}),
-        ]
-        if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
-            plan.append(("GetAlerts", {"namespace": _trigger_namespace(trigger)}))
-
+        namespace = _trigger_namespace(trigger)
         available = set(tool_provider.available_tools())
-        for tool_name, args in plan[: self.max_tool_probes]:
-            if tool_name not in available:
-                continue
+
+        def run(tool_name: str, args: dict[str, Any]) -> str | None:
+            if tool_name not in available or len(results) >= self.max_tool_probes:
+                return None
             result = self._invoke_tool_probe(trigger, tool_provider, tool_name, args)
             results.append(result)
             findings.extend(result.findings)
             citations.extend(result.citations)
+            collected: list[str] = []
             for finding in result.findings:
                 summary = finding.get("summary")
                 if isinstance(summary, str):
                     observed_text.append(summary)
+                    collected.append(summary)
                 details = finding.get("details") or {}
                 output_text = details.get("output_text") if isinstance(details, dict) else None
                 if isinstance(output_text, str):
                     observed_text.append(output_text)
+                    collected.append(output_text)
+            return "\n".join(collected) if collected else None
+
+        get_resources_text = run("GetResources", {"resource_type": "pods", "namespace": namespace})
+        suspect = _discover_suspect_resource(get_resources_text) or _suspect_resource_hint(trigger)
+        if suspect:
+            run("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": namespace})
+            run("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace})
+            run("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace})
+        if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
+            run("GetAlerts", {"namespace": namespace})
 
         ranked = rank_root_causes(observed_text)
         if ranked:
@@ -297,6 +410,8 @@ class InvestigationService:
         context: dict[str, Any],
         *,
         tool_provider: InvestigationToolProvider | None = None,
+        registry: ToolRegistry | None = None,
+        planner: LoopPlanner | None = None,
     ) -> InvestigationPlan:
         probes = [
             {
@@ -332,7 +447,21 @@ class InvestigationService:
                     "read_only": True,
                 }
             )
-        if tool_provider is not None:
+        if registry is not None and planner is not None:
+            for definition in registry.list_definitions(
+                domain=getattr(planner, "domain", None),
+                mutation_class="read_only",
+            ):
+                probes.append(
+                    {
+                        "probe_id": f"probe_tool_{definition.name.lower()}",
+                        "name": definition.name,
+                        "purpose": definition.description,
+                        "read_only": True,
+                        "provider": definition.domain,
+                    }
+                )
+        elif tool_provider is not None:
             for tool_name in tool_provider.available_tools():
                 probes.append(
                     {
@@ -356,8 +485,15 @@ class InvestigationService:
                 "max_probes": self.max_probes,
                 "max_total_latency_ms": self.max_total_latency_ms,
                 "max_tool_probes": self.max_tool_probes,
-                "tool_provider": tool_provider.name if tool_provider else None,
-                "mode": "tool_loop" if tool_provider is not None else "deterministic_builtin",
+                "tool_provider": (
+                    getattr(planner, "domain", None) if planner is not None
+                    else (tool_provider.name if tool_provider else None)
+                ),
+                "mode": (
+                    "harness_loop"
+                    if registry is not None and planner is not None
+                    else ("tool_loop" if tool_provider is not None else "deterministic_builtin")
+                ),
             },
             probes=probes,
         )
@@ -547,6 +683,53 @@ def _trigger_namespace(trigger: Trigger) -> str | None:
     related = trigger.related_context or {}
     namespace = related.get("cloudopsbench_namespace") or related.get("namespace")
     return str(namespace) if namespace else None
+
+
+_RESOURCE_LINE_RE = re.compile(
+    r"^\s*([a-z][a-z0-9-]+(?:-[a-f0-9]+)?)\s+(\d+)/(\d+)\s+([A-Za-z]+)\b"
+)
+_HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
+
+
+def _discover_suspect_resource(get_resources_text: str | None) -> str | None:
+    """Pull the unhealthy resource name out of ``GetResources`` output.
+
+    Cloud-OpsBench tool caches return ``GetResources`` as ``kubectl get
+    pods``-style text: ``<name> <ready>/<desired> <status> ...``. The
+    suspect for follow-up probes is the first row whose status is not
+    ``Running`` or whose ready count is below desired — that's the pod
+    the operator would describe next. When everything looks healthy the
+    function returns ``None`` and the caller falls back to the trigger
+    hint, preserving prior behavior.
+    """
+
+    if not get_resources_text:
+        return None
+    for line in get_resources_text.splitlines():
+        match = _RESOURCE_LINE_RE.match(line)
+        if not match:
+            continue
+        name, ready, desired, status = match.groups()
+        unhealthy_status = status.lower() not in {"running", "completed", "succeeded"}
+        below_ready = int(ready) < int(desired)
+        if unhealthy_status or below_ready:
+            return _strip_replicaset_suffix(name)
+    return None
+
+
+def _strip_replicaset_suffix(name: str) -> str:
+    """``frontend-7c9f-abc12`` → ``frontend``.
+
+    CloudOps tool caches sometimes key on the deployment name and
+    sometimes on the pod name. Stripping the trailing replicaset/pod
+    suffix lets a single suspect string match either form during
+    substring lookup.
+    """
+
+    parts = name.split("-")
+    while parts and len(parts) > 1 and _HEX_SUFFIX_RE.fullmatch(parts[-1]):
+        parts.pop()
+    return "-".join(parts) if parts else name
 
 
 def _suspect_resource_hint(trigger: Trigger) -> str:
