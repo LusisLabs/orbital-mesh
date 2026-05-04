@@ -43,6 +43,7 @@ from .tool_provider import InvestigationToolProvider
 
 
 ProbeFn = Callable[[Trigger, dict[str, Any], dict[str, Any]], tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]
+ProviderProbeStep = tuple[str, dict[str, Any], str]
 
 
 class InvestigationService:
@@ -300,30 +301,13 @@ class InvestigationService:
     ]:
         """Bounded hypothesis loop driven by a read-only tool provider.
 
-        The loop is adaptive: ``GetResources`` always runs first, and the
-        suspect resource for follow-up probes is *discovered* from its
-        output rather than guessed from the trigger. In hidden-mode
-        snapshots the trigger redacts the real service name, so a fixed
-        plan keyed on ``trigger.service`` would miss the cache. Reading
-        the inventory text and pulling out the unhealthy object's name
-        is what lets ``DescribeResource``/``GetAppYAML``/``GetErrorLogs``
-        actually hit a populated cache key.
-
-        Sequence:
-
-        1. ``GetResources`` — gives the agent eyes on the pod/service
-           inventory. Required in every Cloud-OpsBench case.
-        2. *Observe* — pull the most likely unhealthy resource name from
-           the inventory text. Fall back to the trigger hint.
-        3. ``DescribeResource`` on the discovered suspect.
-        4. ``GetAppYAML`` for the same resource.
-        5. ``GetErrorLogs`` for the same resource.
-        6. ``GetAlerts`` if the trigger carries alert metadata.
-
-        Each invocation produces one ``InvestigationProbeResult`` whose
-        ``name`` is the canonical tool family (``GetResources`` etc.) so
-        scoring can credit ``tool_coverage``. Findings include raw
-        observations and a ranked-root-cause list from the ontology.
+        The provider-backed path plans one probe at a time from observed
+        evidence. ``GetResources`` is still the first high-value CloudOps
+        observation when available, but follow-up probes are selected
+        only when the inventory, event text, logs, alerts, or trigger
+        metadata create a concrete reason to ask for that evidence. The
+        loop stops once no uncalled available tool is expected to add
+        evidence value, instead of walking a fixed tool order.
         """
 
         observed_text: list[str] = []
@@ -332,14 +316,22 @@ class InvestigationService:
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
         root_cause_candidates: list[dict[str, Any]] = []
-        stop_reason = "tool_probe_budget_exhausted"
-        namespace = _trigger_namespace(trigger)
         available = set(tool_provider.available_tools())
+        called: set[tuple[str, str]] = set()
+        suspect: str | None = None
+        stop_reason = "evidence_value_exhausted"
 
-        def run(tool_name: str, args: dict[str, Any]) -> str | None:
+        def run(tool_name: str, args: dict[str, Any], selection_reason: str) -> str | None:
             if tool_name not in available or len(results) >= self.max_tool_probes:
                 return None
-            result = self._invoke_tool_probe(trigger, tool_provider, tool_name, args)
+            called.add((tool_name, _arg_summary(args)))
+            result = self._invoke_tool_probe(
+                trigger,
+                tool_provider,
+                tool_name,
+                args,
+                selection_reason=selection_reason,
+            )
             results.append(result)
             findings.extend(result.findings)
             citations.extend(result.citations)
@@ -357,14 +349,25 @@ class InvestigationService:
                     collected.append(output_text)
             return "\n".join(collected) if collected else None
 
-        get_resources_text = run("GetResources", {"resource_type": "pods", "namespace": namespace})
-        suspect = _discover_suspect_resource(get_resources_text) or _suspect_resource_hint(trigger)
-        if suspect:
-            run("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": namespace})
-            run("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace})
-            run("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace})
-        if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
-            run("GetAlerts", {"namespace": namespace})
+        while len(results) < self.max_tool_probes:
+            next_step = _next_provider_probe(
+                trigger=trigger,
+                available=available,
+                called=called,
+                observed_text=observed_text,
+                suspect=suspect,
+            )
+            if next_step is None:
+                break
+            tool_name, args, selection_reason = next_step
+            collected = run(tool_name, args, selection_reason)
+            if tool_name == "GetResources":
+                suspect = _discover_suspect_resource(collected) or suspect
+            elif suspect is None:
+                suspect = _suspect_resource_hint(trigger) or None
+
+        if len(results) >= self.max_tool_probes:
+            stop_reason = "tool_probe_budget_exhausted"
 
         ranked = rank_root_causes(observed_text)
         if ranked:
@@ -386,6 +389,8 @@ class InvestigationService:
         tool_provider: InvestigationToolProvider,
         tool_name: str,
         args: dict[str, Any],
+        *,
+        selection_reason: str | None = None,
     ) -> InvestigationProbeResult:
         # Probe status follows the schema (completed/skipped/failed): a
         # successful tool invocation that returned an empty or error
@@ -416,6 +421,7 @@ class InvestigationService:
                 "args": args,
                 "output_text": output_text,
                 "valid": valid,
+                "selection_reason": selection_reason,
             },
         }
         citations = [_citation(f"{tool_provider.name}:{tool_name}", _arg_summary(args) or tool_name)]
@@ -733,8 +739,8 @@ def _discover_suspect_resource(get_resources_text: str | None) -> str | None:
     suspect for follow-up probes is the first row whose status is not
     ``Running`` or whose ready count is below desired — that's the pod
     the operator would describe next. When everything looks healthy the
-    function returns ``None`` and the caller falls back to the trigger
-    hint, preserving prior behavior.
+    function returns ``None`` and the provider planner stops unless
+    another observed signal justifies a targeted follow-up.
     """
 
     if not get_resources_text:
@@ -782,47 +788,151 @@ def _suspect_resource_hint(trigger: Trigger) -> str:
     return trigger.service or ""
 
 
-def _initial_tool_plan(trigger: Trigger, suspect: str) -> list[tuple[str, dict[str, Any]]]:
-    namespace = _trigger_namespace(trigger)
-    plan: list[tuple[str, dict[str, Any]]] = [
-        ("GetResources", {"resource_type": "pods", "namespace": namespace}),
-    ]
-    if (trigger.related_context or {}).get("cloudopsbench_alert") or (trigger.related_context or {}).get("alerts"):
-        plan.append(("GetAlerts", {"namespace": namespace}))
-    plan.append(("DescribeResource", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
-    return plan
-
-
-def _next_tool_plan(
+def _next_provider_probe(
+    *,
     trigger: Trigger,
-    suspect: str,
-    observed_text: list[str],
+    available: set[str],
     called: set[tuple[str, str]],
-) -> list[tuple[str, dict[str, Any]]]:
+    observed_text: list[str],
+    suspect: str | None,
+) -> ProviderProbeStep | None:
+    namespace = _trigger_namespace(trigger)
+    inventory_args = {"resource_type": "pods", "namespace": namespace}
+    if _probe_is_available_uncalled("GetResources", inventory_args, available, called):
+        return (
+            "GetResources",
+            inventory_args,
+            "inventory_discovery: inspect observed resource health before targeted probes",
+        )
+
+    effective_suspect = suspect
+    if effective_suspect is None and _has_probeable_trigger_or_observed_signal(trigger, observed_text):
+        effective_suspect = _suspect_resource_hint(trigger) or None
+
+    explicit_suspect = _has_explicit_suspect_hint(trigger)
+    if effective_suspect:
+        describe_args = {"resource_type": "pods", "name": effective_suspect, "namespace": namespace}
+        if (explicit_suspect or _has_resource_status_signal(observed_text)) and _probe_is_available_uncalled(
+            "DescribeResource",
+            describe_args,
+            available,
+            called,
+        ):
+            reason_prefix = "explicit_suspect_hint" if explicit_suspect else "resource_status_signal"
+            return (
+                "DescribeResource",
+                describe_args,
+                f"{reason_prefix}: inspect events and conditions for {effective_suspect}",
+            )
+
+    for tool_name, args, reason in _evidence_follow_up_plan(trigger, effective_suspect, observed_text):
+        if _probe_is_available_uncalled(tool_name, args, available, called):
+            return tool_name, args, reason
+    return None
+
+
+def _evidence_follow_up_plan(
+    trigger: Trigger,
+    suspect: str | None,
+    observed_text: list[str],
+) -> list[ProviderProbeStep]:
     namespace = _trigger_namespace(trigger)
     haystack = "\n".join(observed_text).lower()
-    candidates: list[tuple[str, dict[str, Any]]] = []
-    if any(token in haystack for token in ("imagepullbackoff", "errimagepull", "createcontainerconfigerror", "configmap", "secret")):
-        candidates.append(("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace}))
-    if any(token in haystack for token in ("crashloopbackoff", "back-off", "exception", "error", "connection refused", "timeout")):
-        candidates.append(("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
-        candidates.append(("GetRecentLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}))
-    if any(token in haystack for token in ("no endpoints", "targetport", "connection refused", "dns", "no such host")):
-        candidates.append(("CheckServiceConnectivity", {"service": suspect, "namespace": namespace}))
-    if any(token in haystack for token in ("0/", "unschedulable", "taint", "affinity", "insufficient", "node")):
-        candidates.append(("GetClusterConfiguration", {"namespace": namespace}))
-    if not candidates:
-        candidates.extend(
-            [
-                ("GetErrorLogs", {"resource_type": "pods", "name": suspect, "namespace": namespace}),
-                ("GetAppYAML", {"resource_type": "deployment", "name": suspect, "namespace": namespace}),
-            ]
+    candidates: list[ProviderProbeStep] = []
+    if _has_alert_signal(trigger, haystack):
+        candidates.append(("GetAlerts", {"namespace": namespace}, "alert_signal: inspect active alert context"))
+    if not suspect:
+        return candidates
+    if _contains_any(haystack, ("imagepullbackoff", "errimagepull", "invalid image", "manifest unknown", "createcontainerconfigerror", "configmap", "secret")):
+        candidates.append(
+            (
+                "GetAppYAML",
+                {"resource_type": "deployment", "name": suspect, "namespace": namespace},
+                f"image_or_config_signal: inspect deployment spec for {suspect}",
+            )
         )
-    return [
-        (tool_name, args)
-        for tool_name, args in candidates
-        if (tool_name, _arg_summary(args)) not in called
-    ]
+    if _contains_any(haystack, ("crashloopbackoff", "back-off", "exception", "stacktrace", "traceback", "panic", "error", "timeout")):
+        candidates.append(
+            (
+                "GetErrorLogs",
+                {"resource_type": "pods", "name": suspect, "namespace": namespace},
+                f"runtime_failure_signal: inspect error logs for {suspect}",
+            )
+        )
+    if _contains_any(haystack, ("no endpoints", "targetport", "connection refused", "dns", "no such host", "name resolution")):
+        candidates.append(
+            (
+                "CheckServiceConnectivity",
+                {"resource_type": "service", "name": suspect, "namespace": namespace},
+                f"network_or_service_signal: verify service connectivity for {suspect}",
+            )
+        )
+    if _contains_any(haystack, ("0/", "unschedulable", "taint", "affinity", "insufficient", "node")):
+        candidates.append(
+            (
+                "GetClusterConfiguration",
+                {"namespace": namespace},
+                "scheduling_signal: inspect cluster and node configuration",
+            )
+        )
+    if _contains_any(haystack, ("warning", "failed", "event")):
+        candidates.append(
+            (
+                "GetRecentLogs",
+                {"resource_type": "pods", "name": suspect, "namespace": namespace},
+                f"event_signal: inspect recent logs for {suspect}",
+            )
+        )
+    return candidates
+
+
+def _probe_is_available_uncalled(
+    tool_name: str,
+    args: dict[str, Any],
+    available: set[str],
+    called: set[tuple[str, str]],
+) -> bool:
+    return tool_name in available and (tool_name, _arg_summary(args)) not in called
+
+
+def _has_probeable_trigger_or_observed_signal(trigger: Trigger, observed_text: list[str]) -> bool:
+    return _has_explicit_suspect_hint(trigger) or _has_resource_status_signal(observed_text)
+
+
+def _has_explicit_suspect_hint(trigger: Trigger) -> bool:
+    related = trigger.related_context or {}
+    return any(
+        isinstance(related.get(key), str) and related.get(key)
+        for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource")
+    )
+
+
+def _has_resource_status_signal(observed_text: list[str]) -> bool:
+    haystack = "\n".join(observed_text).lower()
+    return _contains_any(
+        haystack,
+        (
+            "0/",
+            "imagepullbackoff",
+            "errimagepull",
+            "crashloopbackoff",
+            "createcontainerconfigerror",
+            "pending",
+            "unschedulable",
+            "no endpoints",
+            "failed",
+            "warning",
+        ),
+    )
+
+
+def _has_alert_signal(trigger: Trigger, haystack: str) -> bool:
+    related = trigger.related_context or {}
+    return bool(related.get("cloudopsbench_alert") or related.get("alerts") or "alert" in haystack)
+
+
+def _contains_any(haystack: str, needles: tuple[str, ...]) -> bool:
+    return any(needle in haystack for needle in needles)
 
 
 def _arg_summary(args: dict[str, Any]) -> str:
