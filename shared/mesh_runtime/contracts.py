@@ -105,6 +105,65 @@ class ScenarioAnalysis(ContractModel):
 
 
 @dataclass
+class InvestigationPlan(ContractModel):
+    schema_name: ClassVar[str] = "investigation-plan.schema.json"
+    plan_id: str
+    trigger_id: str
+    created_at: str
+    objective: str
+    probe_budget: dict[str, Any]
+    probes: list[dict[str, Any]]
+
+
+@dataclass
+class InvestigationProbeResult(ContractModel):
+    schema_name: ClassVar[str] = "investigation-probe-result.schema.json"
+    probe_id: str
+    name: str
+    status: str
+    started_at: str
+    completed_at: str
+    latency_ms: float
+    summary: str
+    findings: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    error: str | None = None
+
+
+@dataclass
+class InvestigationReport(ContractModel):
+    schema_name: ClassVar[str] = "investigation-report.schema.json"
+    report_id: str
+    trigger_id: str
+    created_at: str
+    plan: dict[str, Any]
+    probe_results: list[dict[str, Any]]
+    findings: list[dict[str, Any]]
+    citations: list[dict[str, Any]]
+    uncertainty: float
+    stop_reason: str
+    recommended_next_step: str
+    safety_notes: list[str]
+
+
+@dataclass
+class RcaReport(ContractModel):
+    schema_name: ClassVar[str] = "rca-report.schema.json"
+    report_id: str
+    trigger_id: str
+    created_at: str
+    likely_cause: str
+    confidence: float
+    supporting_evidence: list[str]
+    disconfirming_evidence: list[str]
+    ruled_out_causes: list[str]
+    unknowns: list[str]
+    evidence_checked: list[dict[str, Any]]
+    recommended_next_step: str
+    safety_reason: str
+
+
+@dataclass
 class MemoryCompactionRecord(ContractModel):
     schema_name: ClassVar[str] = "memory-compaction.schema.json"
     compaction_id: str

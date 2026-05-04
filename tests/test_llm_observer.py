@@ -7,11 +7,12 @@ network.
 
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 
 from services.observer import LlmObserver, ObserverConfig
-from services.observer.client import ObserverClientError
+from services.observer.client import ChatMessage, ObserverClientError, chat_completion
 from services.observer.service import _try_parse_json_block
 
 
@@ -123,6 +124,26 @@ class ObserverHappyPathTests(unittest.TestCase):
             )
         self.assertEqual(verdict.verdict, "request_more_evidence")
         self.assertTrue(verdict.promotes_to_escalate())
+
+    def test_observer_passes_prompt_cache_config_to_client(self):
+        body = '{"verdict": "approve", "reason": "cached", "concerns": [], "confidence": 0.8}'
+        cfg = _enabled_config()
+        cfg.provider = "anthropic"
+        cfg.prompt_cache_enabled = True
+        cfg.prompt_cache_mode = "both"
+        cfg.prompt_cache_ttl = "1h"
+        with patch("services.observer.service.chat_completion", return_value=_ok_response(body)) as mocked:
+            LlmObserver(cfg).review(
+                trigger=_BASE_TRIGGER,
+                evidence_pack={},
+                ranked_hypotheses=[],
+                deterministic_decision=_BASE_DET,
+            )
+
+        kwargs = mocked.call_args.kwargs
+        self.assertTrue(kwargs["prompt_cache_enabled"])
+        self.assertEqual(kwargs["prompt_cache_mode"], "both")
+        self.assertEqual(kwargs["prompt_cache_ttl"], "1h")
 
 
 class ObserverDefensiveTests(unittest.TestCase):
@@ -317,6 +338,81 @@ class RetryAfterBudgetTests(unittest.TestCase):
                 max_retries=1,
             )
         self.assertEqual(result, b'{"choices":[]}')
+
+
+class AnthropicPromptCachingTests(unittest.TestCase):
+    class _OkResponse:
+        def __init__(self, payload: dict) -> None:
+            self._raw = json.dumps(payload).encode("utf-8")
+
+        def read(self):
+            return self._raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def _call_anthropic(self, **kwargs):
+        captured: dict[str, object] = {}
+
+        def fake_urlopen(req, timeout):
+            captured["body"] = json.loads(req.data.decode("utf-8"))
+            captured["headers"] = dict(req.header_items())
+            return self._OkResponse(
+                {
+                    "content": [{"type": "text", "text": "ok"}],
+                    "usage": {
+                        "input_tokens": 100,
+                        "cache_creation_input_tokens": 40,
+                        "cache_read_input_tokens": 60,
+                    },
+                }
+            )
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            response = chat_completion(
+                base_url="https://api.anthropic.com",
+                api_key="sk-ant-test",
+                model="claude-haiku-4-5-20251001",
+                messages=[
+                    ChatMessage(role="system", content="static policy", cache_hint=True),
+                    ChatMessage(role="user", content="dynamic incident"),
+                ],
+                provider="anthropic",
+                **kwargs,
+            )
+        return captured, response
+
+    def test_explicit_cache_marks_stable_system_block(self):
+        captured, response = self._call_anthropic()
+
+        body = captured["body"]
+        self.assertNotIn("cache_control", body)
+        self.assertEqual(
+            body["system"][0]["cache_control"],
+            {"type": "ephemeral"},
+        )
+        self.assertEqual(response["_anthropic_cache_creation_input_tokens"], 40)
+        self.assertEqual(response["_anthropic_cache_read_input_tokens"], 60)
+
+    def test_automatic_cache_adds_top_level_cache_control(self):
+        captured, _response = self._call_anthropic(
+            prompt_cache_mode="automatic",
+            prompt_cache_ttl="1h",
+        )
+
+        body = captured["body"]
+        self.assertEqual(body["cache_control"], {"type": "ephemeral", "ttl": "1h"})
+        self.assertNotIn("cache_control", body["system"][0])
+
+    def test_prompt_cache_can_be_disabled(self):
+        captured, _response = self._call_anthropic(prompt_cache_enabled=False)
+
+        body = captured["body"]
+        self.assertNotIn("cache_control", body)
+        self.assertNotIn("cache_control", body["system"][0])
 
 
 if __name__ == "__main__":

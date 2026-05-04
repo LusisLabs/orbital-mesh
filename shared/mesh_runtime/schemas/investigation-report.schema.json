@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/investigation-report.schema.json",
+  "title": "InvestigationReport",
+  "type": "object",
+  "required": [
+    "report_id",
+    "trigger_id",
+    "created_at",
+    "plan",
+    "probe_results",
+    "findings",
+    "citations",
+    "uncertainty",
+    "stop_reason",
+    "recommended_next_step",
+    "safety_notes"
+  ],
+  "properties": {
+    "report_id": { "type": "string" },
+    "trigger_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "plan": { "type": "object" },
+    "probe_results": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "citations": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "uncertainty": { "type": "number" },
+    "stop_reason": { "type": "string" },
+    "recommended_next_step": { "type": "string" },
+    "safety_notes": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

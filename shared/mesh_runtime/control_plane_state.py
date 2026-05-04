@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import threading
 import os
+import queue
+import threading
 import time
 from collections import deque
 from copy import deepcopy
@@ -25,6 +26,13 @@ from .vault import VaultManager
 
 _EVENT_CACHE_SIZE = 512
 _TERMINAL_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator"}
+_VAULT_QUEUE_SIZE = 256
+
+
+def _cache_covers_after(cached: Deque[RunEvent], after_sequence: int) -> bool:
+    if not cached:
+        return True
+    return after_sequence >= cached[0].sequence - 1
 
 
 class FileStateStore:
@@ -53,6 +61,12 @@ class FileStateStore:
         self._packets_path = self._memory_dir / "packets.json"
         self._benchmarks_path = self.state_directory / "benchmarks" / "records.json"
         self._benchmarks_path.parent.mkdir(parents=True, exist_ok=True)
+        self._event_append_lock = threading.Lock()
+        self._vault_queue: queue.Queue[str] | None = None
+        if config.vault_mirror_mode == "async":
+            self._vault_queue = queue.Queue(maxsize=_VAULT_QUEUE_SIZE)
+            self._vault_thread = threading.Thread(target=self._vault_mirror_loop, daemon=True)
+            self._vault_thread.start()
         # Hot cache: SSE subscribers poll list_run_events on a 1s loop; reading
         # JSON from disk + redeserializing is 10-50x more expensive than a
         # deque slice. The tail is bounded per run_id, populated on append
@@ -153,10 +167,12 @@ class FileStateStore:
         return sessions[: filters.limit]
 
     def get_run_session(self, run_id: str) -> RunSession | None:
-        sessions = self.list_run_sessions(limit=200)
-        for session in sessions:
-            if session.run_id == run_id:
-                return session
+        if not self._run_sessions_path.exists():
+            return None
+        with LockedJsonFile(self._run_sessions_path) as payload:
+            for record in payload.get("runs", []):
+                if isinstance(record, dict) and record.get("run_id") == run_id:
+                    return RunSession(**record)
         return None
 
     def get_run(self, run_id: str) -> RunSession | None:
@@ -177,7 +193,11 @@ class FileStateStore:
                 archived = records[self._run_session_file_max_records :]
                 payload["runs"] = records[: self._run_session_file_max_records]
                 self._archive_run_session_records(archived)
-        self._materialize_vault(session.run_id, force=session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES)
+        terminal = session.stage in _TERMINAL_STAGES or session.status in _TERMINAL_STAGES
+        if terminal:
+            self._materialize_vault(session.run_id, force=True)
+        else:
+            self._schedule_materialize_vault(session.run_id)
         return session
 
     def _archive_run_session_records(self, records: list[dict[str, Any]]) -> None:
@@ -204,10 +224,8 @@ class FileStateStore:
         integration_name: str | None = None,
         status: str | None = None,
     ) -> RunEvent:
-        event_path = self._run_events_dir / f"{run_id}.json"
-        with LockedJsonFile(event_path) as event_payload:
-            existing_events = [RunEvent(**record) for record in event_payload.get("events", []) if isinstance(record, dict)]
-            sequence = len(existing_events) + 1
+        with self._event_append_lock:
+            sequence = self._next_event_sequence(run_id)
             event = RunEvent(
                 event_id=f"evt_{sequence:04d}_{uuid4().hex[:8]}",
                 run_id=run_id,
@@ -222,21 +240,15 @@ class FileStateStore:
                 status=status,
             )
             event.merkle_leaf_hash = leaf_hash_for_payload(event.canonical_payload())
-            existing_events.append(event)
-            event_payload["events"] = [record.to_dict() for record in existing_events]
+            self._append_event_record(run_id, event)
 
-        with self._event_cache_lock:
-            tail = self._event_tail_cache.setdefault(
-                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
-            )
-            tail.append(event)
+        self._append_event_to_cache(run_id, event)
 
-        snapshot = self.get_merkle_snapshot(run_id)
         session = self.get_run_session(run_id)
         if session is not None:
             session.latest_event_id = event.event_id
             session.latest_event_sequence = event.sequence
-            session.latest_merkle_root = snapshot.root_hash
+            session.latest_merkle_root = self.get_merkle_snapshot(run_id).root_hash
             session.updated_at = _timestamp()
             self.save_run_session(session)
         return event
@@ -244,26 +256,18 @@ class FileStateStore:
     def append_event(self, run_id: str, event: RunEvent) -> RunEvent:
         if event.run_id != run_id:
             raise ValueError(f"event run_id {event.run_id!r} does not match {run_id!r}")
-        event_path = self._run_events_dir / f"{run_id}.json"
-        with LockedJsonFile(event_path) as event_payload:
-            existing_events = [RunEvent(**record) for record in event_payload.get("events", []) if isinstance(record, dict)]
+        with self._event_append_lock:
             if event.sequence <= 0:
-                event.sequence = len(existing_events) + 1
+                event.sequence = self._next_event_sequence(run_id)
             if not event.merkle_leaf_hash:
                 event.merkle_leaf_hash = leaf_hash_for_payload(event.canonical_payload())
-            existing_events.append(event)
-            event_payload["events"] = [record.to_dict() for record in existing_events]
-        with self._event_cache_lock:
-            tail = self._event_tail_cache.setdefault(
-                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
-            )
-            tail.append(event)
-        snapshot = self.get_merkle_snapshot(run_id)
+            self._append_event_record(run_id, event)
+        self._append_event_to_cache(run_id, event)
         session = self.get_run_session(run_id)
         if session is not None:
             session.latest_event_id = event.event_id
             session.latest_event_sequence = event.sequence
-            session.latest_merkle_root = snapshot.root_hash
+            session.latest_merkle_root = self.get_merkle_snapshot(run_id).root_hash
             session.updated_at = _timestamp()
             self.save_run_session(session)
         return event
@@ -271,30 +275,75 @@ class FileStateStore:
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:
         with self._event_cache_lock:
             cached = self._event_tail_cache.get(run_id)
-            if cached is not None:
+            if cached is not None and _cache_covers_after(cached, after_sequence):
                 return [event for event in cached if event.sequence > after_sequence]
-        event_path = self._run_events_dir / f"{run_id}.json"
+        events = self._load_run_events_from_disk(run_id)
+        return [event for event in events if event.sequence > after_sequence]
+
+    def _load_run_events_from_disk(self, run_id: str) -> list[RunEvent]:
+        events = self._load_legacy_run_events(run_id)
+        event_log_path = self._event_log_path(run_id)
+        if event_log_path.exists():
+            with event_log_path.open(encoding="utf-8") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict):
+                        events.append(RunEvent(**record))
+        events = _dedupe_events(events)
+        events.sort(key=lambda event: event.sequence)
+        with self._event_cache_lock:
+            tail = deque(events[-_EVENT_CACHE_SIZE:], maxlen=_EVENT_CACHE_SIZE)
+            self._event_tail_cache[run_id] = tail
+        return events
+
+    def _load_legacy_run_events(self, run_id: str) -> list[RunEvent]:
+        event_path = self._legacy_event_path(run_id)
         if not event_path.exists():
             return []
         with LockedJsonFile(event_path) as payload:
             records = payload.get("events", [])
-            events = [RunEvent(**record) for record in records if isinstance(record, dict)]
+        return [RunEvent(**record) for record in records if isinstance(record, dict)]
+
+    def _next_event_sequence(self, run_id: str) -> int:
+        session = self.get_run_session(run_id)
+        if session is not None and session.latest_event_sequence:
+            return int(session.latest_event_sequence) + 1
+        events = self._load_run_events_from_disk(run_id)
+        return (events[-1].sequence + 1) if events else 1
+
+    def _append_event_record(self, run_id: str, event: RunEvent) -> None:
+        path = self._event_log_path(run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event.to_dict(), sort_keys=True, separators=(",", ":")) + "\n")
+
+    def _append_event_to_cache(self, run_id: str, event: RunEvent) -> None:
         with self._event_cache_lock:
-            # Warm the cache with whatever we just loaded; subsequent polls hit
-            # the hot path.
-            tail = deque(events[-_EVENT_CACHE_SIZE:], maxlen=_EVENT_CACHE_SIZE)
-            self._event_tail_cache[run_id] = tail
-        return [event for event in events if event.sequence > after_sequence]
+            tail = self._event_tail_cache.setdefault(
+                run_id, deque(maxlen=_EVENT_CACHE_SIZE)
+            )
+            tail.append(event)
+
+    def _legacy_event_path(self, run_id: str) -> Path:
+        return self._run_events_dir / f"{run_id}.json"
+
+    def _event_log_path(self, run_id: str) -> Path:
+        return self._run_events_dir / f"{run_id}.jsonl"
 
     def list_events(self, run_id: str) -> list[RunEvent]:
         return self.list_run_events(run_id)
 
     def get_merkle_snapshot(self, run_id: str):
-        events = self.list_run_events(run_id)
+        events = self._load_run_events_from_disk(run_id)
         return build_merkle_snapshot(run_id, events)
 
     def get_merkle_proof(self, run_id: str, event_id: str):
-        events = self.list_run_events(run_id)
+        events = self._load_run_events_from_disk(run_id)
         return build_merkle_proof(run_id, events, event_id)
 
     def record_operator_note(self, run_id: str, note: str) -> RunSession | None:
@@ -493,6 +542,28 @@ class FileStateStore:
     def read_document(self, relative_path: str) -> dict[str, str]:
         return self.vault.read_document(relative_path)
 
+    def _schedule_materialize_vault(self, run_id: str) -> None:
+        if self.config.vault_mirror_mode == "off":
+            return
+        if self._vault_queue is None:
+            self._materialize_vault(run_id)
+            return
+        try:
+            self._vault_queue.put_nowait(run_id)
+        except queue.Full:
+            # Backpressure on the audit mirror must not block remediation.
+            # Materialize the latest snapshot synchronously as a bounded fallback.
+            self._materialize_vault(run_id)
+
+    def _vault_mirror_loop(self) -> None:
+        assert self._vault_queue is not None
+        while True:
+            run_id = self._vault_queue.get()
+            try:
+                self._materialize_vault(run_id)
+            finally:
+                self._vault_queue.task_done()
+
     def _materialize_vault(self, run_id: str, *, force: bool = False) -> None:
         now = time.monotonic()
         last_materialized = self._last_vault_materialized_at.get(run_id)
@@ -511,7 +582,7 @@ class FileStateStore:
                 if candidate.goal_id == session.goal_id:
                     goal = candidate
                     break
-        events = self.list_run_events(run_id)
+        events = self._load_run_events_from_disk(run_id)
         merkle = build_merkle_snapshot(run_id, events)
         self.vault.write_run_bundle(session, events, merkle, goal)
         self._last_vault_materialized_at[run_id] = now
@@ -572,6 +643,13 @@ def _claim_matches(record: dict[str, Any], filters: dict[str, Any]) -> bool:
     if "state" in filters and filters["state"] is not None and record.get("state") != filters["state"]:
         return False
     return True
+
+
+def _dedupe_events(events: list[RunEvent]) -> list[RunEvent]:
+    by_id: dict[str, RunEvent] = {}
+    for event in events:
+        by_id[event.event_id] = event
+    return list(by_id.values())
 
 
 def _relationship_matches(

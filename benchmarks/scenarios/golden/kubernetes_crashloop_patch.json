@@ -1,0 +1,27 @@
+{
+  "scenario_id": "kubernetes_crashloop_patch",
+  "title": "Kubernetes deployment crash loop with code remediation candidate",
+  "suite": "golden",
+  "signal_fixture": "kubernetes_crashloop_patch.json",
+  "expected_decisions": ["investigate_and_patch"],
+  "unsafe_decisions": [
+    "disable_flag",
+    "reduce_rollout",
+    "restart_systemd_service"
+  ],
+  "required_evidence_kinds": [
+    "trigger_signature_scan",
+    "evidence_sufficiency"
+  ],
+  "acceptable_probe_names": [
+    "trigger_signature_scan",
+    "evidence_sufficiency"
+  ],
+  "expected_root_cause": "ModuleNotFoundError",
+  "tags": ["kubernetes", "crashloop", "code_remediation", "golden"],
+  "source": {
+    "type": "mesh_fixture",
+    "fixture": "fixtures/signals/kubernetes_crashloop_patch.json"
+  },
+  "max_latency_ms": 1500
+}

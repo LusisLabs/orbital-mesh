@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/rca-report.schema.json",
+  "title": "RcaReport",
+  "type": "object",
+  "required": [
+    "report_id",
+    "trigger_id",
+    "created_at",
+    "likely_cause",
+    "confidence",
+    "supporting_evidence",
+    "disconfirming_evidence",
+    "ruled_out_causes",
+    "unknowns",
+    "evidence_checked",
+    "recommended_next_step",
+    "safety_reason"
+  ],
+  "properties": {
+    "report_id": { "type": "string" },
+    "trigger_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "likely_cause": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "supporting_evidence": { "type": "array", "items": { "type": "string" } },
+    "disconfirming_evidence": { "type": "array", "items": { "type": "string" } },
+    "ruled_out_causes": { "type": "array", "items": { "type": "string" } },
+    "unknowns": { "type": "array", "items": { "type": "string" } },
+    "evidence_checked": {
+      "type": "array",
+      "items": { "type": "object", "additionalProperties": true }
+    },
+    "recommended_next_step": { "type": "string" },
+    "safety_reason": { "type": "string" }
+  },
+  "additionalProperties": false
+}

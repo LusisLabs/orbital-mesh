@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/investigation-probe-result.schema.json",
+  "title": "InvestigationProbeResult",
+  "type": "object",
+  "required": [
+    "probe_id",
+    "name",
+    "status",
+    "started_at",
+    "completed_at",
+    "latency_ms",
+    "summary",
+    "findings",
+    "citations"
+  ],
+  "properties": {
+    "probe_id": { "type": "string" },
+    "name": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "skipped", "failed"]
+    },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "latency_ms": { "type": "number" },
+    "summary": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "citations": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "error": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/investigation-plan.schema.json",
+  "title": "InvestigationPlan",
+  "type": "object",
+  "required": [
+    "plan_id",
+    "trigger_id",
+    "created_at",
+    "objective",
+    "probe_budget",
+    "probes"
+  ],
+  "properties": {
+    "plan_id": { "type": "string" },
+    "trigger_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "objective": { "type": "string" },
+    "probe_budget": {
+      "type": "object",
+      "properties": {
+        "max_probes": { "type": "integer" },
+        "max_total_latency_ms": { "type": "integer" },
+        "mode": { "type": "string" }
+      }
+    },
+    "probes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["probe_id", "name", "purpose", "read_only"],
+        "properties": {
+          "probe_id": { "type": "string" },
+          "name": { "type": "string" },
+          "purpose": { "type": "string" },
+          "read_only": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

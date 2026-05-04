@@ -19,6 +19,7 @@ _ACTIONABLE_RECOMMENDATIONS = {
     "investigate_and_patch",
     "rollback_deployment",
     "restart_deployment",
+    "restart_systemd_service",
 }
 
 
@@ -33,6 +34,8 @@ class ScenarioAnalysisInput:
     recovery_patterns: dict[str, int]
     memory_packet: dict[str, Any]
     recent_runs: list[dict[str, Any]]
+    reasoning_bank_packet: dict[str, Any]
+    investigation_report: dict[str, Any]
 
 
 class Analyzer(Protocol):
@@ -58,6 +61,8 @@ class ScenarioAnalysisService:
         self.analyzers = analyzers or [
             RegressionAnalyzer(),
             KubernetesAnalyzer(),
+            RethNodeAnalyzer(),
+            InvestigationAnalyzer(),
             HistoricalOutcomeAnalyzer(),
             RiskScopeAnalyzer(),
             MemoryRelevanceAnalyzer(),
@@ -70,12 +75,25 @@ class ScenarioAnalysisService:
         *,
         run_id: str | None = None,
         reasoning_bank_packet: dict[str, Any] | None = None,
+        investigation_report: dict[str, Any] | None = None,
     ) -> tuple[ScenarioAnalysis, Any | None]:
-        payload = self._build_input(trigger, run_id, reasoning_bank_packet=reasoning_bank_packet)
+        payload = self._build_input(
+            trigger,
+            run_id,
+            reasoning_bank_packet=reasoning_bank_packet,
+            investigation_report=investigation_report,
+        )
         evidence_nodes: list[EvidenceNode] = []
         subdecisions: list[Subdecision] = []
 
         for analyzer in self.analyzers:
+            if isinstance(analyzer, InvestigationAnalyzer) and not payload.investigation_report:
+                continue
+            if (
+                isinstance(analyzer, InvestigationAnalyzer)
+                and payload.investigation_report.get("stop_reason") == "investigation_failed_existing_path_continues"
+            ):
+                continue
             analyzer_evidence, subdecision = analyzer.analyze(payload)
             evidence_nodes.extend(analyzer_evidence)
             subdecisions.append(subdecision)
@@ -90,6 +108,22 @@ class ScenarioAnalysisService:
                 if reasoning_bank_packet is not None
                 else self._retrieve_memory_packet(trigger, run_id)
             )
+            if not refreshed_packet.get("claims") and not refreshed_packet.get("procedures"):
+                refreshed_packet = {
+                    "claims": [
+                        {
+                            "statement": evidence.summary,
+                            "tier": evidence.kind,
+                            "state": "active",
+                            "confidence": evidence.confidence,
+                            "supporting_observation_ids": [],
+                            "updated_at": _timestamp(),
+                        }
+                        for evidence in evidence_nodes
+                        if _should_persist_evidence(evidence)
+                    ],
+                    "procedures": [],
+                }
             memory_record = self.active_memory.project_packet(
                 run_id=run_id,
                 service=trigger.service,
@@ -122,6 +156,7 @@ class ScenarioAnalysisService:
         run_id: str | None,
         *,
         reasoning_bank_packet: dict[str, Any] | None = None,
+        investigation_report: dict[str, Any] | None = None,
     ) -> ScenarioAnalysisInput:
         source_event_ids = _source_event_ids(self.state_store, run_id)
         service_context = self.context_store.get_service_context(trigger.service) if self.context_store else {}
@@ -146,6 +181,8 @@ class ScenarioAnalysisService:
             recovery_patterns=recovery_patterns,
             memory_packet=memory_packet,
             recent_runs=_recent_runs(self.state_store, trigger.service, run_id),
+            reasoning_bank_packet=dict(reasoning_bank_packet or {}),
+            investigation_report=investigation_report or {},
         )
 
     def _retrieve_memory_packet(self, trigger: Trigger, run_id: str | None) -> dict[str, Any]:
@@ -165,7 +202,7 @@ class ScenarioAnalysisService:
         if self.state_store is None or not hasattr(self.state_store, "append_observation"):
             return observation_ids
         for evidence in evidence_nodes:
-            if not evidence.trusted:
+            if not _should_persist_evidence(evidence):
                 continue
             observation = ObservationRecord(
                 observation_id=f"obs_{uuid4().hex[:12]}",
@@ -190,7 +227,9 @@ class ScenarioAnalysisService:
         if self.state_store is None or not hasattr(self.state_store, "save_claim"):
             return
         for evidence in evidence_nodes:
-            if not evidence.trusted or evidence.confidence < 0.55:
+            if not _should_persist_evidence(evidence) or evidence.confidence < 0.55:
+                continue
+            if _claim_exists(self.state_store, service, evidence):
                 continue
             factors = {
                 "support_score": support_score(1),
@@ -324,6 +363,135 @@ class KubernetesAnalyzer:
             reasons,
             [evidence.evidence_id],
             requires_review,
+        )
+
+
+class RethNodeAnalyzer:
+    name = "reth_node"
+
+    def analyze(self, payload: ScenarioAnalysisInput) -> tuple[list[EvidenceNode], Subdecision]:
+        trigger = payload.trigger
+        if trigger.trigger_type != "reth_node_degraded":
+            return _single_evidence_subdecision(
+                payload,
+                self.name,
+                kind="not_applicable",
+                summary="No Reth node evidence applies to this trigger.",
+                recommendation="no_action",
+                confidence=0.6,
+                risk_level="low",
+                reasons=["trigger is not a Reth node degradation"],
+                requires_review=False,
+            )
+
+        rc = trigger.related_context
+        signatures = set(str(sig) for sig in rc.get("error_signatures", []))
+        unsafe = signatures & {
+            "authrpc_exposed",
+            "consensus_disconnected",
+            "db_corruption_suspected",
+            "disk_pressure",
+            "jwt_missing",
+            "jwt_secret_insecure_permissions",
+            "restart_frequency_exceeded",
+            "rpc_exposed",
+        }
+        restartable = signatures & {"peer_starvation", "sync_stalled", "rpc_degraded"}
+        if unsafe:
+            recommendation = "escalate"
+            confidence = 0.84
+            risk_level = "high"
+            requires_review = True
+            reasons = [f"Reth unsafe signature(s): {', '.join(sorted(unsafe))}"]
+        elif restartable:
+            recommendation = "restart_systemd_service"
+            confidence = 0.76
+            risk_level = "medium"
+            requires_review = True
+            reasons = ["Reth restartable signature requires approval-gated systemd remediation"]
+        else:
+            recommendation = "no_action"
+            confidence = 0.68
+            risk_level = "low"
+            requires_review = False
+            reasons = ["Reth trigger did not carry actionable signatures"]
+
+        evidence = _evidence(
+            payload,
+            self.name,
+            "reth_node_health",
+            f"Reth node signatures: {', '.join(sorted(signatures)) or 'none'}.",
+            {
+                "error_signatures": sorted(signatures),
+                "node": rc.get("node", {}),
+                "execution": rc.get("execution", {}),
+                "consensus": rc.get("consensus", {}),
+                "storage": rc.get("storage", {}),
+                "rpc": rc.get("rpc", {}),
+            },
+            confidence,
+            bool(signatures),
+        )
+        return [evidence], _subdecision(
+            self.name,
+            recommendation,
+            confidence,
+            risk_level,
+            reasons,
+            [evidence.evidence_id],
+            requires_review,
+        )
+
+
+class InvestigationAnalyzer:
+    name = "investigation"
+
+    def analyze(self, payload: ScenarioAnalysisInput) -> tuple[list[EvidenceNode], Subdecision]:
+        report = payload.investigation_report or {}
+        if not report:
+            return _single_evidence_subdecision(
+                payload,
+                self.name,
+                kind="not_applicable",
+                summary="No investigation report is attached to this run.",
+                recommendation="no_action",
+                confidence=0.6,
+                risk_level="low",
+                reasons=["investigation stage not present"],
+                requires_review=False,
+            )
+        stop_reason = str(report.get("stop_reason", "unknown"))
+        findings = list(report.get("findings", []) or [])
+        uncertainty = float(report.get("uncertainty", 0.5) or 0.5)
+        failed = stop_reason == "investigation_failed_existing_path_continues"
+        summary = (
+            "Investigation failed; scenario analysis will continue with existing evidence."
+            if failed
+            else f"Investigation produced {len(findings)} finding(s) with uncertainty {uncertainty:.2f}."
+        )
+        evidence = _evidence(
+            payload,
+            self.name,
+            "investigation_report",
+            summary,
+            {
+                "report_id": report.get("report_id"),
+                "stop_reason": stop_reason,
+                "uncertainty": uncertainty,
+                "finding_count": len(findings),
+                "citations": list(report.get("citations", []) or [])[:8],
+            },
+            0.0 if failed else max(0.5, min(1.0 - uncertainty, 0.9)),
+            not failed,
+        )
+        return [evidence], _subdecision(
+            self.name,
+            "no_action",
+            evidence.confidence,
+            "low",
+            ["investigation is advisory and does not bypass live evidence"],
+            [evidence.evidence_id],
+            False,
         )
 
 
@@ -461,7 +629,11 @@ class EdgeCaseAnalyzer:
         corroborating_evidence = int(recovery_context.get("corroborating_evidence_count", 0) or 0)
         reasons: list[str] = []
         resolved: list[str] = []
-        if trigger.trigger_type not in {"feature_flag_performance_regression", "kubernetes_deployment_unhealthy"}:
+        if trigger.trigger_type not in {
+            "feature_flag_performance_regression",
+            "kubernetes_deployment_unhealthy",
+            "reth_node_degraded",
+        }:
             reasons.append(f"unclassified trigger type {trigger.trigger_type}")
         if trigger.related_context.get("conflicting_signals"):
             if corroborating_evidence >= 2:
@@ -616,6 +788,34 @@ def _single_evidence_subdecision(
     return [evidence], _subdecision(analyzer, recommendation, confidence, risk_level, reasons, [evidence.evidence_id], requires_review)
 
 
+def _should_persist_evidence(evidence: EvidenceNode) -> bool:
+    if not evidence.trusted:
+        return False
+    if evidence.kind == "not_applicable":
+        return False
+    if evidence.analyzer == "memory_relevance":
+        payload = evidence.payload if isinstance(evidence.payload, dict) else {}
+        if not payload.get("verified_claims") and not payload.get("verified_procedures"):
+            return False
+    if evidence.confidence < 0.7 and evidence.kind in {"active_memory", "historical_outcomes"}:
+        return False
+    return True
+
+
+def _claim_exists(state_store: Any, service: str, evidence: EvidenceNode) -> bool:
+    if not hasattr(state_store, "list_claims"):
+        return False
+    for record in state_store.list_claims({"service": service}, {"limit": 200}):
+        if (
+            record.get("statement") == evidence.summary
+            and service in record.get("entity_refs", [])
+            and evidence.analyzer in record.get("entity_refs", [])
+            and record.get("state", "active") == "active"
+        ):
+            return True
+    return False
+
+
 def _recovery_context(payload: ScenarioAnalysisInput) -> dict[str, Any]:
     raw = payload.trigger.related_context.get("recovery_context")
     return dict(raw) if isinstance(raw, dict) else {}
@@ -676,6 +876,13 @@ def _base_suggestion(trigger: Trigger) -> str:
         if signatures.intersection({"crash_loop", "probe_failure", "oom_killed", "application_error"}):
             return "restart_deployment"
         return "escalate"
+    if trigger.trigger_type == "reth_node_degraded":
+        signatures = set(trigger.related_context.get("error_signatures", []))
+        if signatures.intersection({"peer_starvation", "sync_stalled", "rpc_degraded"}):
+            return "restart_systemd_service"
+        if signatures:
+            return "escalate"
+        return "no_action"
     timeout_rate = trigger.metrics.get("observed_timeout_rate") or 0.0
     latency_delta = _delta_pct(trigger.metrics.get("baseline_p95_latency_ms") or 0, trigger.metrics.get("observed_p95_latency_ms") or 0)
     error_ratio = _ratio(trigger.metrics.get("baseline_error_rate") or 0, trigger.metrics.get("observed_error_rate") or 0)

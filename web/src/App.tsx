@@ -413,7 +413,7 @@ export default function App() {
     const proofEventId =
       selectedEventId ||
       activeRun.events.find((e) =>
-        ["decision_ready", "evaluation_ready", "execution_recorded", "feedback_recorded"].includes(e.event_type),
+        ["investigation_ready", "decision_ready", "evaluation_ready", "execution_recorded", "feedback_recorded"].includes(e.event_type),
       )?.event_id;
     if (proofEventId) {
       void api.getMerkleProof(baseUrl, activeRun.run_id, proofEventId).then(setMerkleProof).catch(() => setMerkleProof(null));

@@ -4,6 +4,7 @@ import copy
 import json
 import logging
 import os
+import queue
 import re
 import shutil
 import threading
@@ -17,6 +18,8 @@ from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
 from services.evidence import EvidencePack, EvidenceService
+from services.evidence.runners import build_configured_probe_runner
+from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
 from services.ingest.webhook_service import (
     WebhookIngestService,
     build_signal_from_alert,
@@ -38,8 +41,10 @@ from shared.mesh_runtime import (
     EVALUATION_READY,
     EXECUTION_RECORDED,
     FEEDBACK_RECORDED,
+    HYPOTHESIS_RANKED,
     INTEGRATION_ARTIFACT_RECORDED,
     INTEGRATION_READINESS_RECORDED,
+    INVESTIGATION_READY,
     MEMORY_COMPACTION_RECORDED,
     NORMALIZED_EVENT,
     NO_TRIGGER,
@@ -292,7 +297,9 @@ class RunCoordinator:
         # See docs/plans/node-evidence-loop.md for design notes. The
         # service is pure (no I/O at this layer) — live probe runners are
         # injected by the caller when enrichment is needed.
-        self.evidence = EvidenceService()
+        self.evidence = EvidenceService(probe_runner=build_configured_probe_runner(self.config))
+        self.investigation = InvestigationService()
+        self.reth_planner = RethInvestigationPlanner(self.config)
         self.deferred_runs = DeferredRunStore(self.config.state_directory)
         self._deferred_stop = threading.Event()
         self._deferred_thread = threading.Thread(target=self._deferred_recheck_loop, daemon=True)
@@ -304,6 +311,15 @@ class RunCoordinator:
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._run_queue: queue.Queue[tuple[str, RuntimeConfig, dict[str, Any], str | None]] = queue.Queue(
+            maxsize=self.config.run_queue_size
+        )
+        self._run_workers = [
+            threading.Thread(target=self._run_worker_loop, name=f"mesh-run-worker-{idx + 1}", daemon=True)
+            for idx in range(self.config.run_worker_count)
+        ]
+        for worker in self._run_workers:
+            worker.start()
         # Typed watcher registry (replaces the single-threaded WatchDaemon).
         # The legacy env-var path (MESH_WATCH_TARGETS) is handled by the compat
         # shim below, so existing deployments require no config change.
@@ -690,10 +706,20 @@ class RunCoordinator:
         session = self.state_store.get_run_session(run_id)
         if session is None:
             return None
+        latest_sequence = int(session.latest_event_sequence or 0)
+        after_sequence = max(0, latest_sequence - 200)
+        events = self.state_store.list_run_events(run_id, after_sequence=after_sequence)
         return {
             **session.to_dict(),
-            "events": [event.to_dict() for event in self.state_store.list_run_events(run_id)],
-            "merkle": self.state_store.get_merkle_snapshot(run_id).to_dict(),
+            "events": [event.to_dict() for event in events],
+            "events_truncated": after_sequence > 0,
+            "event_count": latest_sequence,
+            "merkle": {
+                "run_id": run_id,
+                "root_hash": session.latest_merkle_root,
+                "leaf_count": latest_sequence,
+                "event_ids": [event.event_id for event in events],
+            },
         }
 
     def list_simulations(self) -> list[dict[str, Any]]:
@@ -806,6 +832,8 @@ class RunCoordinator:
         if session is None:
             raise KeyError(run_id)
         tasks = session.artifacts.get("agent_tasks", [])
+        if isinstance(tasks, dict):
+            return [tasks]
         return list(tasks) if isinstance(tasks, list) else []
 
     def create_run(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -847,20 +875,59 @@ class RunCoordinator:
         )
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
-        worker = threading.Thread(
-            target=self._execute_chaos_probe_run if payload.get("chaos_probe") is True else self._execute_run,
-            args=(session.run_id, run_config, signal_payload, scenario_key),
-            daemon=True,
+        readiness_snapshot = build_readiness(run_config).to_dict()
+        self._set_artifact(session.run_id, "integration_readiness", readiness_snapshot)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": scenario_key,
+                "goal_id": goal_id,
+                "steering_mode": steering_mode,
+                "pause_points": pause_points,
+            },
+            summary={"status": "queued"},
+            status="queued",
         )
-        with self._lock:
-            self._threads[session.run_id] = worker
-        worker.start()
-        # Return the full run snapshot (events + merkle) for backwards
-        # compatibility with callers that read those fields immediately
-        # after submit. ``_run_session_summary`` was a regression that
-        # silently broke external integrations; ``get_run`` is the
-        # contract create_run has always met.
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=INTEGRATION_READINESS_RECORDED,
+            payload=readiness_snapshot,
+            summary={
+                "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
+                "goose_ready": readiness_snapshot["goose"]["ready"],
+                "evo_ready": readiness_snapshot["evo"]["ready"],
+            },
+            artifact_key="integration_readiness",
+            status="captured",
+        )
+        try:
+            self._run_queue.put_nowait((session.run_id, run_config, signal_payload, scenario_key))
+        except queue.Full:
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="failed",
+                event_type=RUN_FAILED,
+                payload={"error": "run queue is full", "queue_size": self.config.run_queue_size},
+                summary={"status": "overloaded"},
+                status="failed",
+            )
+            self._update_session(session.run_id, stage="failed", status="failed")
+            self._finalize_run(session.run_id)
+            return self.get_run(session.run_id) or session.to_dict()
         return self.get_run(session.run_id) or session.to_dict()
+
+    def _run_worker_loop(self) -> None:
+        while True:
+            run_id, run_config, signal_payload, scenario_key = self._run_queue.get()
+            try:
+                with self._lock:
+                    self._threads[run_id] = threading.current_thread()
+                self._execute_run(run_id, run_config, signal_payload, scenario_key)
+            finally:
+                self._run_queue.task_done()
 
     def steer_run(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         command_type = payload.get("command")
@@ -1058,6 +1125,7 @@ class RunCoordinator:
                 break
 
             chaos_probe = self._is_chaos_probe_run(run_id)
+            investigation_plan = None
             evidence_pack: EvidencePack | None = None
             if chaos_probe:
                 self._update_session(run_id, stage="evidence_pack_ready", status="running")
@@ -1075,8 +1143,16 @@ class RunCoordinator:
                     status="skipped",
                 )
             else:
+                investigation_plan = self._record_reth_investigation_plan(run_id, trigger, signal_payload)
                 try:
-                    evidence_pack = self._record_evidence_pack(run_id, trigger, signal_payload)
+                    evidence_pack = self._record_evidence_pack(
+                        run_id,
+                        trigger,
+                        signal_payload,
+                        investigation_plan=(
+                            investigation_plan.to_dict() if investigation_plan is not None else None
+                        ),
+                    )
                 except Exception as exc:
                     # Evidence stage failure is non-fatal: the pipeline falls
                     # back to reading the inbound signal directly. The run log
@@ -1095,6 +1171,7 @@ class RunCoordinator:
 
             reasoning_bank_packet = None
             scenario_analysis = None
+            investigation_report = None
             if chaos_probe:
                 self.state_store.append_run_event(
                     run_id,
@@ -1102,7 +1179,7 @@ class RunCoordinator:
                     event_type=INTEGRATION_ARTIFACT_RECORDED,
                     payload={
                         "reason": "chaos_probe_fast_path",
-                        "skipped": ["reasoning_bank", "scenario_analysis"],
+                        "skipped": ["reasoning_bank", "investigation", "scenario_analysis"],
                     },
                     summary={"status": "skipped", "reason": "chaos_probe_fast_path"},
                     artifact_key="chaos_probe_fast_path",
@@ -1120,10 +1197,36 @@ class RunCoordinator:
                     else None
                 )
                 try:
+                    investigation_report = self._record_investigation_report(
+                        run_id,
+                        trigger,
+                        evidence_pack.to_dict() if evidence_pack is not None else None,
+                    )
+                except Exception as exc:
+                    # Investigation is advisory and read-only. A failure here
+                    # must not prevent scenario analysis or the deterministic
+                    # decision/evaluation path from running.
+                    investigation_report = self.investigation.failure_report(trigger=trigger, error=str(exc))
+                    report_payload = investigation_report.to_dict()
+                    self._set_artifact(run_id, "investigation_report", report_payload)
+                    self.state_store.append_run_event(
+                        run_id,
+                        stage="investigation_ready",
+                        event_type=INVESTIGATION_READY,
+                        payload=report_payload,
+                        summary={"status": "failed", "stop_reason": investigation_report.stop_reason},
+                        artifact_key="investigation_report",
+                        status="failed",
+                    )
+                    _LOG.exception("Investigation failed for run %s", run_id)
+                try:
                     scenario_analysis = self._record_scenario_analysis(
                         run_id,
                         trigger,
                         reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
+                        investigation_report=(
+                            investigation_report.to_dict() if investigation_report is not None else None
+                        ),
                     )
                 except Exception as exc:
                     self.state_store.append_run_event(
@@ -1157,6 +1260,7 @@ class RunCoordinator:
                 scenario_analysis=scenario_analysis,
                 evidence_pack=evidence_pack.to_dict() if evidence_pack is not None else None,
                 reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
+                investigation_report=investigation_report.to_dict() if investigation_report is not None else None,
             )
             evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
             if self._maybe_launch_recovery_run(
@@ -1774,6 +1878,8 @@ class RunCoordinator:
         run_id: str,
         trigger: Trigger,
         signal_payload: dict[str, Any],
+        *,
+        investigation_plan: dict[str, Any] | None = None,
     ) -> EvidencePack:
         """Run the evidence stage and stamp the audited pack onto the run.
 
@@ -1795,7 +1901,11 @@ class RunCoordinator:
             status="running",
         )
 
-        pack = self.evidence.assemble(trigger=trigger, signal_payload=signal_payload)
+        pack = self.evidence.assemble(
+            trigger=trigger,
+            signal_payload=signal_payload,
+            investigation_plan=investigation_plan,
+        )
 
         for probe in pack.probe_results:
             self.state_store.append_run_event(
@@ -1808,6 +1918,8 @@ class RunCoordinator:
                     "success": probe.success,
                     "latency_ms": probe.latency_ms,
                     "error": probe.error,
+                    "payload": probe.payload or {},
+                    "citations": list(probe.citations),
                 },
                 summary={"probe": probe.name, "success": probe.success},
                 status="recorded",
@@ -1831,18 +1943,108 @@ class RunCoordinator:
         )
         return pack
 
+    def _record_reth_investigation_plan(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        signal_payload: dict[str, Any],
+    ):
+        plan = self.reth_planner.plan(trigger=trigger, signal_payload=signal_payload)
+        if plan is None:
+            return None
+        payload = plan.to_dict()
+        self._set_artifact(run_id, "investigation_plan", payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="evidence_pack_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=payload,
+            summary={
+                "planner": payload.get("probe_budget", {}).get("planner"),
+                "probe_count": len(payload.get("probes", [])),
+            },
+            artifact_key="investigation_plan",
+            integration_name="reth_planner",
+            status="recorded",
+        )
+        return plan
+
+    def _record_investigation_report(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        evidence_pack: dict[str, Any] | None,
+    ):
+        self._update_session(run_id, stage="investigation_ready", status="running")
+        memory_packet = {}
+        if hasattr(self.state_store, "retrieve_memory"):
+            memory_response = self.state_store.retrieve_memory(
+                {
+                    "query": " ".join(filter(None, [trigger.service, trigger.endpoint, trigger.trigger_type])),
+                    "scope": {"service": trigger.service, "run_id": run_id},
+                    "limit": 8,
+                }
+            )
+            memory_packet = dict(memory_response.get("packet", {}))
+        service_context = self.context_store.get_service_context(trigger.service) if self.context_store else {}
+        recent_runs = []
+        for session in self.state_store.list_run_sessions(limit=25):
+            if session.run_id == run_id:
+                continue
+            artifacts = session.artifacts if isinstance(session.artifacts, dict) else {}
+            prior_trigger = artifacts.get("trigger", {})
+            if isinstance(prior_trigger, dict) and prior_trigger.get("service") == trigger.service:
+                recent_runs.append(
+                    {
+                        "run_id": session.run_id,
+                        "stage": session.stage,
+                        "status": session.status,
+                        "decision_type": artifacts.get("decision", {}).get("decision_type"),
+                        "feedback_outcome": artifacts.get("feedback", {}).get("outcome"),
+                    }
+                )
+            if len(recent_runs) >= 10:
+                break
+
+        report = self.investigation.investigate(
+            trigger=trigger,
+            evidence_pack=evidence_pack,
+            memory_packet=memory_packet,
+            service_context=service_context,
+            recent_runs=recent_runs,
+        )
+        report_payload = report.to_dict()
+        self._set_artifact(run_id, "investigation_report", report_payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="investigation_ready",
+            event_type=INVESTIGATION_READY,
+            payload=report_payload,
+            summary={
+                "probe_count": len(report.probe_results),
+                "finding_count": len(report.findings),
+                "uncertainty": report.uncertainty,
+                "stop_reason": report.stop_reason,
+            },
+            artifact_key="investigation_report",
+            status="recorded",
+        )
+        return report
+
     def _record_scenario_analysis(
         self,
         run_id: str,
         trigger: Trigger,
         *,
         reasoning_bank_packet: dict[str, Any] | None = None,
+        investigation_report: dict[str, Any] | None = None,
     ):
         self._update_session(run_id, stage="scenario_analysis_ready", status="running")
         analysis, memory_compaction = self.scenario_analysis.analyze(
             trigger,
             run_id=run_id,
             reasoning_bank_packet=reasoning_bank_packet,
+            investigation_report=investigation_report,
         )
         merkle_event_ids: list[str] = []
         for evidence in analysis.evidence_nodes:
@@ -1918,6 +2120,56 @@ class RunCoordinator:
         decision: Decision,
         allow_rereevaluation: bool = False,
     ) -> EvaluationResult:
+        session = self.state_store.get_run_session(run_id)
+        artifacts = session.artifacts if session is not None and isinstance(session.artifacts, dict) else {}
+        evidence_pack = artifacts.get("evidence_pack", {})
+        rca_report = build_rca_report(
+            trigger=trigger,
+            decision=decision,
+            evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
+        )
+        if rca_report is not None:
+            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+                "report_id": rca_report.report_id,
+                "likely_cause": rca_report.likely_cause,
+                "confidence": rca_report.confidence,
+                "recommended_next_step": rca_report.recommended_next_step,
+            }
+            rca_payload = rca_report.to_dict()
+            self._set_artifact(run_id, "rca_report", rca_payload)
+            self.state_store.append_run_event(
+                run_id,
+                stage="decision_ready",
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload=rca_payload,
+                summary={
+                    "likely_cause": rca_report.likely_cause,
+                    "confidence": rca_report.confidence,
+                    "recommended_next_step": rca_report.recommended_next_step,
+                },
+                artifact_key="rca_report",
+                integration_name="reth_rca",
+                status="recorded",
+            )
+        ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
+        if ranked_hypotheses:
+            self._set_artifact(run_id, "ranked_hypotheses", ranked_hypotheses)
+            self.state_store.append_run_event(
+                run_id,
+                stage="decision_ready",
+                event_type=HYPOTHESIS_RANKED,
+                payload={
+                    "trigger_id": trigger.trigger_id,
+                    "top_hypothesis": ranked_hypotheses[0],
+                    "ranked_hypotheses": ranked_hypotheses,
+                },
+                summary={
+                    "top_hypothesis": ranked_hypotheses[0].get("hypothesis_id"),
+                    "recommended_action": ranked_hypotheses[0].get("recommended_action"),
+                },
+                artifact_key="ranked_hypotheses",
+                status="recorded",
+            )
         self._set_artifact(run_id, "decision", decision.to_dict())
         self._update_session(run_id, stage="decision_ready", status="running")
         self.state_store.append_run_event(
@@ -1978,38 +2230,81 @@ class RunCoordinator:
                 status="skipped",
             )
             return evaluation
-        session = self.state_store.get_run_session(run_id)
-        service_agent = session.artifacts.get("service_agent") if session is not None else None
-        tasks = self.agent_mesh.build_tasks(
-            run_id=run_id,
-            trigger=trigger,
-            decision=decision,
-            evaluation=evaluation,
-            service_agent=service_agent if isinstance(service_agent, dict) else None,
-        )
-        task_payload = [task.to_dict() for task in tasks]
-        lane_routing = {
-            "signal_source": _signal_source_for_routing(trigger),
-            "decision_type": decision.decision_type,
-            "service_agent": service_agent,
-            "agents": task_payload[0].get("agents", []) if task_payload else [],
-        }
-        self._set_artifact(run_id, "lane_routing", lane_routing)
-        self._set_artifact(run_id, "agent_tasks", task_payload)
-        self.state_store.append_run_event(
-            run_id,
-            stage="evaluation_ready",
-            event_type=AGENT_TASK_RECORDED,
-            payload={"tasks": task_payload, "lane_routing": lane_routing},
-            summary={
+        self._maybe_record_agent_tasks(run_id, trigger, decision, evaluation)
+        return evaluation
+
+    def _maybe_record_agent_tasks(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> None:
+        mode = self.config.agent_tasks_mode
+        if mode == "off":
+            self._set_artifact(run_id, "agent_tasks", [])
+            return
+        if mode == "blocking":
+            self._record_agent_tasks(run_id, trigger, decision, evaluation)
+            return
+        self._set_artifact(run_id, "agent_tasks", {"status": "pending"})
+        threading.Thread(
+            target=self._record_agent_tasks,
+            args=(run_id, trigger, decision, evaluation),
+            daemon=True,
+        ).start()
+
+    def _record_agent_tasks(
+        self,
+        run_id: str,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ) -> None:
+        try:
+            session = self.state_store.get_run_session(run_id)
+            service_agent = session.artifacts.get("service_agent") if session is not None else None
+            tasks = self.agent_mesh.build_tasks(
+                run_id=run_id,
+                trigger=trigger,
+                decision=decision,
+                evaluation=evaluation,
+                service_agent=service_agent if isinstance(service_agent, dict) else None,
+            )
+            task_payload = [task.to_dict() for task in tasks]
+            lane_routing = {
+                "signal_source": _signal_source_for_routing(trigger),
+                "decision_type": decision.decision_type,
+                "service_agent": service_agent,
+                "agents": task_payload[0].get("agents", []) if task_payload else [],
+            }
+            self._set_artifact(run_id, "lane_routing", lane_routing)
+            status = "recorded"
+            summary = {
                 "tasks": len(task_payload),
                 "agents": sum(len(task.get("attempts", [])) for task in task_payload),
-            },
+            }
+            payload: dict[str, Any] = {"tasks": task_payload, "lane_routing": lane_routing}
+        except Exception as exc:
+            tasks = []
+            task_payload = []
+            status = "failed"
+            summary = {"tasks": 0, "error": str(exc)}
+            payload = {"tasks": [], "error": str(exc)}
+            _LOG.exception("agent task collection failed for run %s", run_id)
+        self._set_artifact(run_id, "agent_tasks", task_payload)
+        session = self.state_store.get_run_session(run_id)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage if session else "evaluation_ready",
+            event_type=AGENT_TASK_RECORDED,
+            payload=payload,
+            summary=summary,
             artifact_key="agent_tasks",
             integration_name="agent_mesh",
-            status="recorded",
+            status=status,
         )
-        if self.config.agent_reconciliation_enabled:
+        if status == "recorded" and self.config.agent_reconciliation_enabled:
             reconciliation = reconcile_agent_tasks(tasks)
             self._set_artifact(run_id, "reconciliation", reconciliation)
             self.state_store.append_run_event(
@@ -2025,8 +2320,7 @@ class RunCoordinator:
                 artifact_key="reconciliation",
                 integration_name="agent_mesh",
                 status="recorded",
-        )
-        return evaluation
+            )
 
     def _is_chaos_probe_run(self, run_id: str) -> bool:
         session = self.state_store.get_run_session(run_id)
@@ -2960,3 +3254,16 @@ def _trajectory_artifact_summary(artifact_key: str, payload: Any) -> dict[str, A
         task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
         return {"trace_version": payload.get("trace_version"), "trigger_type": task.get("trigger_type")}
     return {"artifact_key": artifact_key}
+
+
+def _ranked_hypotheses_from_decision(decision: Decision) -> list[dict[str, Any]]:
+    reasoning = decision.reasoning if isinstance(decision.reasoning, dict) else {}
+    ranked = reasoning.get("ranked_hypotheses")
+    if isinstance(ranked, list):
+        return [item for item in ranked if isinstance(item, dict)]
+    evidence_pack = reasoning.get("evidence_pack")
+    if isinstance(evidence_pack, dict):
+        hypotheses = evidence_pack.get("hypotheses")
+        if isinstance(hypotheses, list):
+            return [item for item in hypotheses if isinstance(item, dict)]
+    return []

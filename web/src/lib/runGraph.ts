@@ -6,6 +6,9 @@ const STAGE_ORDER = [
   "queued",
   "ingesting",
   "trigger_ready",
+  "evidence_pack_ready",
+  "investigation_ready",
+  "scenario_analysis_ready",
   "decision_ready",
   "evaluation_ready",
   "awaiting_operator",
@@ -578,7 +581,12 @@ export function toneForStage(stage: string): string {
   if (stage === "failed" || stage === "cancelled") return "#ff6b5f";
   if (stage === "awaiting_operator") return "#f2b84b";
   if (stage === "executing") return "#41d6b1";
-  if (stage === "evaluation_ready" || stage === "decision_ready") return "#65a7ff";
+  if (
+    stage === "evaluation_ready" ||
+    stage === "decision_ready" ||
+    stage === "scenario_analysis_ready" ||
+    stage === "investigation_ready"
+  ) return "#65a7ff";
   return "#a69f90";
 }
 

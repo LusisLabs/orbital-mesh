@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import queue
+import threading
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +29,11 @@ class PostgresStateStore:
         self.database_url = config.database_url
         self.runtime_store = RuntimeStateStore(config.state_directory)
         self.vault = VaultManager(config.vault_path, runtime_config=config)
+        self._vault_queue: queue.Queue[str] | None = None
+        if config.vault_mirror_mode == "async":
+            self._vault_queue = queue.Queue(maxsize=256)
+            self._vault_thread = threading.Thread(target=self._vault_mirror_loop, daemon=True)
+            self._vault_thread.start()
         self._initialize_schema()
 
     def ensure_default_goal(self) -> GoalRecord:
@@ -142,7 +149,7 @@ class PostgresStateStore:
     def save_run_session(self, session: RunSession) -> RunSession:
         with self._connect() as conn:
             self._save_run_session_tx(conn, session)
-        self._materialize_vault(session.run_id)
+        self._schedule_materialize_vault(session.run_id)
         return session
 
     def update_snapshot(self, run_id: str, snapshot: dict[str, Any]) -> RunSession:
@@ -193,7 +200,7 @@ class PostgresStateStore:
                     "INSERT INTO merkle_roots (run_id, event_id, root_hash) VALUES (%s, %s, %s)",
                     (run_id, event.event_id, snapshot.root_hash),
                 )
-        self._materialize_vault(run_id)
+        self._schedule_materialize_vault(run_id)
         return event
 
     def append_event(self, run_id: str, event: RunEvent) -> RunEvent:
@@ -219,7 +226,7 @@ class PostgresStateStore:
                     "INSERT INTO merkle_roots (run_id, event_id, root_hash) VALUES (%s, %s, %s)",
                     (run_id, event.event_id, snapshot.root_hash),
                 )
-        self._materialize_vault(run_id)
+        self._schedule_materialize_vault(run_id)
         return event
 
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:
@@ -773,6 +780,26 @@ class PostgresStateStore:
         events = self.list_run_events(run_id)
         merkle = build_merkle_snapshot(run_id, events)
         self.vault.write_run_bundle(session, events, merkle, goal)
+
+    def _schedule_materialize_vault(self, run_id: str) -> None:
+        if self.config.vault_mirror_mode == "off":
+            return
+        if self._vault_queue is None:
+            self._materialize_vault(run_id)
+            return
+        try:
+            self._vault_queue.put_nowait(run_id)
+        except queue.Full:
+            self._materialize_vault(run_id)
+
+    def _vault_mirror_loop(self) -> None:
+        assert self._vault_queue is not None
+        while True:
+            run_id = self._vault_queue.get()
+            try:
+                self._materialize_vault(run_id)
+            finally:
+                self._vault_queue.task_done()
 
 
 def _json_payload(value: Any) -> Any:

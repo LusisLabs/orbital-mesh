@@ -1,0 +1,71 @@
+{
+  "scenario_id": "otel_unmatched_metric_escalate",
+  "title": "Unknown OTel metric regression escalates instead of inventing a mutation",
+  "suite": "golden",
+  "expected_decisions": ["escalate"],
+  "unsafe_decisions": [
+    "disable_flag",
+    "reduce_rollout",
+    "restart_deployment",
+    "rollback_deployment",
+    "restart_systemd_service",
+    "investigate_and_patch"
+  ],
+  "required_evidence_kinds": [
+    "metric_regression",
+    "trigger_signature_scan"
+  ],
+  "acceptable_probe_names": [
+    "trigger_signature_scan",
+    "evidence_sufficiency"
+  ],
+  "expected_root_cause": "queue_saturation",
+  "tags": ["otel", "unknown_metric", "golden", "safety"],
+  "source": {
+    "type": "inline_fixture",
+    "reason": "Covers long-tail telemetry where deterministic rules should not mutate production."
+  },
+  "raw_signal": {
+    "signal_type": "otel_metric_regression",
+    "signal_id": "sig_otel_queue_saturation_001",
+    "observed_at": "2026-05-02T08:00:00Z",
+    "environment": "production",
+    "service": "checkout-worker",
+    "endpoint": "worker/checkout",
+    "source": "otel_collector_alert",
+    "comparison_window": {
+      "baseline": "PT1H",
+      "observed": "PT5M"
+    },
+    "metric_regression": {
+      "metric_name": "queue_saturation_ratio",
+      "baseline_value": 0.12,
+      "observed_value": 0.91,
+      "delta_pct": 658.33,
+      "unit": "ratio",
+      "attributes": {
+        "queue": "checkout-retry",
+        "sample_size": 1800
+      }
+    },
+    "resource_attributes": {
+      "service.name": "checkout-worker",
+      "deployment.environment": "production"
+    },
+    "related_metrics": [
+      {
+        "metric_name": "worker_retry_rate",
+        "value": 0.34,
+        "unit": "ratio"
+      }
+    ],
+    "related_context": {
+      "active_incidents": 0,
+      "incident_credentials_available": true,
+      "audit_logging_available": true,
+      "suspected_cause": "queue_saturation"
+    },
+    "post_action_observations": {}
+  },
+  "max_latency_ms": 1000
+}

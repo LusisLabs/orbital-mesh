@@ -71,6 +71,8 @@ class RuntimeConfig:
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
+    run_worker_count: int = 4
+    run_queue_size: int = 100
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     hermes_command_timeout_seconds: int = 180
@@ -103,11 +105,14 @@ class RuntimeConfig:
     latentmas_use_vllm: bool = False
     latentmas_max_artifact_chars: int = 20_000
     agent_fabric_mode: str = "native"
+    agent_tasks_mode: str = "async"
+    agent_mesh_agents: tuple[str, ...] = ()
     agent_mesh_task_timeout_seconds: float = 15.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
     mesh_deepagents_max_artifact_chars: int = 20_000
+    mesh_deepagents_max_output_tokens: int = 1024
     sse_max_connection_seconds: int = 1800
     watch_enabled: bool = False
     watch_interval_seconds: int = 60
@@ -131,10 +136,26 @@ class RuntimeConfig:
     # ``openai`` for /v1/chat/completions (OpenAI, vLLM, Ollama, ...);
     # ``anthropic`` for /v1/messages with x-api-key auth.
     observer_provider: str = "openai"
+    # Claude prompt caching knobs used by every Anthropic-native call routed
+    # through the Mesh observer client. ``explicit`` marks the stable system
+    # prefix; ``automatic`` adds Anthropic's top-level cache_control; ``both``
+    # combines them; ``off`` disables cache hints.
+    observer_prompt_cache_enabled: bool = True
+    observer_prompt_cache_mode: str = "explicit"
+    observer_prompt_cache_ttl: str = "5m"
     observer_secondary_provider: str = ""
     observer_secondary_base_url: str = ""
     observer_secondary_api_key: str = ""
     observer_secondary_model: str = ""
+    sre_judge_enabled: bool = False
+    sre_judge_provider: str = "openai"
+    sre_judge_base_url: str = ""
+    sre_judge_api_key: str = ""
+    sre_judge_model: str = ""
+    sre_judge_secondary_provider: str = ""
+    sre_judge_secondary_base_url: str = ""
+    sre_judge_secondary_api_key: str = ""
+    sre_judge_secondary_model: str = ""
     correlation_enabled: bool = True
     correlation_window_seconds: int = 300
     correlation_min_signals: int = 2
@@ -206,6 +227,11 @@ class RuntimeConfig:
     # "rpc_url": "http://127.0.0.1:8899", "host": "vault-prod-07",
     # "service": "solana-validator.service"}
     bare_metal_node_targets: tuple[dict[str, str], ...] = ()
+    reth_investigation_planner: str = "native"
+    reth_investigation_probe_timeout_seconds: float = 5.0
+    reth_investigation_budget_seconds: float = 15.0
+    reth_investigation_max_probes: int = 6
+    vault_mirror_mode: str = "async"
 
     def __post_init__(self) -> None:
         if not (0 <= self.server_port <= 65535):
@@ -219,6 +245,10 @@ class RuntimeConfig:
                 "agent_mesh_task_timeout_seconds must be > 0, "
                 f"got {self.agent_mesh_task_timeout_seconds}"
             )
+        if self.run_worker_count <= 0:
+            raise ValueError(f"run_worker_count must be > 0, got {self.run_worker_count}")
+        if self.run_queue_size <= 0:
+            raise ValueError(f"run_queue_size must be > 0, got {self.run_queue_size}")
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.reasoning_bank_max_strategies < 1:
@@ -239,6 +269,20 @@ class RuntimeConfig:
             self.research_directory = str(Path(self.state_directory) / "research")
         if self.corpus_database_path == str(DEFAULT_CORPUS_DATABASE_PATH):
             self.corpus_database_path = str(Path(self.state_directory) / "corpus" / "incident_corpus.sqlite")
+        if self.reth_investigation_planner not in {"native", "llm"}:
+            self.reth_investigation_planner = "native"
+        if self.reth_investigation_probe_timeout_seconds <= 0:
+            raise ValueError("reth_investigation_probe_timeout_seconds must be > 0")
+        if self.reth_investigation_budget_seconds <= 0:
+            raise ValueError("reth_investigation_budget_seconds must be > 0")
+        if self.reth_investigation_max_probes < 1:
+            raise ValueError("reth_investigation_max_probes must be >= 1")
+        self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
+            self.observer_prompt_cache_mode
+        )
+        self.observer_prompt_cache_ttl = _normalize_prompt_cache_ttl(
+            self.observer_prompt_cache_ttl
+        )
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -273,6 +317,8 @@ class RuntimeConfig:
             ),
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
+            run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
+            run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             hermes_command=os.getenv("MESH_HERMES_COMMAND") or None,
             hermes_command_timeout_seconds=int(os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS", "180")),
@@ -314,6 +360,8 @@ class RuntimeConfig:
             latentmas_use_vllm=os.getenv("MESH_LATENTMAS_USE_VLLM", "").lower() in ("1", "true", "yes"),
             latentmas_max_artifact_chars=int(os.getenv("MESH_LATENTMAS_MAX_ARTIFACT_CHARS", "20000")),
             agent_fabric_mode=_normalize_agent_fabric_mode(os.getenv("MESH_AGENT_FABRIC_MODE", "native")),
+            agent_tasks_mode=_normalize_agent_tasks_mode(os.getenv("MESH_AGENT_TASKS_MODE", "async")),
+            agent_mesh_agents=_csv_env("MESH_AGENT_MESH_AGENTS"),
             agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
@@ -322,6 +370,7 @@ class RuntimeConfig:
                 default=str(DEFAULT_DEEPAGENTS_WORKSPACE),
             ),
             mesh_deepagents_max_artifact_chars=int(os.getenv("MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS", "20000")),
+            mesh_deepagents_max_output_tokens=int(os.getenv("MESH_DEEPAGENTS_MAX_OUTPUT_TOKENS", "1024")),
             watch_enabled=os.getenv("MESH_WATCH_ENABLED", "").lower() in ("1", "true", "yes"),
             watch_interval_seconds=int(os.getenv("MESH_WATCH_INTERVAL_SECONDS", "60")),
             watch_cooldown_seconds=int(os.getenv("MESH_WATCH_COOLDOWN_SECONDS", "300")),
@@ -400,6 +449,15 @@ class RuntimeConfig:
             load_balancer_drain_timeout_seconds=int(os.getenv("MESH_LOAD_BALANCER_DRAIN_TIMEOUT_SECONDS", "60")),
             load_balancer_max_active_connections=int(os.getenv("MESH_LOAD_BALANCER_MAX_ACTIVE_CONNECTIONS", "0")),
             bare_metal_node_targets=_parse_bare_metal_targets(os.getenv("MESH_BARE_METAL_NODE_TARGETS")),
+            reth_investigation_planner=os.getenv("MESH_RETH_INVESTIGATION_PLANNER", "native").lower(),
+            reth_investigation_probe_timeout_seconds=float(
+                os.getenv("MESH_RETH_PROBE_TIMEOUT_SECONDS", "5.0")
+            ),
+            reth_investigation_budget_seconds=float(
+                os.getenv("MESH_RETH_INVESTIGATION_BUDGET_SECONDS", "15.0")
+            ),
+            reth_investigation_max_probes=int(os.getenv("MESH_RETH_INVESTIGATION_MAX_PROBES", "6")),
+            vault_mirror_mode=_normalize_vault_mirror_mode(os.getenv("MESH_VAULT_MIRROR_MODE", "async")),
             observer_enabled=os.getenv("MESH_OBSERVER_ENABLED", "").lower() in ("1", "true", "yes"),
             observer_base_url=os.getenv("MESH_OBSERVER_BASE_URL", ""),
             observer_api_key=os.getenv("MESH_OBSERVER_API_KEY", ""),
@@ -407,10 +465,22 @@ class RuntimeConfig:
             observer_timeout_seconds=float(os.getenv("MESH_OBSERVER_TIMEOUT_SECONDS", "8.0")),
             observer_max_tokens=int(os.getenv("MESH_OBSERVER_MAX_TOKENS", "512")),
             observer_provider=os.getenv("MESH_OBSERVER_PROVIDER", "openai").lower(),
+            observer_prompt_cache_enabled=_env_bool("MESH_OBSERVER_PROMPT_CACHE_ENABLED", default=True),
+            observer_prompt_cache_mode=os.getenv("MESH_OBSERVER_PROMPT_CACHE_MODE", "explicit"),
+            observer_prompt_cache_ttl=os.getenv("MESH_OBSERVER_PROMPT_CACHE_TTL", "5m"),
             observer_secondary_provider=os.getenv("MESH_OBSERVER_SECONDARY_PROVIDER", "").lower(),
             observer_secondary_base_url=os.getenv("MESH_OBSERVER_SECONDARY_BASE_URL", ""),
             observer_secondary_api_key=os.getenv("MESH_OBSERVER_SECONDARY_API_KEY", ""),
             observer_secondary_model=os.getenv("MESH_OBSERVER_SECONDARY_MODEL", ""),
+            sre_judge_enabled=os.getenv("MESH_SRE_JUDGE_ENABLED", "").lower() in ("1", "true", "yes"),
+            sre_judge_provider=os.getenv("MESH_SRE_JUDGE_PROVIDER", "openai").lower(),
+            sre_judge_base_url=os.getenv("MESH_SRE_JUDGE_BASE_URL", ""),
+            sre_judge_api_key=os.getenv("MESH_SRE_JUDGE_API_KEY", ""),
+            sre_judge_model=os.getenv("MESH_SRE_JUDGE_MODEL", ""),
+            sre_judge_secondary_provider=os.getenv("MESH_SRE_JUDGE_SECONDARY_PROVIDER", "").lower(),
+            sre_judge_secondary_base_url=os.getenv("MESH_SRE_JUDGE_SECONDARY_BASE_URL", ""),
+            sre_judge_secondary_api_key=os.getenv("MESH_SRE_JUDGE_SECONDARY_API_KEY", ""),
+            sre_judge_secondary_model=os.getenv("MESH_SRE_JUDGE_SECONDARY_MODEL", ""),
         )
 
 
@@ -419,6 +489,13 @@ def _csv_env(name: str) -> tuple[str, ...]:
     if not raw.strip():
         return ()
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
@@ -450,8 +527,34 @@ def _normalize_agent_fabric_mode(raw: str) -> str:
     return mode if mode in ("native", "deepagents") else "native"
 
 
+def _normalize_agent_tasks_mode(raw: str) -> str:
+    mode = (raw or "async").strip().lower()
+    return mode if mode in ("off", "async", "blocking") else "async"
+
+
+def _normalize_vault_mirror_mode(raw: str) -> str:
+    mode = (raw or "async").strip().lower()
+    return mode if mode in ("off", "async", "sync") else "async"
+
+
 def _normalize_state_backend(raw: str) -> str:
     backend = (raw or "file").strip().lower()
     if backend not in ("file", "postgres"):
         raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
     return backend
+
+
+def _normalize_prompt_cache_mode(raw: str) -> str:
+    mode = (raw or "explicit").strip().lower()
+    if mode in {"off", "none", "disabled", "false", "0"}:
+        return "off"
+    return mode if mode in {"explicit", "automatic", "both"} else "explicit"
+
+
+def _normalize_prompt_cache_ttl(raw: str) -> str:
+    ttl = (raw or "5m").strip().lower()
+    if ttl in {"", "5m", "5min", "5-minute", "ephemeral"}:
+        return "5m"
+    if ttl in {"1h", "1hr", "60m", "60min", "hour"}:
+        return "1h"
+    return "5m"

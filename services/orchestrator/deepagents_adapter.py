@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import difflib
+import importlib
 import json
 import os
 import shutil
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeout
 from pathlib import Path
@@ -198,6 +200,7 @@ def _bounded_task_context(
     trigger: Trigger,
     decision: Decision,
     evaluation: EvaluationResult,
+    max_chars: int,
 ) -> dict[str, Any]:
     return {
         "run_id": task.run_id,
@@ -207,23 +210,36 @@ def _bounded_task_context(
         "test_commands": task.test_commands,
         "kubernetes_scope": task.kubernetes_scope,
         "memory_scope": task.memory_scope,
-        "memory_packet": task.memory_packet,
+        "memory_packet": _compact_jsonish(task.memory_packet, max_chars=max_chars),
         "memory_write_policy": task.memory_write_policy,
         "open_questions": task.open_questions,
         "trigger": {
             "trigger_type": trigger.trigger_type,
-            "related_context": trigger.related_context,
+            "related_context": _compact_jsonish(trigger.related_context, max_chars=max_chars),
         },
         "decision": {
             "summary": decision.summary,
             "decision_type": decision.decision_type,
-            "execution_plan": decision.execution_plan,
+            "execution_plan": _compact_jsonish(decision.execution_plan, max_chars=max_chars),
         },
         "evaluation": {
             "passed": evaluation.passed,
             "final_recommendation": evaluation.final_recommendation,
             "blocking_reasons": evaluation.blocking_reasons,
         },
+    }
+
+
+def _compact_jsonish(value: Any, *, max_chars: int) -> Any:
+    if max_chars <= 0:
+        return value
+    raw = json.dumps(value, default=str, sort_keys=True)
+    if len(raw) <= max_chars:
+        return value
+    return {
+        "truncated": True,
+        "original_chars": len(raw),
+        "excerpt": raw[:max_chars],
     }
 
 
@@ -297,10 +313,22 @@ def _openai_api_key_for_model(model: str) -> str:
 
 
 def _import_deepagents() -> tuple[Any, Any]:
-    from deepagents.backends.filesystem import FilesystemBackend
-    from deepagents.graph import create_deep_agent
-
+    try:
+        from deepagents.backends.filesystem import FilesystemBackend
+        from deepagents.graph import create_deep_agent
+    except ModuleNotFoundError:
+        _ensure_vendored_deepagents_path()
+        importlib.invalidate_caches()
+        from deepagents.backends.filesystem import FilesystemBackend
+        from deepagents.graph import create_deep_agent
     return FilesystemBackend, create_deep_agent
+
+
+def _ensure_vendored_deepagents_path() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    sdk_path = repo_root / "deepagents" / "libs" / "deepagents"
+    if sdk_path.exists() and str(sdk_path) not in sys.path:
+        sys.path.insert(0, str(sdk_path))
 
 
 def _uses_minimax_openai_compatible_route(model: str) -> bool:
@@ -314,7 +342,9 @@ def _uses_minimax_openai_compatible_route(model: str) -> bool:
     return False
 
 
-def _resolve_deepagents_model(model: str) -> Any:
+def _resolve_deepagents_model(model: str, *, max_output_tokens: int) -> Any:
+    if model.lower().startswith("anthropic:"):
+        return init_chat_model(model, max_tokens=max_output_tokens)
     if model.lower().startswith("openai:") and _uses_minimax_openai_compatible_route(model):
         kwargs: dict[str, Any] = {"use_responses_api": False}
         openai_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()
@@ -380,7 +410,13 @@ class DeepAgentsAdapter:
         repo = _repo_root(trigger, decision)
         snapshot = _copy_allowed_workspace(repo_root=repo, allowed_paths=task.allowed_paths, workspace=workspace)
 
-        ctx = _bounded_task_context(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
+        ctx = _bounded_task_context(
+            task=task,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+            max_chars=int(self.config.mesh_deepagents_max_artifact_chars),
+        )
         env_warnings = _model_env_warnings(self.config.mesh_deepagents_model)
         if env_warnings:
             risk_flags.append("deepagents_model_credentials_missing")
@@ -408,7 +444,10 @@ class DeepAgentsAdapter:
         backend = FilesystemBackend(root_dir=str(workspace), virtual_mode=True)
         try:
             graph = create_deep_agent(
-                model=_resolve_deepagents_model(self.config.mesh_deepagents_model),
+                model=_resolve_deepagents_model(
+                    self.config.mesh_deepagents_model,
+                    max_output_tokens=int(self.config.mesh_deepagents_max_output_tokens),
+                ),
                 backend=backend,
                 subagents=subagents,
                 system_prompt=lane_prompt + instructions,
@@ -438,10 +477,13 @@ class DeepAgentsAdapter:
         def _invoke() -> dict[str, Any]:
             return graph.invoke({"messages": [HumanMessage(content=user_message)]})
 
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(_invoke)
         try:
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                result = pool.submit(_invoke).result(timeout=float(self.config.mesh_deepagents_timeout_seconds))
+            result = future.result(timeout=float(self.config.mesh_deepagents_timeout_seconds))
         except FuturesTimeout:
+            future.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
             return build_agent_attempt(
                 task_id=task.task_id,
                 run_id=task.run_id,
@@ -453,9 +495,13 @@ class DeepAgentsAdapter:
                 ),
                 risk_flags=[*risk_flags, "deepagents_timeout"],
                 recommended_action="human_review",
-                output={"workspace_path": str(workspace)},
+                output={
+                    "workspace_path": str(workspace),
+                    "context_chars": len(json.dumps(ctx, default=str)),
+                },
             )
         except Exception as exc:  # noqa: BLE001
+            pool.shutdown(wait=False, cancel_futures=True)
             return build_agent_attempt(
                 task_id=task.task_id,
                 run_id=task.run_id,
@@ -470,6 +516,9 @@ class DeepAgentsAdapter:
                     "workspace_path": str(workspace),
                 },
             )
+        finally:
+            if future.done() and not future.cancelled():
+                pool.shutdown(wait=True)
 
         messages = result.get("messages", [])
         final_text = _final_ai_text(messages)

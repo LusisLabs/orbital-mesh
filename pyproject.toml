@@ -14,6 +14,17 @@ dependencies = [
   "psycopg[binary]>=3.2,<4",
 ]
 
+[project.optional-dependencies]
+# Offline observer-quality regression. ``simulation/eval_observer.py``
+# uses deepeval to score the LLM observer's verdicts and reasons
+# against faithfulness / hallucination / verdict-correctness metrics.
+# Optional because deepeval pulls a heavy ML stack (transformers,
+# sentence-transformers, etc.) that the runtime doesn't need. Install
+# with ``uv sync --extra eval``.
+eval = [
+  "deepeval>=2.0,<4.0",
+]
+
 [tool.uv.sources]
 deepagents = { path = "deepagents/libs/deepagents", editable = true }
 
@@ -25,6 +36,8 @@ packages = [
   "services.ingest",
   "services.trigger",
   "services.evidence",
+  "services.investigation",
+  "services.benchmark",
   "services.decision",
   "services.evaluation",
   "services.evaluation.mesh_eval",
