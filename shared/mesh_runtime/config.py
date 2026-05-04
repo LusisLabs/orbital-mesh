@@ -136,6 +136,13 @@ class RuntimeConfig:
     # ``openai`` for /v1/chat/completions (OpenAI, vLLM, Ollama, ...);
     # ``anthropic`` for /v1/messages with x-api-key auth.
     observer_provider: str = "openai"
+    # Claude prompt caching knobs used by every Anthropic-native call routed
+    # through the Mesh observer client. ``explicit`` marks the stable system
+    # prefix; ``automatic`` adds Anthropic's top-level cache_control; ``both``
+    # combines them; ``off`` disables cache hints.
+    observer_prompt_cache_enabled: bool = True
+    observer_prompt_cache_mode: str = "explicit"
+    observer_prompt_cache_ttl: str = "5m"
     observer_secondary_provider: str = ""
     observer_secondary_base_url: str = ""
     observer_secondary_api_key: str = ""
@@ -270,6 +277,12 @@ class RuntimeConfig:
             raise ValueError("reth_investigation_budget_seconds must be > 0")
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
+        self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
+            self.observer_prompt_cache_mode
+        )
+        self.observer_prompt_cache_ttl = _normalize_prompt_cache_ttl(
+            self.observer_prompt_cache_ttl
+        )
 
     @classmethod
     def from_env(cls) -> "RuntimeConfig":
@@ -452,6 +465,9 @@ class RuntimeConfig:
             observer_timeout_seconds=float(os.getenv("MESH_OBSERVER_TIMEOUT_SECONDS", "8.0")),
             observer_max_tokens=int(os.getenv("MESH_OBSERVER_MAX_TOKENS", "512")),
             observer_provider=os.getenv("MESH_OBSERVER_PROVIDER", "openai").lower(),
+            observer_prompt_cache_enabled=_env_bool("MESH_OBSERVER_PROMPT_CACHE_ENABLED", default=True),
+            observer_prompt_cache_mode=os.getenv("MESH_OBSERVER_PROMPT_CACHE_MODE", "explicit"),
+            observer_prompt_cache_ttl=os.getenv("MESH_OBSERVER_PROMPT_CACHE_TTL", "5m"),
             observer_secondary_provider=os.getenv("MESH_OBSERVER_SECONDARY_PROVIDER", "").lower(),
             observer_secondary_base_url=os.getenv("MESH_OBSERVER_SECONDARY_BASE_URL", ""),
             observer_secondary_api_key=os.getenv("MESH_OBSERVER_SECONDARY_API_KEY", ""),
@@ -473,6 +489,13 @@ def _csv_env(name: str) -> tuple[str, ...]:
     if not raw.strip():
         return ()
     return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+def _env_bool(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
@@ -519,3 +542,19 @@ def _normalize_state_backend(raw: str) -> str:
     if backend not in ("file", "postgres"):
         raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
     return backend
+
+
+def _normalize_prompt_cache_mode(raw: str) -> str:
+    mode = (raw or "explicit").strip().lower()
+    if mode in {"off", "none", "disabled", "false", "0"}:
+        return "off"
+    return mode if mode in {"explicit", "automatic", "both"} else "explicit"
+
+
+def _normalize_prompt_cache_ttl(raw: str) -> str:
+    ttl = (raw or "5m").strip().lower()
+    if ttl in {"", "5m", "5min", "5-minute", "ephemeral"}:
+        return "5m"
+    if ttl in {"1h", "1hr", "60m", "60min", "hour"}:
+        return "1h"
+    return "5m"

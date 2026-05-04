@@ -16,13 +16,11 @@ a control-plane. The wire format is ~150 lines; we own it.
 
 # Prompt caching
 
-Most OpenAI-compatible providers support prompt caching with different
-opt-in conventions:
+Most providers support prefix caching with different opt-in conventions:
 
 * OpenAI: automatic on prompts with ``>= 1024`` tokens; nothing to do.
-* Anthropic (via OpenAI adapter): requires ``cache_control`` markers on
-  message content blocks. We send the marker as metadata; servers that
-  ignore it pay the price of a cache miss but otherwise work fine.
+* Anthropic native Messages API: supports top-level automatic caching or
+  explicit ``cache_control`` breakpoints on content blocks.
 * vLLM, Together, Groq: automatic if enabled server-side.
 
 We keep the static parts of the prompt (system instructions, policy
@@ -39,7 +37,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 
 def _clean_header_value(value: str) -> str:
@@ -87,7 +85,7 @@ def _post_with_retry(
         request = urllib.request.Request(url, data=body, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=per_call_timeout) as response:
-                return response.read()
+                return cast(bytes, response.read())
         except urllib.error.HTTPError as exc:
             retryable = exc.code in (429, 500, 502, 503, 504)
             if not retryable or attempt >= max_retries:
@@ -157,6 +155,9 @@ def chat_completion(
     max_tokens: int = 512,
     temperature: float = 0.0,
     provider: str = "openai",
+    prompt_cache_enabled: bool = True,
+    prompt_cache_mode: str = "explicit",
+    prompt_cache_ttl: str = "5m",
 ) -> dict[str, Any]:
     """Call the provider's chat-completion endpoint.
 
@@ -184,6 +185,9 @@ def chat_completion(
             timeout_seconds=timeout_seconds,
             max_tokens=max_tokens,
             temperature=temperature,
+            prompt_cache_enabled=prompt_cache_enabled,
+            prompt_cache_mode=prompt_cache_mode,
+            prompt_cache_ttl=prompt_cache_ttl,
         )
 
     url = base_url.rstrip("/") + "/v1/chat/completions"
@@ -223,38 +227,46 @@ def _anthropic_messages(
     timeout_seconds: float,
     max_tokens: int,
     temperature: float,
+    prompt_cache_enabled: bool,
+    prompt_cache_mode: str,
+    prompt_cache_ttl: str,
 ) -> dict[str, Any]:
     """Call Anthropic's native Messages API and adapt the response to
     OpenAI shape so callers don't need to branch.
 
-    We also opt in to ephemeral prompt caching on the system block —
-    Anthropic's prompt cache lifetime is 5 minutes, exactly the right
-    granularity for repeated observer calls during a fault-injection
-    burst.
+    We default to explicit ephemeral prompt caching on the system block.
+    Mesh prompts have a stable system prefix and a per-run evidence
+    suffix, so an explicit breakpoint avoids repeatedly writing a cache
+    entry keyed to changing incident data.
     """
     url = base_url.rstrip("/") + "/v1/messages"
-    system_text = ""
+    system_texts: list[str] = []
     convo: list[dict[str, Any]] = []
     for m in messages:
         if m.role == "system":
-            system_text = m.content if not system_text else system_text + "\n" + m.content
+            system_texts.append(m.content)
         elif m.role in ("user", "assistant"):
             convo.append({"role": m.role, "content": m.content})
 
+    cache_mode = _normalize_prompt_cache_mode(prompt_cache_mode)
+    cache_control = _anthropic_cache_control(
+        enabled=prompt_cache_enabled and cache_mode != "off",
+        ttl=prompt_cache_ttl,
+    )
     body: dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "messages": convo,
     }
+    if cache_control is not None and cache_mode in {"automatic", "both"}:
+        body["cache_control"] = cache_control
+    system_text = "\n".join(system_texts)
     if system_text:
-        body["system"] = [
-            {
-                "type": "text",
-                "text": system_text,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ]
+        system_block: dict[str, Any] = {"type": "text", "text": system_text}
+        if cache_control is not None and cache_mode in {"explicit", "both"}:
+            system_block["cache_control"] = cache_control
+        body["system"] = [system_block]
 
     headers = {
         "Content-Type": "application/json",
@@ -297,6 +309,31 @@ def _anthropic_messages(
             "cache_read_input_tokens"
         ),
     }
+
+
+def _normalize_prompt_cache_mode(mode: str) -> str:
+    normalized = (mode or "explicit").strip().lower()
+    if normalized in {"off", "none", "disabled", "false", "0"}:
+        return "off"
+    if normalized in {"explicit", "automatic", "both"}:
+        return normalized
+    return "explicit"
+
+
+def _anthropic_cache_control(*, enabled: bool, ttl: str) -> dict[str, str] | None:
+    if not enabled:
+        return None
+    normalized_ttl = (ttl or "5m").strip().lower()
+    cache_control = {"type": "ephemeral"}
+    if normalized_ttl in {"", "5m", "5min", "5-minute", "ephemeral"}:
+        return cache_control
+    if normalized_ttl in {"1h", "1hr", "60m", "60min", "hour"}:
+        cache_control["ttl"] = "1h"
+        return cache_control
+    raise ObserverClientError(
+        "unsupported Anthropic prompt cache ttl "
+        f"{ttl!r}; expected '5m' or '1h'"
+    )
 
 
 def extract_message_content(payload: dict[str, Any]) -> str:

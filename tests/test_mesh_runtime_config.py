@@ -23,6 +23,21 @@ class RuntimeConfigPathTests(unittest.TestCase):
             cfg = RuntimeConfig.from_env()
         self.assertFalse(cfg.correlation_enabled)
 
+    def test_observer_prompt_cache_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_OBSERVER_PROMPT_CACHE_ENABLED": "0",
+                "MESH_OBSERVER_PROMPT_CACHE_MODE": "automatic",
+                "MESH_OBSERVER_PROMPT_CACHE_TTL": "1h",
+            },
+            clear=True,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertFalse(cfg.observer_prompt_cache_enabled)
+        self.assertEqual(cfg.observer_prompt_cache_mode, "automatic")
+        self.assertEqual(cfg.observer_prompt_cache_ttl, "1h")
+
     def test_relative_state_directory_is_repo_anchored(self) -> None:
         with patch.dict(
             "os.environ",

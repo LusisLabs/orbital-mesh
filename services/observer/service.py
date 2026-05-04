@@ -103,6 +103,9 @@ class ObserverConfig:
     # ``openai`` (default) speaks /v1/chat/completions; ``anthropic``
     # speaks /v1/messages and adapts the response to the same shape.
     provider: str = "openai"
+    prompt_cache_enabled: bool = True
+    prompt_cache_mode: str = "explicit"
+    prompt_cache_ttl: str = "5m"
 
 
 @dataclass
@@ -238,6 +241,9 @@ class LlmObserver:
                 max_tokens=self.config.max_tokens,
                 temperature=0.0,
                 provider=self.config.provider,
+                prompt_cache_enabled=self.config.prompt_cache_enabled,
+                prompt_cache_mode=self.config.prompt_cache_mode,
+                prompt_cache_ttl=self.config.prompt_cache_ttl,
             )
             content = extract_message_content(response)
         except ObserverClientError as exc:

@@ -135,6 +135,9 @@ class MeshRuntimeEngine:
                 timeout_seconds=self.config.observer_timeout_seconds,
                 max_tokens=self.config.observer_max_tokens,
                 provider=self.config.observer_provider,
+                prompt_cache_enabled=self.config.observer_prompt_cache_enabled,
+                prompt_cache_mode=self.config.observer_prompt_cache_mode,
+                prompt_cache_ttl=self.config.observer_prompt_cache_ttl,
             ))
             secondary_observer = None
             if self.config.observer_secondary_model:
@@ -146,6 +149,9 @@ class MeshRuntimeEngine:
                     timeout_seconds=self.config.observer_timeout_seconds,
                     max_tokens=self.config.observer_max_tokens,
                     provider=self.config.observer_secondary_provider or self.config.observer_provider,
+                    prompt_cache_enabled=self.config.observer_prompt_cache_enabled,
+                    prompt_cache_mode=self.config.observer_prompt_cache_mode,
+                    prompt_cache_ttl=self.config.observer_prompt_cache_ttl,
                 ))
             llm_observer = MultiLlmObserver(primary_observer, secondary_observer)
         self.decision = decision or DecisionService(

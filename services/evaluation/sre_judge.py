@@ -128,6 +128,9 @@ class LlmSreJudgeConfig:
     model: str = ""
     timeout_seconds: float = 25
     max_tokens: int = 1500
+    prompt_cache_enabled: bool = True
+    prompt_cache_mode: str = "explicit"
+    prompt_cache_ttl: str = "5m"
 
 
 class LlmSreJudge(SreJudge):
@@ -182,6 +185,9 @@ class LlmSreJudge(SreJudge):
                 max_tokens=self.config.max_tokens,
                 temperature=0.0,
                 provider=self.config.provider,
+                prompt_cache_enabled=self.config.prompt_cache_enabled,
+                prompt_cache_mode=self.config.prompt_cache_mode,
+                prompt_cache_ttl=self.config.prompt_cache_ttl,
             )
             parsed = json.loads(extract_message_content(response))
         except (ObserverClientError, json.JSONDecodeError, ValueError, TypeError) as exc:

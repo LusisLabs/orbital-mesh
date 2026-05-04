@@ -118,6 +118,9 @@ class RethInvestigationPlanner:
                 max_tokens=min(self.config.observer_max_tokens, 512),
                 temperature=0.0,
                 provider=self.config.observer_provider,
+                prompt_cache_enabled=self.config.observer_prompt_cache_enabled,
+                prompt_cache_mode=self.config.observer_prompt_cache_mode,
+                prompt_cache_ttl=self.config.observer_prompt_cache_ttl,
             )
             parsed = json.loads(extract_message_content(response))
             raw_names = parsed.get("probe_names")

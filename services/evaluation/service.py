@@ -56,6 +56,9 @@ class EvaluationService:
                 api_key=self.config.sre_judge_api_key,
                 model=self.config.sre_judge_model,
                 timeout_seconds=self.config.observer_timeout_seconds,
+                prompt_cache_enabled=self.config.observer_prompt_cache_enabled,
+                prompt_cache_mode=self.config.observer_prompt_cache_mode,
+                prompt_cache_ttl=self.config.observer_prompt_cache_ttl,
             )
         )
         secondary = None
@@ -68,6 +71,9 @@ class EvaluationService:
                     api_key=self.config.sre_judge_secondary_api_key or self.config.sre_judge_api_key,
                     model=self.config.sre_judge_secondary_model,
                     timeout_seconds=self.config.observer_timeout_seconds,
+                    prompt_cache_enabled=self.config.observer_prompt_cache_enabled,
+                    prompt_cache_mode=self.config.observer_prompt_cache_mode,
+                    prompt_cache_ttl=self.config.observer_prompt_cache_ttl,
                 )
             )
         return MultiModelSreJudge(primary, secondary)
