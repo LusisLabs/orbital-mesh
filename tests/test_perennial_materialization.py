@@ -14,6 +14,8 @@ from shared.mesh_runtime.perennial import (
     materialize_governance_commit,
     materialize_ontological_state,
     materialize_proof_envelope,
+    materialize_runtime_evidence_action_records,
+    runtime_evidence_refs,
     verify_ed25519_signature_proof,
     verify_hmac_signature_proof,
 )
@@ -145,6 +147,49 @@ class PerennialMaterializationTests(unittest.TestCase):
         self.assertEqual(governance_commit["commit_type"], "deny_action")
         self.assertEqual(governance_commit["outcome"]["gate_result"], "denied")
         self.assertEqual(governance_commit["authority"]["operator_approval_refs"], [])
+
+    def test_runtime_evidence_materializes_typed_action_records(self) -> None:
+        run_export = _run_export(
+            run_id="run_runtime_evidence",
+            event=_event(
+                "evt_execute_allowed",
+                "run_runtime_evidence",
+                "execution_recorded",
+                {
+                    "operator_id": "operator.launcher",
+                    "action_type": "restart_deployment",
+                    "service": "checkout-api",
+                    "namespace": "payments-pilot",
+                    "resource_ref": "deployment/checkout-api",
+                    "production_impact": "possible",
+                },
+                status="executed",
+            ),
+            decision=_decision("dec_runtime_evidence", autonomy_tier="approval_required"),
+            evaluation=_evaluation("eval_runtime_evidence", final_recommendation="execute", blocking_reasons=[]),
+            approvals=[{"event_id": "evt_runtime_approval", "operator_id": "operator.launcher"}],
+        )
+
+        records = materialize_runtime_evidence_action_records(
+            run_export,
+            tenant_id="customer-a",
+            reservoir_refs=["reservoir_checkout_events"],
+            proof_refs=["proof://runtime-evidence"],
+        )
+
+        action_types = {record["action"]["action_type"] for record in records}
+        self.assertIn("darkharness_remediation_safety_gate", action_types)
+        self.assertIn("darkharness_trust_ladder_gate", action_types)
+        self.assertIn("darkharness_readiness_gap_gate", action_types)
+        self.assertIn("darkharness_operator_approval", action_types)
+        self.assertIn("darkharness_rollback_plan", action_types)
+        approval_record = next(record for record in records if record["action"]["action_type"] == "darkharness_operator_approval")
+        self.assertEqual(approval_record["actor"]["actor_type"], "human")
+        self.assertEqual(approval_record["outcome"]["status"], "approved")
+        self.assertIn("operator-approval://evt_runtime_approval", runtime_evidence_refs(run_export))
+        self.assertIn("rollback://checkout-api/restart", runtime_evidence_refs(run_export))
+        for record in records:
+            validate_payload("perennial/agent-action-record.schema.json", record)
 
     def test_proof_envelope_can_include_configured_hmac_signature(self) -> None:
         run_export = _run_export(

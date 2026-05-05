@@ -92,6 +92,7 @@ from shared.mesh_runtime.perennial import (
     materialize_mesh_brain_action_records,
     materialize_ontological_state,
     materialize_proof_envelope,
+    materialize_runtime_evidence_action_records,
 )
 from shared.mesh_runtime.schema_validation import SchemaValidationError
 from shared.mesh_runtime.alert_store import AlertStore
@@ -1287,6 +1288,15 @@ class RunCoordinator:
                     proof_refs=proof_refs,
                 )
             )
+            action_records.extend(
+                materialize_runtime_evidence_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                    proof_refs=proof_refs,
+                    operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+                )
+            )
             policy = evaluate_darkharness_packet_policy(
                 pilot_scope=pilot_metadata["pilot_scope"],
                 run_export=run_export,
@@ -1427,6 +1437,15 @@ class RunCoordinator:
                     tenant_id=pilot_metadata["tenant_id"],
                     reservoir_refs=[reservoir_id],
                     proof_refs=[],
+                )
+            )
+            run_action_records.extend(
+                materialize_runtime_evidence_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                    operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
                 )
             )
             policy = evaluate_darkharness_packet_policy(

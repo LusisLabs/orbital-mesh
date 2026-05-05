@@ -264,9 +264,16 @@ provenance, training job, eval score, serving smoke, model-kernel proof, and
 quality/trust-ladder update records when those artifacts already exist on the
 run session.
 
+Runtime evidence is projected separately through
+`materialize_runtime_evidence_action_records()`. That adapter emits typed
+`AgentActionRecord` attestations for remediation safety, trust-ladder ceiling,
+readiness gaps, operator approval provenance, and rollback plan metadata when
+those records already exist in the run export.
+
 This linkage is evidence projection only. Packet export does not launch Mesh
 Brain training, model serving, backend evaluation, rollback drill, or promotion
-work. Mesh Brain records are marked as on-prem, non-production-impacting
+work, and it does not execute runtime remediation or rollback work. Mesh Brain
+and runtime-evidence records are marked as on-prem, non-production-impacting
 attestations so the primary remediation or denial action remains the governance
 commit subject.
 

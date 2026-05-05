@@ -162,7 +162,11 @@ class DarkharnessExportPathTests(unittest.TestCase):
                 assert packet is not None
                 self.assertEqual(packet["customer_boundary"], "customer-b-onprem")
                 self.assertEqual(packet["perennial_records"]["sensitive_reservoirs"][0]["reservoir_id"], "reservoir_customer_b_ops")
-                [record] = packet["perennial_records"]["agent_action_records"]
+                record = next(
+                    record
+                    for record in packet["perennial_records"]["agent_action_records"]
+                    if record["action"]["action_type"] == "restart_deployment"
+                )
                 self.assertEqual(record["boundary"]["tenant_id"], "customer-b")
                 self.assertEqual(record["boundary"]["reservoir_refs"], ["reservoir_customer_b_ops"])
                 self.assertEqual(record["governance"]["operator_authority_refs"], ["operator-approval://evt_approval"])
@@ -319,6 +323,49 @@ class DarkharnessExportPathTests(unittest.TestCase):
                     "mesh_brain://live-serving/mb_live_1",
                     governance_commit["inputs"]["evidence_refs"],
                 )
+                validate_payload("perennial/darkharness-pilot-packet.schema.json", packet)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_runtime_gate_artifacts_become_perennial_action_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                coordinator._set_artifact(  # noqa: SLF001
+                    run_id,
+                    "remediation_safety",
+                    {"score": 0.93, "status": "approved", "recorded_at": "2026-05-05T15:00:00Z"},
+                )
+                coordinator._set_artifact(  # noqa: SLF001
+                    run_id,
+                    "trust_ladder",
+                    {"level": "approval_required", "status": "approved"},
+                )
+                coordinator._set_artifact(  # noqa: SLF001
+                    run_id,
+                    "integration_readiness",
+                    {"status": "approved", "missing": []},
+                )
+
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                action_types = {
+                    record["action"]["action_type"]
+                    for record in packet["perennial_records"]["agent_action_records"]
+                }
+                self.assertIn("darkharness_remediation_safety_gate", action_types)
+                self.assertIn("darkharness_trust_ladder_gate", action_types)
+                self.assertIn("darkharness_readiness_gap_gate", action_types)
+                self.assertIn("darkharness_operator_approval", action_types)
+                self.assertIn("darkharness_rollback_plan", action_types)
+                [governance_commit] = packet["perennial_records"]["governance_commits"]
+                self.assertIn("artifact://remediation_safety", governance_commit["inputs"]["evidence_refs"])
+                self.assertIn("artifact://trust_ladder", governance_commit["inputs"]["evidence_refs"])
+                self.assertIn("artifact://integration_readiness", governance_commit["inputs"]["evidence_refs"])
                 validate_payload("perennial/darkharness-pilot-packet.schema.json", packet)
             finally:
                 coordinator.stop_background_workers()

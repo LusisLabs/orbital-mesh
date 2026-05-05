@@ -28,6 +28,14 @@ artifacts, run events, vault notes, or side effects.
 7. If a single run needs inspection, export
    `GET /api/runs/{run_id}/darkharness-packet`.
 
+## Evidence Adapter Coverage
+
+Darkharness exports typed Perennial action attestations for remediation safety,
+trust-ladder ceiling, readiness gaps, operator approval provenance, rollback
+plan metadata, and Mesh Brain artifact lanes. These records are projections over
+existing run/export state; packet generation does not execute remediation,
+training, serving, rollback drill, or promotion work.
+
 ## Signature Configuration
 
 Set `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH` to an Ed25519 private key PEM

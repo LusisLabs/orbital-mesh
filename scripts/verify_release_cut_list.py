@@ -236,6 +236,7 @@ REQUIRED_MARKERS = {
         "contents: read",
         "npm run lint",
         "cryptography>=44,<47",
+        "tests.test_perennial_materialization",
         "tests.test_darkharness_packet",
         "tests.test_darkharness_policy",
         "tests.test_darkharness_export_path",
@@ -250,6 +251,8 @@ REQUIRED_MARKERS = {
         "rollback_drill_run_export_present",
         "Postgres remains authoritative",
         "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH",
+        "Evidence Adapter Coverage",
+        "trust-ladder ceiling",
     ),
     "docs/perennial-darkmesh-architecture.md": (
         "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM",
@@ -257,6 +260,15 @@ REQUIRED_MARKERS = {
         "Ed25519",
         "PQC signatures, KEM, and ZK",
         "selective disclosure remain proposed hooks",
+        "materialize_runtime_evidence_action_records",
+    ),
+    "shared/mesh_runtime/perennial/runtime_evidence.py": (
+        "materialize_runtime_evidence_action_records",
+        "darkharness_remediation_safety_gate",
+        "darkharness_trust_ladder_gate",
+        "darkharness_readiness_gap_gate",
+        "darkharness_operator_approval",
+        "darkharness_rollback_plan",
     ),
     "shared/mesh_runtime/perennial/signing.py": (
         "build_ed25519_signature_proof",
