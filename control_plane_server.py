@@ -76,6 +76,12 @@ def darkharness_packet_response(coordinator: RunCoordinator, run_id: str) -> tup
     return payload, status
 
 
+def darkharness_checkpoint_packet_response(coordinator: RunCoordinator) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_pilot_checkpoint_packet()
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
+
+
 class MeshControlPlaneServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -136,6 +142,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/pilot/go-no-go":
             self._send_json(self.server.coordinator.generate_pilot_go_no_go())
+            return
+        if path == "/api/darkharness/pilot-packet":
+            payload, status = darkharness_checkpoint_packet_response(self.server.coordinator)
+            self._send_json(payload, status=status)
             return
         if path == "/api/rules/suggestions":
             # Layer 4 admin surface. Returns [] when rule_learning_enabled is

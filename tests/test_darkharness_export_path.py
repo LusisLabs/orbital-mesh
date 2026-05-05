@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from control_plane_server import darkharness_packet_response
+from control_plane_server import darkharness_checkpoint_packet_response, darkharness_packet_response
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import RuntimeConfig, load_fixture, validate_payload
 
@@ -290,8 +290,64 @@ class DarkharnessExportPathTests(unittest.TestCase):
             finally:
                 coordinator.stop_background_workers()
 
+    def test_checkpoint_packet_combines_allowed_denied_and_rollback_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                allowed_run_id = _seed_run(coordinator, allowed=True, pilot_go_no_go_evidence=True)
+                denied_run_id = _seed_run(coordinator, allowed=False)
+                rollback_run_id = _record_mesh_brain_checkpoint_evidence(coordinator)
 
-def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dict[str, Any]] | None = None) -> str:
+                with patch.object(coordinator, "build_readiness", return_value={"status": "ready", "profile": "pilot"}):
+                    packet = coordinator.build_darkharness_pilot_checkpoint_packet()
+
+                self.assertEqual(packet["packet"], "darkharness.pilot_packet.v1")
+                self.assertEqual(packet["implemented_evidence"]["go_no_go"]["status"], "go")
+                exported_run_ids = {
+                    export["run_id"]
+                    for export in packet["implemented_evidence"]["run_exports"]
+                }
+                self.assertIn(allowed_run_id, exported_run_ids)
+                self.assertIn(denied_run_id, exported_run_ids)
+                self.assertIn(rollback_run_id, exported_run_ids)
+                self.assertEqual(len(packet["implemented_evidence"]["allowed_action_proofs"]), 1)
+                self.assertEqual(len(packet["implemented_evidence"]["denied_action_proofs"]), 1)
+                self.assertGreaterEqual(len(packet["implemented_evidence"]["merkle_proofs"]), 3)
+                action_types = {
+                    record["action"]["action_type"]
+                    for record in packet["perennial_records"]["agent_action_records"]
+                }
+                self.assertIn("restart_deployment", action_types)
+                self.assertIn("mesh_brain_model_kernel_proof", action_types)
+                self.assertIn("mesh_brain_serving_smoke", action_types)
+                self.assertIn("mesh_brain_quality_update", action_types)
+                self.assertIn("multi_run_checkpoint_export", packet["claim_boundary"]["implemented"])
+                self.assertIn("rollback_drill_proof", packet["claim_boundary"]["implemented"])
+                validate_payload("perennial/darkharness-pilot-packet.schema.json", packet)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_checkpoint_endpoint_helper_returns_conflict_until_go_no_go_is_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                with patch.object(coordinator, "build_readiness", return_value={"status": "blocked", "profile": "pilot"}):
+                    payload, status = darkharness_checkpoint_packet_response(coordinator)
+
+                self.assertEqual(status.value, 409)
+                self.assertEqual(payload["status"], "blocked")
+                self.assertIn("readiness_green", payload["missing_evidence"])
+            finally:
+                coordinator.stop_background_workers()
+
+
+def _seed_run(
+    coordinator: RunCoordinator,
+    *,
+    allowed: bool,
+    approvals: list[dict[str, Any]] | None = None,
+    pilot_go_no_go_evidence: bool = False,
+) -> str:
     decision = _decision("dec_darkharness", autonomy_tier="approval_required")
     evaluation = _evaluation(
         "eval_darkharness",
@@ -312,8 +368,19 @@ def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dic
             "evaluation": evaluation,
             "scenario_analysis": _scenario_analysis(),
             "approvals": approval_records,
+            **({"execution": {"external_refs": {"live_execution": True}}} if pilot_go_no_go_evidence else {}),
         },
     )
+    if pilot_go_no_go_evidence:
+        coordinator.state_store.append_run_event(
+            session.run_id,
+            stage="awaiting_operator",
+            event_type="steering_command",
+            payload={"command_type": "approve", "operator": {"operator_id": "operator.launcher"}},
+            summary={"status": "accepted"},
+            integration_name="control_plane",
+            status="accepted",
+        )
     coordinator.state_store.append_run_event(
         session.run_id,
         stage="executing",
@@ -332,6 +399,92 @@ def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dic
         status="executed" if allowed else "denied",
     )
     return str(session.run_id)
+
+
+def _record_mesh_brain_checkpoint_evidence(coordinator: RunCoordinator) -> str:
+    _record_completed_probe(
+        coordinator,
+        "mesh_brain_model_kernel_probe",
+        {
+            "mesh_brain_model_kernel_run_record": {
+                "run_id": "mb_kernel_checkpoint",
+                "status": "completed",
+                "final_release_decision": "pass",
+                "artifact_refs": _hashed_refs("mesh_brain_model_kernel_probe_summary"),
+            }
+        },
+    )
+    _record_completed_probe(
+        coordinator,
+        "mesh_brain_live_serving_smoke",
+        {
+            "mesh_brain_live_serving_run_record": {
+                "run_id": "mb_live_checkpoint",
+                "tenant_id": "tenant_a",
+                "status": "completed",
+                "final_release_decision": "canary",
+                "artifact_refs": _hashed_refs("mesh_brain_live_serving_summary"),
+                "summary_metrics": {
+                    "task_type": "crops",
+                    "live_smoke_gate": "pass",
+                    "live_response_eval": "pass",
+                    "live_judge_eval": "pass",
+                },
+            }
+        },
+    )
+    return _record_completed_probe(
+        coordinator,
+        "mesh_brain_rollback_drill",
+        {
+            "mesh_brain_rollback_drill_run_record": {
+                "run_id": "mb_rollback_checkpoint",
+                "status": "completed",
+                "final_release_decision": "pass",
+                "artifact_refs": _hashed_refs("mesh_brain_rollback_drill_summary"),
+                "summary_metrics": {"restored_previous_artifact": True},
+            }
+        },
+    )
+
+
+def _record_completed_probe(coordinator: RunCoordinator, scenario_key: str, artifacts: dict[str, Any]) -> str:
+    session = coordinator.state_store.create_run_session(
+        goal_id=None,
+        scenario_key=scenario_key,
+        steering_mode="system_probe",
+        auto_mode=False,
+        pause_points=[],
+        evaluation_mode=scenario_key,
+        orchestration_mode="native",
+        artifacts=artifacts,
+    )
+    coordinator.state_store.append_run_event(
+        session.run_id,
+        stage="completed",
+        event_type="run_completed",
+        payload={"status": "completed", "scenario_key": scenario_key},
+        summary={"status": "completed"},
+        integration_name="mesh_brain",
+        status="completed",
+    )
+    current = coordinator.state_store.get_run_session(session.run_id)
+    assert current is not None
+    current.stage = "completed"
+    current.status = "completed"
+    coordinator.state_store.save_run_session(current)
+    return str(session.run_id)
+
+
+def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
+    return {
+        key: {
+            "artifact_key": key,
+            "path": f"/tmp/{key}.json",
+            "sha256": "a" * 64,
+            "content_type": "application/json",
+        }
+    }
 
 
 def _attach_mesh_brain_artifacts(coordinator: RunCoordinator, run_id: str) -> None:

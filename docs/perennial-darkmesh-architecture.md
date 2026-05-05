@@ -212,6 +212,12 @@ run state and returns it without writing packet files, run events, vault notes,
 or audit artifacts. `MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE` exists to make
 that policy explicit and currently only accepts `ephemeral`.
 
+`GET /api/darkharness/pilot-packet` materializes the read-only checkpoint packet
+across observed pilot runs. It requires `/api/pilot/go-no-go` to be `go`, then
+combines one allowed remediation run, one denied-action run, Mesh Brain
+model-kernel/live-serving/rollback proof runs, the configured reservoir
+boundary, and the same Perennial records used by the per-run export.
+
 Persisted Darkharness packets require a later audited write path with Postgres
 remaining authoritative for runs, events, memory, and audit state. Until that
 path exists, unsupported persistence modes fail configuration validation rather

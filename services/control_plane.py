@@ -1334,6 +1334,184 @@ class RunCoordinator:
         except (KeyError, TypeError, ValueError, SchemaValidationError) as exc:
             return self._darkharness_blocked_response(run_id, [f"materialization_failed:{exc}"], run_export)
 
+    def build_darkharness_pilot_checkpoint_packet(self) -> dict[str, Any]:
+        go_no_go = self.generate_pilot_go_no_go()
+        if go_no_go.get("status") != "go":
+            return self._darkharness_checkpoint_blocked_response(
+                list(go_no_go.get("missing_evidence", [])),
+                go_no_go=go_no_go,
+            )
+        observed = cast(dict[str, Any], go_no_go.get("observed")) if isinstance(go_no_go.get("observed"), dict) else {}
+        candidate_ids = self._darkharness_unique_ids(
+            observed.get("approved_run_ids"),
+            observed.get("live_action_run_ids"),
+            observed.get("denied_action_run_ids"),
+            observed.get("mesh_brain_rollback_drill_run_ids"),
+        )
+        if not candidate_ids:
+            return self._darkharness_checkpoint_blocked_response(["checkpoint_run_evidence_present"], go_no_go=go_no_go)
+        first_session = self.state_store.get_run_session(candidate_ids[0])
+        if first_session is None:
+            return self._darkharness_checkpoint_blocked_response(["checkpoint_run_evidence_present"], go_no_go=go_no_go)
+        try:
+            pilot_metadata = self._darkharness_shadow_metadata(first_session)
+        except SchemaValidationError as exc:
+            return self._darkharness_checkpoint_blocked_response([f"registry_invalid:{exc}"], go_no_go=go_no_go)
+
+        allowed = self._darkharness_select_checkpoint_run(
+            self._darkharness_unique_ids(observed.get("approved_run_ids"), observed.get("live_action_run_ids")),
+            pilot_metadata,
+            allowed=True,
+        )
+        denied = self._darkharness_select_checkpoint_run(
+            self._darkharness_unique_ids(observed.get("denied_action_run_ids")),
+            pilot_metadata,
+            allowed=False,
+        )
+        missing: list[str] = []
+        if allowed is None:
+            missing.append("allowed_remediation_run_present")
+        if denied is None:
+            missing.append("denied_action_run_present")
+        mesh_brain_gate_exports = [
+            export
+            for run_id in self._darkharness_unique_ids(
+                observed.get("mesh_brain_model_kernel_run_ids"),
+                observed.get("mesh_brain_live_canary_smoke_run_ids"),
+                observed.get("mesh_brain_rollback_drill_run_ids"),
+            )
+            for export in [self.build_run_export_package_snapshot(run_id)]
+            if export is not None
+        ]
+        rollback_run_ids = set(self._darkharness_unique_ids(observed.get("mesh_brain_rollback_drill_run_ids")))
+        rollback_exports = [
+            export
+            for export in mesh_brain_gate_exports
+            if str(export.get("run_id")) in rollback_run_ids
+        ]
+        if not rollback_exports:
+            missing.append("rollback_drill_run_export_present")
+        if missing:
+            return self._darkharness_checkpoint_blocked_response(missing, go_no_go=go_no_go)
+
+        assert allowed is not None
+        assert denied is not None
+        readiness = go_no_go.get("readiness") if isinstance(go_no_go.get("readiness"), dict) else self.build_readiness()
+        run_exports = self._darkharness_unique_exports([allowed["run_export"], denied["run_export"], *mesh_brain_gate_exports])
+        action_records: list[dict[str, Any]] = []
+        governance_commits: list[dict[str, Any]] = []
+        proof_envelopes: list[dict[str, Any]] = []
+        epistemic_states: list[dict[str, Any]] = []
+        ontological_state = materialize_ontological_state(pilot_metadata["ontology_metadata"])
+        reservoir_id = pilot_metadata["sensitive_reservoir"]["reservoir_id"]
+        for selected in (allowed, denied):
+            run_export = selected["run_export"]
+            session = selected["session"]
+            decision = run_export["decision_record"]
+            evaluation = run_export["evaluation_record"]
+            run_action_records = materialize_agent_action_records(
+                run_export["timeline_json"],
+                run=run_export["session"],
+                decision=decision,
+                evaluation=evaluation,
+                tenant_id=pilot_metadata["tenant_id"],
+                reservoir_refs=[reservoir_id],
+                proof_refs=[],
+                operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+            )
+            run_action_records.extend(
+                materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                )
+            )
+            policy = evaluate_darkharness_packet_policy(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                run_export=run_export,
+                action_records=run_action_records,
+            )
+            if not policy.allowed:
+                return self._darkharness_checkpoint_blocked_response(
+                    [f"policy_violation:{violation}" for violation in policy.violations],
+                    go_no_go=go_no_go,
+                    policy_checks=policy.checks,
+                )
+            primary_action = self._darkharness_primary_action_record(run_action_records)
+            scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
+            epistemic_state = materialize_epistemic_state(scenario_analysis, run_id=session.run_id)
+            proof_envelope = materialize_proof_envelope(
+                run_export,
+                subject_refs=[session.run_id, primary_action["action_record_id"]],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
+            )
+            governance_commit = materialize_governance_commit(
+                run_export=run_export,
+                epistemic_state=epistemic_state,
+                ontological_state=ontological_state,
+                proof_envelope=proof_envelope,
+                action_record=primary_action,
+                readiness=readiness,
+                trust_ladder_ref=pilot_metadata["trust_ladder_ref"],
+            )
+            action_records.extend(run_action_records)
+            epistemic_states.append(epistemic_state)
+            proof_envelopes.append(proof_envelope)
+            governance_commits.append(governance_commit)
+
+        action_records.extend(
+            [
+                record
+                for run_export in mesh_brain_gate_exports
+                for record in materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                )
+            ]
+        )
+        proof_envelopes.extend(
+            materialize_proof_envelope(
+                run_export,
+                subject_refs=[str(run_export.get("run_id"))],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
+            )
+            for run_export in mesh_brain_gate_exports
+            if run_export.get("run_id") not in {allowed["session"].run_id, denied["session"].run_id}
+        )
+        return build_darkharness_pilot_packet(
+            pilot_scope=pilot_metadata["pilot_scope"],
+            readiness=readiness,
+            go_no_go=go_no_go,
+            run_exports=run_exports,
+            sensitive_reservoirs=[pilot_metadata["sensitive_reservoir"]],
+            agent_action_records=action_records,
+            epistemic_states=epistemic_states,
+            ontological_states=[ontological_state],
+            governance_commits=governance_commits,
+            proof_envelopes=proof_envelopes,
+            generated_at=str(go_no_go.get("generated_at") or _timestamp()),
+            claim_boundary={
+                "implemented": [
+                    "readiness",
+                    "go_no_go",
+                    "multi_run_checkpoint_export",
+                    "allowed_action_proof",
+                    "denied_action_proof",
+                    "rollback_drill_proof",
+                    "reservoir_boundary_proof",
+                    "merkle_proof",
+                    "mesh_brain_artifact_attestation",
+                ],
+                "proposed": ["public_key_signature", "pqc_signature", "pqc_kem", "selective_disclosure_zk"],
+                "not_implemented": ["raw_reservoir_egress", "packet_persistence"],
+            },
+        )
+
     def export_run_archive(self, run_id: str) -> dict[str, Any] | None:
         package = self.export_run_package(run_id)
         if package is None:
@@ -4720,6 +4898,80 @@ class RunCoordinator:
         if production_impact in {"possible", "direct"} and not isinstance(run_export.get("approval_records"), list):
             missing.append("approval_records_present")
         return missing
+
+    def _darkharness_select_checkpoint_run(
+        self,
+        run_ids: list[str],
+        pilot_metadata: dict[str, Any],
+        *,
+        allowed: bool,
+    ) -> dict[str, Any] | None:
+        for run_id in run_ids:
+            session = self.state_store.get_run_session(run_id)
+            if session is None:
+                continue
+            run_export = self.build_run_export_package_snapshot(run_id)
+            if run_export is None:
+                continue
+            if self._darkharness_missing_evidence(run_export, session, pilot_metadata):
+                continue
+            raw_evaluation = run_export.get("evaluation_record")
+            evaluation = cast(dict[str, Any], raw_evaluation) if isinstance(raw_evaluation, dict) else {}
+            blocking_reasons = evaluation.get("blocking_reasons")
+            is_allowed = evaluation.get("final_recommendation") == "execute" and not blocking_reasons
+            if is_allowed is allowed:
+                return {"session": session, "run_export": run_export}
+        return None
+
+    @staticmethod
+    def _darkharness_unique_ids(*groups: Any) -> list[str]:
+        ids: list[str] = []
+        for group in groups:
+            values = group if isinstance(group, list) else []
+            for value in values:
+                if value is not None:
+                    ids.append(str(value))
+        return list(dict.fromkeys(ids))
+
+    @staticmethod
+    def _darkharness_unique_exports(run_exports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        selected: dict[str, dict[str, Any]] = {}
+        for run_export in run_exports:
+            run_id = str(run_export.get("run_id") or run_export.get("export_id") or "")
+            if run_id and run_id not in selected:
+                selected[run_id] = run_export
+        return list(selected.values())
+
+    def _darkharness_checkpoint_blocked_response(
+        self,
+        missing: list[str],
+        *,
+        go_no_go: dict[str, Any] | None = None,
+        policy_checks: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        checks: dict[str, bool] = {}
+        if isinstance(go_no_go, dict) and isinstance(go_no_go.get("checks"), dict):
+            checks.update(cast(dict[str, bool], go_no_go["checks"]))
+        checks.update(policy_checks or {})
+        return {
+            "packet": "darkharness.pilot_packet.v1",
+            "status": "blocked",
+            "missing_evidence": sorted(set(missing)),
+            "checks": checks,
+            "implemented_evidence": {
+                "go_no_go": go_no_go or {},
+            },
+            "boundaries": {
+                "raw_reservoir_egress": "deny",
+                "external_model_calls": "deny",
+                "production_actions_approval_required": True,
+            },
+            "claim_boundary": {
+                "implemented": [],
+                "proposed": ["multi_run_checkpoint_packet"],
+                "not_implemented": ["blocked_until_required_evidence_exists"],
+            },
+        }
 
     def _darkharness_blocked_response(
         self,
