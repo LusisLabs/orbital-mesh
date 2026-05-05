@@ -31,6 +31,13 @@ REQUIRED_DOCS = (
     "docs/pilot-slo-error-budget.md",
     "docs/post-training/runtime.md",
     "docs/security-audit-readiness.md",
+    "docs/darkharness-operator-runbook.md",
+)
+
+REQUIRED_TESTS = (
+    "tests/test_darkharness_packet.py",
+    "tests/test_darkharness_policy.py",
+    "tests/test_darkharness_export_path.py",
 )
 
 REQUIRED_SCRIPTS = (
@@ -49,6 +56,7 @@ REQUIRED_API_MARKERS = (
     "/api/readiness",
     "/api/kill-switch",
     "/api/pilot/go-no-go",
+    "/api/darkharness/pilot-packet",
     "/api/policy/simulate",
 )
 
@@ -227,7 +235,19 @@ REQUIRED_MARKERS = {
         "permissions:",
         "contents: read",
         "npm run lint",
+        "tests.test_darkharness_packet",
+        "tests.test_darkharness_policy",
+        "tests.test_darkharness_export_path",
         "docker build",
+    ),
+    "docs/darkharness-operator-runbook.md": (
+        "/api/runs/{run_id}/darkharness-packet",
+        "/api/darkharness/pilot-packet",
+        "policy_violation:",
+        "materialization_failed:",
+        "registry_invalid:",
+        "rollback_drill_run_export_present",
+        "Postgres remains authoritative",
     ),
     "docs/security-audit-readiness.md": (
         "OpenSSF Control Map",
@@ -254,6 +274,7 @@ def main() -> int:
     checks: list[dict[str, Any]] = []
     checks.extend(_check_image_defaults())
     checks.extend(_check_required_paths("doc", REQUIRED_DOCS))
+    checks.extend(_check_required_paths("test", REQUIRED_TESTS))
     checks.extend(_check_required_paths("script", REQUIRED_SCRIPTS))
     checks.extend(_check_api_markers())
     checks.extend(_check_required_markers())
