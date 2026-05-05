@@ -89,6 +89,7 @@ from shared.mesh_runtime.perennial import (
     materialize_agent_action_records,
     materialize_epistemic_state,
     materialize_governance_commit,
+    materialize_mesh_brain_action_records,
     materialize_ontological_state,
     materialize_proof_envelope,
 )
@@ -1277,6 +1278,14 @@ class RunCoordinator:
                 reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
                 proof_refs=proof_refs,
                 operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+            )
+            action_records.extend(
+                materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                    proof_refs=proof_refs,
+                )
             )
             policy = evaluate_darkharness_packet_policy(
                 pilot_scope=pilot_metadata["pilot_scope"],

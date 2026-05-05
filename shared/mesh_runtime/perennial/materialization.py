@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from ._utils import as_plain_dict, stable_id, string_list, timestamp, validate
+from .mesh_brain import mesh_brain_evidence_refs
 from .signing import build_hmac_signature_proof
 
 
@@ -584,7 +585,7 @@ def _run_export_evidence_refs(run_export: dict[str, Any]) -> list[str]:
     session: dict[str, Any] = cast(dict[str, Any], raw_session) if isinstance(raw_session, dict) else {}
     for key in ("remediation_safety", "trust_ladder", "integration_readiness"):
         add(_artifact_ref(session, key))
-    for ref in _mesh_brain_evidence_refs(session):
+    for ref in mesh_brain_evidence_refs(session):
         add(ref)
     decision = run_export.get("decision_record")
     if isinstance(decision, dict):
@@ -613,24 +614,6 @@ def _approval_refs(raw_records: Any) -> list[str]:
         if approval_id:
             refs.append(f"operator-approval://{approval_id}")
     return list(dict.fromkeys(refs))
-
-
-def _mesh_brain_evidence_refs(session: dict[str, Any]) -> list[str]:
-    raw_artifacts = session.get("artifacts")
-    artifacts: dict[str, Any] = cast(dict[str, Any], raw_artifacts) if isinstance(raw_artifacts, dict) else {}
-    refs: list[str] = []
-    artifact_map = {
-        "mesh_brain_model_kernel_run_record": "model-kernel",
-        "mesh_brain_live_serving_run_record": "live-serving",
-        "mesh_brain_rollback_drill_run_record": "rollback-drill",
-        "mesh_brain_backend_matrix_record": "backend-matrix",
-    }
-    for key, lane in artifact_map.items():
-        artifact = artifacts.get(key)
-        if isinstance(artifact, dict):
-            run_id = artifact.get("run_id") or artifact.get("id") or key
-            refs.append(f"mesh_brain://{lane}/{run_id}")
-    return refs
 
 
 def _artifact_ref(session: dict[str, Any], key: str) -> str | None:

@@ -244,6 +244,21 @@ not a public-key signature system and not post-quantum cryptography. PQC
 signatures, KEM, and ZK selective disclosure remain proposed hooks until a real
 provider interface and audited key-management path are added.
 
+## Mesh Brain Linkage
+
+Darkharness packet export maps recorded Mesh Brain artifacts into additional
+`AgentActionRecord` attestations through
+`materialize_mesh_brain_action_records()`. The adapter covers dataset
+provenance, training job, eval score, serving smoke, model-kernel proof, and
+quality/trust-ladder update records when those artifacts already exist on the
+run session.
+
+This linkage is evidence projection only. Packet export does not launch Mesh
+Brain training, model serving, backend evaluation, rollback drill, or promotion
+work. Mesh Brain records are marked as on-prem, non-production-impacting
+attestations so the primary remediation or denial action remains the governance
+commit subject.
+
 ## Architecture Layers
 
 ### 1. Reservoir Layer

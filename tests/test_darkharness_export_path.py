@@ -232,6 +232,64 @@ class DarkharnessExportPathTests(unittest.TestCase):
             finally:
                 coordinator.stop_background_workers()
 
+    def test_mesh_brain_artifacts_become_perennial_action_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                _attach_mesh_brain_artifacts(coordinator, run_id)
+
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                action_records = packet["perennial_records"]["agent_action_records"]
+                action_types = {record["action"]["action_type"] for record in action_records}
+                self.assertIn("restart_deployment", action_types)
+                self.assertIn("mesh_brain_dataset_provenance", action_types)
+                self.assertIn("mesh_brain_training_job", action_types)
+                self.assertIn("mesh_brain_eval_score", action_types)
+                self.assertIn("mesh_brain_serving_smoke", action_types)
+                self.assertIn("mesh_brain_model_kernel_proof", action_types)
+                self.assertIn("mesh_brain_quality_update", action_types)
+                mesh_records = [
+                    record
+                    for record in action_records
+                    if record["action"]["action_type"].startswith("mesh_brain_")
+                ]
+                self.assertTrue(mesh_records)
+                self.assertTrue(all(record["action"]["production_impact"] == "none" for record in mesh_records))
+                restart_record = next(
+                    record
+                    for record in action_records
+                    if record["action"]["action_type"] == "restart_deployment"
+                )
+                self.assertTrue(
+                    all(
+                        record["boundary"]["tenant_id"] == restart_record["boundary"]["tenant_id"]
+                        for record in mesh_records
+                    )
+                )
+                [governance_commit] = packet["perennial_records"]["governance_commits"]
+                primary_record = next(
+                    record
+                    for record in action_records
+                    if record["action_record_id"] == governance_commit["subject"]["action_record_id"]
+                )
+                self.assertEqual(primary_record["action"]["action_type"], "restart_deployment")
+                self.assertIn(
+                    "mesh_brain://model-kernel/mb_kernel_1",
+                    governance_commit["inputs"]["evidence_refs"],
+                )
+                self.assertIn(
+                    "mesh_brain://live-serving/mb_live_1",
+                    governance_commit["inputs"]["evidence_refs"],
+                )
+                validate_payload("perennial/darkharness-pilot-packet.schema.json", packet)
+            finally:
+                coordinator.stop_background_workers()
+
 
 def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dict[str, Any]] | None = None) -> str:
     decision = _decision("dec_darkharness", autonomy_tier="approval_required")
@@ -274,6 +332,93 @@ def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dic
         status="executed" if allowed else "denied",
     )
     return str(session.run_id)
+
+
+def _attach_mesh_brain_artifacts(coordinator: RunCoordinator, run_id: str) -> None:
+    coordinator._set_artifact(  # noqa: SLF001
+        run_id,
+        "mesh_brain_run_record",
+        {
+            "run_id": "mb_mvp_1",
+            "tenant_id": "customer-a",
+            "status": "completed",
+            "artifact_refs": {
+                "mesh_brain_dataset_manifest": {
+                    "artifact_key": "mesh_brain_dataset_manifest",
+                    "path": "/tmp/mesh-brain/dataset_manifest.json",
+                },
+                "mesh_brain_training_job": {
+                    "artifact_key": "mesh_brain_training_job",
+                    "path": "/tmp/mesh-brain/training_job.json",
+                },
+                "mesh_brain_eval_job": {
+                    "artifact_key": "mesh_brain_eval_job",
+                    "path": "/tmp/mesh-brain/eval_job.json",
+                },
+            },
+            "summary_metrics": {
+                "golden_eval_case_count": 3,
+                "serving_backend": "deterministic",
+            },
+            "final_release_decision": "canary",
+        },
+    )
+    coordinator._set_artifact(  # noqa: SLF001
+        run_id,
+        "mesh_brain_model_kernel_run_record",
+        {
+            "run_id": "mb_kernel_1",
+            "tenant_id": "mesh_system",
+            "status": "completed",
+            "artifact_refs": {
+                "mesh_brain_model_kernel_gate": {
+                    "artifact_key": "mesh_brain_model_kernel_gate",
+                    "path": "/tmp/mesh-brain/model_kernel_gate.json",
+                },
+            },
+            "final_release_decision": "pass",
+        },
+    )
+    coordinator._set_artifact(  # noqa: SLF001
+        run_id,
+        "mesh_brain_live_serving_run_record",
+        {
+            "run_id": "mb_live_1",
+            "tenant_id": "customer-a",
+            "status": "completed",
+            "artifact_refs": {
+                "mesh_brain_live_serving_summary": {
+                    "artifact_key": "mesh_brain_live_serving_summary",
+                    "path": "/tmp/mesh-brain/live_serving_summary.json",
+                },
+            },
+            "final_release_decision": "canary",
+        },
+    )
+    coordinator._set_artifact(  # noqa: SLF001
+        run_id,
+        "mesh_brain_backend_matrix_record",
+        {
+            "run_id": "mb_matrix_1",
+            "tenant_id": "customer-a",
+            "status": "completed",
+            "artifact_refs": {
+                "mesh_brain_backend_matrix_results": {
+                    "artifact_key": "mesh_brain_backend_matrix_results",
+                    "path": "/tmp/mesh-brain/backend_matrix_results.json",
+                },
+                "mesh_brain_backend_matrix_summary": {
+                    "artifact_key": "mesh_brain_backend_matrix_summary",
+                    "path": "/tmp/mesh-brain/backend_matrix_summary.json",
+                },
+            },
+            "summary_metrics": {
+                "passed_count": 2,
+                "blocked_count": 0,
+            },
+            "final_release_decision": "pass",
+        },
+    )
 
 
 def _patched_pilot_inputs(coordinator: RunCoordinator) -> Any:
