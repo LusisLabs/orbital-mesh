@@ -901,6 +901,13 @@ Phase 3: pilot packet.
   go/no-go packet output.
 - Require `PilotScope`.
 - Include implemented/proposed capability labels in the packet.
+- Expose read-only packet export at
+  `GET /api/runs/{run_id}/darkharness-packet`.
+- Return a schema-valid `darkharness.pilot_packet.v1` only when existing run
+  evidence is sufficient; otherwise return a blocked response with explicit
+  missing evidence.
+- Do not write DB state, execute actions, relax approval gates, call external
+  models, or export raw reservoir contents from this endpoint.
 
 Phase 4: reservoir controls.
 

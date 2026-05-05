@@ -68,6 +68,14 @@ def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def darkharness_packet_response(coordinator: RunCoordinator, run_id: str) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_packet(run_id)
+    if payload is None:
+        return {"error": "run not found"}, HTTPStatus.NOT_FOUND
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
+
+
 class MeshControlPlaneServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
@@ -287,6 +295,14 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/darkharness-packet"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload, status = darkharness_packet_response(self.server.coordinator, run_id)
+            self._send_json(payload, status=status)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]

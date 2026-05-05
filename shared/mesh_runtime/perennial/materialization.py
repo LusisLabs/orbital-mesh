@@ -535,9 +535,13 @@ def _evidence_refs(event: dict[str, Any], payload: dict[str, Any], decision: dic
 
 def _run_export_evidence_refs(run_export: dict[str, Any]) -> list[str]:
     refs: list[Any] = []
-    for artifact in run_export.get("evidence_artifacts", []):
-        if isinstance(artifact, dict):
-            refs.append(artifact.get("artifact_key") or artifact.get("uri") or artifact.get("path"))
+    artifacts = run_export.get("evidence_artifacts")
+    if isinstance(artifacts, dict):
+        refs.extend(f"artifact://{key}" for key in artifacts)
+    elif isinstance(artifacts, list):
+        for artifact in artifacts:
+            if isinstance(artifact, dict):
+                refs.append(artifact.get("artifact_key") or artifact.get("uri") or artifact.get("path"))
     if run_export.get("export_id"):
         refs.append(f"run_export://{run_export['export_id']}")
     if not refs and run_export.get("run_id"):

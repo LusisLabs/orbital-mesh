@@ -15,7 +15,7 @@ from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
@@ -82,6 +82,15 @@ from shared.mesh_runtime import (
     Trigger,
     load_fixture,
 )
+from shared.mesh_runtime.perennial import (
+    build_darkharness_pilot_packet,
+    materialize_agent_action_records,
+    materialize_epistemic_state,
+    materialize_governance_commit,
+    materialize_ontological_state,
+    materialize_proof_envelope,
+)
+from shared.mesh_runtime.schema_validation import SchemaValidationError
 from shared.mesh_runtime.alert_store import AlertStore
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunEvent, RunSession, SteeringCommand
 from services.signal_correlator import SignalCorrelator
@@ -1184,6 +1193,117 @@ class RunCoordinator:
             status="recorded",
         )
         return package
+
+    def build_run_export_package_snapshot(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        events = self.state_store.list_run_events(run_id)
+        merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
+        proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
+        proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        artifacts = _redact_run_export_value(session.artifacts)
+        generated_at = _timestamp()
+        package: dict[str, Any] = {
+            "package_version": "mesh.run_export.v1",
+            "generated_at": generated_at,
+            "run_id": run_id,
+            "session": _redact_run_export_value(session.to_dict()),
+            "timeline_json": [_redact_run_export_value(event.to_dict()) for event in events],
+            "postmortem_markdown": self._build_run_export_markdown(session, events, merkle),
+            "evidence_artifacts": self._run_export_evidence_artifacts(artifacts),
+            "decision_record": copy.deepcopy(artifacts.get("decision")),
+            "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
+            "execution_record": copy.deepcopy(artifacts.get("execution")),
+            "feedback_record": copy.deepcopy(artifacts.get("feedback")),
+            "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "operator_notes": _redact_run_export_value(list(session.operator_notes)),
+            "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "vault_documents": self._run_export_vault_documents(run_id),
+            "checks": {
+                "timeline_present": bool(events),
+                "markdown_summary_present": True,
+                "merkle_root_present": bool(merkle.get("root_hash")),
+                "merkle_proof_valid": bool(proof and proof.get("valid")),
+                "decision_record_present": isinstance(artifacts.get("decision"), dict),
+                "evaluation_record_present": isinstance(artifacts.get("evaluation"), dict),
+                "execution_record_present": isinstance(artifacts.get("execution"), dict),
+                "feedback_record_present": isinstance(artifacts.get("feedback"), dict),
+            },
+            "redaction": {
+                "enabled": True,
+                "secret_markers": ("token", "secret", "api_key", "apikey", "authorization", "password", "jwt"),
+                "replacement": "<redacted>",
+            },
+            "retention": self._run_export_retention_policy(generated_at),
+            "read_only": True,
+        }
+        package = self._enforce_run_export_size(package)
+        package_sha = _canonical_sha256(package)
+        package["export_id"] = f"run_export_shadow_{generated_at.replace(':', '').replace('+', 'Z')}_{package_sha[:12]}"
+        package["package_sha256"] = _canonical_sha256(package)
+        package["path"] = None
+        return package
+
+    def build_darkharness_packet(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        run_export = self.build_run_export_package_snapshot(run_id)
+        if run_export is None:
+            return None
+        pilot_metadata = self._darkharness_shadow_metadata(session)
+        missing = self._darkharness_missing_evidence(run_export, session, pilot_metadata)
+        if missing:
+            return self._darkharness_blocked_response(run_id, missing, run_export)
+
+        try:
+            readiness = self.build_readiness()
+            go_no_go = self.generate_pilot_go_no_go()
+            decision = run_export["decision_record"]
+            evaluation = run_export["evaluation_record"]
+            proof_refs: list[str] = []
+            action_records = materialize_agent_action_records(
+                run_export["timeline_json"],
+                run=run_export["session"],
+                decision=decision,
+                evaluation=evaluation,
+                tenant_id=pilot_metadata["tenant_id"],
+                reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                proof_refs=proof_refs,
+            )
+            primary_action = self._darkharness_primary_action_record(action_records)
+            scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
+            epistemic_state = materialize_epistemic_state(scenario_analysis, run_id=run_id)
+            ontological_state = materialize_ontological_state(pilot_metadata["ontology_metadata"])
+            proof_envelope = materialize_proof_envelope(
+                run_export,
+                subject_refs=[run_id, primary_action["action_record_id"]],
+            )
+            governance_commit = materialize_governance_commit(
+                run_export=run_export,
+                epistemic_state=epistemic_state,
+                ontological_state=ontological_state,
+                proof_envelope=proof_envelope,
+                action_record=primary_action,
+                readiness=readiness,
+                trust_ladder_ref=pilot_metadata["trust_ladder_ref"],
+            )
+            return build_darkharness_pilot_packet(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                readiness=readiness,
+                go_no_go=go_no_go,
+                run_exports=[run_export],
+                sensitive_reservoirs=[pilot_metadata["sensitive_reservoir"]],
+                agent_action_records=action_records,
+                epistemic_states=[epistemic_state],
+                ontological_states=[ontological_state],
+                governance_commits=[governance_commit],
+                proof_envelopes=[proof_envelope],
+                generated_at=run_export["generated_at"],
+            )
+        except (KeyError, TypeError, ValueError, SchemaValidationError) as exc:
+            return self._darkharness_blocked_response(run_id, [f"materialization_failed:{exc}"], run_export)
 
     def export_run_archive(self, run_id: str) -> dict[str, Any] | None:
         package = self.export_run_package(run_id)
@@ -4503,6 +4623,126 @@ class RunCoordinator:
         if final_bytes > max_bytes:
             raise ValueError(f"run export package exceeds {max_bytes} bytes after compaction")
         return package
+
+    def _darkharness_shadow_metadata(self, session: RunSession) -> dict[str, Any]:
+        fixture_payload = load_fixture("perennial", "allowed_action.json")
+        fixture = cast(dict[str, Any], fixture_payload["contracts"])
+        raw_decision = session.artifacts.get("decision")
+        decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
+        raw_execution_plan = decision.get("execution_plan")
+        execution_plan = cast(dict[str, Any], raw_execution_plan) if isinstance(raw_execution_plan, dict) else {}
+        raw_parameters = execution_plan.get("parameters")
+        parameters = cast(dict[str, Any], raw_parameters) if isinstance(raw_parameters, dict) else {}
+        service = str(parameters.get("service") or session.scenario_key or "orbital-mesh-run")
+        namespace = str(parameters.get("namespace") or "pilot")
+        reservoir = cast(dict[str, Any], copy.deepcopy(fixture["sensitive_reservoir"]))
+        pilot_scope = cast(dict[str, Any], copy.deepcopy(fixture["pilot_scope"]))
+        pilot_scope["pilot_scope_id"] = f"pilot_scope_{session.run_id}"
+        pilot_scope["customer_boundary"] = "shadow-onprem"
+        action_limits = cast(dict[str, Any], pilot_scope["action_limits"])
+        action_limits["allowed_namespaces"] = [namespace]
+        action_limits["allowed_services"] = [service]
+        reservoir_id = str(reservoir["reservoir_id"])
+        return {
+            "tenant_id": "shadow",
+            "pilot_scope": pilot_scope,
+            "sensitive_reservoir": reservoir,
+            "trust_ladder_ref": f"trust://{service}/pilot",
+            "ontology_metadata": {
+                "namespace": namespace,
+                "service": service,
+                "owner": {
+                    "owner_id": f"owner.{service}",
+                    "team": "platform-reliability",
+                    "source_refs": [f"registry://owners/{service}"],
+                },
+                "reservoir_ids": [reservoir_id],
+                "policy_refs": ["policy://darkharness/pilot/approval-required"],
+            },
+        }
+
+    def _darkharness_missing_evidence(
+        self,
+        run_export: dict[str, Any],
+        session: RunSession,
+        pilot_metadata: dict[str, Any],
+    ) -> list[str]:
+        raw_checks = run_export.get("checks")
+        checks = cast(dict[str, Any], raw_checks) if isinstance(raw_checks, dict) else {}
+        missing = [
+            name
+            for name in (
+                "timeline_present",
+                "merkle_root_present",
+                "merkle_proof_valid",
+                "decision_record_present",
+                "evaluation_record_present",
+            )
+            if checks.get(name) is not True
+        ]
+        if not isinstance(session.artifacts.get("scenario_analysis"), dict):
+            missing.append("scenario_analysis_present")
+        if not isinstance(pilot_metadata.get("pilot_scope"), dict):
+            missing.append("pilot_scope_present")
+        if not isinstance(pilot_metadata.get("sensitive_reservoir"), dict):
+            missing.append("sensitive_reservoir_present")
+        raw_decision = run_export.get("decision_record")
+        raw_evaluation = run_export.get("evaluation_record")
+        decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
+        evaluation = cast(dict[str, Any], raw_evaluation) if isinstance(raw_evaluation, dict) else {}
+        production_impact = self._darkharness_decision_production_impact(decision)
+        is_allowed = evaluation.get("final_recommendation") == "execute" and not evaluation.get("blocking_reasons")
+        if is_allowed and production_impact in {"possible", "direct"} and not run_export.get("approval_records"):
+            missing.append("operator_approval_present")
+        return missing
+
+    def _darkharness_blocked_response(
+        self,
+        run_id: str,
+        missing: list[str],
+        run_export: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "packet": "darkharness.pilot_packet.v1",
+            "status": "blocked",
+            "run_id": run_id,
+            "missing_evidence": sorted(set(missing)),
+            "checks": copy.deepcopy(run_export.get("checks", {})),
+            "boundaries": {
+                "raw_reservoir_egress": "deny",
+                "external_model_calls": "deny",
+                "production_actions_approval_required": True,
+            },
+            "claim_boundary": {
+                "implemented": [],
+                "proposed": ["perennial_shadow_records"],
+                "not_implemented": ["blocked_until_required_evidence_exists"],
+            },
+        }
+
+    @staticmethod
+    def _darkharness_primary_action_record(action_records: list[dict[str, Any]]) -> dict[str, Any]:
+        priority = {"denied": 0, "executed": 1, "approved": 2, "proposed": 3, "observed": 4}
+        def sort_key(record: dict[str, Any]) -> int:
+            raw_outcome = record.get("outcome")
+            outcome = cast(dict[str, Any], raw_outcome) if isinstance(raw_outcome, dict) else {}
+            return priority.get(str(outcome.get("status")), 99)
+
+        return sorted(action_records, key=sort_key)[0]
+
+    @staticmethod
+    def _darkharness_decision_production_impact(decision: dict[str, Any]) -> str:
+        raw_plan = decision.get("execution_plan")
+        plan = cast(dict[str, Any], raw_plan) if isinstance(raw_plan, dict) else {}
+        raw_parameters = plan.get("parameters")
+        parameters = cast(dict[str, Any], raw_parameters) if isinstance(raw_parameters, dict) else {}
+        impact = parameters.get("production_impact") or plan.get("production_impact")
+        if impact in {"none", "possible", "direct"}:
+            return str(impact)
+        action = str(plan.get("action") or "").lower()
+        if any(marker in action for marker in ("scale", "patch", "rollback", "restart", "execute", "write")):
+            return "possible"
+        return "none"
 
 
 def _timestamp() -> str:
