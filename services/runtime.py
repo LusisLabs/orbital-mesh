@@ -49,6 +49,63 @@ def _build_kubernetes_feedback_observer(config: RuntimeConfig) -> KubernetesFeed
     return KubernetesFeedbackObserver(kubectl_command=config.kubectl_command)
 
 
+def _auto_wire_investigation_harness(
+    raw_signal: dict,
+    trigger: object,
+    config: RuntimeConfig | None = None,
+) -> tuple[object | None, object | None]:
+    """When the caller doesn't supply a harness, auto-wire one from the signal.
+
+    The single biggest gap on CloudOpsBench: ``MeshBackend.run_scenario``
+    invoked ``run_sync`` without ``registry``/``planner``, so the
+    investigation tool-loop short-circuited on every scenario (0/521 used
+    any tool). The machinery existed; only the wiring was missing.
+
+    Two planner shapes are produced depending on config:
+
+    * If ``MESH_OBSERVER_ENABLED=1`` and a key is configured, an
+      ``LlmProbeSelector`` is built. Each harness iteration calls the
+      observer LLM with the current observation state and asks for the
+      next tool to invoke. The LLM cannot pick mutating tools (the
+      registry rejects them) and cannot crash the loop (failures
+      collapse to ``stop``).
+    * Otherwise the rule-based ``CloudOpsLoopPlanner`` is used — pattern
+      matching over the snapshot. This is the deterministic safety floor.
+
+    Returns ``(registry, planner)`` if a domain match is found, or
+    ``(None, None)`` to leave the harness disabled.
+    """
+    snapshot = raw_signal.get("cloudopsbench_snapshot") if isinstance(raw_signal, dict) else None
+    if isinstance(snapshot, dict):
+        from services.benchmark.cloudopsbench import CloudOpsSnapshotTools
+        from services.investigation.cloudops_tools import (
+            CLOUDOPS_TOOL_DEFINITIONS,
+            CloudOpsLoopPlanner,
+            CloudOpsRulePack,
+            register_cloudops_tools,
+        )
+        from services.investigation.harness.native_selector import LlmProbeSelector
+        from services.investigation.harness.registry import ToolRegistry
+        from services.investigation.llm_planner import build_llm_decision_provider
+
+        registry = ToolRegistry()
+        register_cloudops_tools(registry, CloudOpsSnapshotTools(snapshot))
+
+        decision_provider = build_llm_decision_provider(config) if config is not None else None
+        if decision_provider is not None:
+            rule_pack = CloudOpsRulePack(trigger)
+            planner = LlmProbeSelector(
+                rule_pack,
+                tool_definitions=CLOUDOPS_TOOL_DEFINITIONS,
+                decision_provider=decision_provider,
+                enabled=True,
+            )
+        else:
+            planner = CloudOpsLoopPlanner(trigger)
+        return registry, planner
+    return None, None
+
+
 class MeshRuntimeEngine:
     def __init__(
         self,
@@ -227,6 +284,19 @@ class MeshRuntimeEngine:
             )
             result["run_metadata"] = run_record.__dict__
             return result
+
+        # Auto-wire the investigation harness when the caller didn't
+        # supply one. Without this, every benchmark/test/ad-hoc call hit
+        # the tool-loop's "registry+planner are None" short-circuit and
+        # skipped investigation entirely (this was the source of
+        # 0-of-521 tool-coverage on CloudOpsBench). See
+        # ``_auto_wire_investigation_harness`` for the rationale.
+        if registry is None and planner is None and tool_provider is None:
+            auto_registry, auto_planner = _auto_wire_investigation_harness(
+                raw_signal, trigger, self.config,
+            )
+            registry = auto_registry
+            planner = auto_planner
 
         record_event(
             "trigger_ready",
