@@ -51,6 +51,7 @@ import {
 } from "./lib/runGraph";
 import type {
   BenchmarkRecord,
+  DarkharnessPilotPacket,
   HealthSnapshot,
   KillSwitchStatus,
   ConnectionStatus,
@@ -125,7 +126,7 @@ type AppView =
   | "packets"
   | "roadmap"
   | "settings";
-type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "audit" | "agents" | "topology";
+type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "darkharness" | "audit" | "agents" | "topology";
 type ConnectorState =
   | "ready"
   | "degraded"
@@ -417,6 +418,7 @@ export default function App() {
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
   const [runExport, setRunExport] = useState<RunExportPackage | null>(null);
+  const [darkharnessPacket, setDarkharnessPacket] = useState<DarkharnessPilotPacket | null>(null);
 
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
@@ -503,6 +505,7 @@ export default function App() {
       setEvidenceGraph(null);
       setMemoryCrystallization(null);
       setRunExport(null);
+      setDarkharnessPacket(null);
       setRunConnection("disconnected");
       return;
     }
@@ -659,18 +662,20 @@ export default function App() {
 
   async function loadRun(runId: string) {
     try {
-      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse] = await Promise.all([
+      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse, darkharnessResponse] = await Promise.all([
         api.getRun(baseUrl, runId),
         api.getAgentTasks(baseUrl, runId).catch(() => ({ tasks: [] as AgentTask[] })),
         api.getScenarioAnalysis(baseUrl, runId).catch(() => null),
         api.getEvidenceGraph(baseUrl, runId).catch(() => null),
         api.getMemoryCrystallization(baseUrl, runId).catch(() => null),
+        api.getRunDarkharnessPacket(baseUrl, runId).catch(() => null),
       ]);
       setActiveRun(run);
       setAgentTasks(taskResponse.tasks);
       setScenarioAnalysis(analysisResponse);
       setEvidenceGraph(evidenceResponse);
       setMemoryCrystallization(memoryResponse);
+      setDarkharnessPacket(darkharnessResponse);
       setRunExport((current) => (current?.run_id === runId ? current : null));
     } catch (error) {
       addToast({ variant: "error", title: "Failed to load run", description: error instanceof Error ? error.message : "Unknown error" });
@@ -1490,6 +1495,7 @@ export default function App() {
               selectedEventInsights={selectedEventInsights}
               merkleProof={merkleProof}
               runExport={runExport}
+              darkharnessPacket={darkharnessPacket}
               exportingRun={exportingRun}
               exportingArchive={exportingArchive}
               onSelectRun={(runId) => {
@@ -1572,7 +1578,13 @@ export default function App() {
           ) : activeView === "trust" ? (
             <TrustLadderView trustLadder={trustLadder} serviceAgents={serviceAgents} activeRun={activeRun} />
           ) : activeView === "packets" ? (
-            <PilotPacketView packet={pilotPacket} readiness={readiness} benchmarks={benchmarks} activeRun={activeRun} />
+            <PilotPacketView
+              packet={pilotPacket}
+              darkharnessPacket={darkharnessPacket}
+              readiness={readiness}
+              benchmarks={benchmarks}
+              activeRun={activeRun}
+            />
           ) : activeView === "roadmap" ? (
             <RoadmapView readiness={readiness} pilotPacket={pilotPacket} simulations={simulations} trustLadder={trustLadder} />
           ) : activeView === "evidence" || activeView === "audit" ? (
@@ -2069,6 +2081,7 @@ function RunsView({
   selectedEventInsights,
   merkleProof,
   runExport,
+  darkharnessPacket,
   exportingRun,
   exportingArchive,
   onSelectRun,
@@ -2101,6 +2114,7 @@ function RunsView({
   selectedEventInsights: Array<{ label: string; value: string; tone?: string }>;
   merkleProof: MerkleProof | null;
   runExport: RunExportPackage | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
   exportingRun: boolean;
   exportingArchive: boolean;
   onSelectRun: (runId: string) => void;
@@ -2146,7 +2160,7 @@ function RunsView({
           {activeRun ? <StatusChip label={humanize(activeRun.stage)} tone={toneForStage(activeRun.stage)} /> : null}
         </div>
         <div className="mesh-tab-list" role="tablist" aria-label="Run detail">
-          {(["timeline", "evidence", "rca", "approvals", "actions", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
+          {(["timeline", "evidence", "rca", "approvals", "actions", "darkharness", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
             <button key={tab} className={runDetailTab === tab ? "tab active" : "tab"} type="button" onClick={() => onRunDetailTabChange(tab)}>
               {runDetailTabLabel(tab)}
             </button>
@@ -2162,6 +2176,8 @@ function RunsView({
           <RunApprovalPanel queue={approvalQueue} activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "actions" ? (
           <RunActionPanel activeRun={activeRun} onJumpContext={onJumpContext} />
+        ) : runDetailTab === "darkharness" ? (
+          <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} />
         ) : runDetailTab === "audit" ? (
           <RunAuditPanel
             activeRun={activeRun}
@@ -2959,11 +2975,13 @@ function TrustLadderCard({ entry }: { entry: TrustLadderEntry }) {
 
 function PilotPacketView({
   packet,
+  darkharnessPacket,
   readiness,
   benchmarks,
   activeRun,
 }: {
   packet: PilotGoNoGoPacket | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
   readiness: IntegrationReadiness | null;
   benchmarks: BenchmarkRecord[];
   activeRun: RunDetail | null;
@@ -3025,6 +3043,9 @@ function PilotPacketView({
             <ConnectorRow key={path} name={label} detail={path} state="config-only" />
           ))}
         </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} compact />
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Activity size={15} />} title="Benchmark Records" />
@@ -3733,6 +3754,154 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
         </div>
       </section>
     </div>
+  );
+}
+
+function DarkharnessPacketPanel({
+  packet,
+  activeRun,
+  compact,
+}: {
+  packet: DarkharnessPilotPacket | null;
+  activeRun: RunDetail | null;
+  compact?: boolean;
+}) {
+  const missingEvidence = packet?.missing_evidence ?? [];
+  const checks = Object.entries(packet?.checks ?? {});
+  const evidence = packet?.implemented_evidence;
+  const records = packet?.perennial_records;
+  const allowedProofs = evidence?.allowed_action_proofs ?? [];
+  const deniedProofs = evidence?.denied_action_proofs ?? [];
+  const merkleProofs = evidence?.merkle_proofs ?? [];
+  const governanceCommits = records?.governance_commits ?? [];
+  const agentRecords = records?.agent_action_records ?? [];
+  const reservoirs = records?.sensitive_reservoirs ?? [];
+  const state: ConnectorState = !packet ? "disconnected" : packet.status === "blocked" ? "degraded" : "ready";
+  const statusLabel = !packet ? "Unavailable" : packet.status === "blocked" ? "Blocked" : "Packet ready";
+  return (
+    <div className={compact ? "darkharness-panel compact" : "mesh-detail-grid darkharness-panel"} data-testid="darkharness-packet-panel">
+      <section className="context-panel">
+        <div className="mesh-section-header">
+          <SectionTitle icon={<ShieldCheck size={14} />} title="Darkharness Packet" />
+          <StatusPill state={state} label={statusLabel} />
+        </div>
+        <div className="context-stat-grid">
+          <ContextStat label="Run" value={activeRun?.run_id ?? packet?.run_id ?? "No run"} />
+          <ContextStat label="Packet" value={packet?.packet_id?.slice(0, 18) ?? packet?.packet ?? "Unavailable"} />
+          <ContextStat label="Allowed proof" value={String(allowedProofs.length)} />
+          <ContextStat label="Denied proof" value={String(deniedProofs.length)} />
+          <ContextStat label="Merkle proofs" value={String(merkleProofs.length)} />
+          <ContextStat label="Missing evidence" value={String(missingEvidence.length)} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Binary size={14} />} title="Boundary Status" />
+        <div className="gate-matrix compact">
+          <DarkharnessBoundaryRow
+            label="Raw reservoir egress"
+            value={packet?.boundaries.raw_reservoir_egress}
+            passed={packet?.boundaries.raw_reservoir_egress === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="External model calls"
+            value={packet?.boundaries.external_model_calls}
+            passed={packet?.boundaries.external_model_calls === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="Production approval"
+            value={packet ? String(packet.boundaries.production_actions_approval_required) : undefined}
+            passed={packet?.boundaries.production_actions_approval_required === true}
+          />
+          {checks.map(([name, passed]) => (
+            <div key={name} className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+              <span>{humanize(name)}</span>
+              <strong>{passed ? "observed" : "missing"}</strong>
+              <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<AlertTriangle size={14} />} title="Missing Evidence" />
+        <div className="mesh-stack">
+          {missingEvidence.map((item) => (
+            <ConnectorRow key={item} name={humanize(item)} detail="Packet eligibility blocker" state="degraded" />
+          ))}
+          {packet && missingEvidence.length === 0 ? <EmptyState text="No missing evidence in the Darkharness packet." /> : null}
+          {!packet ? <EmptyState text="No Darkharness packet is available for the selected run." /> : null}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Activity size={14} />} title="Implemented Evidence" />
+        <div className="context-stat-grid">
+          <ContextStat label="Run exports" value={String(evidence?.run_exports?.length ?? 0)} />
+          <ContextStat label="Agent records" value={String(agentRecords.length)} />
+          <ContextStat label="Governance commits" value={String(governanceCommits.length)} />
+          <ContextStat label="Reservoirs" value={String(reservoirs.length)} />
+          <ContextStat label="Readiness" value={humanize(String(evidence?.readiness?.status ?? "unavailable"))} />
+          <ContextStat label="Go/no-go" value={humanize(String(evidence?.go_no_go?.status ?? evidence?.go_no_go?.final_release_decision ?? "unavailable"))} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<FolderGit2 size={14} />} title="Claim Boundary" />
+        <ClaimBoundaryList title="Implemented" items={packet?.claim_boundary.implemented ?? []} state="ready" />
+        <ClaimBoundaryList title="Proposed" items={packet?.claim_boundary.proposed ?? []} state="config-only" />
+        <ClaimBoundaryList title="Not implemented" items={packet?.claim_boundary.not_implemented ?? []} state="degraded" />
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<BookOpen size={14} />} title="Perennial Records" />
+        <div className="mesh-table-wrap">
+          <table className="mesh-table">
+            <thead><tr><th>Record</th><th>Count</th><th>Status</th></tr></thead>
+            <tbody>
+              <DarkharnessRecordRow label="Sensitive reservoirs" count={reservoirs.length} />
+              <DarkharnessRecordRow label="Agent actions" count={agentRecords.length} />
+              <DarkharnessRecordRow label="Governance commits" count={governanceCommits.length} />
+              <DarkharnessRecordRow label="Epistemic states" count={records?.epistemic_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Ontological states" count={records?.ontological_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Proof envelopes" count={records?.proof_envelopes?.length ?? 0} />
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DarkharnessBoundaryRow({ label, value, passed }: { label: string; value?: string; passed: boolean }) {
+  return (
+    <div className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+      <span>{label}</span>
+      <strong>{value ?? "unavailable"}</strong>
+      <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+    </div>
+  );
+}
+
+function ClaimBoundaryList({ title, items, state }: { title: string; items: string[]; state: ConnectorState }) {
+  return (
+    <div className="darkharness-claim-group">
+      <div className="mesh-section-header compact">
+        <strong>{title}</strong>
+        <StatusPill state={state} label={String(items.length)} />
+      </div>
+      <div className="darkharness-claim-list">
+        {items.map((item) => (
+          <span key={`${title}-${item}`}>{humanize(item)}</span>
+        ))}
+        {items.length === 0 ? <small>None</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function DarkharnessRecordRow({ label, count }: { label: string; count: number }) {
+  return (
+    <tr>
+      <td>{label}</td>
+      <td>{count}</td>
+      <td><StatusPill state={count > 0 ? "ready" : "config-only"} label={count > 0 ? "present" : "empty"} /></td>
+    </tr>
   );
 }
 

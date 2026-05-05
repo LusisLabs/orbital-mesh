@@ -1,5 +1,6 @@
 import type {
   GoalRecord,
+  DarkharnessPilotPacket,
   HealthSnapshot,
   IntegrationReadiness,
   EvidenceGraph,
@@ -43,6 +44,34 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
     ...init,
   });
   if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+      else if (body?.error) detail = body.error;
+      else if (body?.message) detail = body.message;
+    } catch {
+      /* body not JSON */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
+async function requestAllowingStatus<T>(
+  baseUrl: string,
+  path: string,
+  allowedStatuses: number[],
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  if (!response.ok && !allowedStatuses.includes(response.status)) {
     let detail = `${response.status} ${response.statusText}`;
     try {
       const body = await response.json();
@@ -265,6 +294,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     });
+  },
+
+  getRunDarkharnessPacket(baseUrl: string, runId: string) {
+    return requestAllowingStatus<DarkharnessPilotPacket>(
+      baseUrl,
+      `/api/runs/${runId}/darkharness-packet`,
+      [409],
+    );
   },
 
   getRunExportArchive(baseUrl: string, runId: string) {

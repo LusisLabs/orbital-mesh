@@ -131,6 +131,22 @@ test("keeps run detail topology secondary while preserving canvas modes", async 
   }
 });
 
+test("exposes Darkharness packet status on the operator surface", async ({ page }) => {
+  await openFixture(page);
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Evidence Runs" }).click();
+  await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
+  await page.getByRole("button", { name: "Darkharness" }).click();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Darkharness Packet" })).toBeVisible();
+  await expect(page.getByText("Boundary Status")).toBeVisible();
+  await expect(page.getByText("Claim Boundary")).toBeVisible();
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Pilot Packet" }).click();
+  await expect(page.getByTestId("mesh-view-packets")).toBeVisible();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
+});
+
 test("submits operator note and Hermes chat through steering", async ({ page }) => {
   const apiUrl = process.env.MESH_E2E_API_URL;
   expect(apiUrl, "MESH_E2E_API_URL must be set by scripts/e2e_ui_operator.sh").toBeTruthy();

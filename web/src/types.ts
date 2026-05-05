@@ -317,6 +317,45 @@ export interface RunExportPackage {
   };
 }
 
+export interface DarkharnessPilotPacket {
+  packet: "darkharness.pilot_packet.v1";
+  status?: "blocked" | string;
+  run_id?: string;
+  packet_id?: string;
+  generated_at?: string;
+  customer_boundary?: string;
+  pilot_scope_id?: string;
+  missing_evidence?: string[];
+  checks?: Record<string, boolean>;
+  implemented_evidence?: {
+    readiness?: Record<string, any>;
+    go_no_go?: Record<string, any>;
+    run_exports?: Array<Record<string, any>>;
+    merkle_proofs?: Array<Record<string, any>>;
+    denied_action_proofs?: Array<Record<string, any>>;
+    allowed_action_proofs?: Array<Record<string, any>>;
+    postgres_restart_proof?: Record<string, any> | null;
+  };
+  perennial_records?: {
+    sensitive_reservoirs?: Array<Record<string, any>>;
+    agent_action_records?: Array<Record<string, any>>;
+    epistemic_states?: Array<Record<string, any>>;
+    ontological_states?: Array<Record<string, any>>;
+    governance_commits?: Array<Record<string, any>>;
+    proof_envelopes?: Array<Record<string, any>>;
+  };
+  boundaries: {
+    raw_reservoir_egress: string;
+    external_model_calls: string;
+    production_actions_approval_required: boolean;
+  };
+  claim_boundary: {
+    implemented: string[];
+    proposed: string[];
+    not_implemented: string[];
+  };
+}
+
 export interface TrustLadderEntry {
   action_class: string;
   service: string;

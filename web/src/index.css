@@ -4071,6 +4071,49 @@ body {
   white-space: nowrap;
 }
 
+.darkharness-panel {
+  gap: 0.9rem;
+}
+
+.darkharness-panel.compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.darkharness-claim-group {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: var(--mesh-radius-sm);
+  background: rgba(22, 22, 25, 0.72);
+}
+
+.darkharness-claim-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.darkharness-claim-list span,
+.darkharness-claim-list small {
+  max-width: 100%;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: 999px;
+  color: var(--mesh-text-soft);
+  font-family: var(--mesh-mono);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.mesh-section-header.compact {
+  gap: 0.5rem;
+  min-height: 0;
+  margin: 0;
+}
+
 .simulator-layout {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) minmax(320px, 0.82fr);
@@ -4258,6 +4301,7 @@ body {
 
 @media (max-width: 900px) {
   .simulator-layout,
+  .darkharness-panel.compact,
   .gate-matrix {
     grid-template-columns: 1fr;
   }
