@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from shared.mesh_runtime import RunEvent, RunSession, build_merkle_proof, build_merkle_snapshot, validate_payload
 from shared.mesh_runtime.perennial import (
+    CryptoProviderRegistry,
     materialize_agent_action_record,
     materialize_epistemic_state,
     materialize_governance_commit,
@@ -310,6 +311,46 @@ class PerennialMaterializationTests(unittest.TestCase):
         self.assertEqual(signature["status"], "verified")
         self.assertIn("BEGIN PUBLIC KEY", signature["public_key_pem"])
         self.assertTrue(verify_ed25519_signature_proof(signature_payload, signature))
+        validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
+
+    def test_crypto_agility_hooks_are_fail_closed_until_providers_exist(self) -> None:
+        registry = CryptoProviderRegistry()
+
+        with self.assertRaisesRegex(NotImplementedError, "PQC signature provider"):
+            registry.require_pqc_signature()
+        with self.assertRaisesRegex(NotImplementedError, "KEM provider"):
+            registry.require_kem()
+        with self.assertRaisesRegex(NotImplementedError, "ZK selective disclosure provider"):
+            registry.require_zk()
+
+        run_export = _run_export(
+            run_id="run_crypto_hooks",
+            event=_event(
+                "evt_crypto_hooks",
+                "run_crypto_hooks",
+                "execution_recorded",
+                {
+                    "operator_id": "operator.launcher",
+                    "action_type": "restart_deployment",
+                    "service": "checkout-api",
+                    "namespace": "payments-pilot",
+                    "resource_ref": "deployment/checkout-api",
+                    "production_impact": "possible",
+                },
+                status="executed",
+            ),
+            decision=_decision("dec_crypto_hooks", autonomy_tier="approval_required"),
+            evaluation=_evaluation("eval_crypto_hooks", final_recommendation="execute", blocking_reasons=[]),
+            approvals=[{"event_id": "evt_crypto_approval", "operator_id": "operator.launcher"}],
+        )
+        proof_envelope = materialize_proof_envelope(run_export, subject_refs=["run_crypto_hooks"])
+
+        self.assertEqual(proof_envelope["proposed_proofs"]["pqc_signature"]["status"], "proposed")
+        self.assertEqual(proof_envelope["proposed_proofs"]["kem"]["status"], "proposed")
+        self.assertEqual(proof_envelope["proposed_proofs"]["zk"]["status"], "proposed")
+        self.assertNotIn("pqc_signature", proof_envelope["implemented_proofs"])
+        self.assertNotIn("kem", proof_envelope["implemented_proofs"])
+        self.assertNotIn("zk", proof_envelope["implemented_proofs"])
         validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
 
 

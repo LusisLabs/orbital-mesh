@@ -69,6 +69,10 @@ for public-key packet signatures. `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM`
 can carry the same PEM inline for local tests. `MESH_DARKHARNESS_SIGNING_KEY`
 remains a local HMAC integrity fallback, not a public-key signature.
 
+PQC signature, KEM, and ZK providers are intentionally fail-closed. If no real
+provider is configured, `CryptoProviderRegistry` raises `NotImplementedError`
+and packets retain those fields as proposed proof hooks only.
+
 ## Blocked States
 
 - `decision_record_present`, `evaluation_record_present`,

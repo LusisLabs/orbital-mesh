@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from ._utils import as_plain_dict, stable_id, string_list, timestamp, validate
+from .crypto_agility import proposed_kem_proof, proposed_pqc_signature_proof, proposed_zk_proof
 from .mesh_brain import mesh_brain_evidence_refs
 from .signing import build_ed25519_signature_proof, build_hmac_signature_proof
 
@@ -409,29 +410,9 @@ def materialize_proof_envelope(
                 "signature": signature_value,
                 "status": signature_status,
             },
-            "pqc_signature": {
-                "interface": "pqc_signature_v1",
-                "algorithm": None,
-                "key_id": None,
-                "signature": None,
-                "status": "proposed",
-            },
-            "kem": {
-                "interface": "pqc_kem_v1",
-                "algorithm": None,
-                "encapsulated_key_ref": None,
-                "status": "proposed",
-            },
-            "zk": {
-                "hook": "selective_disclosure_v1",
-                "statement": "Pilot packet can prove governance outcome without exposing raw reservoir contents.",
-                "public_inputs": {
-                    "raw_sensitive_data_included": "false",
-                    "run_id": str(run_id),
-                },
-                "proof_ref": None,
-                "status": "proposed",
-            },
+            "pqc_signature": proposed_pqc_signature_proof(),
+            "kem": proposed_kem_proof(),
+            "zk": proposed_zk_proof(run_id=str(run_id) if run_id is not None else None),
         },
         "disclosure": {
             "raw_sensitive_data_included": False,

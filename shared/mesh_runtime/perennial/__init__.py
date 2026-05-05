@@ -4,6 +4,12 @@ from .boundaries import (
     materialize_sensitive_reservoir,
     project_reservoir_access,
 )
+from .crypto_agility import (
+    CryptoProviderRegistry,
+    proposed_kem_proof,
+    proposed_pqc_signature_proof,
+    proposed_zk_proof,
+)
 from .materialization import (
     materialize_agent_action_record,
     materialize_agent_action_records,
@@ -27,6 +33,7 @@ from .signing import (
 __all__ = [
     "DarkharnessRegistry",
     "DarkharnessPolicyResult",
+    "CryptoProviderRegistry",
     "assert_pilot_scope_boundaries",
     "assert_reservoir_default_deny",
     "build_darkharness_pilot_packet",
@@ -45,6 +52,9 @@ __all__ = [
     "mesh_brain_evidence_refs",
     "materialize_sensitive_reservoir",
     "project_reservoir_access",
+    "proposed_kem_proof",
+    "proposed_pqc_signature_proof",
+    "proposed_zk_proof",
     "runtime_evidence_refs",
     "verify_ed25519_signature_proof",
     "verify_hmac_signature_proof",

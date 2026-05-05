@@ -272,6 +272,11 @@ This does not implement post-quantum cryptography. PQC signatures, KEM, and ZK
 selective disclosure remain proposed hooks until a real provider interface and
 audited key-management path are added.
 
+`CryptoProviderRegistry` is the fail-closed provider boundary for those hooks.
+Until a PQC signature, KEM, or ZK provider is configured, `require_*` calls raise
+`NotImplementedError` and proof envelopes keep those sections under
+`proposed_proofs`, never `implemented_proofs`.
+
 ## Mesh Brain Linkage
 
 Darkharness packet export maps recorded Mesh Brain artifacts into additional
