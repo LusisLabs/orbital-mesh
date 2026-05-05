@@ -1,0 +1,96 @@
+{
+  "fixture_id": "perennial.pilot_packet_boundary.fixture.v1",
+  "description": "Darkharness packet boundary case with all v1 hard denials preserved.",
+  "contracts": {
+    "pilot_scope": {
+      "contract": "perennial.pilot_scope.v1",
+      "pilot_scope_id": "pilot_scope_boundary_001",
+      "customer_boundary": "customer-a-onprem",
+      "environment": {
+        "name": "pilot",
+        "readiness_profile": "pilot",
+        "on_prem_only": true,
+        "postgres_required": true
+      },
+      "domains": {
+        "ops": true,
+        "cyber": true,
+        "ai_governance": true,
+        "infrastructure_remediation": true
+      },
+      "sources": {
+        "kubernetes_signals": "enabled",
+        "otel_metrics": "enabled",
+        "vendor_security_webhooks": "enabled",
+        "audit_compliance_signals": "enabled",
+        "policy_docs": "enabled",
+        "service_ownership_metadata": "enabled",
+        "sensitive_reservoirs": "enabled"
+      },
+      "authority": {
+        "default_steering_mode": "approval_gate",
+        "production_actions_approval_required": true,
+        "proposal_lanes_advisory_only": true,
+        "trust_ladder_can_expand": false
+      },
+      "action_limits": {
+        "allowed_action_classes": ["observe", "propose", "approve", "export", "attest"],
+        "denied_action_classes": ["raw_reservoir_export", "unapproved_production_write"],
+        "allowed_namespaces": ["payments-pilot"],
+        "allowed_services": ["checkout-api"],
+        "max_parallel_live_actions": 1
+      },
+      "evidence_requirements": {
+        "allowed_action_proof": true,
+        "denied_action_proof": true,
+        "rollback_metadata": true,
+        "merkle_proof": true,
+        "run_export": true,
+        "go_no_go_packet": true
+      },
+      "data_boundary": {
+        "raw_reservoir_egress": "deny",
+        "external_model_calls": "deny_by_default",
+        "export_redaction_required": true
+      }
+    },
+    "darkharness_pilot_packet": {
+      "packet": "darkharness.pilot_packet.v1",
+      "packet_id": "dh_packet_boundary_001",
+      "generated_at": "2026-05-05T14:20:00Z",
+      "customer_boundary": "customer-a-onprem",
+      "pilot_scope_id": "pilot_scope_boundary_001",
+      "implemented_evidence": {
+        "readiness": {
+          "status": "go"
+        },
+        "go_no_go": {
+          "final_release_decision": "pass"
+        },
+        "run_exports": [{"run_id": "run_allowed_001"}, {"run_id": "run_denied_001"}],
+        "merkle_proofs": [{"root_hash": "sha256:allowed-root"}, {"root_hash": "sha256:denied-root"}],
+        "denied_action_proofs": [{"governance_commit_id": "gc_denied_scale_001"}],
+        "allowed_action_proofs": [{"governance_commit_id": "gc_allowed_restart_001"}],
+        "postgres_restart_proof": null
+      },
+      "perennial_records": {
+        "sensitive_reservoirs": [{"reservoir_id": "reservoir_checkout_events"}],
+        "agent_action_records": [{"action_record_id": "aar_allowed_restart_001"}, {"action_record_id": "aar_denied_write_001"}],
+        "epistemic_states": [{"epistemic_state_id": "epi_allowed_restart_001"}],
+        "ontological_states": [{"ontological_state_id": "onto_allowed_restart_001"}],
+        "governance_commits": [{"governance_commit_id": "gc_allowed_restart_001"}, {"governance_commit_id": "gc_denied_scale_001"}],
+        "proof_envelopes": [{"proof_envelope_id": "proof_allowed_restart"}, {"proof_envelope_id": "proof_denied_scale"}]
+      },
+      "boundaries": {
+        "raw_reservoir_egress": "deny",
+        "external_model_calls": "deny",
+        "production_actions_approval_required": true
+      },
+      "claim_boundary": {
+        "implemented": ["readiness", "go_no_go", "run_export", "merkle_proof"],
+        "proposed": ["perennial_shadow_records", "signature", "pqc_signature", "pqc_kem", "selective_disclosure_zk"],
+        "not_implemented": ["runtime_materializer", "external_raw_reservoir_egress"]
+      }
+    }
+  }
+}

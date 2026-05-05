@@ -1,0 +1,363 @@
+{
+  "fixture_id": "perennial.allowed_action.fixture.v1",
+  "description": "Allowed controlled remediation with approval, Merkle proof, and redacted export boundary.",
+  "contracts": {
+    "pilot_scope": {
+      "contract": "perennial.pilot_scope.v1",
+      "pilot_scope_id": "pilot_scope_darkharness_v1",
+      "customer_boundary": "customer-a-onprem",
+      "environment": {
+        "name": "pilot",
+        "readiness_profile": "pilot",
+        "on_prem_only": true,
+        "postgres_required": true
+      },
+      "domains": {
+        "ops": true,
+        "cyber": true,
+        "ai_governance": true,
+        "infrastructure_remediation": true
+      },
+      "sources": {
+        "kubernetes_signals": "enabled",
+        "otel_metrics": "enabled",
+        "vendor_security_webhooks": "enabled",
+        "audit_compliance_signals": "enabled",
+        "policy_docs": "enabled",
+        "service_ownership_metadata": "enabled",
+        "sensitive_reservoirs": "enabled"
+      },
+      "authority": {
+        "default_steering_mode": "approval_gate",
+        "production_actions_approval_required": true,
+        "proposal_lanes_advisory_only": true,
+        "trust_ladder_can_expand": false
+      },
+      "action_limits": {
+        "allowed_action_classes": ["observe", "propose", "approve", "execute", "rollback", "export", "attest"],
+        "denied_action_classes": ["external_model_export", "unapproved_production_write"],
+        "allowed_namespaces": ["payments-pilot"],
+        "allowed_services": ["checkout-api"],
+        "max_parallel_live_actions": 1
+      },
+      "evidence_requirements": {
+        "allowed_action_proof": true,
+        "denied_action_proof": true,
+        "rollback_metadata": true,
+        "merkle_proof": true,
+        "run_export": true,
+        "go_no_go_packet": true
+      },
+      "data_boundary": {
+        "raw_reservoir_egress": "deny",
+        "external_model_calls": "deny_by_default",
+        "export_redaction_required": true
+      }
+    },
+    "sensitive_reservoir": {
+      "contract": "perennial.sensitive_reservoir.v1",
+      "reservoir_id": "reservoir_checkout_events",
+      "name": "Checkout operational and audit events",
+      "owner": {
+        "team": "platform-reliability",
+        "service_owner": "owner.checkout",
+        "data_steward": "steward.security"
+      },
+      "classification": {
+        "data_classes": ["operational", "security", "audit_only"],
+        "sensitivity": "confidential",
+        "trainable": "prohibited"
+      },
+      "locality": {
+        "boundary": "on_prem",
+        "region": "customer-a-dc1",
+        "storage_ref": "postgres://mesh/audit_events",
+        "external_egress_default": "deny"
+      },
+      "access_policy": {
+        "allowed_purposes": ["rca", "feedback", "audit", "policy_check", "export"],
+        "allowed_compute_modes": ["in_place", "redacted_projection", "hash_only", "aggregate_only"],
+        "approval_required": true,
+        "retention_days": 30
+      },
+      "projection": {
+        "redaction_profile": "darkharness-pilot-redacted",
+        "max_snippet_chars": 0,
+        "hash_algorithm": "sha256",
+        "allowed_index_fields": ["service", "namespace", "event_type", "hash"]
+      },
+      "crypto": {
+        "encryption_profile": "customer-managed-aes256",
+        "signing_profile": null,
+        "pqc_profile": null
+      }
+    },
+    "agent_action_record": {
+      "contract": "perennial.agent_action_record.v1",
+      "action_record_id": "aar_allowed_restart_001",
+      "observed_at": "2026-05-05T14:00:00Z",
+      "actor": {
+        "actor_type": "human",
+        "actor_id": "operator.launcher",
+        "display_name": "Launcher Operator",
+        "authority_source": "proxy_header"
+      },
+      "action": {
+        "action_class": "execute",
+        "action_type": "restart_deployment",
+        "target": {
+          "environment": "pilot",
+          "service": "checkout-api",
+          "namespace": "payments-pilot",
+          "resource_ref": "deployment/checkout-api",
+          "reservoir_id": null
+        },
+        "production_impact": "possible"
+      },
+      "context": {
+        "run_id": "run_allowed_001",
+        "run_event_id": "evt_allowed_execute",
+        "decision_id": "dec_allowed_restart",
+        "evaluation_id": "eval_allowed_restart",
+        "feedback_id": null,
+        "source_system": "orbital-mesh-control-plane"
+      },
+      "governance": {
+        "risk_tier": "moderate",
+        "autonomy_tier": "approval_required",
+        "policy_refs": ["policy://darkharness/pilot/approval-required"],
+        "evidence_refs": ["evidence://run_allowed_001/readiness", "evidence://run_allowed_001/rollback"],
+        "proof_refs": ["proof_allowed_restart"],
+        "operator_authority_refs": ["operator-approval://evt_allowed_approve"]
+      },
+      "outcome": {
+        "status": "executed",
+        "denial_reasons": [],
+        "rollback_ref": "rollback://run_allowed_001",
+        "side_effect_refs": ["kubernetes://payments-pilot/deployment/checkout-api/restart"]
+      },
+      "boundary": {
+        "tenant_id": "customer-a",
+        "data_boundary": "on_prem",
+        "reservoir_refs": ["reservoir_checkout_events"]
+      }
+    },
+    "epistemic_state": {
+      "contract": "perennial.epistemic_state.v1",
+      "epistemic_state_id": "epi_allowed_restart_001",
+      "subject_ref": "run_allowed_001",
+      "run_id": "run_allowed_001",
+      "created_at": "2026-05-05T13:59:50Z",
+      "claims": [
+        {
+          "claim_id": "claim_latency_regression",
+          "claim_type": "hypothesis",
+          "statement": "Checkout latency is caused by a stuck deployment rollout.",
+          "confidence": 0.78,
+          "evidence_refs": ["otel://checkout-api/p95", "kubernetes://checkout-api/rollout"],
+          "contradicted_by": ["claim_database_pressure"],
+          "source": "scenario-analysis",
+          "status": "active"
+        },
+        {
+          "claim_id": "claim_database_pressure",
+          "claim_type": "hypothesis",
+          "statement": "Checkout latency is caused by downstream database pressure.",
+          "confidence": 0.31,
+          "evidence_refs": ["otel://db/p95"],
+          "contradicted_by": ["claim_latency_regression"],
+          "source": "scenario-analysis",
+          "status": "disputed"
+        }
+      ],
+      "uncertainty": {
+        "missing_evidence": ["db lock wait histogram"],
+        "competing_hypotheses": ["claim_latency_regression", "claim_database_pressure"],
+        "confidence_floor": 0.62,
+        "confidence_ceiling": 0.84
+      },
+      "governance_use": {
+        "usable_for_decision": true,
+        "usable_for_execution": true,
+        "review_required": true
+      }
+    },
+    "ontological_state": {
+      "contract": "perennial.ontological_state.v1",
+      "ontological_state_id": "onto_allowed_restart_001",
+      "namespace": "payments-pilot",
+      "created_at": "2026-05-05T13:59:45Z",
+      "schema_version": "perennial.ontology.v1",
+      "entities": [
+        {
+          "entity_id": "service.checkout-api",
+          "entity_type": "service",
+          "labels": {
+            "tier": "checkout",
+            "environment": "pilot"
+          },
+          "source_refs": ["ownership://checkout-api"],
+          "confidence": 0.95,
+          "status": "active"
+        },
+        {
+          "entity_id": "owner.checkout",
+          "entity_type": "owner",
+          "labels": {
+            "team": "platform-reliability"
+          },
+          "source_refs": ["registry://owners/checkout"],
+          "confidence": 0.9,
+          "status": "active"
+        }
+      ],
+      "relationships": [
+        {
+          "relationship_id": "rel_checkout_owner",
+          "subject_id": "owner.checkout",
+          "predicate": "owns",
+          "object_id": "service.checkout-api",
+          "evidence_refs": ["registry://owners/checkout"],
+          "confidence": 0.9,
+          "status": "active"
+        }
+      ],
+      "conflict_sets": []
+    },
+    "governance_commit": {
+      "contract": "perennial.governance_commit.v1",
+      "governance_commit_id": "gc_allowed_restart_001",
+      "created_at": "2026-05-05T14:00:05Z",
+      "commit_type": "allow_action",
+      "subject": {
+        "run_id": "run_allowed_001",
+        "trigger_id": "trg_checkout_latency",
+        "decision_id": "dec_allowed_restart",
+        "evaluation_id": "eval_allowed_restart",
+        "action_record_id": "aar_allowed_restart_001"
+      },
+      "state_refs": {
+        "epistemic_state_id": "epi_allowed_restart_001",
+        "ontological_state_id": "onto_allowed_restart_001"
+      },
+      "inputs": {
+        "evidence_refs": ["evidence://run_allowed_001/readiness", "evidence://run_allowed_001/operator-approval"],
+        "scenario_analysis_ref": "scenario://run_allowed_001",
+        "policy_refs": ["policy://darkharness/pilot/approval-required"],
+        "remediation_safety_ref": "safety://eval_allowed_restart",
+        "trust_ladder_ref": "trust://checkout-api/pilot",
+        "readiness_ref": "readiness://pilot/go"
+      },
+      "authority": {
+        "operator_required": true,
+        "operator_approval_refs": ["operator-approval://evt_allowed_approve"],
+        "service_owner_refs": ["owner.checkout"]
+      },
+      "action": {
+        "action_type": "restart_deployment",
+        "target_ref": "kubernetes://payments-pilot/deployment/checkout-api",
+        "production_impact": "possible",
+        "rollback_ref": "rollback://run_allowed_001"
+      },
+      "proof": {
+        "proof_envelope_id": "proof_allowed_restart",
+        "merkle_root": "sha256:allowed-root",
+        "signature_ref": null
+      },
+      "outcome": {
+        "gate_result": "allowed",
+        "reasons": ["operator approval present", "rollback proof present", "raw reservoir egress denied"],
+        "expires_at": "2026-05-05T15:00:05Z"
+      }
+    },
+    "proof_envelope": {
+      "contract": "perennial.proof_envelope.v1",
+      "proof_envelope_id": "proof_allowed_restart",
+      "created_at": "2026-05-05T14:00:06Z",
+      "subject_refs": ["gc_allowed_restart_001", "run_allowed_001"],
+      "implemented_proofs": {
+        "merkle": {
+          "run_id": "run_allowed_001",
+          "root_hash": "sha256:allowed-root",
+          "leaf_event_ids": ["evt_allowed_approve", "evt_allowed_execute"],
+          "proof_refs": ["merkle://run_allowed_001/proof"],
+          "verifier": "orbital_mesh_merkle_v1"
+        }
+      },
+      "proposed_proofs": {
+        "signature": {
+          "signing_profile": "darkharness-classical-v1",
+          "algorithm": "ed25519",
+          "key_id": "proposed-key",
+          "signature": null,
+          "status": "proposed"
+        },
+        "pqc_signature": {
+          "interface": "pqc_signature_v1",
+          "algorithm": null,
+          "key_id": null,
+          "signature": null,
+          "status": "proposed"
+        },
+        "kem": {
+          "interface": "pqc_kem_v1",
+          "algorithm": null,
+          "encapsulated_key_ref": null,
+          "status": "proposed"
+        },
+        "zk": {
+          "hook": "selective_disclosure_v1",
+          "statement": "Pilot packet can prove approval without exposing raw reservoir contents.",
+          "public_inputs": {
+            "raw_sensitive_data_included": "false"
+          },
+          "proof_ref": null,
+          "status": "proposed"
+        }
+      },
+      "disclosure": {
+        "raw_sensitive_data_included": false,
+        "redaction_profile": "darkharness-pilot-redacted",
+        "exported_fields": ["run_id", "decision_id", "gate_result", "merkle_root"]
+      }
+    },
+    "darkharness_pilot_packet": {
+      "packet": "darkharness.pilot_packet.v1",
+      "packet_id": "dh_packet_allowed_001",
+      "generated_at": "2026-05-05T14:00:10Z",
+      "customer_boundary": "customer-a-onprem",
+      "pilot_scope_id": "pilot_scope_darkharness_v1",
+      "implemented_evidence": {
+        "readiness": {
+          "status": "go"
+        },
+        "go_no_go": {
+          "final_release_decision": "pass"
+        },
+        "run_exports": [{"run_id": "run_allowed_001"}],
+        "merkle_proofs": [{"proof_envelope_id": "proof_allowed_restart"}],
+        "denied_action_proofs": [],
+        "allowed_action_proofs": [{"governance_commit_id": "gc_allowed_restart_001"}],
+        "postgres_restart_proof": null
+      },
+      "perennial_records": {
+        "sensitive_reservoirs": [{"reservoir_id": "reservoir_checkout_events"}],
+        "agent_action_records": [{"action_record_id": "aar_allowed_restart_001"}],
+        "epistemic_states": [{"epistemic_state_id": "epi_allowed_restart_001"}],
+        "ontological_states": [{"ontological_state_id": "onto_allowed_restart_001"}],
+        "governance_commits": [{"governance_commit_id": "gc_allowed_restart_001"}],
+        "proof_envelopes": [{"proof_envelope_id": "proof_allowed_restart"}]
+      },
+      "boundaries": {
+        "raw_reservoir_egress": "deny",
+        "external_model_calls": "deny",
+        "production_actions_approval_required": true
+      },
+      "claim_boundary": {
+        "implemented": ["readiness", "go_no_go", "run_export", "merkle_proof"],
+        "proposed": ["signature", "pqc_signature", "pqc_kem", "selective_disclosure_zk"],
+        "not_implemented": ["runtime_materializer"]
+      }
+    }
+  }
+}

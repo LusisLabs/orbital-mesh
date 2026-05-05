@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/darkharness-pilot-packet.schema.json",
+  "title": "DarkharnessPilotPacket",
+  "type": "object",
+  "required": [
+    "packet",
+    "packet_id",
+    "generated_at",
+    "customer_boundary",
+    "pilot_scope_id",
+    "implemented_evidence",
+    "perennial_records",
+    "boundaries",
+    "claim_boundary"
+  ],
+  "properties": {
+    "packet": {
+      "type": "string",
+      "enum": ["darkharness.pilot_packet.v1"]
+    },
+    "packet_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "customer_boundary": { "type": "string" },
+    "pilot_scope_id": { "type": "string" },
+    "implemented_evidence": {
+      "type": "object",
+      "required": [
+        "readiness",
+        "go_no_go",
+        "run_exports",
+        "merkle_proofs",
+        "denied_action_proofs",
+        "allowed_action_proofs",
+        "postgres_restart_proof"
+      ],
+      "properties": {
+        "readiness": { "type": "object" },
+        "go_no_go": { "type": "object" },
+        "run_exports": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "merkle_proofs": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "denied_action_proofs": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "allowed_action_proofs": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "postgres_restart_proof": { "type": ["object", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "perennial_records": {
+      "type": "object",
+      "required": [
+        "sensitive_reservoirs",
+        "agent_action_records",
+        "epistemic_states",
+        "ontological_states",
+        "governance_commits",
+        "proof_envelopes"
+      ],
+      "properties": {
+        "sensitive_reservoirs": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "agent_action_records": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "epistemic_states": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "ontological_states": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "governance_commits": {
+          "type": "array",
+          "items": { "type": "object" }
+        },
+        "proof_envelopes": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "boundaries": {
+      "type": "object",
+      "required": ["raw_reservoir_egress", "external_model_calls", "production_actions_approval_required"],
+      "properties": {
+        "raw_reservoir_egress": {
+          "type": "string",
+          "enum": ["deny", "approved_exception"]
+        },
+        "external_model_calls": {
+          "type": "string",
+          "enum": ["deny", "approved_exception"]
+        },
+        "production_actions_approval_required": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "claim_boundary": {
+      "type": "object",
+      "required": ["implemented", "proposed", "not_implemented"],
+      "properties": {
+        "implemented": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "proposed": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "not_implemented": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

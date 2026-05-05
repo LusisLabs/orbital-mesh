@@ -1,0 +1,228 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/pilot-scope.schema.json",
+  "title": "PilotScope",
+  "type": "object",
+  "required": [
+    "contract",
+    "pilot_scope_id",
+    "customer_boundary",
+    "environment",
+    "domains",
+    "sources",
+    "authority",
+    "action_limits",
+    "evidence_requirements",
+    "data_boundary"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.pilot_scope.v1"]
+    },
+    "pilot_scope_id": { "type": "string" },
+    "customer_boundary": { "type": "string" },
+    "environment": {
+      "type": "object",
+      "required": ["name", "readiness_profile", "on_prem_only", "postgres_required"],
+      "properties": {
+        "name": { "type": "string" },
+        "readiness_profile": {
+          "type": "string",
+          "enum": ["pilot"]
+        },
+        "on_prem_only": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "postgres_required": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "domains": {
+      "type": "object",
+      "required": ["ops", "cyber", "ai_governance", "infrastructure_remediation"],
+      "properties": {
+        "ops": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "cyber": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "ai_governance": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "infrastructure_remediation": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "object",
+      "required": [
+        "kubernetes_signals",
+        "otel_metrics",
+        "vendor_security_webhooks",
+        "audit_compliance_signals",
+        "policy_docs",
+        "service_ownership_metadata",
+        "sensitive_reservoirs"
+      ],
+      "properties": {
+        "kubernetes_signals": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "otel_metrics": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "vendor_security_webhooks": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "audit_compliance_signals": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "policy_docs": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "service_ownership_metadata": {
+          "type": "string",
+          "enum": ["enabled"]
+        },
+        "sensitive_reservoirs": {
+          "type": "string",
+          "enum": ["enabled"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "default_steering_mode",
+        "production_actions_approval_required",
+        "proposal_lanes_advisory_only",
+        "trust_ladder_can_expand"
+      ],
+      "properties": {
+        "default_steering_mode": {
+          "type": "string",
+          "enum": ["approval_gate"]
+        },
+        "production_actions_approval_required": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "proposal_lanes_advisory_only": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "trust_ladder_can_expand": {
+          "type": "boolean",
+          "enum": [false]
+        }
+      },
+      "additionalProperties": false
+    },
+    "action_limits": {
+      "type": "object",
+      "required": [
+        "allowed_action_classes",
+        "denied_action_classes",
+        "allowed_namespaces",
+        "allowed_services",
+        "max_parallel_live_actions"
+      ],
+      "properties": {
+        "allowed_action_classes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "denied_action_classes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowed_namespaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "allowed_services": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "max_parallel_live_actions": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "evidence_requirements": {
+      "type": "object",
+      "required": [
+        "allowed_action_proof",
+        "denied_action_proof",
+        "rollback_metadata",
+        "merkle_proof",
+        "run_export",
+        "go_no_go_packet"
+      ],
+      "properties": {
+        "allowed_action_proof": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "denied_action_proof": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "rollback_metadata": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "merkle_proof": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "run_export": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "go_no_go_packet": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "data_boundary": {
+      "type": "object",
+      "required": ["raw_reservoir_egress", "external_model_calls", "export_redaction_required"],
+      "properties": {
+        "raw_reservoir_egress": {
+          "type": "string",
+          "enum": ["deny"]
+        },
+        "external_model_calls": {
+          "type": "string",
+          "enum": ["deny_by_default"]
+        },
+        "export_redaction_required": {
+          "type": "boolean",
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

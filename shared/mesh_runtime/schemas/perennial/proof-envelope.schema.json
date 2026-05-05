@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/proof-envelope.schema.json",
+  "title": "ProofEnvelope",
+  "type": "object",
+  "required": [
+    "contract",
+    "proof_envelope_id",
+    "created_at",
+    "subject_refs",
+    "implemented_proofs",
+    "proposed_proofs",
+    "disclosure"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.proof_envelope.v1"]
+    },
+    "proof_envelope_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "subject_refs": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "implemented_proofs": {
+      "type": "object",
+      "required": ["merkle"],
+      "properties": {
+        "merkle": {
+          "type": "object",
+          "required": ["run_id", "root_hash", "leaf_event_ids", "proof_refs", "verifier"],
+          "properties": {
+            "run_id": { "type": ["string", "null"] },
+            "root_hash": { "type": ["string", "null"] },
+            "leaf_event_ids": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "proof_refs": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "verifier": {
+              "type": "string",
+              "enum": ["orbital_mesh_merkle_v1"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "proposed_proofs": {
+      "type": "object",
+      "required": ["signature", "pqc_signature", "kem", "zk"],
+      "properties": {
+        "signature": {
+          "type": "object",
+          "required": ["signing_profile", "algorithm", "key_id", "signature", "status"],
+          "properties": {
+            "signing_profile": { "type": "string" },
+            "algorithm": { "type": "string" },
+            "key_id": { "type": "string" },
+            "signature": { "type": ["string", "null"] },
+            "status": {
+              "type": "string",
+              "enum": ["proposed", "present", "verified", "failed"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "pqc_signature": {
+          "type": "object",
+          "required": ["interface", "algorithm", "key_id", "signature", "status"],
+          "properties": {
+            "interface": {
+              "type": "string",
+              "enum": ["pqc_signature_v1"]
+            },
+            "algorithm": { "type": ["string", "null"] },
+            "key_id": { "type": ["string", "null"] },
+            "signature": { "type": ["string", "null"] },
+            "status": {
+              "type": "string",
+              "enum": ["proposed"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "kem": {
+          "type": "object",
+          "required": ["interface", "algorithm", "encapsulated_key_ref", "status"],
+          "properties": {
+            "interface": {
+              "type": "string",
+              "enum": ["pqc_kem_v1"]
+            },
+            "algorithm": { "type": ["string", "null"] },
+            "encapsulated_key_ref": { "type": ["string", "null"] },
+            "status": {
+              "type": "string",
+              "enum": ["proposed"]
+            }
+          },
+          "additionalProperties": false
+        },
+        "zk": {
+          "type": "object",
+          "required": ["hook", "statement", "public_inputs", "proof_ref", "status"],
+          "properties": {
+            "hook": {
+              "type": "string",
+              "enum": ["selective_disclosure_v1"]
+            },
+            "statement": { "type": "string" },
+            "public_inputs": { "type": "object" },
+            "proof_ref": { "type": ["string", "null"] },
+            "status": {
+              "type": "string",
+              "enum": ["proposed"]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "disclosure": {
+      "type": "object",
+      "required": ["raw_sensitive_data_included", "redaction_profile", "exported_fields"],
+      "properties": {
+        "raw_sensitive_data_included": {
+          "type": "boolean",
+          "enum": [false]
+        },
+        "redaction_profile": { "type": "string" },
+        "exported_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
