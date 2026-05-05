@@ -10,6 +10,8 @@ Required artifacts:
 
 - architecture brief: `README.md`, `docs/production-deployment-roadmap.md`, and `docs/integrations.md`;
 - safety boundary brief: `docs/production-hardening-records.md`, `docs/production-live-runbook.md`, and `docs/production-readiness-validation.md`;
+- deployment compatibility brief: `docs/deployment-compatibility.md`;
+- agentic operator fork-in brief: `docs/agentic-operator-core-import-plan.md`;
 - one-command whole-system environment: `docker-compose.stack.yml`;
 - production-like deployment template: `docker-compose.prod.yml`;
 - whole-system smoke command: `scripts/compose_stack_smoke.sh`;
@@ -36,6 +38,15 @@ Reference architectures:
 - live Kubernetes recovery proof: `scripts/e2e_seed_failure.sh` plus `scripts/e2e_run_mesh.sh`;
 - browser operator proof: `scripts/e2e_ui_operator.sh`;
 - long-running evidence sweep: `scripts/run_breakthrough_proof.sh` and `scripts/run_overnight_mesh_breakthrough_cron.py`.
+
+Compatibility review:
+
+- treat Docker Compose and Kubernetes as validated paths;
+- treat OCI-compatible runtimes and image builders as contract compatibility, not individual runtime integrations;
+- treat Podman, K3s, OpenShift, Rancher-managed Kubernetes, managed Kubernetes, Cloud Run, Azure Container Apps, Fly.io, Railway, and Render as recipes until the evaluator supplies target-specific smoke and release evidence;
+- treat ECS/Fargate as the first non-Kubernetes production target candidate after the Kubernetes pilot path is repeatable;
+- reject broad "all orchestrators supported" claims.
+- treat `agentic-operator-core-main/` as source input for future CRD/operator/Helm/Argo/MCP/LiteLLM/metering/network-policy work, not as current Orbital Mesh runtime proof.
 
 Enterprise pass criteria:
 

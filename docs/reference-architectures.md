@@ -7,6 +7,8 @@ This packet maps production evaluation shapes to active `orbital-mesh` files. It
 Every architecture keeps the same authority boundary:
 
 - control-plane runtime: `control_plane_server.py` and `services/control_plane.py`;
+- deployment compatibility: `docs/deployment-compatibility.md`;
+- agentic operator fork-in: `docs/agentic-operator-core-import-plan.md`;
 - deployment smoke: `scripts/prod_smoke.sh`;
 - readiness: `GET /api/readiness`;
 - pilot packet: `GET /api/pilot/go-no-go`;
@@ -22,6 +24,15 @@ Required production defaults:
 - explicit Kubernetes context and namespace allowlists before live execution;
 - unfinished feature-flag and incident adapters disabled unless replaced by certified real providers;
 - proposal lanes without kubeconfig, repository write, or actuator credentials.
+
+Compatibility posture:
+
+- Docker Compose and Kubernetes are the validated deployment paths.
+- OCI image compatibility is a contract for Docker Engine, Podman, containerd, runc, crun, BuildKit, Buildah, and Kaniko outputs, but direct runtime APIs are not a product surface.
+- K3s, OpenShift, Rancher-managed Kubernetes, managed Kubernetes, Cloud Run, Azure Container Apps, Fly.io, Railway, and Render are recipes until target-specific release evidence exists.
+- ECS/Fargate is the first non-Kubernetes production target candidate for validation.
+- Swarm, Mesos/Marathon, Windows Containers, and direct runc/containerd integration are not active roadmap targets.
+- `agentic-operator-core-main/` is source input for Kubernetes operator, CRD, Helm, Argo, MCP, LiteLLM, metering, and network-policy patterns. It is not active runtime until forked through Orbital Mesh authority gates.
 
 ## Local Full-Stack Proof
 
@@ -116,6 +127,15 @@ Gaps before reusable distribution:
 - Kustomize overlays;
 - cloud-specific IAM examples;
 - ingress-controller-specific SSO templates.
+
+Fork-in candidate:
+
+- `agentic-operator-core-main/api/v1alpha1/agentworkload_types.go`;
+- `agentic-operator-core-main/api/v1alpha1/tenant_types.go`;
+- `agentic-operator-core-main/charts/`;
+- `agentic-operator-core-main/pkg/argo/`.
+
+These provide useful Kubernetes-native packaging and scheduling material, but they must be renamed and wired through Orbital Mesh evidence, policy, approval, rollback, proof, and release provenance before this architecture can claim validated operator support.
 
 ## Private Cloud Or VPC-Only
 
