@@ -231,6 +231,19 @@ Policy failures return a blocked packet with `policy_violation:*` entries in
 `missing_evidence` and policy booleans in `checks`. The blocked response still
 does not write run events, packet files, vault notes, or audit artifacts.
 
+## Proof Signing
+
+`MESH_DARKHARNESS_SIGNING_KEY` enables a local HMAC-SHA256 proof over the
+Darkharness proof-envelope subject, Merkle root, leaf ids, and redaction
+profile. `MESH_DARKHARNESS_SIGNING_KEY_ID` identifies the configured key in the
+proof envelope. When configured, `implemented_proofs.signature` is present and
+the governance commit carries a `signature_ref`.
+
+This is an implemented local integrity signature for pilot packet verification,
+not a public-key signature system and not post-quantum cryptography. PQC
+signatures, KEM, and ZK selective disclosure remain proposed hooks until a real
+provider interface and audited key-management path are added.
+
 ## Architecture Layers
 
 ### 1. Reservoir Layer

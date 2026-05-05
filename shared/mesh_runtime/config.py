@@ -71,6 +71,8 @@ class RuntimeConfig:
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
     darkharness_registry_path: str | None = None
     darkharness_packet_persistence_mode: str = "ephemeral"
+    darkharness_signing_key: str | None = None
+    darkharness_signing_key_id: str = "darkharness-local-hmac"
     mesh_brain_artifact_uri_prefix: str | None = None
     mesh_brain_serving_base_url: str | None = None
     mesh_brain_serving_model: str | None = None
@@ -341,6 +343,8 @@ class RuntimeConfig:
                 "MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE",
                 "ephemeral",
             ),
+            darkharness_signing_key=os.getenv("MESH_DARKHARNESS_SIGNING_KEY") or None,
+            darkharness_signing_key_id=os.getenv("MESH_DARKHARNESS_SIGNING_KEY_ID", "darkharness-local-hmac"),
             mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
             mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
             mesh_brain_serving_model=os.getenv("MESH_BRAIN_SERVING_MODEL") or None,

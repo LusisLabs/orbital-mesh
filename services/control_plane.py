@@ -1297,6 +1297,8 @@ class RunCoordinator:
             proof_envelope = materialize_proof_envelope(
                 run_export,
                 subject_refs=[run_id, primary_action["action_record_id"]],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
             )
             governance_commit = materialize_governance_commit(
                 run_export=run_export,

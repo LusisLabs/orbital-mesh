@@ -11,6 +11,7 @@ from shared.mesh_runtime.perennial import (
     materialize_governance_commit,
     materialize_ontological_state,
     materialize_proof_envelope,
+    verify_hmac_signature_proof,
 )
 
 
@@ -140,6 +141,76 @@ class PerennialMaterializationTests(unittest.TestCase):
         self.assertEqual(governance_commit["commit_type"], "deny_action")
         self.assertEqual(governance_commit["outcome"]["gate_result"], "denied")
         self.assertEqual(governance_commit["authority"]["operator_approval_refs"], [])
+
+    def test_proof_envelope_can_include_configured_hmac_signature(self) -> None:
+        run_export = _run_export(
+            run_id="run_signed_shadow",
+            event=_event(
+                "evt_signed_execute",
+                "run_signed_shadow",
+                "execution_recorded",
+                {
+                    "operator_id": "operator.launcher",
+                    "action_type": "restart_deployment",
+                    "service": "checkout-api",
+                    "namespace": "payments-pilot",
+                    "resource_ref": "deployment/checkout-api",
+                    "production_impact": "possible",
+                },
+                status="executed",
+            ),
+            decision=_decision("dec_signed_restart", autonomy_tier="approval_required"),
+            evaluation=_evaluation("eval_signed_restart", final_recommendation="execute", blocking_reasons=[]),
+            approvals=[{"event_id": "evt_signed_approval", "operator_id": "operator.launcher"}],
+        )
+        action_record = materialize_agent_action_record(
+            run_export["timeline_json"][0],
+            run=run_export["session"],
+            decision=run_export["decision_record"],
+            evaluation=run_export["evaluation_record"],
+            tenant_id="customer-a",
+        )
+        epistemic_state = materialize_epistemic_state(_scenario_analysis(), run_id=run_export["run_id"])
+        ontological_state = materialize_ontological_state(_ownership_metadata())
+        proof_envelope = materialize_proof_envelope(
+            run_export,
+            subject_refs=[run_export["run_id"], action_record["action_record_id"]],
+            signing_key="test-darkharness-signing-secret",
+            signing_key_id="test-key",
+        )
+        signature = proof_envelope["implemented_proofs"]["signature"]
+        governance_commit = materialize_governance_commit(
+            run_export=run_export,
+            epistemic_state=epistemic_state,
+            ontological_state=ontological_state,
+            proof_envelope=proof_envelope,
+            action_record=action_record,
+            readiness={"status": "ready"},
+            trust_ladder_ref="trust://checkout-api/pilot",
+        )
+
+        signature_payload = {
+            "run_id": run_export["run_id"],
+            "subject_refs": [run_export["run_id"], action_record["action_record_id"]],
+            "merkle_root": run_export["merkle"]["snapshot"]["root_hash"],
+            "leaf_event_ids": run_export["merkle"]["snapshot"]["event_ids"],
+            "redaction_profile": "darkharness-pilot-redacted",
+        }
+        self.assertEqual(signature["algorithm"], "hmac-sha256")
+        self.assertEqual(signature["status"], "verified")
+        self.assertTrue(
+            verify_hmac_signature_proof(
+                signature_payload,
+                signature,
+                secret="test-darkharness-signing-secret",
+            )
+        )
+        self.assertEqual(
+            governance_commit["proof"]["signature_ref"],
+            f"signature://test-key/{signature['payload_sha256']}",
+        )
+        validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
+        validate_payload("perennial/governance-commit.schema.json", governance_commit)
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any], *, status: str) -> RunEvent:

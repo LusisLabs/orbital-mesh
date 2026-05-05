@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from ._utils import as_plain_dict, stable_id, string_list, timestamp, validate
+from .signing import build_hmac_signature_proof
 
 
 def materialize_agent_action_records(
@@ -321,7 +322,7 @@ def materialize_governance_commit(
         "proof": {
             "proof_envelope_id": proof_envelope["proof_envelope_id"],
             "merkle_root": proof_envelope["implemented_proofs"]["merkle"]["root_hash"],
-            "signature_ref": None,
+            "signature_ref": _signature_ref(proof_envelope),
         },
         "outcome": {
             "gate_result": "denied" if gate_denied else "allowed",
@@ -339,6 +340,8 @@ def materialize_proof_envelope(
     proof_envelope_id: str | None = None,
     created_at: str | None = None,
     redaction_profile: str = "darkharness-pilot-redacted",
+    signing_key: str | None = None,
+    signing_key_id: str | None = None,
 ) -> dict[str, Any]:
     merkle = run_export.get("merkle") or {}
     snapshot = merkle.get("snapshot") or {}
@@ -347,27 +350,50 @@ def materialize_proof_envelope(
     proof_refs = []
     if proof.get("event_id"):
         proof_refs.append(f"merkle://{run_id}/proof/{proof['event_id']}")
+    implemented_proofs: dict[str, Any] = {
+        "merkle": {
+            "run_id": run_id,
+            "root_hash": snapshot.get("root_hash"),
+            "leaf_event_ids": string_list(snapshot.get("event_ids")),
+            "proof_refs": proof_refs,
+            "verifier": "orbital_mesh_merkle_v1",
+        }
+    }
+    signature_payload = {
+        "run_id": run_id,
+        "subject_refs": list(subject_refs),
+        "merkle_root": snapshot.get("root_hash"),
+        "leaf_event_ids": string_list(snapshot.get("event_ids")),
+        "redaction_profile": redaction_profile,
+    }
+    signature_status = "proposed"
+    signature_key_id = "proposed-key"
+    signature_value = None
+    signature_algorithm = "ed25519"
+    if signing_key:
+        signature_proof = build_hmac_signature_proof(
+            signature_payload,
+            key_id=signing_key_id or "darkharness-local-hmac",
+            secret=signing_key,
+        )
+        implemented_proofs["signature"] = signature_proof
+        signature_status = "verified"
+        signature_key_id = signature_proof["key_id"]
+        signature_value = signature_proof["signature"]
+        signature_algorithm = signature_proof["algorithm"]
     envelope = {
         "contract": "perennial.proof_envelope.v1",
         "proof_envelope_id": proof_envelope_id or stable_id("proof", run_id, snapshot.get("root_hash"), subject_refs),
         "created_at": created_at or run_export.get("generated_at") or timestamp(),
         "subject_refs": list(subject_refs),
-        "implemented_proofs": {
-            "merkle": {
-                "run_id": run_id,
-                "root_hash": snapshot.get("root_hash"),
-                "leaf_event_ids": string_list(snapshot.get("event_ids")),
-                "proof_refs": proof_refs,
-                "verifier": "orbital_mesh_merkle_v1",
-            }
-        },
+        "implemented_proofs": implemented_proofs,
         "proposed_proofs": {
             "signature": {
-                "signing_profile": "darkharness-classical-v1",
-                "algorithm": "ed25519",
-                "key_id": "proposed-key",
-                "signature": None,
-                "status": "proposed",
+                "signing_profile": "darkharness-hmac-sha256-v1" if signing_key else "darkharness-classical-v1",
+                "algorithm": signature_algorithm,
+                "key_id": signature_key_id,
+                "signature": signature_value,
+                "status": signature_status,
             },
             "pqc_signature": {
                 "interface": "pqc_signature_v1",
@@ -400,6 +426,16 @@ def materialize_proof_envelope(
         },
     }
     return validate("perennial/proof-envelope.schema.json", envelope)
+
+
+def _signature_ref(proof_envelope: dict[str, Any]) -> str | None:
+    implemented = proof_envelope.get("implemented_proofs")
+    proofs: dict[str, Any] = cast(dict[str, Any], implemented) if isinstance(implemented, dict) else {}
+    raw_signature = proofs.get("signature")
+    signature = cast(dict[str, Any], raw_signature) if isinstance(raw_signature, dict) else {}
+    if not signature:
+        return None
+    return f"signature://{signature.get('key_id')}/{signature.get('payload_sha256')}"
 
 
 def _action_class_and_status(event: dict[str, Any], payload: dict[str, Any]) -> tuple[str, str]:

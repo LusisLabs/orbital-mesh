@@ -203,6 +203,35 @@ class DarkharnessExportPathTests(unittest.TestCase):
             finally:
                 coordinator.stop_background_workers()
 
+    def test_configured_signing_key_adds_signature_proof_to_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    darkharness_signing_key="test-darkharness-signing-secret",
+                    darkharness_signing_key_id="test-key",
+                )
+            )
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                [proof_envelope] = packet["perennial_records"]["proof_envelopes"]
+                signature = proof_envelope["implemented_proofs"]["signature"]
+                [governance_commit] = packet["perennial_records"]["governance_commits"]
+                self.assertEqual(signature["algorithm"], "hmac-sha256")
+                self.assertEqual(signature["key_id"], "test-key")
+                self.assertEqual(signature["status"], "verified")
+                self.assertEqual(
+                    governance_commit["proof"]["signature_ref"],
+                    f"signature://test-key/{signature['payload_sha256']}",
+                )
+            finally:
+                coordinator.stop_background_workers()
+
 
 def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dict[str, Any]] | None = None) -> str:
     decision = _decision("dec_darkharness", autonomy_tier="approval_required")

@@ -122,6 +122,19 @@ class RuntimeConfigPathTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only supports ephemeral"):
             RuntimeConfig(darkharness_packet_persistence_mode="audit_artifact")
 
+    def test_darkharness_signing_env_configures_local_hmac_key(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_DARKHARNESS_SIGNING_KEY": "local-secret",
+                "MESH_DARKHARNESS_SIGNING_KEY_ID": "local-key",
+            },
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertEqual(cfg.darkharness_signing_key, "local-secret")
+        self.assertEqual(cfg.darkharness_signing_key_id, "local-key")
+
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "run_sessions.json"
