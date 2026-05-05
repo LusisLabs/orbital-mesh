@@ -15,6 +15,7 @@ from services.benchmark.runner import BenchmarkRunConfig, run_benchmark
 from services.benchmark.scenario_loader import load_suite
 from services.benchmark.scoring import score_outcome
 from services.benchmark.sregym_agent import build_agent_registry_entry, render_agent_yaml, run_mesh_sregym_agent
+from services.investigation.cloudops_ontology import rank_root_causes
 from shared.mesh_runtime import Trigger
 
 
@@ -689,6 +690,643 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertTrue(result.root_cause_matched)
             self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
             self.assertEqual(1.0, result.process_metrics.root_cause_at_3)
+
+    def test_cloudopsbench_hidden_mode_normalizes_workload_name_for_probe_port_rca(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "runtime" / "41"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service abnormal restart.",
+                        "result": {
+                            "fault_object": "app/currencyservice",
+                            "root_cause": "readiness_probe_incorrect_port",
+                        },
+                        "process": {
+                            "path1": [
+                                "GetResources::pods",
+                                "DescribeResource::pods::currencyservice",
+                                "GetAppYAML::currencyservice",
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"boutique"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            "currencyservice-7cc975cfff-nk87k 0/1 Running 0 91s\n"
+                        ),
+                        'DescribeResource:{"resource_type":"pods","name":"currencyservice-7cc975cfff-nk87k","namespace":"boutique"}': (
+                            "Name: currencyservice-7cc975cfff-nk87k\n"
+                            "Labels: app=currencyservice\n"
+                            "Port: 7000/TCP\n"
+                            "Readiness: grpc <pod>:7001 delay=5s timeout=1s period=10s\n"
+                            "Warning Unhealthy Readiness probe failed: timeout connecting to 172.20.2.130:7001\n"
+                        ),
+                        'GetAppYAML:{"app_name":"currencyservice"}': (
+                            "apiVersion: apps/v1\n"
+                            "kind: Deployment\n"
+                            "metadata:\n"
+                            "  name: currencyservice\n"
+                            "spec:\n"
+                            "  template:\n"
+                            "    spec:\n"
+                            "      containers:\n"
+                            "      - name: server\n"
+                            "        ports:\n"
+                            "        - containerPort: 7000\n"
+                            "        readinessProbe:\n"
+                            "          grpc:\n"
+                            "            port: 7001\n"
+                            "---\n"
+                            "kind: Service\n"
+                            "metadata:\n"
+                            "  name: currencyservice\n"
+                            "spec:\n"
+                            "  ports:\n"
+                            "  - targetPort: 7000\n"
+                        ),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench readiness port case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "boutique/runtime/41"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "readiness_probe_incorrect_port",
+                        "expert_trajectory": ["GetResources::pods", "DescribeResource::pods::currencyservice", "GetAppYAML::currencyservice"],
+                        "required_tool_families": ["GetResources", "DescribeResource", "GetAppYAML"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "boutique"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            app_yaml_calls = [call for call in artifact["tool_trajectory"] if call.get("tool_name") == "GetAppYAML"]
+            self.assertEqual("currencyservice", app_yaml_calls[0]["args"].get("app_name"))
+            self.assertIn("currencyservice", app_yaml_calls[0].get("output_summary", ""))
+            self.assertEqual(
+                "readiness_probe_incorrect_port",
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+            )
+            self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+
+    def test_cloudops_ontology_maps_malformed_http_probe_response_to_protocol_rca(self) -> None:
+        readiness = rank_root_causes(
+            [
+                "Readiness: http-get http://:5050/health delay=5s timeout=1s period=10s",
+                'Warning Unhealthy Readiness probe failed: Get "http://172.20.2.80:5050/health": '
+                'net/http: HTTP/1.x transport connection broken: malformed HTTP response "\\x00\\x00"',
+            ]
+        )
+        liveness = rank_root_causes(
+            [
+                "Liveness: http-get http://:8080/ delay=5s timeout=1s period=10s",
+                'Warning Unhealthy Liveness probe failed: Get "http://172.20.1.99:8080/": '
+                'net/http: HTTP/1.x transport connection broken: malformed HTTP response "\\x00\\x00"',
+            ]
+        )
+        generic = rank_root_causes(["Warning Unhealthy Readiness probe failed: timeout connecting to 172.20.2.80:5050"])
+
+        self.assertEqual("readiness_probe_incorrect_protocol", readiness[0].root_cause)
+        self.assertEqual("liveness_probe_incorrect_protocol", liveness[0].root_cause)
+        self.assertEqual("readiness_probe_failed", generic[0].root_cause)
+
+    def test_cloudopsbench_hidden_mode_uses_full_inventory_for_late_unhealthy_pod(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "trainticket" / "startup" / "16"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "train-ticket",
+                        "query": "Partial Service Unreachability.",
+                        "result": {
+                            "fault_object": "app/ts-station-service",
+                            "root_cause": "missing_secret_binding",
+                        },
+                        "process": {"path1": ["GetResources::pods", "DescribeResource::pods::ts-station-service"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            healthy_rows = "".join(
+                f"ts-healthy-service-{idx:03d}-85577d9b4d-a{idx:04d} 1/1 Running 0 5m\n"
+                for idx in range(100)
+            )
+            bad_pod = "ts-station-service-5f5c7cc968-f9dzr"
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"train-ticket"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            f"{healthy_rows}"
+                            f"{bad_pod} 0/1 CreateContainerConfigError 0 4m55s\n"
+                        ),
+                        f'DescribeResource:{{"resource_type":"pods","name":"{bad_pod}","namespace":"train-ticket"}}': (
+                            f"Name: {bad_pod}\n"
+                            'Warning Failed secret "station-secret" not found\n'
+                            "State: Waiting\n"
+                            "Reason: CreateContainerConfigError\n"
+                        ),
+                        'GetAppYAML:{"app_name":"ts-station-service"}': (
+                            "kind: Deployment\n"
+                            "metadata:\n"
+                            "  name: ts-station-service\n"
+                        ),
+                        f'GetErrorLogs:{{"resource_type":"pods","name":"{bad_pod}","namespace":"train-ticket"}}': (
+                            'CreateContainerConfigError: secret "station-secret" not found\n'
+                        ),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench late inventory case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "trainticket/startup/16"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "missing_secret_binding",
+                        "expert_trajectory": ["GetResources::pods", "DescribeResource::pods::ts-station-service"],
+                        "required_tool_families": ["GetResources", "DescribeResource"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "train-ticket"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            describe_calls = [call for call in artifact["tool_trajectory"] if call.get("tool_name") == "DescribeResource"]
+            self.assertEqual(bad_pod, describe_calls[0]["args"].get("name"))
+            self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+
+    def test_cloudopsbench_hidden_mode_does_not_probe_unknown_service_from_restarts_header(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "infrastructure" / "12"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service Availability Disruption.",
+                        "result": {
+                            "fault_object": "node/worker-02",
+                            "root_cause": "kube_proxy_unavailable",
+                        },
+                        "process": {"path1": ["GetResources::pods", "GetClusterConfiguration::"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"boutique"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            "frontend-6778bd7b8b-jm6t9 1/1 Running 0 72s\n"
+                            "cartservice-7c5f46fc47-s596z 1/1 Running 0 73s\n"
+                        ),
+                        'GetResources:{"resource_type":"deployments","name":"","namespace":"boutique"}': (
+                            "NAME READY UP-TO-DATE AVAILABLE AGE\n"
+                            "frontend 1/1 1 1 72s\n"
+                            "cartservice 1/1 1 1 73s\n"
+                        ),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench healthy inventory case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "boutique/infrastructure/12"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "kube_proxy_unavailable",
+                        "expert_trajectory": ["GetResources::pods", "GetClusterConfiguration::"],
+                        "required_tool_families": ["GetResources"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "boutique"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            tool_names = [call.get("tool_name") for call in artifact["tool_trajectory"]]
+            self.assertNotIn("DescribeResource", tool_names)
+            self.assertFalse(
+                any(call.get("args", {}).get("name") == "unknown-service" for call in artifact["tool_trajectory"])
+            )
+            self.assertEqual(0, run.results[0].process_metrics.invalid_action_count)
+
+    def test_cloudopsbench_hidden_mode_lists_deployments_for_zero_replica_rca(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "trainticket" / "runtime" / "16"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "train-ticket",
+                        "query": "Service Availability Disruption.",
+                        "result": {
+                            "fault_object": "app/ts-assurance-service",
+                            "root_cause": "deployment_zero_replicas",
+                        },
+                        "process": {
+                            "path1": [
+                                "GetResources::pods",
+                                "GetAlerts::",
+                                "GetResources::deployments",
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"train-ticket"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            "ts-assurance-service-85577d9b4d-4ld9p 1/1 Running 0 5m\n"
+                            "ts-basic-service-7695b48fbc-lr6bf 1/1 Running 0 5m\n"
+                        ),
+                        "GetAlerts:{}": {
+                            "status": "has_anomalies",
+                            "alert_count": 1,
+                            "alerts": [
+                                {
+                                    "entry_service": "ts-assurance-service",
+                                    "raw_error": "HTTPError('503 Server Error: Service Unavailable')",
+                                }
+                            ],
+                        },
+                        'GetResources:{"resource_type":"deployments","name":"","namespace":"train-ticket"}': (
+                            "NAME READY UP-TO-DATE AVAILABLE AGE\n"
+                            "ts-assurance-service 0/0 0 0 5m\n"
+                            "ts-basic-service 1/1 1 1 5m\n"
+                        ),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench zero replica case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "trainticket/runtime/16"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "deployment_zero_replicas",
+                        "expert_trajectory": ["GetResources::pods", "GetAlerts::", "GetResources::deployments"],
+                        "required_tool_families": ["GetResources", "GetAlerts"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "train-ticket"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            deployment_calls = [
+                call
+                for call in artifact["tool_trajectory"]
+                if call.get("tool_name") == "GetResources" and call.get("args", {}).get("resource_type") == "deployments"
+            ]
+            self.assertTrue(deployment_calls)
+            self.assertEqual(
+                "deployment_zero_replicas",
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+            )
+            self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+
+    def test_cloudopsbench_hidden_mode_maps_network_drop_alert_to_pod_network_delay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "trainticket" / "performance" / "1"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "train-ticket",
+                        "query": "Service quality degradation.",
+                        "result": {
+                            "fault_object": "app/ts-basic-service",
+                            "root_cause": "pod_network_delay",
+                        },
+                        "process": {"path1": ["GetResources::pods", "GetAlerts::"]},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            alert_payload = {
+                "status": "has_anomalies",
+                "alert_count": 1,
+                "alerts": [
+                    {
+                        "name": "ts-basic-service",
+                        "metric_category": "TRAFFIC_ANOMALY",
+                        "evidence": [
+                            "TRAFFIC_ANOMALY [Network Drop] | Inbound: Normal=5.73pps -> Current=2.32pps (-59.6%)"
+                        ],
+                    }
+                ],
+            }
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"train-ticket"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            "ts-basic-service-57fb684696-6nfpd 1/1 Running 0 35m\n"
+                        ),
+                        "GetAlerts:{}": alert_payload,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text(json.dumps(alert_payload), encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench network drop case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "trainticket/performance/1"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "pod_network_delay",
+                        "expert_trajectory": ["GetResources::pods", "GetAlerts::"],
+                        "required_tool_families": ["GetResources", "GetAlerts"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "latency",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "latency", "baseline_value": 1.0, "observed_value": 10.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "train-ticket"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            self.assertEqual(
+                "pod_network_delay",
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+            )
+            self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
+
+    def test_cloudopsbench_hidden_mode_ranks_untolerated_taint_above_generic_scheduler_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cloudops_root = root / "Cloud-OpsBench"
+            case_dir = cloudops_root / "benchmark" / "boutique" / "scheduling" / "154"
+            (case_dir / "raw_data").mkdir(parents=True)
+            (case_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "namespace": "boutique",
+                        "query": "Service pod pending.",
+                        "result": {
+                            "fault_object": "app/recommendationservice",
+                            "root_cause": "taint_toleration_mismatch",
+                        },
+                        "process": {
+                            "path1": [
+                                "GetResources::pods",
+                                "DescribeResource::pods::recommendationservice",
+                            ]
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            pod_name = "recommendationservice-68858794d6-pd6vc"
+            (case_dir / "tool_cache.json").write_text(
+                json.dumps(
+                    {
+                        'GetResources:{"resource_type":"pods","name":"","namespace":"boutique"}': (
+                            "NAME READY STATUS RESTARTS AGE\n"
+                            f"{pod_name} 0/1 Pending 0 70s\n"
+                        ),
+                        f'DescribeResource:{{"resource_type":"pods","name":"{pod_name}","namespace":"boutique"}}': (
+                            f"Name: {pod_name}\n"
+                            "Status: Pending\n"
+                            "Warning FailedScheduling 0/4 nodes are available: "
+                            "1 node(s) had untolerated taint {dedicated: batch}, "
+                            "3 node(s) didn't match pod's node affinity/selector.\n"
+                        ),
+                        "GetClusterConfiguration:{}": {"node_count": 4, "nodes": []},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (case_dir / "raw_data" / "alert.json").write_text("{}", encoding="utf-8")
+            scenario_root = root / "scenarios" / "cloudopsbench"
+            scenario_root.mkdir(parents=True)
+            (scenario_root / "official_case.json").write_text(
+                json.dumps(
+                    {
+                        "scenario_id": "official_case",
+                        "title": "Official Cloud-OpsBench taint scheduling case",
+                        "suite": "cloudopsbench",
+                        "source": {"cloudopsbench_case": "boutique/scheduling/154"},
+                        "expected_decisions": ["escalate"],
+                        "expected_root_cause": "taint_toleration_mismatch",
+                        "expert_trajectory": ["GetResources::pods", "DescribeResource::pods::recommendationservice"],
+                        "required_tool_families": ["GetResources", "DescribeResource"],
+                        "raw_signal": {
+                            "signal_type": "otel_metric_regression",
+                            "signal_id": "placeholder",
+                            "observed_at": "2026-05-04T00:00:00Z",
+                            "environment": "cloudopsbench",
+                            "service": "unknown-service",
+                            "endpoint": "availability",
+                            "comparison_window": {"baseline": "PT1H", "observed": "PT5M"},
+                            "metric_regression": {"metric_name": "availability", "baseline_value": 1.0, "observed_value": 0.0},
+                            "related_context": {"audit_logging_available": True, "cloudopsbench_namespace": "boutique"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            run = run_benchmark(
+                BenchmarkRunConfig(
+                    suite="cloudopsbench",
+                    scenario_root=root / "scenarios",
+                    output_root=root / "out",
+                    provider="cloudopsbench",
+                    cloudopsbench_root=cloudops_root,
+                    state_directory=root / "state",
+                )
+            )
+
+            result = run.results[0]
+            artifact = json.loads(
+                (run.output_dir / "attempt-artifacts" / "iteration-1" / "official_case.json").read_text()
+            )
+            self.assertEqual(
+                "taint_toleration_mismatch",
+                artifact["investigation_report"]["root_cause_candidates"][0]["root_cause"],
+            )
+            self.assertTrue(result.root_cause_matched)
+            self.assertEqual(1.0, result.process_metrics.root_cause_at_1)
 
     def test_sregym_backend_and_gap_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

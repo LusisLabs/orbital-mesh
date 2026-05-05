@@ -146,6 +146,382 @@ Benchmark design implication:
 
 Active Checkpoint
 -----------------
+Checkpoint: PR H CloudOps malformed HTTP probe protocol RCA.
+Date: 2026-05-05.
+
+Before implementation:
+
+  Planned files:
+    - services/investigation/cloudops_ontology.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+
+  Intended behavior:
+    - Promote readiness_probe_incorrect_protocol when readiness probe evidence
+      contains an HTTP probe failure with malformed HTTP response text.
+    - Promote liveness_probe_incorrect_protocol under the same evidence shape
+      for liveness probes.
+    - Preserve generic readiness_probe_failed and liveness_probe_failed when
+      protocol-mismatch evidence is absent.
+
+  Risk:
+    - Malformed HTTP responses are meaningful only in the context of an
+      observed HTTP probe failure; the rule must not treat arbitrary malformed
+      response strings as probe protocol faults.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOps ontology now derives readiness_probe_incorrect_protocol from
+      observed readiness probe failures that include HTTP probe evidence and
+      malformed HTTP response text.
+    - The same evidence shape maps liveness probe failures to
+      liveness_probe_incorrect_protocol.
+    - Generic readiness_probe_failed and liveness_probe_failed remain the top
+      candidates when malformed HTTP protocol evidence is absent.
+
+  Runs captured:
+    - Representative official dev cases:
+        .mesh-runtime-state/benchmarks/roadmap-pr-h-protocol-after/bench_20260505T012225329801Z/report.md
+        Scenarios: cloudops_boutique_runtime_32,
+          cloudops_boutique_runtime_4
+        Root-cause accuracy / A@1 / A@3: 1.0000
+    - Dev hidden split compared with PR G:
+        .mesh-runtime-state/benchmarks/roadmap-dev-after-pr-h/bench_20260505T012245699034Z/report.md
+        Agentic RCA score: 80.47
+        Root-cause accuracy / A@1: 0.5481
+        A@3: 0.5778
+        Invalid action count: 0.0667
+        RCA match improvements over PR G: 6
+        RCA match regressions over PR G: 0
+    - Held-out eval hidden split compared with PR G:
+        .mesh-runtime-state/benchmarks/roadmap-eval-after-pr-h/bench_20260505T012245813221Z/report.md
+        Agentic RCA score: 75.15
+        Root-cause accuracy / A@1: 0.3378
+        A@3: 0.3781
+        Invalid action count: 0.0422
+        RCA match improvements over PR G: 10
+        RCA match regressions over PR G: 0
+
+  Validation status:
+    - PASS: targeted regression test
+      test_cloudops_ontology_maps_malformed_http_probe_response_to_protocol_rca.
+    - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v,
+      26 tests.
+    - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - PASS: UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tool
+      RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
+      services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+
+Checkpoint: PR G CloudOps untolerated-taint RCA ranking.
+Date: 2026-05-05.
+
+Before implementation:
+
+  Planned files:
+    - services/investigation/cloudops_ontology.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+
+  Intended behavior:
+    - Promote taint_toleration_mismatch above generic node selector/affinity
+      candidates when scheduler evidence explicitly says the pod had an
+      untolerated taint.
+    - Preserve node_selector_mismatch and node_affinity_mismatch behavior when
+      untolerated-taint text is absent.
+
+  Risk:
+    - Scheduler failure messages can mention several predicates together; the
+      boost must require explicit taint evidence and not flatten all scheduling
+      failures into taint_toleration_mismatch.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOps ontology now adds a derived scheduler rule for explicit
+      untolerated-taint evidence.
+    - The derived rule promotes taint_toleration_mismatch above generic
+      node selector / affinity candidates only when observed investigation
+      text includes untolerated-taint wording.
+    - Existing node_selector_mismatch and node_affinity_mismatch matching
+      remain unchanged when untolerated-taint evidence is absent.
+
+  Runs captured:
+    - Representative official dev case:
+        .mesh-runtime-state/benchmarks/roadmap-pr-g-sched154-after/bench_20260505T011347227615Z/report.md
+        Scenario: cloudops_boutique_scheduling_154
+        Root-cause accuracy / A@1 / A@3: 1.0000
+        Top RCA candidate: taint_toleration_mismatch
+    - Dev hidden split compared with PR F:
+        .mesh-runtime-state/benchmarks/roadmap-dev-after-pr-g/bench_20260505T011410473565Z/report.md
+        Agentic RCA score: 79.36
+        Root-cause accuracy / A@1: 0.5037
+        A@3: 0.5333
+        Invalid action count: 0.0667
+        RCA match improvements over PR F: 5
+        RCA match regressions over PR F: 0
+    - Held-out eval hidden split compared with PR F:
+        .mesh-runtime-state/benchmarks/roadmap-eval-after-pr-g/bench_20260505T011439392055Z/report.md
+        Agentic RCA score: 74.68
+        Root-cause accuracy / A@1: 0.3186
+        A@3: 0.3589
+        Invalid action count: 0.0422
+        RCA match improvements over PR F: 10
+        RCA match regressions over PR F: 0
+
+  Validation status:
+    - PASS: targeted regression test
+      test_cloudopsbench_hidden_mode_ranks_untolerated_taint_above_generic_scheduler_text.
+    - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v,
+      25 tests.
+    - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - PASS: UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tool
+      RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
+      services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+
+Checkpoint: PR F CloudOps network-delay alert RCA coverage.
+Date: 2026-05-05.
+
+Before implementation:
+
+  Planned files:
+    - services/investigation/cloudops_ontology.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+
+  Intended behavior:
+    - Map explicit Cloud-OpsBench alert evidence for TRAFFIC_ANOMALY
+      [Network Drop] to pod_network_delay when no stronger probe evidence is
+      present.
+    - Keep the rule evidence-derived from GetAlerts output, not hidden labels.
+    - Validate against full hidden dev and eval splits for regressions.
+
+  Risk:
+    - Network-drop alert text is weaker than pod-level packet loss telemetry;
+      the rule must remain narrow and must not map generic latency degradation
+      to pod_network_delay.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOps ontology now maps explicit GetAlerts evidence containing
+      TRAFFIC_ANOMALY [Network Drop] to pod_network_delay.
+    - Generic latency degradation and throughput drop text remain insufficient
+      by themselves for pod_network_delay.
+
+  Runs captured:
+    - Representative official dev case:
+        .mesh-runtime-state/benchmarks/roadmap-pr-f-perf1-after/bench_20260505T010949505572Z/report.md
+        Scenario: cloudops_trainticket_performance_1
+        Root-cause accuracy / A@1 / A@3: 1.0000
+        Tool calls: GetResources pods, GetAlerts
+    - Dev hidden split compared with PR E:
+        .mesh-runtime-state/benchmarks/roadmap-dev-after-pr-f/bench_20260505T011009672328Z/report.md
+        Agentic RCA score: 78.44
+        Root-cause accuracy / A@1: 0.4667
+        A@3: 0.5333
+        Invalid action count: 0.0667
+        RCA match improvements over PR E: 3
+        RCA match regressions over PR E: 0
+    - Held-out eval hidden split compared with PR E:
+        .mesh-runtime-state/benchmarks/roadmap-eval-after-pr-f/bench_20260505T011037007981Z/report.md
+        Agentic RCA score: 74.20
+        Root-cause accuracy / A@1: 0.2994
+        A@3: 0.3589
+        Invalid action count: 0.0422
+        RCA match improvements over PR E: 12
+        RCA match regressions over PR E: 0
+
+  Validation status:
+    - PASS: targeted regression test
+      test_cloudopsbench_hidden_mode_maps_network_drop_alert_to_pod_network_delay.
+    - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v,
+      24 tests.
+    - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - PASS: UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tool
+      RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
+      services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+
+Checkpoint: PR E CloudOps deployment inventory RCA coverage.
+Date: 2026-05-05.
+
+Before implementation:
+
+  Planned files:
+    - services/investigation/cloudops_tools.py
+    - services/investigation/cloudops_ontology.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+
+  Intended behavior:
+    - Add a read-only deployment inventory probe for Cloud-OpsBench
+      availability/runtime cases where pods are healthy but alerts indicate
+      service unavailability.
+    - Infer deployment_zero_replicas only from observed deployment inventory
+      evidence, not from hidden labels.
+    - Preserve PR D workload normalization and avoid broad extra probing for
+      every healthy inventory.
+
+  Risk:
+    - Deployment inventory must not consume budget ahead of higher-value pod
+      describe probes when pods already expose a concrete unhealthy suspect.
+    - The zero-replica ontology must avoid treating unrelated 0 values as a
+      deployment_zero_replicas diagnosis.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOps native probe planning now has a deployment_inventory rule that
+      calls GetResources(resource_type=deployments) after pod inventory when
+      availability/unreachability signals exist and pods do not expose a
+      concrete unhealthy suspect.
+    - The rule remains read-only and does not run when pod inventory already
+      identifies a suspect for DescribeResource.
+    - The CloudOps ontology now derives deployment_zero_replicas only from
+      deployment-table evidence with READY/UP-TO-DATE/AVAILABLE headers and a
+      zero-replica row such as 0/0 0 0.
+
+  Runs captured:
+    - Representative official dev case:
+        .mesh-runtime-state/benchmarks/roadmap-pr-e-runtime16-after/bench_20260505T010318970867Z/report.md
+        Scenario: cloudops_trainticket_runtime_16
+        Root-cause accuracy / A@1 / A@3: 1.0000
+        Tool calls: GetResources pods, GetAlerts, GetResources deployments
+    - Dev hidden split compared with PR D:
+        .mesh-runtime-state/benchmarks/roadmap-dev-after-pr-e/bench_20260505T010334986187Z/report.md
+        Agentic RCA score: 77.88
+        Root-cause accuracy / A@1: 0.4444
+        A@3: 0.5111
+        Invalid action count: 0.0667
+        RCA match improvements over PR D: 7
+        RCA match regressions over PR D: 0
+    - Held-out eval hidden split compared with PR D:
+        .mesh-runtime-state/benchmarks/roadmap-eval-after-pr-e/bench_20260505T010403582220Z/report.md
+        Agentic RCA score: 73.62
+        Root-cause accuracy / A@1: 0.2764
+        A@3: 0.3359
+        Invalid action count: 0.0422
+        RCA match improvements over PR D: 10
+        RCA match regressions over PR D: 0
+
+  Validation status:
+    - PASS: targeted regression test
+      test_cloudopsbench_hidden_mode_lists_deployments_for_zero_replica_rca.
+    - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v,
+      23 tests.
+    - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - PASS: UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tool
+      RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
+      services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+
+Checkpoint: PR D CloudOps read-only RCA normalization.
+Date: 2026-05-04.
+
+Before implementation:
+
+  Planned files:
+    - services/investigation/cloudops_tools.py
+    - services/investigation/cloudops_ontology.py
+    - services/benchmark/cloudopsbench.py
+    - tests/test_benchmark_harness.py
+    - docs/AGENTIC_SRE_HARNESS.txt
+
+  Intended behavior:
+    - Normalize Kubernetes pod / ReplicaSet names to workload names when
+      selecting app YAML and service connectivity probes.
+    - Keep pod-scoped DescribeResource and GetErrorLogs probes intact.
+    - Resolve official Cloud-OpsBench tool_cache keys that use app_name as
+      well as Kubernetes-style resource_type/name/namespace keys.
+    - Infer readiness/liveness probe incorrect-port RCA candidates from
+      observed read-only evidence, not from hidden Cloud-OpsBench labels.
+    - Preserve the native selector as the default planner.
+
+  Risk:
+    - Workload-name normalization must not make DescribeResource lose pod-level
+      event detail.
+    - Probe-port inference must stay conservative and cite observed probe/spec
+      text; it must not turn generic readiness failures into exact port-mismatch
+      diagnoses without corroborating port evidence.
+
+After implementation:
+
+  Actual behavior added:
+    - CloudOps suspect discovery now reads the full GetResources tool output
+      instead of only the truncated output_summary, so long official resource
+      lists still expose late unhealthy pods.
+    - DescribeResource and GetErrorLogs keep pod-scoped names while GetAppYAML
+      and service connectivity probes use best-effort workload names derived
+      from pod / ReplicaSet names.
+    - Cloud-OpsBench tool_cache lookup now parses structured cache keys and
+      scores app_name, name/name_hint/service_name, namespace, and resource_type
+      matches before falling back.
+    - Readiness/liveness incorrect-port RCA candidates can be derived from
+      observed probe failures plus mismatched probe and serving ports.
+    - A RESTARTS table header no longer makes healthy inventories probe
+      unknown-service. Restart-count selection is only enabled for restart-
+      related triggers.
+
+  Runs captured:
+    - Baseline hidden dev split before this slice:
+        .mesh-runtime-state/benchmarks/roadmap-dev-before/bench_20260504T233443252844Z/report.md
+        Agentic RCA score: 73.62
+        Root-cause accuracy / A@1: 0.2889
+        A@3: 0.3481
+        Invalid action count: 0.0667
+    - Final hidden dev split after this slice:
+        .mesh-runtime-state/benchmarks/roadmap-dev-after5/bench_20260504T235046075975Z/report.md
+        Agentic RCA score: 76.58
+        Root-cause accuracy / A@1: 0.3926
+        A@3: 0.4593
+        Invalid action count: 0.0667
+        RCA match improvements: 14
+        RCA match regressions: 0
+    - Held-out hidden eval split after this slice:
+        .mesh-runtime-state/benchmarks/roadmap-eval-after-prd/bench_20260504T235940116909Z/report.md
+        Cases: 521
+        Agentic RCA score: 73.14
+        Root-cause accuracy / A@1: 0.2572
+        A@3: 0.3167
+        Invalid action count: 0.0422
+        Unsafe action rate: 0.00%
+
+  Validation status:
+    - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v,
+      22 tests.
+    - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - PASS: UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tool
+      RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check
+      services/investigation/cloudops_tools.py
+      services/investigation/cloudops_ontology.py
+      services/benchmark/cloudopsbench.py tests/test_benchmark_harness.py.
+    - INCONCLUSIVE: focused strict mypy via uvx initially failed on a corrupt
+      /tmp uv cache entry, then exceeded the local validation window in a fresh
+      cache with no diagnostics emitted and was killed.
+
+  Remaining gaps:
+    - Expand ontology coverage for still-missed official dev cases.
+    - Compare this eval split against a pre-slice eval baseline before making a
+      generalized improvement claim beyond the measured dev split.
+    - Keep native selector as default; LLM selector remains disabled.
+
 Checkpoint: W5 SREGym and Cloud-OpsBench parity slice.
 Date: 2026-05-04.
 
@@ -937,6 +1313,50 @@ Change Ledger
   - Rechecked SREGym prerequisites and confirmed Docker/Helm still block
     official local-kind execution.
 
+2026-05-04 PR D CloudOps read-only RCA normalization
+  - Normalized CloudOps app YAML and service probes from pod / ReplicaSet names
+    to workload names while preserving pod-scoped DescribeResource and
+    GetErrorLogs calls.
+  - Added structured official Cloud-OpsBench tool_cache key scoring for
+    app_name, names, namespace, and resource type.
+  - Added conservative observed-evidence derivation for readiness/liveness
+    incorrect-port RCA labels.
+  - Switched suspect discovery to full GetResources output so long official
+    inventories are not limited by output_summary truncation.
+  - Preserved hidden dev split invalid_action_count and improved A@1/A@3 with
+    zero RCA-match regressions against the pre-slice baseline.
+
+2026-05-05 PR E CloudOps deployment inventory RCA coverage
+  - Added a deployment inventory probe for availability/unreachability cases
+    where pod inventory has no concrete unhealthy suspect.
+  - Added conservative deployment_zero_replicas derivation from observed
+    deployment table output with a 0/0 0 0 row.
+  - Improved hidden dev and eval split A@1/A@3 with zero RCA-match regressions
+    against the PR D baseline.
+
+2026-05-05 PR F CloudOps network-delay alert RCA coverage
+  - Added narrow pod_network_delay ontology coverage for explicit
+    TRAFFIC_ANOMALY [Network Drop] alert evidence.
+  - Improved hidden dev and eval split A@1/A@3 with zero RCA-match regressions
+    against the PR E baseline.
+
+2026-05-05 PR G CloudOps untolerated-taint RCA ranking
+  - Added derived scheduler ontology coverage for explicit untolerated-taint
+    evidence.
+  - Promoted taint_toleration_mismatch above generic node selector / affinity
+    candidates only when the observed scheduler text contains untolerated-taint
+    wording.
+  - Improved hidden dev and eval split A@1 with zero RCA-match regressions
+    against the PR F baseline.
+
+2026-05-05 PR H CloudOps malformed HTTP probe protocol RCA
+  - Added derived readiness and liveness protocol RCA coverage for observed
+    HTTP probe failures with malformed HTTP response evidence.
+  - Kept generic probe-failed labels for probe failures without protocol
+    mismatch evidence.
+  - Improved hidden dev and eval split A@1/A@3 with zero RCA-match regressions
+    against the PR G baseline.
+
 
 Open Decisions
 --------------
@@ -1099,6 +1519,87 @@ Benchmark validation:
     Deep Agents benchmark runs.
 
 Current validation status:
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_dev_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR H CloudOps malformed
+    HTTP probe protocol RCA; A@1=0.5481, A@3=0.5778,
+    invalid_action_count=0.0667.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_eval_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR H CloudOps malformed
+    HTTP probe protocol RCA; A@1=0.3378, A@3=0.3781,
+    invalid_action_count=0.0422.
+  - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v
+    after PR H CloudOps malformed HTTP probe protocol RCA, 26 tests.
+  - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+    services/investigation/cloudops_ontology.py services/benchmark/cloudopsbench.py
+    tests/test_benchmark_harness.py after PR H.
+  - PASS: focused Ruff check over PR H touched Python files.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_dev_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR G CloudOps
+    untolerated-taint RCA ranking; A@1=0.5037, A@3=0.5333,
+    invalid_action_count=0.0667.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_eval_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR G CloudOps
+    untolerated-taint RCA ranking; A@1=0.3186, A@3=0.3589,
+    invalid_action_count=0.0422.
+  - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v
+    after PR G CloudOps untolerated-taint RCA ranking, 25 tests.
+  - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+    services/investigation/cloudops_ontology.py services/benchmark/cloudopsbench.py
+    tests/test_benchmark_harness.py after PR G.
+  - PASS: focused Ruff check over PR G touched Python files.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_dev_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR F CloudOps network-delay
+    alert RCA coverage; A@1=0.4667, A@3=0.5333,
+    invalid_action_count=0.0667.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_eval_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR F CloudOps network-delay
+    alert RCA coverage; A@1=0.2994, A@3=0.3589,
+    invalid_action_count=0.0422.
+  - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v
+    after PR F CloudOps network-delay alert RCA coverage, 24 tests.
+  - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+    services/investigation/cloudops_ontology.py services/benchmark/cloudopsbench.py
+    tests/test_benchmark_harness.py after PR F.
+  - PASS: focused Ruff check over PR F touched Python files.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_dev_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR E CloudOps deployment
+    inventory RCA coverage; A@1=0.4444, A@3=0.5111,
+    invalid_action_count=0.0667.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_eval_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR E CloudOps deployment
+    inventory RCA coverage; A@1=0.2764, A@3=0.3359,
+    invalid_action_count=0.0422.
+  - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v
+    after PR E CloudOps deployment inventory RCA coverage, 23 tests.
+  - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+    services/investigation/cloudops_ontology.py services/benchmark/cloudopsbench.py
+    tests/test_benchmark_harness.py after PR E.
+  - PASS: focused Ruff check over PR E touched Python files.
+  - PASS: PYTHONPATH=. python3.11 -m unittest tests.test_benchmark_harness -v
+    after PR D CloudOps RCA normalization, 22 tests.
+  - PASS: python3.11 -m py_compile services/investigation/cloudops_tools.py
+    services/investigation/cloudops_ontology.py services/benchmark/cloudopsbench.py
+    tests/test_benchmark_harness.py after PR D CloudOps RCA normalization.
+  - PASS: focused Ruff check over PR D touched Python files.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_dev_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR D CloudOps RCA
+    normalization; A@1=0.3926, A@3=0.4593, invalid_action_count=0.0667.
+  - PASS: python3.11 -m services.benchmark run --suite
+    cloudopsbench_official_eval_full --provider cloudopsbench
+    --cloudopsbench-ground-truth-mode hidden after PR D CloudOps RCA
+    normalization; A@1=0.2572, A@3=0.3167, invalid_action_count=0.0422.
+  - INCONCLUSIVE: focused strict mypy via uvx was attempted after PR D but
+    exceeded the local validation window in a fresh cache with no diagnostics
+    emitted and was killed.
   - PASS: PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest
     pytest tests/test_benchmark_harness.py -q after W8 compact artifact and
     Cloud-OpsBench importer changes, 18 tests.

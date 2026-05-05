@@ -18,6 +18,7 @@ Patterns are kept lowercase; matching is also lowercase.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Iterable
 
@@ -74,7 +75,16 @@ _RULES: tuple[_Rule, ...] = (
     _Rule("liveness_probe_failed", ("liveness probe failed", "failed liveness probe"), weight=1.2),
     _Rule("readiness_probe_failed", ("readiness probe failed", "failed readiness probe"), weight=1.2),
     # Network / DNS
-    _Rule("pod_network_delay", ("network is unreachable", "no route to host", "i/o timeout", "context deadline exceeded")),
+    _Rule(
+        "pod_network_delay",
+        (
+            "network is unreachable",
+            "no route to host",
+            "i/o timeout",
+            "context deadline exceeded",
+            "traffic_anomaly [network drop]",
+        ),
+    ),
     _Rule("dns_resolution_failure", ("dns lookup failed", "no such host", "name resolution", "no servers could be reached")),
     _Rule("connection_refused", ("connection refused", "dial tcp", "ECONNREFUSED")),
     # Disk / volume
@@ -113,9 +123,15 @@ def rank_root_causes(text: Iterable[str], *, top_k: int = 5) -> list[RankedCause
                 matched.add(pattern)
         if not matched:
             continue
-        score = rule.weight * (1.0 + 0.25 * (len(matched) - 1))
-        cause_score, cause_patterns = hits.get(rule.root_cause, (0.0, set()))
-        hits[rule.root_cause] = (cause_score + score, cause_patterns | matched)
+        _add_hit(hits, rule.root_cause, rule.weight * (1.0 + 0.25 * (len(matched) - 1)), matched)
+    for derived in _derived_probe_port_rules(haystack):
+        _add_hit(hits, derived.root_cause, derived.weight, set(derived.patterns))
+    for derived in _derived_probe_protocol_rules(haystack):
+        _add_hit(hits, derived.root_cause, derived.weight, set(derived.patterns))
+    for derived in _derived_deployment_rules(haystack):
+        _add_hit(hits, derived.root_cause, derived.weight, set(derived.patterns))
+    for derived in _derived_scheduler_rules(haystack):
+        _add_hit(hits, derived.root_cause, derived.weight, set(derived.patterns))
     if not hits:
         return []
     total = sum(score for score, _ in hits.values()) or 1.0
@@ -128,3 +144,120 @@ def rank_root_causes(text: Iterable[str], *, top_k: int = 5) -> list[RankedCause
         )
         for cause, (score, patterns) in ranked
     ]
+
+
+def _add_hit(
+    hits: dict[str, tuple[float, set[str]]],
+    root_cause: str,
+    score: float,
+    matched: set[str],
+) -> None:
+    cause_score, cause_patterns = hits.get(root_cause, (0.0, set()))
+    hits[root_cause] = (cause_score + score, cause_patterns | matched)
+
+
+def _derived_probe_port_rules(haystack: str) -> tuple[_Rule, ...]:
+    derived: list[_Rule] = []
+    if _probe_port_mismatch(haystack, "readiness"):
+        derived.append(
+            _Rule(
+                "readiness_probe_incorrect_port",
+                ("readiness probe failed", "readiness:", "readinessprobe", "targetport"),
+                weight=4.0,
+            )
+        )
+    if _probe_port_mismatch(haystack, "liveness"):
+        derived.append(
+            _Rule(
+                "liveness_probe_incorrect_port",
+                ("liveness probe failed", "liveness:", "livenessprobe", "targetport"),
+                weight=4.0,
+            )
+        )
+    return tuple(derived)
+
+
+def _derived_probe_protocol_rules(haystack: str) -> tuple[_Rule, ...]:
+    derived: list[_Rule] = []
+    if _probe_protocol_mismatch(haystack, "readiness"):
+        derived.append(
+            _Rule(
+                "readiness_probe_incorrect_protocol",
+                ("readiness probe failed", "malformed http response", "http-get"),
+                weight=4.0,
+            )
+        )
+    if _probe_protocol_mismatch(haystack, "liveness"):
+        derived.append(
+            _Rule(
+                "liveness_probe_incorrect_protocol",
+                ("liveness probe failed", "malformed http response", "http-get"),
+                weight=4.0,
+            )
+        )
+    return tuple(derived)
+
+
+def _derived_deployment_rules(haystack: str) -> tuple[_Rule, ...]:
+    if "ready" not in haystack or "up-to-date" not in haystack or "available" not in haystack:
+        return ()
+    if not re.search(r"(?m)^\s*[a-z0-9][a-z0-9-]*\s+0/0\s+0\s+0\b", haystack):
+        return ()
+    return (
+        _Rule(
+            "deployment_zero_replicas",
+            ("ready", "up-to-date", "available", "0/0"),
+            weight=4.0,
+        ),
+    )
+
+
+def _derived_scheduler_rules(haystack: str) -> tuple[_Rule, ...]:
+    if "untolerated taint" not in haystack and "had untolerated taint" not in haystack:
+        return ()
+    return (
+        _Rule(
+            "taint_toleration_mismatch",
+            ("untolerated taint",),
+            weight=3.0,
+        ),
+    )
+
+
+def _probe_port_mismatch(haystack: str, probe: str) -> bool:
+    if f"{probe} probe failed" not in haystack:
+        return False
+    probe_ports = _probe_ports(haystack, probe)
+    if not probe_ports:
+        return False
+    serving_ports = _serving_ports(haystack)
+    return bool(serving_ports and any(port not in serving_ports for port in probe_ports))
+
+
+def _probe_protocol_mismatch(haystack: str, probe: str) -> bool:
+    if f"{probe} probe failed" not in haystack:
+        return False
+    if "malformed http response" not in haystack and "http/1.x transport connection broken" not in haystack:
+        return False
+    return "http-get" in haystack or 'get "http://' in haystack or "get 'http://" in haystack
+
+
+def _probe_ports(haystack: str, probe: str) -> set[str]:
+    ports: set[str] = set()
+    for pattern in (
+        rf"{probe}:\s+\w+\s+<pod>:(\d+)",
+        rf"{probe}probe:.*?port:\s*[\"']?(\d+)",
+    ):
+        ports.update(re.findall(pattern, haystack, flags=re.DOTALL))
+    return ports
+
+
+def _serving_ports(haystack: str) -> set[str]:
+    ports: set[str] = set()
+    for pattern in (
+        r"containerport:\s*[\"']?(\d+)",
+        r"targetport:\s*[\"']?(\d+)",
+        r"\bport:\s+(\d+)/tcp",
+    ):
+        ports.update(re.findall(pattern, haystack))
+    return ports

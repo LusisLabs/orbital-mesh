@@ -36,7 +36,7 @@ from .harness.native_selector import RootCauseCandidate, RootCauseRanker
 
 
 _RESOURCE_LINE_RE = re.compile(
-    r"^\s*([a-z][a-z0-9-]+(?:-[a-f0-9]+)?)\s+(\d+)/(\d+)\s+([A-Za-z]+)\b"
+    r"^\s*([a-z][a-z0-9-]+(?:-[a-z0-9]+)*)\s+(\d+)/(\d+)\s+([A-Za-z]+)\s+(\d+)\b"
 )
 _HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
 
@@ -55,6 +55,7 @@ def _build_tool_definitions() -> list[ToolDefinition]:
     common_args = {
         "resource_type": {"type": "str", "required": False},
         "name": {"type": "str", "required": False},
+        "app_name": {"type": "str", "required": False},
         "namespace": {"type": "str", "required": False, "nullable": True},
     }
     descriptions = {
@@ -159,6 +160,15 @@ class CloudOpsRulePack:
                 confidence=0.55,
             ),
             ProbeRule(
+                name="deployment_inventory",
+                tool_name="GetResources",
+                when=self._should_list_deployments,
+                build_args=self._deployment_inventory_args,
+                selection_reason=self._deployment_inventory_reason,
+                priority=35,
+                confidence=0.6,
+            ),
+            ProbeRule(
                 name="image_or_config_spec",
                 tool_name="GetAppYAML",
                 when=self._has_image_or_config_signal,
@@ -226,7 +236,11 @@ class CloudOpsRulePack:
         suspect = self._effective_suspect(index)
         if not suspect:
             return False
-        return _has_explicit_suspect_hint(self._trigger) or _has_resource_status_signal(index)
+        return (
+            _has_explicit_suspect_hint(self._trigger)
+            or _has_resource_status_signal(index)
+            or self._discovered_suspect(index) == suspect
+        )
 
     def _describe_args(self, index: ObservationIndex) -> dict[str, Any]:
         return {"resource_type": "pods", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
@@ -246,6 +260,19 @@ class CloudOpsRulePack:
     def _alerts_reason(self, _index: ObservationIndex) -> str:
         return "alert_signal: inspect active alert context"
 
+    def _should_list_deployments(self, index: ObservationIndex) -> bool:
+        if not _resource_type_called(index, "pods") or _resource_type_called(index, "deployments"):
+            return False
+        if self._discovered_suspect(index):
+            return False
+        return _has_availability_signal(self._trigger, index)
+
+    def _deployment_inventory_args(self, _index: ObservationIndex) -> dict[str, Any]:
+        return {"resource_type": "deployments", "namespace": self._namespace}
+
+    def _deployment_inventory_reason(self, _index: ObservationIndex) -> str:
+        return "availability_signal: inspect deployment readiness when pods do not expose a suspect"
+
     def _has_image_or_config_signal(self, index: ObservationIndex) -> bool:
         return self._has_suspect(index) and index.contains_any(
             (
@@ -256,14 +283,18 @@ class CloudOpsRulePack:
                 "createcontainerconfigerror",
                 "configmap",
                 "secret",
+                "readiness:",
+                "liveness:",
+                "readiness probe failed",
+                "liveness probe failed",
             )
         )
 
     def _app_yaml_args(self, index: ObservationIndex) -> dict[str, Any]:
-        return {"resource_type": "deployment", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+        return {"app_name": _workload_name(self._effective_suspect(index) or ""), "namespace": self._namespace}
 
     def _app_yaml_reason(self, index: ObservationIndex) -> str:
-        return f"image_or_config_signal: inspect deployment spec for {self._effective_suspect(index) or 'suspect'}"
+        return f"image_or_config_signal: inspect deployment spec for {_workload_name(self._effective_suspect(index) or '') or 'suspect'}"
 
     def _has_runtime_failure_signal(self, index: ObservationIndex) -> bool:
         return self._has_suspect(index) and index.contains_any(
@@ -282,10 +313,10 @@ class CloudOpsRulePack:
         )
 
     def _connectivity_args(self, index: ObservationIndex) -> dict[str, Any]:
-        return {"resource_type": "service", "name": self._effective_suspect(index) or "", "namespace": self._namespace}
+        return {"resource_type": "services", "name": _workload_name(self._effective_suspect(index) or ""), "namespace": self._namespace}
 
     def _connectivity_reason(self, index: ObservationIndex) -> str:
-        return f"network_or_service_signal: verify service connectivity for {self._effective_suspect(index) or 'suspect'}"
+        return f"network_or_service_signal: verify service connectivity for {_workload_name(self._effective_suspect(index) or '') or 'suspect'}"
 
     def _has_scheduling_signal(self, index: ObservationIndex) -> bool:
         return self._has_suspect(index) and index.contains_any(
@@ -312,13 +343,19 @@ class CloudOpsRulePack:
 
     def _effective_suspect(self, index: ObservationIndex) -> str | None:
         return (
-            _discover_suspect_resource(index.summary_for("GetResources"))
+            self._discovered_suspect(index)
             or (
                 _suspect_resource_hint(self._trigger)
                 if _has_probeable_trigger_or_observed_signal(self._trigger, index)
                 else None
             )
             or None
+        )
+
+    def _discovered_suspect(self, index: ObservationIndex) -> str | None:
+        return _discover_suspect_resource(
+            index.output_for("GetResources"),
+            include_restarts=_has_restart_query(self._trigger),
         )
 
 
@@ -339,17 +376,18 @@ class CloudOpsLoopPlanner:
         return self._selector.plan(state=state, trigger_context=trigger_context)
 
 
-def _discover_suspect_resource(text: str | None) -> str | None:
+def _discover_suspect_resource(text: str | None, *, include_restarts: bool = False) -> str | None:
     if not text:
         return None
     for line in text.splitlines():
         match = _RESOURCE_LINE_RE.match(line)
         if not match:
             continue
-        name, ready, desired, status = match.groups()
+        name, ready, desired, status, restarts = match.groups()
         unhealthy_status = status.lower() not in {"running", "completed", "succeeded"}
         below_ready = int(ready) < int(desired)
-        if unhealthy_status or below_ready:
+        recently_restarted = include_restarts and int(restarts) > 0
+        if unhealthy_status or below_ready or recently_restarted:
             return _strip_replicaset_suffix(name)
     return None
 
@@ -359,6 +397,25 @@ def _strip_replicaset_suffix(name: str) -> str:
     while parts and len(parts) > 1 and _HEX_SUFFIX_RE.fullmatch(parts[-1]):
         parts.pop()
     return "-".join(parts) if parts else name
+
+
+def _workload_name(name: str) -> str:
+    """Best-effort Kubernetes workload name from a pod/ReplicaSet name."""
+
+    parts = [part for part in str(name or "").split("-") if part]
+    if len(parts) >= 3 and _looks_like_replicaset_hash(parts[-2]) and _looks_like_pod_suffix(parts[-1]):
+        return "-".join(parts[:-2])
+    if len(parts) >= 2 and _looks_like_replicaset_hash(parts[-1]):
+        return "-".join(parts[:-1])
+    return _strip_replicaset_suffix(name)
+
+
+def _looks_like_replicaset_hash(value: str) -> bool:
+    return len(value) >= 8 and value.isalnum() and any(ch.isdigit() for ch in value)
+
+
+def _looks_like_pod_suffix(value: str) -> bool:
+    return 4 <= len(value) <= 6 and value.isalnum() and any(ch.isdigit() for ch in value)
 
 
 def _suspect_resource_hint(trigger: Trigger) -> str:
@@ -380,6 +437,39 @@ def _has_explicit_suspect_hint(trigger: Trigger) -> bool:
         isinstance(related.get(key), str) and related.get(key)
         for key in ("cloudopsbench_fault_object", "fault_object", "deployment_name", "suspect_resource")
     )
+
+
+def _has_restart_query(trigger: Trigger) -> bool:
+    endpoint = str(getattr(trigger, "endpoint", "") or "").lower()
+    related = trigger.related_context or {}
+    query = str(related.get("cloudopsbench_query") or related.get("query") or "").lower()
+    return "restart" in endpoint or "restart" in query
+
+
+def _has_availability_signal(trigger: Trigger, index: ObservationIndex) -> bool:
+    endpoint = str(getattr(trigger, "endpoint", "") or "").lower()
+    related = trigger.related_context or {}
+    query = str(related.get("cloudopsbench_query") or related.get("query") or "").lower()
+    haystack = index.haystack
+    return any(
+        signal in f"{endpoint}\n{query}\n{haystack}"
+        for signal in ("availability", "unreachability", "service unavailable", "503 server error")
+    )
+
+
+def _resource_type_called(index: ObservationIndex, resource_type: str) -> bool:
+    expected = _singular_resource_type(resource_type)
+    for call in index.state.tool_calls:
+        if call.tool_name != "GetResources":
+            continue
+        called = _singular_resource_type(str(call.args.get("resource_type") or ""))
+        if called == expected:
+            return True
+    return False
+
+
+def _singular_resource_type(value: str) -> str:
+    return value[:-1] if value.endswith("s") else value
 
 
 def _has_resource_status_signal(index: ObservationIndex) -> bool:
