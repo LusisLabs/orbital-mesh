@@ -326,24 +326,101 @@ def _lookup_cloudops_cache(tools: dict[str, Any], tool_name: str, args: dict[str
     candidates = [(key, value) for key, value in tools.items() if isinstance(key, str) and key.startswith(prefix)]
     if not candidates:
         return None
-    resource_type = str(args.get("resource_type") or "").lower()
-    # Tool caches in the official CloudOps format key on ``name`` (e.g.
-    # ``"name":"productcatalogservice"``). Older expert-trajectory steps
-    # used ``name_hint``. Accept either so probe-loop callers and
-    # trajectory replay both find their entries.
-    name_hint = str(args.get("name") or args.get("name_hint") or "").lower()
-    namespace = str(args.get("namespace") or "").lower()
+    normalized_args = _normalize_lookup_args(args)
+    resource_type = normalized_args.get("resource_type", "")
+    name_hint = normalized_args.get("name", "")
+    app_name = normalized_args.get("app_name", "") or _workload_name(name_hint)
+    namespace = normalized_args.get("namespace", "")
+    best_match: tuple[int, Any] | None = None
     for key, value in candidates:
-        lowered = key.lower()
-        if resource_type and resource_type not in lowered:
+        cache_args = _parse_cache_args(key, prefix)
+        score = _cache_match_score(
+            cache_args,
+            resource_type=resource_type,
+            name_hint=name_hint,
+            app_name=app_name,
+            namespace=namespace,
+        )
+        if score <= 0:
             continue
-        if name_hint and name_hint not in lowered:
-            continue
-        if namespace and f'"namespace":"{namespace}"' not in lowered and namespace not in lowered:
-            continue
-        return value
+        if best_match is None or score > best_match[0]:
+            best_match = (score, value)
+    if best_match is not None:
+        return best_match[1]
     if resource_type:
         for key, value in candidates:
             if re.search(rf'"resource_type":"?{re.escape(resource_type)}', key.lower()):
                 return value
     return candidates[0][1]
+
+
+def _normalize_lookup_args(args: dict[str, Any]) -> dict[str, str]:
+    return {str(key): str(value).lower() for key, value in args.items() if value is not None}
+
+
+def _parse_cache_args(key: str, prefix: str) -> dict[str, str]:
+    raw = key[len(prefix):]
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    return {str(item_key): str(item_value).lower() for item_key, item_value in payload.items() if item_value is not None}
+
+
+def _cache_match_score(
+    cache_args: dict[str, str],
+    *,
+    resource_type: str,
+    name_hint: str,
+    app_name: str,
+    namespace: str,
+) -> int:
+    score = 0
+    if namespace:
+        cached_namespace = cache_args.get("namespace", "")
+        if cached_namespace and cached_namespace != namespace:
+            return 0
+        if cached_namespace == namespace:
+            score += 2
+    if resource_type:
+        cached_resource = cache_args.get("resource_type", "")
+        if cached_resource and cached_resource != resource_type and _singular(cached_resource) != _singular(resource_type):
+            return 0
+        if cached_resource:
+            score += 2
+    cached_app = cache_args.get("app_name", "")
+    cached_name = cache_args.get("name", "") or cache_args.get("name_hint", "") or cache_args.get("service_name", "")
+    if app_name:
+        if cached_app:
+            return score + 8 if cached_app == app_name else 0
+        if cached_name and (_workload_name(cached_name) == app_name or cached_name == app_name):
+            score += 6
+    if name_hint:
+        if cached_name == name_hint:
+            score += 5
+        elif cached_name and _workload_name(name_hint) == _workload_name(cached_name):
+            score += 4
+    return score
+
+
+def _singular(value: str) -> str:
+    return value[:-1] if value.endswith("s") else value
+
+
+def _workload_name(name: str) -> str:
+    parts = [part for part in str(name or "").split("-") if part]
+    if len(parts) >= 3 and _looks_like_replicaset_hash(parts[-2]) and _looks_like_pod_suffix(parts[-1]):
+        return "-".join(parts[:-2])
+    if len(parts) >= 2 and _looks_like_replicaset_hash(parts[-1]):
+        return "-".join(parts[:-1])
+    return str(name or "")
+
+
+def _looks_like_replicaset_hash(value: str) -> bool:
+    return len(value) >= 8 and value.isalnum() and any(ch.isdigit() for ch in value)
+
+
+def _looks_like_pod_suffix(value: str) -> bool:
+    return 4 <= len(value) <= 6 and value.isalnum() and any(ch.isdigit() for ch in value)
