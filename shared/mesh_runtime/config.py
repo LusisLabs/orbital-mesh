@@ -70,6 +70,7 @@ class RuntimeConfig:
     vault_path: str = str(DEFAULT_VAULT_PATH)
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
     darkharness_registry_path: str | None = None
+    darkharness_packet_persistence_mode: str = "ephemeral"
     mesh_brain_artifact_uri_prefix: str | None = None
     mesh_brain_serving_base_url: str | None = None
     mesh_brain_serving_model: str | None = None
@@ -291,6 +292,8 @@ class RuntimeConfig:
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
         self.readiness_profile = _normalize_readiness_profile(self.readiness_profile, self.environment)
+        if self.darkharness_packet_persistence_mode != "ephemeral":
+            raise ValueError("darkharness_packet_persistence_mode only supports ephemeral in this phase")
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
             self.observer_prompt_cache_mode
         )
@@ -333,6 +336,10 @@ class RuntimeConfig:
                 _env_path_anchored_to_repo(os.getenv("MESH_DARKHARNESS_REGISTRY_PATH"), default="")
                 if os.getenv("MESH_DARKHARNESS_REGISTRY_PATH")
                 else None
+            ),
+            darkharness_packet_persistence_mode=os.getenv(
+                "MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE",
+                "ephemeral",
             ),
             mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
             mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,

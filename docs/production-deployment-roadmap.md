@@ -19,8 +19,8 @@ The first production test must prove:
 | Surface | Current repo anchor | Production posture |
 | --- | --- | --- |
 | Control plane API and SSE | `control_plane_server.py`, `services/control_plane.py` | Core runtime. Must be placed behind authenticated TLS before external access. |
-| GPUI operator console | `apps/mesh-gpui/` | Target primary human application shell; uses the control plane API as the authority boundary. |
-| Browser operator UI | `web/`, served by `run_server.py` | Compatibility and CI-visible human test surface while the GPUI console graduates. |
+| Browser operator UI | `web/`, served by `run_server.py` | Primary human operator surface for local, CI-visible, and production-pilot review. |
+| Archived GPUI operator console | `docs/history/gpui/mesh-gpui/` | Archived experiment. Not an active build, packaging, or parity target. |
 | TUI | `run_tui.py` | Local companion only. |
 | Manual and fixture runs | `POST /api/runs`, `fixtures/signals/` | Safe replay and demo path. |
 | Kubernetes live signals | `services/ingest/kubernetes_live_signal.py`, `services/watchers/kubernetes.py` | Production candidate when kubeconfig, network reachability, context allowlist, and namespace allowlist are all set. |
@@ -207,7 +207,7 @@ Exit gates:
 | Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, and rollback evidence. |
 | Connector certification matrix | private staging | Machine-readable certification states are exposed in `/api/readiness` and documented. |
 | Failure-mode library | private staging | Core denied-action and fault tests exist; explicit product library and UI replay catalog remain. |
-| Operator trust ladder UI | private staging | API and browser trust surface now expose current ceiling, next level, threshold requirements, blockers, manual override reason, and per-service/action evidence. GPUI parity remains. |
+| Operator trust ladder UI | private staging | API and browser trust surface now expose current ceiling, next level, threshold requirements, blockers, manual override reason, and per-service/action evidence. |
 | Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
 | Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
 | Release provenance packet | production pilot | Local generator and completeness gate exist; CI must supply image digests, base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity before a signed pilot packet is valid. |

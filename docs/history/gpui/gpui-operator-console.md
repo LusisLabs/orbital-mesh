@@ -1,6 +1,10 @@
-# GPUI Operator Console
+# Archived GPUI Operator Console
 
-Orbital Mesh now has a first-party Rust desktop client under `apps/mesh-gpui/`. The goal is to make the core application feel like a professional operations console rather than a themed web dashboard.
+This document records the archived GPUI desktop experiment. The active operator
+surface is the browser UI in `web/`, served by `run_server.py`.
+
+The archived Rust desktop client lives under `docs/history/gpui/mesh-gpui/`.
+It is not part of the active root build, packaging path, or production roadmap.
 
 ## Architecture
 
@@ -35,6 +39,8 @@ This keeps policy, audit, RBAC, readiness, run state, Merkle proofs, and connect
 | Trust ladder | Trust surface renders service/action autonomy evidence. |
 | Kill switch | Kill Switch surface can stop watchers, disable live execution, clear namespaces, and force approval gates through the backend API. |
 
-## Migration Position
+## Archived Position
 
-The browser UI remains useful for CI and web-based review, but the GPUI client is the target primary operator shell. Do not reimplement backend policy or run orchestration in GPUI. Add UI capability by extending the HTTP contract first, then binding the Rust client to that contract.
+The browser UI is the primary operator shell again. Do not add GPUI parity work,
+root Rust workspace requirements, or GPUI packaging gates unless the desktop
+experiment is explicitly restored.

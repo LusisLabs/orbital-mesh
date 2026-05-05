@@ -1,4 +1,4 @@
 [workspace]
-members = ["apps/mesh-gpui"]
+members = ["mesh-gpui"]
 exclude = ["latent-mesh/LatentMAS"]
 resolver = "3"

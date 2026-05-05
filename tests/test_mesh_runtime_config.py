@@ -110,6 +110,18 @@ class RuntimeConfigPathTests(unittest.TestCase):
             (DEFAULT_STATE_DIRECTORY / "darkharness-registry.json").resolve(),
         )
 
+    def test_darkharness_packet_persistence_is_explicitly_ephemeral(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE": "ephemeral"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertEqual(cfg.darkharness_packet_persistence_mode, "ephemeral")
+
+        with self.assertRaisesRegex(ValueError, "only supports ephemeral"):
+            RuntimeConfig(darkharness_packet_persistence_mode="audit_artifact")
+
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "run_sessions.json"

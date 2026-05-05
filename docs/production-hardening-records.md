@@ -104,7 +104,7 @@ The kill switch records a `kill_switch` artifact and forces active run controls 
 - `promotion_blockers`;
 - `autonomy_ceiling_reason`.
 
-The computed fields are not persisted into `learning/trust_ladder.json`; they are derived from current thresholds so API clients, GPUI, and exported evidence do not need to reimplement threshold math. Manual override reason is surfaced as a blocker so operators can distinguish earned autonomy from forced autonomy.
+The computed fields are not persisted into `learning/trust_ladder.json`; they are derived from current thresholds so API clients and exported evidence do not need to reimplement threshold math. Manual override reason is surfaced as a blocker so operators can distinguish earned autonomy from forced autonomy.
 
 The browser trust ladder renders current level, next threshold, recent blockers, run count, success rate, consecutive failures, overrides, and the current ceiling reason for each service/action entry.
 
@@ -157,6 +157,18 @@ Observed local-stack packet on 2026-05-05 after the live compose smoke:
 - Merkle root for the live run: `5b962a4e378546c7373271148fc9f420303ea20b11183a0d94eab32a647e5f06`, with `58` leaves;
 - pilot packet observed `8` runs, live-action proof, denied-action proof, operator approval, rollback plan, and Merkle proof;
 - missing pilot evidence: `readiness_green`, Mesh Brain model-kernel gate, Mesh Brain live canary smoke, single CROPS canary lane, and Mesh Brain rollback drill.
+
+Observed local-stack packet on 2026-05-05 after Mesh Brain pilot env wiring:
+
+- status: `go`;
+- readiness: `pilot` profile, `status: ready`, no blockers;
+- readiness inputs were `MESH_BRAIN_ARTIFACT_URI_PREFIX=s3://mesh-prod-artifacts/mesh-brain`, `MESH_BRAIN_SERVING_BASE_URL=http://host.docker.internal:1234`, `MESH_BRAIN_SERVING_MODEL=nvidia/nemotron-3-nano-4b`, and `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`;
+- the serving backend was a local OpenAI-compatible smoke backend, not a production model-serving backend;
+- model-kernel proof run: `run_20260505T055908_8be1e9e5`, `final_release_decision: pass`, Merkle root `9f9fec65f443517bfa930c5b10adf4bf77d5838fb82ebab961951f9777096049`;
+- live canary smoke run: `run_20260505T055908_51637047`, `final_release_decision: canary`, single lane `tenant_a/crops`, Merkle root `61fa5d84e0ba2ed2b763166155e06e0b82dd2ea027b6e0d213c2f4c86bad75dc`;
+- rollback drill run: `run_20260505T055908_d53f14ca`, `final_release_decision: pass`, restored previous artifact, Merkle root `72f227d7b8dc755c93293c0bb4125f6f3ed9f5c02db9b86e33a881274e9b4dfa`;
+- pilot packet observed `11` runs, live-action proof, denied-action proof, operator approval, rollback plan, Merkle proof, model-kernel gate, live canary smoke, single CROPS canary lane, and rollback drill;
+- missing evidence: none.
 
 ## Connector Certification States
 
@@ -250,6 +262,11 @@ Validated in this slice:
 - `PYTHONPATH=. python3 -m unittest tests.test_run_export_retention tests.test_trust_ladder` passed with `13` tests after adding the dry-run-first purge utility and computed trust-ladder autonomy rationale;
 - `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` passed on 2026-05-05 and produced live run `run_20260505T054747_9a8c2386` with `rollback_deployment`, execution `succeeded`, and feedback `successful`;
 - `./scripts/prod_smoke.sh` passed against `http://127.0.0.1:8787` after the stack remained healthy;
+- `docker compose -f docker-compose.stack.yml up -d --build --force-recreate mesh mesh-agent-operator` passed after wiring Mesh Brain pilot env passthroughs into the stack compose file;
+- `POST /api/mesh-brain/model-kernel-probe` passed and produced `run_20260505T055908_8be1e9e5`;
+- `POST /api/mesh-brain/live-serving-smoke` passed against the local OpenAI-compatible smoke backend and produced `run_20260505T055908_51637047`;
+- `POST /api/mesh-brain/rollback-drill` passed and produced `run_20260505T055908_d53f14ca`;
+- `GET /api/pilot/go-no-go` returned `status: go` with no missing evidence after the rollback-drill predicate was corrected to accept the drill contract's `final_release_decision: pass`;
 - `PYTHONPATH=. python3 -m unittest tests.test_authenticated_ingress tests.test_release_provenance tests.test_production_faults_and_packaging tests.test_run_export_retention tests.test_trust_ladder` passed with `26` tests when localhost binding was allowed for the authenticated-ingress rehearsal;
 - `python3 scripts/verify_postgres_restart_proof.py --skip-if-missing --json` returned `status: skipped` because `MESH_DATABASE_URL` was not set in the local shell;
 - `scripts/generate_release_provenance.py --json` returned `status: incomplete` because the worktree is dirty and CI release artifacts are absent;
