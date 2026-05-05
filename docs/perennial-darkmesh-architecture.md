@@ -239,16 +239,21 @@ does not write run events, packet files, vault notes, or audit artifacts.
 
 ## Proof Signing
 
-`MESH_DARKHARNESS_SIGNING_KEY` enables a local HMAC-SHA256 proof over the
-Darkharness proof-envelope subject, Merkle root, leaf ids, and redaction
-profile. `MESH_DARKHARNESS_SIGNING_KEY_ID` identifies the configured key in the
-proof envelope. When configured, `implemented_proofs.signature` is present and
-the governance commit carries a `signature_ref`.
+`MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM` or
+`MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH` enables an Ed25519 public-key
+signature over the Darkharness proof-envelope subject, Merkle root, leaf ids,
+and redaction profile. `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID` identifies
+the key in `implemented_proofs.signature`, and the proof carries the matching
+public key PEM for local verification.
 
-This is an implemented local integrity signature for pilot packet verification,
-not a public-key signature system and not post-quantum cryptography. PQC
-signatures, KEM, and ZK selective disclosure remain proposed hooks until a real
-provider interface and audited key-management path are added.
+`MESH_DARKHARNESS_SIGNING_KEY` remains a local HMAC-SHA256 integrity mode for
+pilot rehearsals and compatibility. When both Ed25519 and HMAC keys are
+configured, Ed25519 wins because it is the real classical public-key signature
+provider.
+
+This does not implement post-quantum cryptography. PQC signatures, KEM, and ZK
+selective disclosure remain proposed hooks until a real provider interface and
+audited key-management path are added.
 
 ## Mesh Brain Linkage
 

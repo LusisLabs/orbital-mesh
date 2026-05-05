@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from ._utils import as_plain_dict, stable_id, string_list, timestamp, validate
 from .mesh_brain import mesh_brain_evidence_refs
-from .signing import build_hmac_signature_proof
+from .signing import build_ed25519_signature_proof, build_hmac_signature_proof
 
 
 def materialize_agent_action_records(
@@ -343,6 +343,8 @@ def materialize_proof_envelope(
     redaction_profile: str = "darkharness-pilot-redacted",
     signing_key: str | None = None,
     signing_key_id: str | None = None,
+    classical_signing_key_pem: str | None = None,
+    classical_signing_key_id: str | None = None,
 ) -> dict[str, Any]:
     merkle = run_export.get("merkle") or {}
     snapshot = merkle.get("snapshot") or {}
@@ -371,7 +373,18 @@ def materialize_proof_envelope(
     signature_key_id = "proposed-key"
     signature_value = None
     signature_algorithm = "ed25519"
-    if signing_key:
+    if classical_signing_key_pem:
+        signature_proof = build_ed25519_signature_proof(
+            signature_payload,
+            key_id=classical_signing_key_id or signing_key_id or "darkharness-ed25519",
+            private_key_pem=classical_signing_key_pem,
+        )
+        implemented_proofs["signature"] = signature_proof
+        signature_status = "verified"
+        signature_key_id = signature_proof["key_id"]
+        signature_value = signature_proof["signature"]
+        signature_algorithm = signature_proof["algorithm"]
+    elif signing_key:
         signature_proof = build_hmac_signature_proof(
             signature_payload,
             key_id=signing_key_id or "darkharness-local-hmac",

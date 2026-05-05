@@ -1308,6 +1308,8 @@ class RunCoordinator:
                 subject_refs=[run_id, primary_action["action_record_id"]],
                 signing_key=self.config.darkharness_signing_key,
                 signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
             )
             governance_commit = materialize_governance_commit(
                 run_export=run_export,
@@ -1446,6 +1448,8 @@ class RunCoordinator:
                 subject_refs=[session.run_id, primary_action["action_record_id"]],
                 signing_key=self.config.darkharness_signing_key,
                 signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
             )
             governance_commit = materialize_governance_commit(
                 run_export=run_export,
@@ -1479,6 +1483,8 @@ class RunCoordinator:
                 subject_refs=[str(run_export.get("run_id"))],
                 signing_key=self.config.darkharness_signing_key,
                 signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
             )
             for run_export in mesh_brain_gate_exports
             if run_export.get("run_id") not in {allowed["session"].run_id, denied["session"].run_id}

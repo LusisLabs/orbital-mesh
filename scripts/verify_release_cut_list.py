@@ -235,6 +235,7 @@ REQUIRED_MARKERS = {
         "permissions:",
         "contents: read",
         "npm run lint",
+        "cryptography>=44,<47",
         "tests.test_darkharness_packet",
         "tests.test_darkharness_policy",
         "tests.test_darkharness_export_path",
@@ -248,6 +249,19 @@ REQUIRED_MARKERS = {
         "registry_invalid:",
         "rollback_drill_run_export_present",
         "Postgres remains authoritative",
+        "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH",
+    ),
+    "docs/perennial-darkmesh-architecture.md": (
+        "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM",
+        "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH",
+        "Ed25519",
+        "PQC signatures, KEM, and ZK",
+        "selective disclosure remain proposed hooks",
+    ),
+    "shared/mesh_runtime/perennial/signing.py": (
+        "build_ed25519_signature_proof",
+        "verify_ed25519_signature_proof",
+        "orbital_mesh_ed25519_v1",
     ),
     "docs/security-audit-readiness.md": (
         "OpenSSF Control Map",

@@ -56,18 +56,19 @@
             "signing_profile": { "type": "string" },
             "algorithm": {
               "type": "string",
-              "enum": ["hmac-sha256"]
+              "enum": ["hmac-sha256", "ed25519"]
             },
             "key_id": { "type": "string" },
             "signature": { "type": "string" },
             "payload_sha256": { "type": "string" },
+            "public_key_pem": { "type": ["string", "null"] },
             "status": {
               "type": "string",
               "enum": ["present", "verified", "failed"]
             },
             "verifier": {
               "type": "string",
-              "enum": ["orbital_mesh_hmac_sha256_v1"]
+              "enum": ["orbital_mesh_hmac_sha256_v1", "orbital_mesh_ed25519_v1"]
             }
           },
           "additionalProperties": false

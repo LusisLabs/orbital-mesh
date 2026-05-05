@@ -135,6 +135,35 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertEqual(cfg.darkharness_signing_key, "local-secret")
         self.assertEqual(cfg.darkharness_signing_key_id, "local-key")
 
+    def test_darkharness_classical_signing_key_can_load_from_env_or_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "darkharness-ed25519.pem"
+            key_path.write_text("file-private-key", encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {
+                    "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH": str(key_path),
+                    "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID": "file-key",
+                },
+                clear=False,
+            ):
+                file_cfg = RuntimeConfig.from_env()
+            self.assertEqual(file_cfg.darkharness_classical_signing_key_pem, "file-private-key")
+            self.assertEqual(file_cfg.darkharness_classical_signing_key_id, "file-key")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM": "inline-private-key",
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH": "/ignored/key.pem",
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID": "inline-key",
+            },
+            clear=False,
+        ):
+            inline_cfg = RuntimeConfig.from_env()
+        self.assertEqual(inline_cfg.darkharness_classical_signing_key_pem, "inline-private-key")
+        self.assertEqual(inline_cfg.darkharness_classical_signing_key_id, "inline-key")
+
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "run_sessions.json"

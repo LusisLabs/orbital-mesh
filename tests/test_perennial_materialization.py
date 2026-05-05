@@ -4,6 +4,9 @@ import copy
 import unittest
 from typing import Any
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from shared.mesh_runtime import RunEvent, RunSession, build_merkle_proof, build_merkle_snapshot, validate_payload
 from shared.mesh_runtime.perennial import (
     materialize_agent_action_record,
@@ -11,6 +14,7 @@ from shared.mesh_runtime.perennial import (
     materialize_governance_commit,
     materialize_ontological_state,
     materialize_proof_envelope,
+    verify_ed25519_signature_proof,
     verify_hmac_signature_proof,
 )
 
@@ -212,6 +216,57 @@ class PerennialMaterializationTests(unittest.TestCase):
         validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
         validate_payload("perennial/governance-commit.schema.json", governance_commit)
 
+    def test_proof_envelope_can_include_configured_ed25519_signature(self) -> None:
+        run_export = _run_export(
+            run_id="run_ed25519_shadow",
+            event=_event(
+                "evt_ed25519_execute",
+                "run_ed25519_shadow",
+                "execution_recorded",
+                {
+                    "operator_id": "operator.launcher",
+                    "action_type": "restart_deployment",
+                    "service": "checkout-api",
+                    "namespace": "payments-pilot",
+                    "resource_ref": "deployment/checkout-api",
+                    "production_impact": "possible",
+                },
+                status="executed",
+            ),
+            decision=_decision("dec_ed25519_restart", autonomy_tier="approval_required"),
+            evaluation=_evaluation("eval_ed25519_restart", final_recommendation="execute", blocking_reasons=[]),
+            approvals=[{"event_id": "evt_ed25519_approval", "operator_id": "operator.launcher"}],
+        )
+        action_record = materialize_agent_action_record(
+            run_export["timeline_json"][0],
+            run=run_export["session"],
+            decision=run_export["decision_record"],
+            evaluation=run_export["evaluation_record"],
+            tenant_id="customer-a",
+        )
+        private_key_pem = _ed25519_private_key_pem()
+        proof_envelope = materialize_proof_envelope(
+            run_export,
+            subject_refs=[run_export["run_id"], action_record["action_record_id"]],
+            classical_signing_key_pem=private_key_pem,
+            classical_signing_key_id="test-ed25519",
+        )
+        signature = proof_envelope["implemented_proofs"]["signature"]
+        signature_payload = {
+            "run_id": run_export["run_id"],
+            "subject_refs": [run_export["run_id"], action_record["action_record_id"]],
+            "merkle_root": run_export["merkle"]["snapshot"]["root_hash"],
+            "leaf_event_ids": run_export["merkle"]["snapshot"]["event_ids"],
+            "redaction_profile": "darkharness-pilot-redacted",
+        }
+
+        self.assertEqual(signature["algorithm"], "ed25519")
+        self.assertEqual(signature["key_id"], "test-ed25519")
+        self.assertEqual(signature["status"], "verified")
+        self.assertIn("BEGIN PUBLIC KEY", signature["public_key_pem"])
+        self.assertTrue(verify_ed25519_signature_proof(signature_payload, signature))
+        validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
+
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any], *, status: str) -> RunEvent:
     return RunEvent(
@@ -411,6 +466,15 @@ def _ownership_metadata() -> dict[str, Any]:
         "reservoir_ids": ["reservoir_checkout_events"],
         "policy_refs": ["policy://darkharness/pilot/approval-required"],
     }
+
+
+def _ed25519_private_key_pem() -> str:
+    private_key = Ed25519PrivateKey.generate()
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
 
 
 if __name__ == "__main__":

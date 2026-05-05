@@ -28,6 +28,13 @@ artifacts, run events, vault notes, or side effects.
 7. If a single run needs inspection, export
    `GET /api/runs/{run_id}/darkharness-packet`.
 
+## Signature Configuration
+
+Set `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH` to an Ed25519 private key PEM
+for public-key packet signatures. `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM`
+can carry the same PEM inline for local tests. `MESH_DARKHARNESS_SIGNING_KEY`
+remains a local HMAC integrity fallback, not a public-key signature.
+
 ## Blocked States
 
 - `decision_record_present`, `evaluation_record_present`,

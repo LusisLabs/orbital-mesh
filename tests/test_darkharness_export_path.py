@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from control_plane_server import darkharness_checkpoint_packet_response, darkharness_packet_response
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import RuntimeConfig, load_fixture, validate_payload
@@ -228,6 +231,36 @@ class DarkharnessExportPathTests(unittest.TestCase):
                 self.assertEqual(
                     governance_commit["proof"]["signature_ref"],
                     f"signature://test-key/{signature['payload_sha256']}",
+                )
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_configured_ed25519_key_adds_public_key_signature_proof_to_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    darkharness_classical_signing_key_pem=_ed25519_private_key_pem(),
+                    darkharness_classical_signing_key_id="test-ed25519",
+                )
+            )
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                [proof_envelope] = packet["perennial_records"]["proof_envelopes"]
+                signature = proof_envelope["implemented_proofs"]["signature"]
+                [governance_commit] = packet["perennial_records"]["governance_commits"]
+                self.assertEqual(signature["algorithm"], "ed25519")
+                self.assertEqual(signature["key_id"], "test-ed25519")
+                self.assertEqual(signature["status"], "verified")
+                self.assertIn("BEGIN PUBLIC KEY", signature["public_key_pem"])
+                self.assertEqual(
+                    governance_commit["proof"]["signature_ref"],
+                    f"signature://test-ed25519/{signature['payload_sha256']}",
                 )
             finally:
                 coordinator.stop_background_workers()
@@ -485,6 +518,15 @@ def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
             "content_type": "application/json",
         }
     }
+
+
+def _ed25519_private_key_pem() -> str:
+    private_key = Ed25519PrivateKey.generate()
+    return private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
 
 
 def _attach_mesh_brain_artifacts(coordinator: RunCoordinator, run_id: str) -> None:

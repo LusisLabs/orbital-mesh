@@ -24,6 +24,18 @@ def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
         return str(p.resolve())
     return str((_REPO_ROOT / p).resolve())
 
+
+def _read_env_or_file(raw: str | None, raw_path: str | None) -> str | None:
+    value = (raw or "").strip()
+    if value:
+        return value
+    path_value = (raw_path or "").strip()
+    if not path_value:
+        return None
+    path = Path(_env_path_anchored_to_repo(path_value, default=""))
+    return path.read_text(encoding="utf-8")
+
+
 def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
     if not raw:
         return ()
@@ -73,6 +85,8 @@ class RuntimeConfig:
     darkharness_packet_persistence_mode: str = "ephemeral"
     darkharness_signing_key: str | None = None
     darkharness_signing_key_id: str = "darkharness-local-hmac"
+    darkharness_classical_signing_key_pem: str | None = None
+    darkharness_classical_signing_key_id: str = "darkharness-ed25519"
     mesh_brain_artifact_uri_prefix: str | None = None
     mesh_brain_serving_base_url: str | None = None
     mesh_brain_serving_model: str | None = None
@@ -345,6 +359,14 @@ class RuntimeConfig:
             ),
             darkharness_signing_key=os.getenv("MESH_DARKHARNESS_SIGNING_KEY") or None,
             darkharness_signing_key_id=os.getenv("MESH_DARKHARNESS_SIGNING_KEY_ID", "darkharness-local-hmac"),
+            darkharness_classical_signing_key_pem=_read_env_or_file(
+                os.getenv("MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM"),
+                os.getenv("MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH"),
+            ),
+            darkharness_classical_signing_key_id=os.getenv(
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID",
+                "darkharness-ed25519",
+            ),
             mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
             mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
             mesh_brain_serving_model=os.getenv("MESH_BRAIN_SERVING_MODEL") or None,
