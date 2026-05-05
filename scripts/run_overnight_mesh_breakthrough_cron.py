@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import sys
 import time
-import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -115,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.run_mesh_brain:
-        lane_results.extend(_run_mesh_brain_lanes(base_url=args.base_url, logs_dir=logs_dir, env=env, deadline=deadline))
+        lane_results.append(_mesh_brain_extracted_lane(logs_dir=logs_dir))
 
     if args.run_compose_chaos:
         chaos_duration = max(300, int(_remaining(deadline)) - 900)
@@ -285,7 +284,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-mesh-smoke", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_SMOKE", True))
     parser.add_argument("--run-compose-chaos", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_COMPOSE_CHAOS", True))
     parser.add_argument("--run-autoresearch", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_AUTORESEARCH", True))
-    parser.add_argument("--run-mesh-brain", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_MESH_BRAIN", True))
+    parser.add_argument(
+        "--run-mesh-brain",
+        action=argparse.BooleanOptionalAction,
+        default=_truthy("MESH_OVERNIGHT_RUN_MESH_BRAIN", False),
+        help="Deprecated compatibility flag. Mesh Brain lanes live in the extracted post-training repo.",
+    )
     parser.add_argument("--run-node-probes", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_NODE_PROBES", True))
     parser.add_argument("--run-simulation-benchmarks", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_RUN_SIM_BENCH", True))
     parser.add_argument("--generate-proof", action=argparse.BooleanOptionalAction, default=_truthy("MESH_OVERNIGHT_GENERATE_PROOF", True))
@@ -306,114 +310,25 @@ def _base_env(*, run_dir: Path, base_url: str) -> dict[str, str]:
     return env
 
 
-def _run_mesh_brain_lanes(*, base_url: str, logs_dir: Path, env: dict[str, str], deadline: float) -> list[LaneResult]:
-    results: list[LaneResult] = []
-    endpoints: list[tuple[str, str, dict[str, Any]]] = [
-        ("mesh_brain_mvp_control_plane", "/api/mesh-brain/mvp-runs", {"tenant_id": "tenant_a"}),
-        (
-            "mesh_brain_backend_matrix",
-            "/api/mesh-brain/backend-matrix",
-            {
-                "tenant_id": "tenant_a",
-                "targets": [
-                    {
-                        "name": "local-openai-compatible",
-                        "base_url": os.environ.get("MESH_BRAIN_LIVE_BASE_URL", "http://127.0.0.1:1234"),
-                        "model": os.environ.get("MESH_BRAIN_LIVE_MODEL", "nvidia/nemotron-3-nano-4b"),
-                        "enabled": _truthy("MESH_BRAIN_ENABLE_LIVE_TARGET", False),
-                    }
-                ],
-            },
-        ),
-        (
-            "mesh_brain_posttraining_proof",
-            "/api/mesh-brain/posttraining-proof",
-            {
-                "tenant_id": "tenant_a",
-                "timeout_seconds": 60,
-                "max_runtime_runs": 12,
-                "max_runtime_events_per_run": 25,
-            },
-        ),
-    ]
-    for name, path, payload in endpoints:
-        if _remaining(deadline) <= 30:
-            break
-        result = _post_json_lane(
-            name,
-            f"{base_url.rstrip('/')}{path}",
-            payload,
-            logs_dir=logs_dir,
-            timeout_seconds=float(payload.get("client_timeout_seconds") or 900.0),
-        )
-        results.append(result)
-
-    if any(result.name == "mesh_brain_mvp_control_plane" and result.status == "failed" for result in results):
-        results.append(
-            _run_command(
-                "mesh_brain_mvp_local_fallback",
-                [sys.executable, "-m", "mesh_brain.run_mvp_e2e", "--json"],
-                logs_dir=logs_dir,
-                env=env,
-                timeout_seconds=min(600, _remaining(deadline)),
-                allow_failure=True,
-            )
-        )
-    return results
-
-
-def _post_json_lane(
-    name: str,
-    url: str,
-    payload: dict[str, Any],
-    *,
-    logs_dir: Path,
-    timeout_seconds: float,
-) -> LaneResult:
+def _mesh_brain_extracted_lane(*, logs_dir: Path) -> LaneResult:
     started = time.monotonic()
     started_at = _now()
-    log_path = logs_dir / f"{name}.json"
-    try:
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=max(1.0, timeout_seconds)) as response:
-            body = response.read().decode("utf-8")
-            data = json.loads(body) if body else {}
-        _write_json(log_path, data)
-        status = str(data.get("status") or data.get("stage") or "completed")
-        return LaneResult(
-            name=name,
-            status="completed" if status in {"completed", "awaiting_operator", "manual_review"} else "failed",
-            started_at=started_at,
-            finished_at=_now(),
-            elapsed_seconds=round(time.monotonic() - started, 3),
-            log_path=str(log_path),
-            details={
-                "url": url,
-                "run_id": data.get("run_id"),
-                "stage": data.get("stage"),
-                "status": data.get("status"),
-                "timeout_seconds": timeout_seconds,
-            },
-        )
-    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        log_path.write_text(
-            json.dumps({"error": repr(exc), "url": url, "timeout_seconds": timeout_seconds}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        return LaneResult(
-            name=name,
-            status="failed",
-            started_at=started_at,
-            finished_at=_now(),
-            elapsed_seconds=round(time.monotonic() - started, 3),
-            log_path=str(log_path),
-            details={"url": url, "error": repr(exc), "timeout_seconds": timeout_seconds},
-        )
+    log_path = logs_dir / "mesh_brain_extracted.json"
+    details = {
+        "status": "skipped",
+        "reason": "Mesh Brain control-plane and local package lanes were extracted from this repo.",
+        "external_repo": "https://github.com/hyperstrategy/post-training",
+    }
+    _write_json(log_path, details)
+    return LaneResult(
+        name="mesh_brain_extracted",
+        status="completed",
+        started_at=started_at,
+        finished_at=_now(),
+        elapsed_seconds=round(time.monotonic() - started, 3),
+        log_path=str(log_path),
+        details=details,
+    )
 
 
 def _run_command(
@@ -559,7 +474,6 @@ def _artifact_index(run_dir: Path) -> dict[str, list[str]]:
         "overnight_run": run_dir,
         "compose_chaos": REPO_ROOT / ".mesh-runtime-state" / "compose-chaos",
         "research": REPO_ROOT / ".mesh-runtime-state" / "research",
-        "mesh_brain": REPO_ROOT / ".mesh-runtime-state" / "mesh-brain",
         "proofs": run_dir / "proofs",
     }
     index: dict[str, list[str]] = {}
@@ -589,11 +503,6 @@ def _capability_map() -> dict[str, list[str]]:
             "native/goose orchestration matrix",
             "HTTP control-plane runs",
             "prior synthesis evolution",
-        ],
-        "mesh_brain": [
-            "MVP data-to-serving artifact flow",
-            "backend matrix smoke",
-            "posttraining proof with runtime context",
         ],
         "production_node_breakthrough": [
             "Reth/systemd probes",

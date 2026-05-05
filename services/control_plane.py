@@ -2344,6 +2344,7 @@ class RunCoordinator:
                 integration_name="agent_mesh",
                 status="recorded",
             )
+        self.state_store.materialize_vault_now(run_id)
 
     def _is_chaos_probe_run(self, run_id: str) -> bool:
         session = self.state_store.get_run_session(run_id)
