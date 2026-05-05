@@ -281,11 +281,7 @@ def materialize_governance_commit(
     production_impact = action_record["action"]["production_impact"]
     blocking_reasons = string_list(evaluation.get("blocking_reasons"))
     gate_denied = denied if denied is not None else bool(blocking_reasons or evaluation.get("final_recommendation") == "reject")
-    approval_refs = [
-        approval.get("event_id") or approval.get("approval_id")
-        for approval in run_export.get("approval_records", [])
-        if isinstance(approval, dict) and (approval.get("event_id") or approval.get("approval_id"))
-    ]
+    approval_refs = _approval_refs(run_export.get("approval_records"))
     reasons = blocking_reasons or ["operator approval present", "policy checks passed"]
     commit = {
         "contract": "perennial.governance_commit.v1",
@@ -534,19 +530,71 @@ def _evidence_refs(event: dict[str, Any], payload: dict[str, Any], decision: dic
 
 
 def _run_export_evidence_refs(run_export: dict[str, Any]) -> list[str]:
-    refs: list[Any] = []
+    refs: list[str] = []
+
+    def add(ref: Any) -> None:
+        if ref:
+            refs.append(str(ref))
+
     artifacts = run_export.get("evidence_artifacts")
     if isinstance(artifacts, dict):
-        refs.extend(f"artifact://{key}" for key in artifacts)
+        for key in artifacts:
+            add(f"artifact://{key}")
     elif isinstance(artifacts, list):
         for artifact in artifacts:
             if isinstance(artifact, dict):
-                refs.append(artifact.get("artifact_key") or artifact.get("uri") or artifact.get("path"))
+                add(artifact.get("artifact_key") or artifact.get("uri") or artifact.get("path"))
+    raw_session = run_export.get("session")
+    session: dict[str, Any] = cast(dict[str, Any], raw_session) if isinstance(raw_session, dict) else {}
+    for key in ("remediation_safety", "trust_ladder", "integration_readiness"):
+        add(_artifact_ref(session, key))
+    for ref in _mesh_brain_evidence_refs(session):
+        add(ref)
+    decision = run_export.get("decision_record")
+    if isinstance(decision, dict):
+        add(_execution_plan(decision).get("rollback_plan"))
+    for ref in _approval_refs(run_export.get("approval_records")):
+        add(ref)
     if run_export.get("export_id"):
-        refs.append(f"run_export://{run_export['export_id']}")
+        add(f"run_export://{run_export['export_id']}")
     if not refs and run_export.get("run_id"):
-        refs.append(f"run://{run_export['run_id']}")
-    return [str(ref) for ref in refs if ref]
+        add(f"run://{run_export['run_id']}")
+    return list(dict.fromkeys(refs))
+
+
+def _approval_refs(raw_records: Any) -> list[str]:
+    if not isinstance(raw_records, list):
+        return []
+    refs: list[str] = []
+    for approval in raw_records:
+        if not isinstance(approval, dict):
+            continue
+        raw_ref = approval.get("authority_ref") or approval.get("ref")
+        if raw_ref:
+            refs.append(str(raw_ref))
+            continue
+        approval_id = approval.get("event_id") or approval.get("approval_id")
+        if approval_id:
+            refs.append(f"operator-approval://{approval_id}")
+    return list(dict.fromkeys(refs))
+
+
+def _mesh_brain_evidence_refs(session: dict[str, Any]) -> list[str]:
+    raw_artifacts = session.get("artifacts")
+    artifacts: dict[str, Any] = cast(dict[str, Any], raw_artifacts) if isinstance(raw_artifacts, dict) else {}
+    refs: list[str] = []
+    artifact_map = {
+        "mesh_brain_model_kernel_run_record": "model-kernel",
+        "mesh_brain_live_serving_run_record": "live-serving",
+        "mesh_brain_rollback_drill_run_record": "rollback-drill",
+        "mesh_brain_backend_matrix_record": "backend-matrix",
+    }
+    for key, lane in artifact_map.items():
+        artifact = artifacts.get(key)
+        if isinstance(artifact, dict):
+            run_id = artifact.get("run_id") or artifact.get("id") or key
+            refs.append(f"mesh_brain://{lane}/{run_id}")
+    return refs
 
 
 def _artifact_ref(session: dict[str, Any], key: str) -> str | None:

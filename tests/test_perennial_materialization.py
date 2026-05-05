@@ -66,6 +66,13 @@ class PerennialMaterializationTests(unittest.TestCase):
         self.assertEqual(epistemic_state["governance_use"]["review_required"], True)
         self.assertIn("owner.checkout", governance_commit["authority"]["service_owner_refs"])
         self.assertEqual(governance_commit["outcome"]["gate_result"], "allowed")
+        self.assertIn("operator-approval://evt_approve_allowed", governance_commit["authority"]["operator_approval_refs"])
+        self.assertIn("artifact://remediation_safety", governance_commit["inputs"]["evidence_refs"])
+        self.assertIn("artifact://integration_readiness", governance_commit["inputs"]["evidence_refs"])
+        self.assertIn("mesh_brain://model-kernel/mb_kernel_1", governance_commit["inputs"]["evidence_refs"])
+        self.assertIn("mesh_brain://live-serving/mb_live_1", governance_commit["inputs"]["evidence_refs"])
+        self.assertIn("mesh_brain://rollback-drill/mb_rollback_1", governance_commit["inputs"]["evidence_refs"])
+        self.assertIn("rollback://checkout-api/restart", governance_commit["inputs"]["evidence_refs"])
         self.assertEqual(proof_envelope["implemented_proofs"]["merkle"]["run_id"], "run_allowed_shadow")
         self.assertEqual(run_export, before)
 
@@ -175,7 +182,17 @@ def _run_export(
         latest_event_id=event.event_id,
         latest_event_sequence=event.sequence,
         latest_merkle_root=None,
-        artifacts={"decision": decision, "evaluation": evaluation, "approvals": approvals},
+        artifacts={
+            "decision": decision,
+            "evaluation": evaluation,
+            "approvals": approvals,
+            "remediation_safety": {"score": 0.91},
+            "trust_ladder": {"level": "approval_required"},
+            "integration_readiness": {"status": "ready"},
+            "mesh_brain_model_kernel_run_record": {"run_id": "mb_kernel_1"},
+            "mesh_brain_live_serving_run_record": {"run_id": "mb_live_1"},
+            "mesh_brain_rollback_drill_run_record": {"run_id": "mb_rollback_1"},
+        },
     )
     snapshot = build_merkle_snapshot(run_id, [event]).to_dict()
     proof = build_merkle_proof(run_id, [event], event.event_id)

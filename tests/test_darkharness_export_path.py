@@ -162,6 +162,7 @@ class DarkharnessExportPathTests(unittest.TestCase):
                 [record] = packet["perennial_records"]["agent_action_records"]
                 self.assertEqual(record["boundary"]["tenant_id"], "customer-b")
                 self.assertEqual(record["boundary"]["reservoir_refs"], ["reservoir_customer_b_ops"])
+                self.assertEqual(record["governance"]["operator_authority_refs"], ["operator-approval://evt_approval"])
             finally:
                 coordinator.stop_background_workers()
 

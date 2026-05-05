@@ -1275,6 +1275,7 @@ class RunCoordinator:
                 tenant_id=pilot_metadata["tenant_id"],
                 reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
                 proof_refs=proof_refs,
+                operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
             )
             primary_action = self._darkharness_primary_action_record(action_records)
             scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
@@ -4732,6 +4733,21 @@ class RunCoordinator:
             return priority.get(str(outcome.get("status")), 99)
 
         return sorted(action_records, key=sort_key)[0]
+
+    @staticmethod
+    def _darkharness_operator_authority_refs(run_export: dict[str, Any]) -> list[str]:
+        refs: list[str] = []
+        for approval in run_export.get("approval_records", []):
+            if not isinstance(approval, dict):
+                continue
+            raw_ref = approval.get("authority_ref") or approval.get("ref")
+            if raw_ref:
+                refs.append(str(raw_ref))
+                continue
+            approval_id = approval.get("event_id") or approval.get("approval_id")
+            if approval_id:
+                refs.append(f"operator-approval://{approval_id}")
+        return list(dict.fromkeys(refs))
 
     @staticmethod
     def _darkharness_decision_production_impact(decision: dict[str, Any]) -> str:
