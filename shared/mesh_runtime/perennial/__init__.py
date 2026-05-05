@@ -1,4 +1,9 @@
-from .boundaries import assert_pilot_scope_boundaries, assert_reservoir_default_deny, materialize_sensitive_reservoir
+from .boundaries import (
+    assert_pilot_scope_boundaries,
+    assert_reservoir_default_deny,
+    materialize_sensitive_reservoir,
+    project_reservoir_access,
+)
 from .materialization import (
     materialize_agent_action_record,
     materialize_agent_action_records,
@@ -39,6 +44,7 @@ __all__ = [
     "materialize_runtime_evidence_action_records",
     "mesh_brain_evidence_refs",
     "materialize_sensitive_reservoir",
+    "project_reservoir_access",
     "runtime_evidence_refs",
     "verify_ed25519_signature_proof",
     "verify_hmac_signature_proof",

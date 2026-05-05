@@ -57,6 +57,11 @@ plan metadata, and Mesh Brain artifact lanes. These records are projections over
 existing run/export state; packet generation does not execute remediation,
 training, serving, rollback drill, or promotion work.
 
+Reservoir projections must go through `project_reservoir_access()`. The helper
+allows only configured purposes and compute modes, emits hash-only,
+aggregate-only, redacted, or in-place projection metadata, and returns a denial
+record instead of raw data when a request violates the reservoir policy.
+
 ## Signature Configuration
 
 Set `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH` to an Ed25519 private key PEM

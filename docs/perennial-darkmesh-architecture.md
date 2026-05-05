@@ -237,6 +237,23 @@ Policy failures return a blocked packet with `policy_violation:*` entries in
 `missing_evidence` and policy booleans in `checks`. The blocked response still
 does not write run events, packet files, vault notes, or audit artifacts.
 
+## Reservoir Projection Guard
+
+`project_reservoir_access()` enforces the configured `SensitiveReservoir`
+purpose and compute-mode allowlists before producing any packet-side projection.
+Allowed modes emit only bounded projections:
+
+- `hash_only`: SHA-256 content hash and projection ref;
+- `aggregate_only`: shape/count summary plus content hash;
+- `redacted_projection`: configured allowlisted fields truncated by
+  `max_snippet_chars`;
+- `in_place`: local-only execution attestation plus content hash.
+
+Denied purpose or compute-mode requests return a valid denial
+`AgentActionRecord` and no projection payload. This is a software projection
+guard for packet/export paths; it is not hardware enclave enforcement and does
+not replace a future storage access-control layer.
+
 ## Proof Signing
 
 `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM` or

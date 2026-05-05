@@ -12,6 +12,7 @@ from shared.mesh_runtime.perennial import (
     assert_reservoir_default_deny,
     load_darkharness_registry,
     materialize_sensitive_reservoir,
+    project_reservoir_access,
 )
 from shared.mesh_runtime.perennial.boundaries import reservoir_denial_record
 
@@ -89,6 +90,62 @@ class SensitiveReservoirBoundaryTests(unittest.TestCase):
         self.assertEqual(record["action"]["action_class"], "deny")
         self.assertEqual(record["outcome"]["status"], "denied")
         self.assertEqual(record["boundary"]["data_boundary"], "on_prem")
+
+    def test_hash_projection_excludes_raw_reservoir_value(self) -> None:
+        reservoir = json.loads((FIXTURE_DIR / "reservoir_denial.json").read_text())["contracts"]["sensitive_reservoir"]
+
+        result = project_reservoir_access(
+            reservoir=reservoir,
+            value={"finding": "secret-adjacent stack trace", "severity": "high"},
+            purpose="audit",
+            compute_mode="hash_only",
+            actor_id="darkharness.packet-export",
+            tenant_id="customer-a",
+            run_id="run_projection",
+            observed_at="2026-05-05T16:05:00Z",
+        )
+
+        self.assertEqual(result["status"], "allowed")
+        self.assertFalse(result["raw_sensitive_data_included"])
+        self.assertEqual(result["projection"]["mode"], "hash_only")
+        self.assertIn("content_hash", result["projection"])
+        self.assertNotIn("secret-adjacent stack trace", json.dumps(result))
+        self.assertEqual(result["action_record"]["action"]["action_type"], "reservoir_hash_only")
+
+    def test_aggregate_projection_returns_shape_not_raw_values(self) -> None:
+        reservoir = json.loads((FIXTURE_DIR / "reservoir_denial.json").read_text())["contracts"]["sensitive_reservoir"]
+
+        result = project_reservoir_access(
+            reservoir=reservoir,
+            value=[1, 2, {"customer": "private"}],
+            purpose="audit",
+            compute_mode="aggregate_only",
+            actor_id="darkharness.packet-export",
+            tenant_id="customer-a",
+        )
+
+        self.assertEqual(result["projection"]["summary"]["shape"], "array")
+        self.assertEqual(result["projection"]["summary"]["item_count"], 3)
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_disallowed_projection_mode_returns_denial_without_raw_value(self) -> None:
+        reservoir = json.loads((FIXTURE_DIR / "reservoir_denial.json").read_text())["contracts"]["sensitive_reservoir"]
+
+        result = project_reservoir_access(
+            reservoir=reservoir,
+            value={"raw": "do-not-export"},
+            purpose="audit",
+            compute_mode="redacted_projection",
+            actor_id="external-model.request",
+            tenant_id="customer-a",
+            run_id="run_projection_denied",
+        )
+
+        self.assertEqual(result["status"], "denied")
+        self.assertFalse(result["raw_sensitive_data_included"])
+        self.assertIn("compute mode", result["denial_reasons"][0])
+        self.assertNotIn("do-not-export", json.dumps(result))
+        self.assertEqual(result["action_record"]["outcome"]["status"], "denied")
 
     def test_registry_loader_validates_configured_scope_and_reservoirs(self) -> None:
         fixture = json.loads((FIXTURE_DIR / "allowed_action.json").read_text())["contracts"]
