@@ -204,6 +204,19 @@ calls denied by default, and production-impacting actions approval-required.
 Invalid registry files block packet export instead of fabricating Perennial
 records.
 
+## Packet Persistence Policy
+
+Darkharness pilot packets are ephemeral read-only exports in this phase.
+`GET /api/runs/{run_id}/darkharness-packet` materializes a packet from current
+run state and returns it without writing packet files, run events, vault notes,
+or audit artifacts. `MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE` exists to make
+that policy explicit and currently only accepts `ephemeral`.
+
+Persisted Darkharness packets require a later audited write path with Postgres
+remaining authoritative for runs, events, memory, and audit state. Until that
+path exists, unsupported persistence modes fail configuration validation rather
+than silently writing side effects.
+
 ## Architecture Layers
 
 ### 1. Reservoir Layer
