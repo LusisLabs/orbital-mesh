@@ -107,6 +107,7 @@ from .model_management import (
     MeshBrainModelCatalog,
     ModelRouteRequest,
     ModelRouteResolution,
+    PromotionApproval,
     artifact_fingerprint,
     build_model_management_e2e,
     deterministic_alias,
@@ -130,6 +131,16 @@ from .mvp import (
     MeshBrainMVPResult,
     run_private_crops_mvp_e2e,
     write_mvp_result,
+)
+from .control_plane import (
+    MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
+    MESH_BRAIN_MODEL_KERNEL_ARTIFACT_KEYS,
+    MeshBrainArtifactBundle,
+    MeshBrainArtifactRef,
+    build_live_serving_artifact_bundle,
+    build_model_kernel_artifact_bundle,
+    live_serving_smoke_to_run_record,
+    model_kernel_probe_to_run_record,
 )
 from .observability import (
     REQUIRED_OBSERVABILITY_LABELS,

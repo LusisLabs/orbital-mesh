@@ -95,6 +95,21 @@ class ReleasePackagingTests(unittest.TestCase):
                 "control_plane_server.py",
                 "scripts/verify_authenticated_ingress.py",
             ],
+            "docs/reference-architectures.md": [
+                "docker-compose.stack.yml",
+                "docker-compose.prod.yml",
+                "docs/authenticated-ingress.md",
+                "scripts/prod_smoke.sh",
+                "services/actuators/service.py",
+                "mesh_brain/",
+            ],
+            "docs/pilot-slo-error-budget.md": [
+                "docs/design-partner-packet.md",
+                "scripts/prod_smoke.sh",
+                "scripts/verify_authenticated_ingress.py",
+                "scripts/verify_postgres_restart_proof.py",
+                "scripts/generate_release_provenance.py",
+            ],
         }
         for doc, refs in docs.items():
             text = (REPO_ROOT / doc).read_text(encoding="utf-8")

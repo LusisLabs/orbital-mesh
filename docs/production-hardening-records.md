@@ -19,15 +19,20 @@ Implemented in this slice:
 - enterprise and startup evaluation kit packaging from active repository paths;
 - community governance and contribution boundary documentation;
 - design-partner pilot packet;
+- reference architecture packet tied to active compose, API, ingress, Postgres, Kubernetes, GPU, regulated-enterprise, and offline-adjacent paths;
+- pilot SLO and error-budget contract with hard stops, measurement sources, latency targets, and review cadence;
 - Postgres restart-proof harness for environments with `MESH_DATABASE_URL`;
 - production-like compose defaults for Postgres state, named operator identity, approval-gated smoke, and disabled unfinished feature-flag and incident adapters;
 - release provenance generator with an explicit `--require-complete` pilot gate;
-- release-cut guard for active image names, API markers, docs, compose pilot defaults, provenance markers, and smoke paths.
+- authenticated ingress rehearsal harness and proxy trust-boundary documentation;
+- release-cut guard for active image names, API markers, docs, compose pilot defaults, provenance markers, authenticated ingress markers, and smoke paths.
 
 Deferred from the immediate list:
 
 - broad historical-doc naming cleanup outside active release paths;
-- production smoke against authenticated TLS ingress;
+- production smoke against real authenticated TLS/SSO ingress;
+- Helm, Terraform, marketplace, and ingress-controller-specific reference packages;
+- deployment-specific ingress, Prometheus, audit-sink, signed-release, and load/concurrency SLO evidence;
 - external audit-sink certification, SBOM generation, vulnerability scan, image digest capture, and signed CI release packet production.
 
 ## Readiness Profiles
@@ -56,6 +61,10 @@ Roles:
 - `viewer` can call the mutation-free policy simulator.
 
 Run creation records the operator under the run `operator` artifact. Steering commands and approval records include the operator identity and roles.
+
+`docs/authenticated-ingress.md` documents the deployment boundary: Mesh trusts proxy-stamped identity headers, so production ingress must terminate TLS, enforce SSO/OIDC/SAML or equivalent identity, strip client-supplied Mesh identity headers, and only then set `X-Mesh-Operator` and `X-Mesh-Roles`.
+
+`scripts/verify_authenticated_ingress.py` starts an ephemeral local control plane with `operator_identity_required=True` and proves app-level role behavior across anonymous denial, viewer simulation, launcher run creation, approver approval, and admin kill-switch access.
 
 ## Policy Simulator
 
@@ -176,7 +185,7 @@ Run:
 scripts/verify_release_cut_list.py --json
 ```
 
-The guard checks active Docker image defaults, required production docs, smoke scripts, API markers, compose pilot defaults, release-provenance markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, Postgres restart proof, or signed CI provenance.
+The guard checks active Docker image defaults, required production docs, smoke scripts, API markers, compose pilot defaults, release-provenance markers, authenticated ingress markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, authenticated ingress rehearsal, Postgres restart proof, or signed CI provenance.
 
 ## Current Validation Evidence
 
@@ -184,6 +193,8 @@ Validated in this slice:
 
 - `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list tests.test_production_faults_and_packaging` passed with `15` tests;
 - `PYTHONPATH=. python3 -m unittest tests.test_release_provenance tests.test_production_faults_and_packaging` passed with `11` tests;
+- `python3 -m unittest tests.test_authenticated_ingress` passed with `2` tests and asserted that `scripts/verify_authenticated_ingress.py --json` returned `status: passed`;
+- `python3 -m unittest tests.test_authenticated_ingress tests.test_release_provenance tests.test_production_faults_and_packaging` passed with `13` tests after adding the reference architecture and pilot SLO packets;
 - `scripts/verify_release_cut_list.py --json` returned `status: pass`;
 - `scripts/generate_release_provenance.py --json` returned `status: incomplete` with missing CI release gates listed above;
 - `scripts/verify_postgres_restart_proof.py --skip-if-missing --json` returned `status: skipped`;
@@ -203,6 +214,7 @@ Validated in this slice:
 
 Still not validated in this environment:
 
-- production smoke against authenticated TLS ingress;
+- production smoke against real authenticated TLS/SSO ingress;
+- real TLS/SSO ingress header-stripping and group-mapping proof from the deployed reverse proxy;
 - external audit-sink certification;
 - signed CI release provenance with complete image/base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity.

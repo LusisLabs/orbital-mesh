@@ -153,6 +153,38 @@ export const api = {
     });
   },
 
+  runMeshBrainModelKernelProbe(baseUrl: string, payload: { benchmark_iterations?: number } = {}) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/model-kernel-probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  runMeshBrainLiveServingSmoke(
+    baseUrl: string,
+    payload: {
+      base_url?: string;
+      model?: string;
+      tenant_id?: string;
+      task_type?: string;
+      hardware_tier?: string;
+      prompt?: string;
+      timeout_seconds?: number;
+      latency_budget_ms?: number;
+      max_total_tokens?: number;
+      response_eval_min_score?: number;
+      judge_enabled?: boolean;
+      judge_base_url?: string;
+      judge_model?: string;
+      deterministic_release_decision?: "block" | "manual_review" | "canary" | "promote";
+    } = {},
+  ) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/live-serving-smoke", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   getRun(baseUrl: string, runId: string) {
     return request<RunDetail>(baseUrl, `/api/runs/${runId}`);
   },

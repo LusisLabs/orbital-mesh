@@ -194,8 +194,8 @@ Exit gates:
 
 | Capability | Required before | Status |
 | --- | --- | --- |
-| Authenticated ingress and operator identity | any external human test | App accepts proxy identity headers and records operators; authenticated TLS/SSO proxy remains required before external access. |
-| RBAC roles for viewer, launcher, approver, admin | production pilot | App-level role checks are implemented for mutating paths; proxy identity remains the trust boundary. |
+| Authenticated ingress and operator identity | any external human test | App accepts proxy identity headers, records operators, and has a local ingress rehearsal harness; real TLS/SSO proxy deployment proof remains required before external access. |
+| RBAC roles for viewer, launcher, approver, admin | production pilot | App-level role checks are implemented and rehearsed for launch, approval, simulation, and kill-switch paths; proxy identity remains the trust boundary. |
 | Tiered readiness profiles | private staging | Implemented in `/api/readiness` for `local`, `staging`, `pilot`, and `expansion`. |
 | Policy simulator | private staging | Mutation-free API exists for fixture, captured-run, and inline-signal replay; UI surface is present for operator inspection. |
 | Evidence graph as primary run surface | local production-like e2e | UI defaults to evidence-first run inspection with graph and proof surfaces. |
@@ -211,9 +211,9 @@ Exit gates:
 | Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
 | Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
 | Release provenance packet | production pilot | Local generator and completeness gate exist; CI must supply image digests, base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity before a signed pilot packet is valid. |
-| Pilot SLO and error budget | production pilot | Needed to bound acceptable failure, latency, and degradation during real-user testing. |
+| Pilot SLO and error budget | production pilot | Initial contract exists in `docs/pilot-slo-error-budget.md` with hard stops, latency objectives, reliability budget, measurement sources, and review cadence; deployment-specific ingress, Prometheus, audit-sink, signed-release, and load evidence remain. |
 | Enterprise evaluation kit | private staging | Initial kit is documented in `docs/evaluation-kits.md`; sample export packaging and formal benchmark packet remain. |
-| Reference architectures | private staging | Need deployment guides for Kubernetes platforms, private cloud, GPU/AI infrastructure, regulated enterprise, and air-gapped/VPC-only environments. |
+| Reference architectures | private staging | Initial active-path packet exists in `docs/reference-architectures.md` for local stack, single-VM private deployment, Kubernetes platform teams, private cloud/VPC-only, GPU/AI infrastructure, regulated enterprise, and air-gapped/offline-adjacent shapes; Helm, Terraform, marketplace, and ingress-controller-specific packages remain. |
 | Startup and developer evaluation path | private staging | Initial five-minute and thirty-minute paths are documented in `docs/evaluation-kits.md`; sample export artifact remains. |
 | Community and open-source motion | private staging | Governance and community/commercial boundaries are documented in `docs/community-governance.md`; issue templates and example catalog remain. |
 | Cloud and ecosystem marketplaces | production expansion | Need packaging for Docker, Helm, Terraform, Kubernetes, and major cloud marketplace listings once production controls are real. |

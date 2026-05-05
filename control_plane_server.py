@@ -614,6 +614,30 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
+        if parsed.path == "/api/mesh-brain/model-kernel-probe":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_model_kernel_probe(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/live-serving-smoke":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_live_serving_smoke(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
         if parsed.path.startswith("/api/simulations/") and parsed.path.endswith("/run"):
             scenario_id = _safe_segment(parsed.path, 2)
             if scenario_id is None:

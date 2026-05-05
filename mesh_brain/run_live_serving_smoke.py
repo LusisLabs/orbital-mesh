@@ -201,6 +201,7 @@ def run_live_serving_smoke(
         "requested_model": model,
         "tenant_id": tenant_id,
         "hardware_tier": hardware_tier,
+        "task_type": task_type,
         "backend_name": execution.plan.backend_name,
         "request_id": execution.plan.request_id,
         "completion_id": execution.completion["completion_id"],

@@ -85,11 +85,28 @@ The run session stores these normalized artifact keys:
 
 The session also stores `mesh_brain_run_record`, which includes run id, tenant id, stage/status, artifact refs, audit events, policy events, summary metrics, and final release decision. A blocked eval marks the deployment record as blocked and non-deployed. `/metrics` appends the latest Mesh Brain Prometheus samples from recorded Mesh Brain runs.
 
+Model-kernel probe artifacts use the same control-plane artifact-ref format:
+
+- `mesh_brain_model_kernel_correctness`;
+- `mesh_brain_model_kernel_runtime_benchmark`;
+- `mesh_brain_model_kernel_gate`;
+- `mesh_brain_model_kernel_probe_summary`.
+
+The control plane can record the probe as a completed Mesh run:
+
+```http
+POST /api/mesh-brain/model-kernel-probe
+```
+
+The optional JSON body accepts `benchmark_iterations`. Values are capped by the coordinator before execution. The run stores `mesh_brain_model_kernel_run_record` and `mesh_brain_model_kernel_deployment_record`; the deployment record is non-deployed by design because this probe is governance evidence, not a model rollout.
+
 Live model-call smoke can be recorded as a Mesh run with:
 
 ```http
 POST /api/mesh-brain/live-serving-smoke
 ```
+
+The endpoint calls the configured OpenAI-compatible backend directly. It records `mesh_brain_live_serving_execution`, `mesh_brain_live_smoke_gate`, `mesh_brain_live_response_eval`, `mesh_brain_live_judge_eval`, `mesh_brain_live_release_gate`, and `mesh_brain_live_serving_summary` artifact refs on success. Infrastructure failures are recorded as failed Mesh runs with `mesh_brain_live_serving_failure` and a blocked release decision.
 
 The live serving run stores:
 
@@ -399,7 +416,8 @@ It writes `model_kernel_correctness.json`, `model_kernel_runtime_benchmark.json`
 `build_model_management_e2e()` proves:
 
 - base model, tenant adapter, and quantized checkpoint registration;
-- release-gated promotion into a tenant/task alias;
+- release-gated promotion into a tenant/task alias only when model-kernel, live-smoke, response-eval, judge/rubric, and red-team gates pass;
+- canary and promotion require recorded operator approval plus rollback manifest metadata;
 - route resolution by tenant, task, hardware tier, risk, and structured-output need;
 - artifact lineage lookup;
 - catalog snapshot export;

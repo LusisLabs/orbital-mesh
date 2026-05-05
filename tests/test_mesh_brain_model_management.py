@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from mesh_brain import (
     MeshBrainModelCatalog,
     ModelRouteRequest,
+    PromotionApproval,
     ReleaseGatePolicy,
     artifact_fingerprint,
     build_model_management_e2e,
@@ -45,7 +46,13 @@ class MeshBrainModelManagementTests(unittest.TestCase):
             training_run_id="train_v1",
         )
         current_gate = _gate(current.artifact_id, "promote")
-        catalog.promote(artifact_id=current.artifact_id, gate_result=current_gate, alias="tenant_a/crops")
+        catalog.promote(
+            artifact_id=current.artifact_id,
+            gate_result=current_gate,
+            alias="tenant_a/crops",
+            approval=_approval("approval_current"),
+            rollback_manifest_ref="rollback://tenant_a/crops/current",
+        )
         candidate = catalog.register_tenant_adapter(
             tenant_id="tenant_a",
             task_type="crops",
@@ -55,8 +62,20 @@ class MeshBrainModelManagementTests(unittest.TestCase):
             dataset_manifest_ids=["dataset_v2"],
             training_run_id="train_v2",
         )
-        canary_alias = catalog.promote(artifact_id=candidate.artifact_id, gate_result=_gate(candidate.artifact_id, "canary"), alias="tenant_a/crops")
-        promoted_alias = catalog.promote(artifact_id=candidate.artifact_id, gate_result=_gate(candidate.artifact_id, "promote"), alias="tenant_a/crops")
+        canary_alias = catalog.promote(
+            artifact_id=candidate.artifact_id,
+            gate_result=_gate(candidate.artifact_id, "canary"),
+            alias="tenant_a/crops",
+            approval=_approval("approval_canary"),
+            rollback_manifest_ref="rollback://tenant_a/crops/candidate",
+        )
+        promoted_alias = catalog.promote(
+            artifact_id=candidate.artifact_id,
+            gate_result=_gate(candidate.artifact_id, "promote"),
+            alias="tenant_a/crops",
+            approval=_approval("approval_promote"),
+            rollback_manifest_ref="rollback://tenant_a/crops/candidate",
+        )
         rollback_alias = catalog.rollback(alias="tenant_a/crops")
         retired = catalog.retire(candidate.artifact_id)
 
@@ -64,6 +83,8 @@ class MeshBrainModelManagementTests(unittest.TestCase):
         self.assertEqual(promoted_alias.previous_artifact_id, current.artifact_id)
         self.assertEqual(rollback_alias.artifact_id, current.artifact_id)
         self.assertEqual(retired.state, "retired")
+        self.assertEqual(candidate.metadata["promotion_approval"]["approval_id"], "approval_promote")
+        self.assertEqual(candidate.metadata["rollback_manifest_ref"], "rollback://tenant_a/crops/candidate")
 
     def test_catalog_rejects_blocked_gate_promotion(self) -> None:
         catalog = MeshBrainModelCatalog()
@@ -87,6 +108,25 @@ class MeshBrainModelManagementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "blocks promotion"):
             catalog.promote(artifact_id=artifact.artifact_id, gate_result=gate, alias="tenant_a/crops")
 
+    def test_catalog_rejects_canary_without_required_approval_and_rollback_controls(self) -> None:
+        catalog = MeshBrainModelCatalog()
+        artifact = catalog.register_tenant_adapter(
+            tenant_id="tenant_a",
+            task_type="crops",
+            version="v1",
+            signed_manifest_ref="sha256:v1",
+        )
+
+        with self.assertRaisesRegex(ValueError, "operator approval"):
+            catalog.promote(artifact_id=artifact.artifact_id, gate_result=_gate(artifact.artifact_id, "canary"), alias="tenant_a/crops")
+        with self.assertRaisesRegex(ValueError, "rollback metadata"):
+            catalog.promote(
+                artifact_id=artifact.artifact_id,
+                gate_result=_gate(artifact.artifact_id, "canary"),
+                alias="tenant_a/crops",
+                approval=_approval("approval_missing_rollback"),
+            )
+
     def test_route_resolution_filters_by_tenant_and_task(self) -> None:
         catalog = MeshBrainModelCatalog()
         base = catalog.register_base_model(version="base", signed_manifest_ref="sha256:base")
@@ -103,8 +143,20 @@ class MeshBrainModelManagementTests(unittest.TestCase):
             version="b",
             signed_manifest_ref="sha256:b",
         )
-        catalog.promote(artifact_id=tenant_a.artifact_id, gate_result=_gate(tenant_a.artifact_id, "promote"), alias="tenant_a/crops")
-        catalog.promote(artifact_id=tenant_b.artifact_id, gate_result=_gate(tenant_b.artifact_id, "promote"), alias="tenant_b/crops")
+        catalog.promote(
+            artifact_id=tenant_a.artifact_id,
+            gate_result=_gate(tenant_a.artifact_id, "promote"),
+            alias="tenant_a/crops",
+            approval=_approval("approval_tenant_a"),
+            rollback_manifest_ref="rollback://tenant_a/crops",
+        )
+        catalog.promote(
+            artifact_id=tenant_b.artifact_id,
+            gate_result=_gate(tenant_b.artifact_id, "promote"),
+            alias="tenant_b/crops",
+            approval=_approval("approval_tenant_b"),
+            rollback_manifest_ref="rollback://tenant_b/crops",
+        )
 
         route = catalog.resolve_route(
             ModelRouteRequest(
@@ -130,6 +182,11 @@ def _gate(artifact_id: str, decision: str):
             "schema_validity_delta": 0,
             "task_success_rate": 1.0,
             "canary_passed": decision == "promote",
+            "model_kernel_passed": True,
+            "live_serving_smoke_passed": True,
+            "response_eval_passed": True,
+            "judge_rubric_passed": True,
+            "red_team_regression_passed": True,
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8),
     )
@@ -137,6 +194,16 @@ def _gate(artifact_id: str, decision: str):
         self_decision = gate.release_decision
         assert self_decision == "canary"
     return gate
+
+
+def _approval(approval_id: str) -> PromotionApproval:
+    return PromotionApproval(
+        approval_id=approval_id,
+        operator_id="operator_1",
+        roles=["approver"],
+        approved_at="2026-05-04T00:00:00+00:00",
+        evidence_refs=["mesh://approval/test"],
+    )
 
 
 if __name__ == "__main__":

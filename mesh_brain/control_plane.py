@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .model_kernel_probe import ModelKernelProbeResult
 from .mvp import MeshBrainMVPResult
 from .observability import mesh_brain_observation_to_prometheus
 from .run_mvp_e2e import persisted_artifact_paths
@@ -66,6 +67,13 @@ MESH_BRAIN_MLX_LM_LORA_ARTIFACT_KEYS = (
     "mesh_brain_mlx_lm_lora_native_response_eval",
     "mesh_brain_mlx_lm_lora_lm_studio_compatibility",
     "mesh_brain_mlx_lm_lora_run_summary",
+)
+
+MESH_BRAIN_MODEL_KERNEL_ARTIFACT_KEYS = (
+    "mesh_brain_model_kernel_correctness",
+    "mesh_brain_model_kernel_runtime_benchmark",
+    "mesh_brain_model_kernel_gate",
+    "mesh_brain_model_kernel_probe_summary",
 )
 
 
@@ -174,6 +182,132 @@ def mesh_brain_mvp_to_run_record(
             "serving_backend": result.serving_plan.backend_name,
         },
         "final_release_decision": bundle.release_decision,
+    }
+
+
+def build_model_kernel_artifact_bundle(
+    *,
+    result: ModelKernelProbeResult,
+) -> MeshBrainArtifactBundle:
+    artifact_paths = {
+        "mesh_brain_model_kernel_correctness": result.artifact_paths["model_kernel_correctness"],
+        "mesh_brain_model_kernel_runtime_benchmark": result.artifact_paths["model_kernel_runtime_benchmark"],
+        "mesh_brain_model_kernel_gate": result.artifact_paths["model_kernel_gate"],
+        "mesh_brain_model_kernel_probe_summary": result.artifact_paths["model_kernel_probe_summary"],
+    }
+    refs = {
+        key: _artifact_ref(key, Path(path))
+        for key, path in artifact_paths.items()
+    }
+    return MeshBrainArtifactBundle(
+        workflow_id=result.result_id,
+        tenant_id="mesh_system",
+        output_directory=str(Path(result.artifact_paths["model_kernel_probe_summary"]).parent),
+        artifacts=refs,
+        release_decision=result.release_decision,
+        deployment_record={
+            "status": "recorded" if result.release_decision == "pass" else "blocked",
+            "deployed": False,
+            "release_decision": result.release_decision,
+            "correctness_probe_id": result.correctness.probe_id,
+            "runtime_benchmark_id": result.runtime_benchmark.benchmark_id,
+            "deterministic_digest": result.correctness.deterministic_digest,
+        },
+    )
+
+
+def model_kernel_probe_to_run_record(
+    *,
+    result: ModelKernelProbeResult,
+    bundle: MeshBrainArtifactBundle,
+    run_id: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "tenant_id": bundle.tenant_id,
+        "stage": "completed" if bundle.release_decision == "pass" else "failed",
+        "status": "completed" if bundle.release_decision == "pass" else "blocked",
+        "artifact_refs": {key: ref.to_dict() for key, ref in bundle.artifacts.items()},
+        "audit_events": [],
+        "policy_events": [],
+        "summary_metrics": {
+            "loss_before": result.correctness.loss_before,
+            "loss_after_adam": result.correctness.loss_after_adam,
+            "max_forward_delta": result.correctness.max_forward_delta,
+            "max_gradient_relative_error": result.correctness.max_gradient_relative_error,
+            "q412_max_logit_delta": result.correctness.q412_max_logit_delta,
+            "reference_tokens_per_second": result.runtime_benchmark.local_target["tokens_per_second"],
+            "source_influences": list(result.correctness.source_influences),
+        },
+        "final_release_decision": bundle.release_decision,
+    }
+
+
+def build_live_serving_artifact_bundle(
+    *,
+    summary: dict[str, Any],
+) -> MeshBrainArtifactBundle:
+    artifact_paths = summary.get("artifact_paths")
+    if not isinstance(artifact_paths, dict):
+        raise ValueError("live serving summary missing artifact paths")
+    key_map = {
+        "mesh_brain_live_serving_execution": "live_serving_execution",
+        "mesh_brain_live_smoke_gate": "live_smoke_gate",
+        "mesh_brain_live_response_eval": "live_response_eval",
+        "mesh_brain_live_judge_eval": "live_judge_eval",
+        "mesh_brain_live_release_gate": "live_release_gate",
+        "mesh_brain_live_serving_summary": "live_serving_summary",
+    }
+    refs = {
+        artifact_key: _artifact_ref(artifact_key, Path(str(artifact_paths[source_key])))
+        for artifact_key, source_key in key_map.items()
+    }
+    release_decision = str(summary.get("release_gate", {}).get("decision") or summary.get("status") or "block")
+    deployment_record = summary.get("deployment_record")
+    return MeshBrainArtifactBundle(
+        workflow_id=str(summary.get("request_id") or summary.get("completion_id") or "mesh_brain_live_serving_smoke"),
+        tenant_id=str(summary.get("tenant_id") or "unknown"),
+        output_directory=str(Path(str(artifact_paths["live_serving_summary"])).parent),
+        artifacts=refs,
+        release_decision=release_decision,
+        deployment_record=dict(deployment_record) if isinstance(deployment_record, dict) else {
+            "status": "blocked",
+            "release_decision": release_decision,
+            "deployed": False,
+        },
+    )
+
+
+def live_serving_smoke_to_run_record(
+    *,
+    summary: dict[str, Any],
+    bundle: MeshBrainArtifactBundle,
+    run_id: str,
+) -> dict[str, Any]:
+    release_decision = bundle.release_decision
+    blocked = release_decision not in {"canary", "promote"}
+    return {
+        "run_id": run_id,
+        "tenant_id": bundle.tenant_id,
+        "stage": "failed" if blocked else "completed",
+        "status": "blocked" if blocked else "completed",
+        "artifact_refs": {key: ref.to_dict() for key, ref in bundle.artifacts.items()},
+        "audit_events": [],
+        "policy_events": [],
+        "summary_metrics": {
+            "model": summary.get("model"),
+            "requested_model": summary.get("requested_model"),
+            "backend_name": summary.get("backend_name"),
+            "hardware_tier": summary.get("hardware_tier"),
+            "task_type": summary.get("task_type"),
+            "latency_ms": summary.get("latency_ms"),
+            "total_tokens": (summary.get("usage") or {}).get("total_tokens") if isinstance(summary.get("usage"), dict) else None,
+            "live_smoke_gate": (summary.get("gate") or {}).get("decision") if isinstance(summary.get("gate"), dict) else None,
+            "live_response_eval": (summary.get("response_eval") or {}).get("decision") if isinstance(summary.get("response_eval"), dict) else None,
+            "live_judge_eval": (summary.get("judge_eval") or {}).get("decision") if isinstance(summary.get("judge_eval"), dict) else None,
+            "live_release_gate": (summary.get("release_gate") or {}).get("decision") if isinstance(summary.get("release_gate"), dict) else None,
+        },
+        "final_release_decision": release_decision,
     }
 
 

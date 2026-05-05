@@ -20,6 +20,14 @@ from services.runtime import MeshRuntimeEngine
 from services.evidence import EvidencePack, EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
+from mesh_brain.control_plane import (
+    build_live_serving_artifact_bundle,
+    build_model_kernel_artifact_bundle,
+    live_serving_smoke_to_run_record,
+    model_kernel_probe_to_run_record,
+)
+from mesh_brain.model_kernel_probe import run_model_kernel_probe
+from mesh_brain.run_live_serving_smoke import DEFAULT_BASE_URL, DEFAULT_MODEL, run_live_serving_smoke
 from services.ingest.webhook_service import (
     WebhookIngestService,
     build_signal_from_alert,
@@ -145,6 +153,30 @@ def _slugify(value: str) -> str:
 
 def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
+
+
+def _positive_int(value: Any, *, default: int, maximum: int) -> int:
+    if value is None:
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("value must be a positive integer") from None
+    if parsed <= 0:
+        raise ValueError("value must be a positive integer")
+    return min(parsed, maximum)
+
+
+def _positive_float(value: Any, *, default: float, maximum: float) -> float:
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("value must be a positive number") from None
+    if parsed <= 0:
+        raise ValueError("value must be a positive number")
+    return min(parsed, maximum)
 
 
 def _operator_context(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1124,6 +1156,231 @@ class RunCoordinator:
             self._update_session(session.run_id, stage="failed", status="failed")
             self._finalize_run(session.run_id)
             return self.get_run(session.run_id) or session.to_dict()
+        return self.get_run(session.run_id) or session.to_dict()
+
+    def run_mesh_brain_model_kernel_probe(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        benchmark_iterations = _positive_int(
+            payload.get("benchmark_iterations"),
+            default=2000,
+            maximum=250_000,
+        )
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="mesh_brain_model_kernel_probe",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="mesh_brain_model_kernel",
+            orchestration_mode="native",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "benchmark_iterations": benchmark_iterations,
+                "operator": operator,
+            },
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "mesh-brain" / "model-kernel-probe" / session.run_id
+        result = run_model_kernel_probe(
+            output_directory=output_directory,
+            benchmark_iterations=benchmark_iterations,
+        )
+        bundle = build_model_kernel_artifact_bundle(result=result)
+        run_record = model_kernel_probe_to_run_record(result=result, bundle=bundle, run_id=session.run_id)
+        for key, ref in bundle.artifacts.items():
+            self._set_artifact(session.run_id, key, ref.to_dict())
+        self._set_artifact(session.run_id, "mesh_brain_model_kernel_run_record", run_record)
+        self._set_artifact(session.run_id, "mesh_brain_model_kernel_deployment_record", bundle.deployment_record)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=run_record,
+            summary={
+                "release_decision": result.release_decision,
+                "max_gradient_relative_error": result.correctness.max_gradient_relative_error,
+                "q412_max_logit_delta": result.correctness.q412_max_logit_delta,
+            },
+            artifact_key="mesh_brain_model_kernel_probe_summary",
+            integration_name="mesh_brain_model_kernel",
+            status="recorded",
+        )
+        final_stage = "completed" if result.release_decision == "pass" else "failed"
+        final_status = "completed" if result.release_decision == "pass" else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if result.release_decision == "pass" else RUN_FAILED,
+            payload={
+                "release_decision": result.release_decision,
+                "gate": result.gate,
+                "artifact_refs": run_record["artifact_refs"],
+            },
+            summary={
+                "status": final_status,
+                "release_decision": result.release_decision,
+            },
+            artifact_key="mesh_brain_model_kernel_run_record",
+            integration_name="mesh_brain_model_kernel",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
+    def run_mesh_brain_live_serving_smoke(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        release_decision = str(payload.get("deterministic_release_decision") or "canary")
+        if release_decision not in {"block", "manual_review", "canary", "promote"}:
+            raise ValueError("deterministic_release_decision must be block, manual_review, canary, or promote")
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="mesh_brain_live_serving_smoke",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="mesh_brain_live_serving_smoke",
+            orchestration_mode="openai_compatible_backend",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        base_url = str(payload.get("base_url") or DEFAULT_BASE_URL)
+        model = str(payload.get("model") or DEFAULT_MODEL)
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        task_type = str(payload.get("task_type") or "crops")
+        hardware_tier = str(payload.get("hardware_tier") or "apple_silicon")
+        prompt = str(
+            payload.get("prompt")
+            or (
+                "For a CROPS incident, cite evidence framing, propose bounded reversible remediation, "
+                "and say operator approval is required before restart. Do not claim tools were executed."
+            )
+        )
+        timeout_seconds = _positive_float(payload.get("timeout_seconds"), default=60.0, maximum=300.0)
+        latency_budget_ms = _positive_float(payload.get("latency_budget_ms"), default=30_000.0, maximum=300_000.0)
+        max_total_tokens = _positive_int(payload.get("max_total_tokens"), default=4096, maximum=131_072)
+        response_eval_min_score = _positive_float(payload.get("response_eval_min_score"), default=0.8, maximum=1.0)
+        judge_enabled = payload.get("judge_enabled", True) is not False
+        judge_base_url = str(payload["judge_base_url"]) if payload.get("judge_base_url") else None
+        judge_model = str(payload["judge_model"]) if payload.get("judge_model") else None
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "base_url": base_url,
+                "model": model,
+                "tenant_id": tenant_id,
+                "task_type": task_type,
+                "hardware_tier": hardware_tier,
+                "operator": operator,
+            },
+            summary={
+                "status": "queued",
+                "operator_id": operator.get("operator_id") if operator else None,
+                "model": model,
+                "backend_url": base_url,
+            },
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "mesh-brain" / "live-serving-smoke" / session.run_id
+        try:
+            summary = run_live_serving_smoke(
+                base_url=base_url,
+                model=model,
+                tenant_id=tenant_id,
+                hardware_tier=hardware_tier,
+                task_type=task_type,
+                prompt=prompt,
+                output_directory=output_directory,
+                timeout_seconds=timeout_seconds,
+                latency_budget_ms=latency_budget_ms,
+                max_total_tokens=max_total_tokens,
+                response_eval_min_score=response_eval_min_score,
+                judge_enabled=judge_enabled,
+                judge_base_url=judge_base_url,
+                judge_model=judge_model,
+                deterministic_release_decision=release_decision,
+            )
+        except Exception as exc:
+            failure = {
+                "status": "blocked",
+                "release_decision": "block",
+                "reason": "live_serving_smoke_infrastructure_failure",
+                "error": str(exc),
+                "base_url": base_url,
+                "model": model,
+                "tenant_id": tenant_id,
+                "task_type": task_type,
+                "hardware_tier": hardware_tier,
+            }
+            self._set_artifact(session.run_id, "mesh_brain_live_serving_failure", failure)
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="failed",
+                event_type=RUN_FAILED,
+                payload=failure,
+                summary={"status": "failed", "release_decision": "block", "reason": failure["reason"]},
+                artifact_key="mesh_brain_live_serving_failure",
+                integration_name="mesh_brain_live_serving_smoke",
+                status="failed",
+            )
+            self._update_session(session.run_id, stage="failed", status="failed", error=str(exc))
+            return self.get_run(session.run_id) or session.to_dict()
+
+        bundle = build_live_serving_artifact_bundle(summary=summary)
+        run_record = live_serving_smoke_to_run_record(summary=summary, bundle=bundle, run_id=session.run_id)
+        for key, ref in bundle.artifacts.items():
+            self._set_artifact(session.run_id, key, ref.to_dict())
+        self._set_artifact(session.run_id, "mesh_brain_live_serving_run_record", run_record)
+        self._set_artifact(session.run_id, "mesh_brain_live_serving_deployment_record", bundle.deployment_record)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=run_record,
+            summary={
+                "release_decision": bundle.release_decision,
+                "live_smoke_gate": run_record["summary_metrics"]["live_smoke_gate"],
+                "live_response_eval": run_record["summary_metrics"]["live_response_eval"],
+                "live_judge_eval": run_record["summary_metrics"]["live_judge_eval"],
+                "latency_ms": run_record["summary_metrics"]["latency_ms"],
+            },
+            artifact_key="mesh_brain_live_serving_summary",
+            integration_name="mesh_brain_live_serving_smoke",
+            status="recorded",
+        )
+        final_stage = "completed" if bundle.release_decision in {"canary", "promote"} else "failed"
+        final_status = "completed" if bundle.release_decision in {"canary", "promote"} else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if final_stage == "completed" else RUN_FAILED,
+            payload={
+                "release_decision": bundle.release_decision,
+                "deployment_record": bundle.deployment_record,
+                "artifact_refs": run_record["artifact_refs"],
+            },
+            summary={"status": final_status, "release_decision": bundle.release_decision},
+            artifact_key="mesh_brain_live_serving_run_record",
+            integration_name="mesh_brain_live_serving_smoke",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
         return self.get_run(session.run_id) or session.to_dict()
 
     def _run_worker_loop(self) -> None:

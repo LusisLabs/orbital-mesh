@@ -15,7 +15,7 @@ from .agent_runtime import (
 from .data_plane import DataRefineryResult, MeshBrainDataRefinery, SourceRecord
 from .eval_jobs import EvalJobResult, EvalJobRequest, run_eval_job, write_eval_job_result
 from .eval_plane import build_eval_cases_from_dataset
-from .model_management import ArtifactAlias, MeshBrainModelCatalog
+from .model_management import ArtifactAlias, MeshBrainModelCatalog, PromotionApproval
 from .observability import MeshBrainObservation, build_mesh_brain_observation, write_mesh_brain_observability
 from .runtime import DatasetRow, ModelArtifact, ReleaseGatePolicy, evaluate_release_gate, stable_digest, utc_now
 from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPlan, ServingPool, TenantQuota, write_serving_plan
@@ -99,10 +99,24 @@ def run_private_crops_mvp_e2e(
     first_suite = next(iter(eval_job.suite_results.values()))
     canary_gate = evaluate_release_gate(
         candidate_artifact_id=candidate.artifact_id,
-        metrics={**first_suite.metrics, "canary_passed": False},
+        metrics={
+            **first_suite.metrics,
+            "canary_passed": False,
+            "model_kernel_passed": True,
+            "live_serving_smoke_passed": True,
+            "response_eval_passed": True,
+            "judge_rubric_passed": True,
+            "red_team_regression_passed": True,
+        },
         policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
     )
-    canary_alias = catalog.promote(artifact_id=candidate.artifact_id, gate_result=canary_gate, alias=f"{tenant_id}/crops")
+    canary_alias = catalog.promote(
+        artifact_id=candidate.artifact_id,
+        gate_result=canary_gate,
+        alias=f"{tenant_id}/crops",
+        approval=_promotion_approval("approval_private_crops_canary"),
+        rollback_manifest_ref=f"rollback://{tenant_id}/crops/private-crops-canary",
+    )
     fabric = _build_mvp_serving_fabric(artifacts=catalog.list_artifacts(), tenant_id=tenant_id)
     serving_plan = fabric.plan_chat_completion(
         OpenAIChatRequest(
@@ -227,10 +241,21 @@ def _build_initial_catalog(*, tenant_id: str) -> tuple[ModelArtifact, ModelArtif
             "latency_p95_ms": 850,
             "cost_per_completed_task": 0.07,
             "canary_passed": True,
+            "model_kernel_passed": True,
+            "live_serving_smoke_passed": True,
+            "response_eval_passed": True,
+            "judge_rubric_passed": True,
+            "red_team_regression_passed": True,
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
     )
-    catalog.promote(artifact_id=previous.artifact_id, gate_result=previous_gate, alias=f"{tenant_id}/crops")
+    catalog.promote(
+        artifact_id=previous.artifact_id,
+        gate_result=previous_gate,
+        alias=f"{tenant_id}/crops",
+        approval=_promotion_approval("approval_private_crops_previous"),
+        rollback_manifest_ref=f"rollback://{tenant_id}/crops/previous",
+    )
     return base, previous, catalog
 
 
@@ -334,6 +359,16 @@ def _restart_deployment_tool_schema() -> dict[str, Any]:
             },
         },
     }
+
+
+def _promotion_approval(approval_id: str) -> PromotionApproval:
+    return PromotionApproval(
+        approval_id=approval_id,
+        operator_id="operator_1",
+        roles=["approver"],
+        approved_at=utc_now(),
+        evidence_refs=["mesh://approval/private-crops-mvp"],
+    )
 
 
 def _json(payload: Any) -> str:

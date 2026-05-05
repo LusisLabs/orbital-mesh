@@ -33,6 +33,19 @@ class ArtifactAlias:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class PromotionApproval:
+    approval_id: str
+    operator_id: str
+    roles: list[str]
+    approved_at: str
+    evidence_refs: list[str]
+    approved: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 @dataclass
 class ModelRouteRequest:
     tenant_id: str
@@ -149,12 +162,19 @@ class MeshBrainModelCatalog:
         artifact_id: str,
         gate_result: ReleaseGateResult,
         alias: str,
+        approval: PromotionApproval | dict[str, Any] | None = None,
+        rollback_manifest_ref: str | None = None,
     ) -> ArtifactAlias:
         artifact = self._require_artifact(artifact_id)
         if gate_result.candidate_artifact_id != artifact_id:
             raise ValueError("gate result does not belong to artifact")
         if gate_result.release_decision not in {"canary", "promote"}:
             raise ValueError("release gate blocks promotion")
+        approval_record = _validate_promotion_controls(
+            gate_result=gate_result,
+            approval=approval,
+            rollback_manifest_ref=rollback_manifest_ref,
+        )
         previous = self._aliases.get(alias)
         previous_artifact_id = None
         if previous is not None:
@@ -162,6 +182,9 @@ class MeshBrainModelCatalog:
         artifact.state = "canary" if gate_result.release_decision == "canary" else "production"
         artifact.eval_report_id = gate_result.gate_result_id
         artifact.rollback_artifact_id = previous_artifact_id
+        artifact.metadata["promotion_approval"] = approval_record
+        artifact.metadata["rollback_manifest_ref"] = rollback_manifest_ref
+        artifact.metadata["promotion_gate_metrics"] = dict(gate_result.metrics)
         if artifact.state == "production" and previous and previous.artifact_id != artifact.artifact_id:
             self._artifacts[previous.artifact_id].state = "retired"
         alias_row = ArtifactAlias(
@@ -270,6 +293,45 @@ class MeshBrainModelCatalog:
         return artifact
 
 
+REQUIRED_PROMOTION_GATE_METRICS = (
+    "model_kernel_passed",
+    "live_serving_smoke_passed",
+    "response_eval_passed",
+    "judge_rubric_passed",
+    "red_team_regression_passed",
+)
+
+
+def _validate_promotion_controls(
+    *,
+    gate_result: ReleaseGateResult,
+    approval: PromotionApproval | dict[str, Any] | None,
+    rollback_manifest_ref: str | None,
+) -> dict[str, Any]:
+    missing_gates = [
+        gate
+        for gate in REQUIRED_PROMOTION_GATE_METRICS
+        if gate_result.metrics.get(gate) is not True
+    ]
+    if missing_gates:
+        raise ValueError(f"promotion missing required gates: {', '.join(missing_gates)}")
+    approval_record = approval.to_dict() if isinstance(approval, PromotionApproval) else dict(approval or {})
+    if approval_record.get("approved") is not True:
+        raise ValueError("promotion requires operator approval")
+    if not str(approval_record.get("approval_id") or "").strip():
+        raise ValueError("promotion approval requires approval_id")
+    if not str(approval_record.get("operator_id") or "").strip():
+        raise ValueError("promotion approval requires operator_id")
+    roles = approval_record.get("roles")
+    if not isinstance(roles, list) or not roles:
+        raise ValueError("promotion approval requires operator roles")
+    if not str(approval_record.get("approved_at") or "").strip():
+        raise ValueError("promotion approval requires approved_at")
+    if not rollback_manifest_ref:
+        raise ValueError("promotion requires rollback metadata")
+    return approval_record
+
+
 def build_model_management_e2e(*, output_directory: str | Path) -> tuple[MeshBrainModelCatalog, ModelRouteResolution]:
     from .runtime import ReleaseGatePolicy, evaluate_release_gate
 
@@ -293,10 +355,17 @@ def build_model_management_e2e(*, output_directory: str | Path) -> tuple[MeshBra
             "schema_validity_delta": 0,
             "task_success_rate": 0.9,
             "canary_passed": True,
+            **_required_gate_metrics(),
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8),
     )
-    catalog.promote(artifact_id=current.artifact_id, gate_result=gate, alias="tenant_a/crops")
+    catalog.promote(
+        artifact_id=current.artifact_id,
+        gate_result=gate,
+        alias="tenant_a/crops",
+        approval=_approval("approval_model_management_e2e"),
+        rollback_manifest_ref="rollback://tenant_a/crops/model-management-e2e",
+    )
     quantized = catalog.register_quantized_variant(
         base_artifact_id=base.artifact_id,
         version="qwen-27b-nvfp4",
@@ -324,3 +393,17 @@ def deterministic_alias(tenant_id: str, task_type: str) -> str:
 
 def artifact_fingerprint(artifact: ModelArtifact) -> str:
     return stable_digest(artifact.to_dict())
+
+
+def _required_gate_metrics() -> dict[str, bool]:
+    return {gate: True for gate in REQUIRED_PROMOTION_GATE_METRICS}
+
+
+def _approval(approval_id: str) -> PromotionApproval:
+    return PromotionApproval(
+        approval_id=approval_id,
+        operator_id="operator_1",
+        roles=["approver"],
+        approved_at=utc_now(),
+        evidence_refs=["mesh://approval/local-e2e"],
+    )

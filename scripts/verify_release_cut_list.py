@@ -27,6 +27,8 @@ REQUIRED_DOCS = (
     "docs/postgres-restart-proof.md",
     "docs/release-provenance.md",
     "docs/authenticated-ingress.md",
+    "docs/reference-architectures.md",
+    "docs/pilot-slo-error-budget.md",
 )
 
 REQUIRED_SCRIPTS = (
@@ -99,6 +101,31 @@ REQUIRED_MARKERS = {
         "approver",
         "admin",
         "scripts/verify_authenticated_ingress.py",
+    ),
+    "docs/reference-architectures.md": (
+        "docker-compose.stack.yml",
+        "docker-compose.prod.yml",
+        "docs/authenticated-ingress.md",
+        "scripts/prod_smoke.sh",
+        "scripts/verify_postgres_restart_proof.py",
+        "scripts/generate_release_provenance.py",
+        "Kubernetes Platform Team",
+        "GPU And AI Infrastructure",
+        "Regulated Enterprise",
+        "Air-Gapped Or Offline-Adjacent",
+    ),
+    "docs/pilot-slo-error-budget.md": (
+        "/api/health",
+        "/api/readiness",
+        "/api/agent/slo",
+        "/metrics",
+        "/api/pilot/go-no-go",
+        "scripts/prod_smoke.sh",
+        "scripts/verify_authenticated_ingress.py",
+        "scripts/verify_postgres_restart_proof.py",
+        "scripts/generate_release_provenance.py",
+        "Hard Stop Conditions",
+        "Error Budget",
     ),
 }
 
@@ -209,6 +236,28 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
         "docs/authenticated-ingress.md": (
             "control_plane_server.py",
             "scripts/verify_authenticated_ingress.py",
+        ),
+        "docs/reference-architectures.md": (
+            "docker-compose.stack.yml",
+            "docker-compose.prod.yml",
+            "docs/authenticated-ingress.md",
+            "scripts/prod_smoke.sh",
+            "scripts/verify_postgres_restart_proof.py",
+            "scripts/generate_release_provenance.py",
+            "services/ingest/kubernetes_live_signal.py",
+            "services/watchers/kubernetes.py",
+            "services/actuators/service.py",
+            "docker-compose.latentmas.yml",
+            "mesh_brain/",
+            "fixtures/signals/",
+            "policies/",
+        ),
+        "docs/pilot-slo-error-budget.md": (
+            "docs/design-partner-packet.md",
+            "scripts/prod_smoke.sh",
+            "scripts/verify_authenticated_ingress.py",
+            "scripts/verify_postgres_restart_proof.py",
+            "scripts/generate_release_provenance.py",
         ),
     }
     checks: list[dict[str, Any]] = []
