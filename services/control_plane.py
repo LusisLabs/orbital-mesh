@@ -84,6 +84,7 @@ from shared.mesh_runtime import (
 )
 from shared.mesh_runtime.perennial import (
     build_darkharness_pilot_packet,
+    load_darkharness_registry,
     materialize_agent_action_records,
     materialize_epistemic_state,
     materialize_governance_commit,
@@ -1252,7 +1253,10 @@ class RunCoordinator:
         run_export = self.build_run_export_package_snapshot(run_id)
         if run_export is None:
             return None
-        pilot_metadata = self._darkharness_shadow_metadata(session)
+        try:
+            pilot_metadata = self._darkharness_shadow_metadata(session)
+        except SchemaValidationError as exc:
+            return self._darkharness_blocked_response(run_id, [f"registry_invalid:{exc}"], run_export)
         missing = self._darkharness_missing_evidence(run_export, session, pilot_metadata)
         if missing:
             return self._darkharness_blocked_response(run_id, missing, run_export)
@@ -4625,8 +4629,7 @@ class RunCoordinator:
         return package
 
     def _darkharness_shadow_metadata(self, session: RunSession) -> dict[str, Any]:
-        fixture_payload = load_fixture("perennial", "allowed_action.json")
-        fixture = cast(dict[str, Any], fixture_payload["contracts"])
+        registry = load_darkharness_registry(self.config.darkharness_registry_path)
         raw_decision = session.artifacts.get("decision")
         decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
         raw_execution_plan = decision.get("execution_plan")
@@ -4635,29 +4638,29 @@ class RunCoordinator:
         parameters = cast(dict[str, Any], raw_parameters) if isinstance(raw_parameters, dict) else {}
         service = str(parameters.get("service") or session.scenario_key or "orbital-mesh-run")
         namespace = str(parameters.get("namespace") or "pilot")
-        reservoir = cast(dict[str, Any], copy.deepcopy(fixture["sensitive_reservoir"]))
-        pilot_scope = cast(dict[str, Any], copy.deepcopy(fixture["pilot_scope"]))
+        reservoir = cast(dict[str, Any], copy.deepcopy(registry.sensitive_reservoirs[0]))
+        pilot_scope = cast(dict[str, Any], copy.deepcopy(registry.pilot_scope))
         pilot_scope["pilot_scope_id"] = f"pilot_scope_{session.run_id}"
-        pilot_scope["customer_boundary"] = "shadow-onprem"
         action_limits = cast(dict[str, Any], pilot_scope["action_limits"])
         action_limits["allowed_namespaces"] = [namespace]
         action_limits["allowed_services"] = [service]
         reservoir_id = str(reservoir["reservoir_id"])
+        policy_refs = registry.policy_refs or ["policy://darkharness/pilot/approval-required"]
         return {
-            "tenant_id": "shadow",
+            "tenant_id": registry.tenant_id,
             "pilot_scope": pilot_scope,
             "sensitive_reservoir": reservoir,
-            "trust_ladder_ref": f"trust://{service}/pilot",
+            "trust_ladder_ref": registry.trust_ladder_ref or f"trust://{service}/pilot",
             "ontology_metadata": {
                 "namespace": namespace,
                 "service": service,
                 "owner": {
                     "owner_id": f"owner.{service}",
                     "team": "platform-reliability",
-                    "source_refs": [f"registry://owners/{service}"],
+                    "source_refs": [registry.owner_registry_ref or f"registry://owners/{service}"],
                 },
                 "reservoir_ids": [reservoir_id],
-                "policy_refs": ["policy://darkharness/pilot/approval-required"],
+                "policy_refs": policy_refs,
             },
         }
 

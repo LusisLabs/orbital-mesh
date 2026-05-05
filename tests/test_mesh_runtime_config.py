@@ -8,7 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shared.mesh_runtime.config import DEFAULT_CORPUS_DATABASE_PATH, DEFAULT_RESEARCH_DIRECTORY, DEFAULT_STATE_DIRECTORY, RuntimeConfig
+from shared.mesh_runtime.config import (
+    DEFAULT_CORPUS_DATABASE_PATH,
+    DEFAULT_RESEARCH_DIRECTORY,
+    DEFAULT_STATE_DIRECTORY,
+    RuntimeConfig,
+)
 from shared.mesh_runtime.state import parse_state_json_file
 
 
@@ -89,6 +94,21 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertTrue(Path(cfg.corpus_database_path).is_absolute())
         self.assertEqual(Path(cfg.corpus_database_path), DEFAULT_CORPUS_DATABASE_PATH.resolve())
         self.assertEqual(cfg.corpus_memory_projection_limit, 123)
+
+    def test_darkharness_registry_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DARKHARNESS_REGISTRY_PATH": ".mesh-runtime-state/darkharness-registry.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.darkharness_registry_path)
+        assert cfg.darkharness_registry_path is not None
+        self.assertTrue(Path(cfg.darkharness_registry_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.darkharness_registry_path),
+            (DEFAULT_STATE_DIRECTORY / "darkharness-registry.json").resolve(),
+        )
 
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

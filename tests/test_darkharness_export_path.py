@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from control_plane_server import darkharness_packet_response
 from services.control_plane import RunCoordinator
-from shared.mesh_runtime import RuntimeConfig, validate_payload
+from shared.mesh_runtime import RuntimeConfig, load_fixture, validate_payload
 
 from tests.test_perennial_materialization import _decision, _evaluation, _scenario_analysis
 
@@ -146,6 +146,42 @@ class DarkharnessExportPathTests(unittest.TestCase):
             finally:
                 coordinator.stop_background_workers()
 
+    def test_coordinator_uses_configured_darkharness_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = _write_registry(tmp)
+            coordinator = RunCoordinator(_config(tmp, darkharness_registry_path=str(registry_path)))
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                self.assertEqual(packet["customer_boundary"], "customer-b-onprem")
+                self.assertEqual(packet["perennial_records"]["sensitive_reservoirs"][0]["reservoir_id"], "reservoir_customer_b_ops")
+                [record] = packet["perennial_records"]["agent_action_records"]
+                self.assertEqual(record["boundary"]["tenant_id"], "customer-b")
+                self.assertEqual(record["boundary"]["reservoir_refs"], ["reservoir_customer_b_ops"])
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_invalid_configured_registry_blocks_packet_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry_path = _write_registry(tmp, raw_reservoir_egress="approved_exception")
+            coordinator = RunCoordinator(_config(tmp, darkharness_registry_path=str(registry_path)))
+            try:
+                run_id = _seed_run(coordinator, allowed=True)
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
+
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                self.assertEqual(packet["status"], "blocked")
+                self.assertTrue(any(item.startswith("registry_invalid:") for item in packet["missing_evidence"]))
+                self.assertNotIn("perennial_records", packet)
+            finally:
+                coordinator.stop_background_workers()
+
 
 def _seed_run(coordinator: RunCoordinator, *, allowed: bool) -> str:
     decision = _decision("dec_darkharness", autonomy_tier="approval_required")
@@ -201,6 +237,32 @@ def _patched_pilot_inputs(coordinator: RunCoordinator) -> Any:
             "postgres_restart_proof": None,
         },
     )
+
+
+def _write_registry(tmp: str, *, raw_reservoir_egress: str = "deny") -> Path:
+    fixture = load_fixture("perennial", "allowed_action.json")["contracts"]
+    pilot_scope = json.loads(json.dumps(fixture["pilot_scope"]))
+    reservoir = json.loads(json.dumps(fixture["sensitive_reservoir"]))
+    pilot_scope["customer_boundary"] = "customer-b-onprem"
+    pilot_scope["data_boundary"]["raw_reservoir_egress"] = raw_reservoir_egress
+    reservoir["reservoir_id"] = "reservoir_customer_b_ops"
+    reservoir["name"] = "Customer B operational evidence"
+    path = Path(tmp) / "darkharness-registry.json"
+    path.write_text(
+        json.dumps(
+            {
+                "registry": "darkharness.registry.v1",
+                "tenant_id": "customer-b",
+                "pilot_scope": pilot_scope,
+                "sensitive_reservoirs": [reservoir],
+                "trust_ladder_ref": "trust://customer-b/checkout-api/pilot",
+                "owner_registry_ref": "registry://owners/customer-b/checkout-api",
+                "policy_refs": ["policy://darkharness/pilot/approval-required"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 if __name__ == "__main__":

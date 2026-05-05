@@ -184,6 +184,26 @@ Darkmesh must treat data movement as an explicit governance choice.
 Default pilot mode is `hash_only` or `aggregate_only` for sensitive reservoirs,
 with `redacted_projection` allowed only for operator-reviewed evidence.
 
+## Darkharness Registry Configuration
+
+The read-only Darkharness packet export can load pilot scope and sensitive
+reservoir definitions from `MESH_DARKHARNESS_REGISTRY_PATH`. The file is a JSON
+object with:
+
+- `tenant_id`;
+- `pilot_scope`, validated by
+  `shared/mesh_runtime/schemas/perennial/pilot-scope.schema.json`;
+- `sensitive_reservoirs`, a non-empty list validated by
+  `shared/mesh_runtime/schemas/perennial/sensitive-reservoir.schema.json`;
+- optional `trust_ladder_ref`, `owner_registry_ref`, and `policy_refs`.
+
+When the env var is not set, local development keeps using the existing shadow
+fixture. When it is set, the file must exist and must preserve the pilot
+boundaries: on-prem reservoirs, raw reservoir egress denied, external model
+calls denied by default, and production-impacting actions approval-required.
+Invalid registry files block packet export instead of fabricating Perennial
+records.
+
 ## Architecture Layers
 
 ### 1. Reservoir Layer

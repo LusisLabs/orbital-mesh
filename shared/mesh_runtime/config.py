@@ -69,6 +69,7 @@ class RuntimeConfig:
     web_asset_path: str = str(DEFAULT_WEB_ASSET_PATH)
     vault_path: str = str(DEFAULT_VAULT_PATH)
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
+    darkharness_registry_path: str | None = None
     mesh_brain_artifact_uri_prefix: str | None = None
     mesh_brain_serving_base_url: str | None = None
     mesh_brain_serving_model: str | None = None
@@ -327,6 +328,11 @@ class RuntimeConfig:
             integrations_config_path=os.getenv(
                 "MESH_INTEGRATIONS_CONFIG_PATH",
                 str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
+            ),
+            darkharness_registry_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_DARKHARNESS_REGISTRY_PATH"), default="")
+                if os.getenv("MESH_DARKHARNESS_REGISTRY_PATH")
+                else None
             ),
             mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
             mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
