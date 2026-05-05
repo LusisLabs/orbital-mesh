@@ -38,6 +38,7 @@ REQUIRED_TESTS = (
     "tests/test_darkharness_packet.py",
     "tests/test_darkharness_policy.py",
     "tests/test_darkharness_export_path.py",
+    "tests/test_darkharness_live_verifier.py",
 )
 
 REQUIRED_SCRIPTS = (
@@ -50,6 +51,7 @@ REQUIRED_SCRIPTS = (
     "scripts/verify_mesh_brain_artifact_registry.py",
     "scripts/purge_run_exports.py",
     "scripts/verify_security_audit_readiness.py",
+    "scripts/verify_darkharness_live_packet.py",
 )
 
 REQUIRED_API_MARKERS = (
@@ -240,11 +242,13 @@ REQUIRED_MARKERS = {
         "tests.test_darkharness_packet",
         "tests.test_darkharness_policy",
         "tests.test_darkharness_export_path",
+        "tests.test_darkharness_live_verifier",
         "docker build",
     ),
     "docs/darkharness-operator-runbook.md": (
         "/api/runs/{run_id}/darkharness-packet",
         "/api/darkharness/pilot-packet",
+        "scripts/verify_darkharness_live_packet.py --json",
         "policy_violation:",
         "materialization_failed:",
         "registry_invalid:",

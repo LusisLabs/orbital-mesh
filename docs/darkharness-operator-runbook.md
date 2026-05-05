@@ -28,6 +28,27 @@ artifacts, run events, vault notes, or side effects.
 7. If a single run needs inspection, export
    `GET /api/runs/{run_id}/darkharness-packet`.
 
+## Live Local Proof
+
+Run the local verifier before treating Darkharness as end-to-end tested:
+
+```bash
+PYTHONPATH=. scripts/verify_darkharness_live_packet.py --json
+```
+
+The verifier starts a local control-plane server and an OpenAI-compatible mock
+serving backend, executes one approved live Kubernetes remediation through a
+fake allowlisted `kubectl`, records one denied action, runs Mesh Brain model
+kernel/live-smoke/rollback probes, and validates:
+
+- `GET /api/runs/{approved_run_id}/darkharness-packet`
+- `GET /api/runs/{denied_run_id}/darkharness-packet`
+- `GET /api/darkharness/pilot-packet`
+
+The proof is local and deterministic. It is not production serving proof, but it
+does verify Darkharness packets against real control-plane run ids rather than
+seeded test sessions.
+
 ## Evidence Adapter Coverage
 
 Darkharness exports typed Perennial action attestations for remediation safety,
@@ -78,5 +99,6 @@ The focused Darkharness CI step must pass:
 PYTHONPATH=. python3 -m unittest \
   tests.test_darkharness_packet \
   tests.test_darkharness_policy \
-  tests.test_darkharness_export_path
+  tests.test_darkharness_export_path \
+  tests.test_darkharness_live_verifier
 ```
