@@ -217,6 +217,20 @@ remaining authoritative for runs, events, memory, and audit state. Until that
 path exists, unsupported persistence modes fail configuration validation rather
 than silently writing side effects.
 
+## Packet Eligibility Policy
+
+Darkharness packet materialization now passes through an explicit policy
+evaluator before a full packet is returned. The evaluator blocks export when:
+
+- production-impacting allowed actions have no operator approval record;
+- production approval is not required by the pilot scope;
+- raw reservoir egress is not denied;
+- external model calls are not denied by default.
+
+Policy failures return a blocked packet with `policy_violation:*` entries in
+`missing_evidence` and policy booleans in `checks`. The blocked response still
+does not write run events, packet files, vault notes, or audit artifacts.
+
 ## Architecture Layers
 
 ### 1. Reservoir Layer

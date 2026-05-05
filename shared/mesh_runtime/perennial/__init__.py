@@ -8,13 +8,16 @@ from .materialization import (
     materialize_proof_envelope,
 )
 from .packet import build_darkharness_pilot_packet
+from .policy import DarkharnessPolicyResult, evaluate_darkharness_packet_policy
 from .registry import DarkharnessRegistry, load_darkharness_registry
 
 __all__ = [
     "DarkharnessRegistry",
+    "DarkharnessPolicyResult",
     "assert_pilot_scope_boundaries",
     "assert_reservoir_default_deny",
     "build_darkharness_pilot_packet",
+    "evaluate_darkharness_packet_policy",
     "load_darkharness_registry",
     "materialize_agent_action_record",
     "materialize_agent_action_records",

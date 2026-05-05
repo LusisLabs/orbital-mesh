@@ -183,15 +183,35 @@ class DarkharnessExportPathTests(unittest.TestCase):
             finally:
                 coordinator.stop_background_workers()
 
+    def test_policy_blocks_allowed_production_action_without_operator_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                run_id = _seed_run(coordinator, allowed=True, approvals=[])
+                with _patched_pilot_inputs(coordinator):
+                    packet = coordinator.build_darkharness_packet(run_id)
 
-def _seed_run(coordinator: RunCoordinator, *, allowed: bool) -> str:
+                self.assertIsNotNone(packet)
+                assert packet is not None
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn(
+                    "policy_violation:production_action_has_operator_approval",
+                    packet["missing_evidence"],
+                )
+                self.assertFalse(packet["checks"]["production_action_has_operator_approval"])
+                self.assertNotIn("perennial_records", packet)
+            finally:
+                coordinator.stop_background_workers()
+
+
+def _seed_run(coordinator: RunCoordinator, *, allowed: bool, approvals: list[dict[str, Any]] | None = None) -> str:
     decision = _decision("dec_darkharness", autonomy_tier="approval_required")
     evaluation = _evaluation(
         "eval_darkharness",
         final_recommendation="execute" if allowed else "reject",
         blocking_reasons=[] if allowed else ["production-impacting action requires operator approval"],
     )
-    approvals = [{"event_id": "evt_approval", "operator_id": "operator.launcher"}] if allowed else []
+    approval_records = approvals if approvals is not None else ([{"event_id": "evt_approval", "operator_id": "operator.launcher"}] if allowed else [])
     session = coordinator.state_store.create_run_session(
         goal_id=None,
         scenario_key="checkout_latency",
@@ -204,7 +224,7 @@ def _seed_run(coordinator: RunCoordinator, *, allowed: bool) -> str:
             "decision": decision,
             "evaluation": evaluation,
             "scenario_analysis": _scenario_analysis(),
-            "approvals": approvals,
+            "approvals": approval_records,
         },
     )
     coordinator.state_store.append_run_event(

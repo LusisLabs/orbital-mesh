@@ -84,6 +84,7 @@ from shared.mesh_runtime import (
 )
 from shared.mesh_runtime.perennial import (
     build_darkharness_pilot_packet,
+    evaluate_darkharness_packet_policy,
     load_darkharness_registry,
     materialize_agent_action_records,
     materialize_epistemic_state,
@@ -1277,6 +1278,18 @@ class RunCoordinator:
                 proof_refs=proof_refs,
                 operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
             )
+            policy = evaluate_darkharness_packet_policy(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                run_export=run_export,
+                action_records=action_records,
+            )
+            if not policy.allowed:
+                return self._darkharness_blocked_response(
+                    run_id,
+                    [f"policy_violation:{violation}" for violation in policy.violations],
+                    run_export,
+                    policy_checks=policy.checks,
+                )
             primary_action = self._darkharness_primary_action_record(action_records)
             scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
             epistemic_state = materialize_epistemic_state(scenario_analysis, run_id=run_id)
@@ -4691,13 +4704,10 @@ class RunCoordinator:
         if not isinstance(pilot_metadata.get("sensitive_reservoir"), dict):
             missing.append("sensitive_reservoir_present")
         raw_decision = run_export.get("decision_record")
-        raw_evaluation = run_export.get("evaluation_record")
         decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
-        evaluation = cast(dict[str, Any], raw_evaluation) if isinstance(raw_evaluation, dict) else {}
         production_impact = self._darkharness_decision_production_impact(decision)
-        is_allowed = evaluation.get("final_recommendation") == "execute" and not evaluation.get("blocking_reasons")
-        if is_allowed and production_impact in {"possible", "direct"} and not run_export.get("approval_records"):
-            missing.append("operator_approval_present")
+        if production_impact in {"possible", "direct"} and not isinstance(run_export.get("approval_records"), list):
+            missing.append("approval_records_present")
         return missing
 
     def _darkharness_blocked_response(
@@ -4705,13 +4715,17 @@ class RunCoordinator:
         run_id: str,
         missing: list[str],
         run_export: dict[str, Any],
+        policy_checks: dict[str, bool] | None = None,
     ) -> dict[str, Any]:
         return {
             "packet": "darkharness.pilot_packet.v1",
             "status": "blocked",
             "run_id": run_id,
             "missing_evidence": sorted(set(missing)),
-            "checks": copy.deepcopy(run_export.get("checks", {})),
+            "checks": {
+                **copy.deepcopy(run_export.get("checks", {})),
+                **(policy_checks or {}),
+            },
             "boundaries": {
                 "raw_reservoir_egress": "deny",
                 "external_model_calls": "deny",
