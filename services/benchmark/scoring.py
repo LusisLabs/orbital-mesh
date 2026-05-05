@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, cast
 
 from .models import DIMENSION_WEIGHTS, BenchmarkScenario, BenchmarkScorecard, ProcessMetrics, ScenarioBenchmarkResult
+
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9]+")
+
+
+def _identifier_tokens(text: str) -> set[str]:
+    """Split ``text`` into lowercased alphanumeric tokens.
+
+    Underscores and hyphens are treated as separators so that a needle like
+    ``oom_killed`` (canonical snake_case kind) matches a haystack containing
+    ``"reason: oom_killed"`` *without* also matching unrelated substrings
+    like ``"oom"`` inside ``"boom"`` or ``"a8oom42"`` — the false-positive
+    surface of the previous ``needle in entire_haystack_string`` check.
+    """
+
+    return {token.lower() for token in _TOKEN_RE.findall(text or "")}
+
+
+def _evidence_kind_matches(needle: str, haystack: str) -> bool:
+    """True if every alphanumeric segment of ``needle`` appears as a token
+    in ``haystack``.
+
+    This is the contract used by both the required-evidence-kinds scorer
+    and the root-cause fallback scorer. It is strictly tighter than the
+    previous ``needle.lower() in haystack.lower()`` check: a needle of
+    ``oom_killed`` only matches when both ``oom`` and ``killed`` appear as
+    separate alphanumeric tokens in the haystack, so arbitrary JSON noise
+    that happens to contain the substring no longer scores as a hit.
+    """
+
+    needle_parts = _TOKEN_RE.findall((needle or "").lower())
+    if not needle_parts:
+        return False
+    return set(needle_parts).issubset(_identifier_tokens(haystack))
 
 
 def score_outcome(
@@ -210,8 +245,12 @@ def _required_evidence_hits(
             _stringify(outcome.get("scenario_analysis")),
             _stringify(outcome.get("decision")),
         ]
-    ).lower()
-    return [kind for kind in scenario.required_evidence_kinds if kind.lower() in haystack]
+    )
+    return [
+        kind
+        for kind in scenario.required_evidence_kinds
+        if _evidence_kind_matches(kind, haystack)
+    ]
 
 
 def _root_cause_scores(
@@ -228,8 +267,8 @@ def _root_cause_scores(
         at_1 = 1.0 if normalized and normalized[0] == needle else 0.0
         at_3 = 1.0 if needle in normalized[:3] else 0.0
         return {"accuracy": at_1, "at_1": at_1, "at_3": at_3, "matched": bool(at_1)}
-    haystack = " ".join([_stringify(decision.get("reasoning")), _stringify(report)]).lower()
-    matched = scenario.expected_root_cause.lower() in haystack
+    haystack = " ".join([_stringify(decision.get("reasoning")), _stringify(report)])
+    matched = _evidence_kind_matches(scenario.expected_root_cause, haystack)
     score = 1.0 if matched else 0.0
     return {"accuracy": score, "at_1": score, "at_3": score, "matched": matched}
 

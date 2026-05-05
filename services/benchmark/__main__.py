@@ -118,6 +118,14 @@ def main() -> None:
     loghub_parser.add_argument("--service", default="loghub-service")
 
     args = parser.parse_args()
+    # When invoked without a subcommand (``python -m services.benchmark``)
+    # argparse leaves ``args.command`` as None and never populates the
+    # subparser-scoped attributes (``suite``, ``output``, …). The fallback
+    # ``run`` dispatch below would then crash with AttributeError. Surface
+    # the right thing — usage on stderr, non-zero exit — instead.
+    if args.command is None:
+        parser.print_help()
+        raise SystemExit(2)
     if args.command == "gate":
         gate = run_benchmark_gate(
             BenchmarkRunConfig(

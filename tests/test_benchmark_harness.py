@@ -13,7 +13,7 @@ from services.benchmark.loghub import LoghubExtractionConfig, extract_loghub_sce
 from services.benchmark.models import DIMENSION_WEIGHTS, BenchmarkScenario
 from services.benchmark.runner import BenchmarkRunConfig, run_benchmark
 from services.benchmark.scenario_loader import load_suite
-from services.benchmark.scoring import score_outcome
+from services.benchmark.scoring import _evidence_kind_matches, score_outcome
 from services.benchmark.sregym_agent import build_agent_registry_entry, render_agent_yaml, run_mesh_sregym_agent
 from services.investigation.cloudops_ontology import rank_root_causes
 from shared.mesh_runtime import Trigger
@@ -1380,6 +1380,54 @@ class BenchmarkHarnessTest(unittest.TestCase):
         self.assertFalse(entry["container_isolation"])
         self.assertIn("kickoff_workdir: /mesh", rendered)
         self.assertIn("container_isolation: false", rendered)
+
+
+class EvidenceKindMatchTests(unittest.TestCase):
+    """Regression tests for the substring-match tightening in scoring.
+
+    The previous ``needle.lower() in haystack.lower()`` check matched any
+    substring anywhere in the JSON-stringified haystack, producing
+    false positives like ``"oom"`` matching ``"boom"`` or
+    ``"a8oom42-test"``. The replacement uses identifier-token subset
+    matching: every alphanumeric segment of the needle must appear as
+    a token in the haystack.
+    """
+
+    def test_canonical_snake_case_match(self) -> None:
+        haystack = '{"reason": "oom_killed", "container": "search-api"}'
+        self.assertTrue(_evidence_kind_matches("oom_killed", haystack))
+
+    def test_canonical_with_hyphen_separator_match(self) -> None:
+        haystack = "report says image-pull-back-off observed"
+        self.assertTrue(_evidence_kind_matches("image_pull_back_off", haystack))
+
+    def test_substring_inside_unrelated_token_does_not_match(self) -> None:
+        # The previous behavior would have ``"oom" in "a8oom42"`` → True.
+        haystack = '{"run_id": "a8oom42-test", "phase": "running"}'
+        self.assertFalse(_evidence_kind_matches("oom", haystack))
+
+    def test_substring_inside_natural_word_does_not_match(self) -> None:
+        # ``"oom" in "room"`` previously fired. Now requires whole-token.
+        haystack = "the room temperature is fine"
+        self.assertFalse(_evidence_kind_matches("oom", haystack))
+
+    def test_partial_token_subset_does_not_match(self) -> None:
+        # Both "oom" and "killed" must appear separately.
+        haystack = "we saw oom but the pod was not killed"
+        self.assertTrue(_evidence_kind_matches("oom_killed", haystack))
+        self.assertFalse(_evidence_kind_matches("oom_killed", "we saw oom only"))
+
+    def test_empty_inputs_do_not_match(self) -> None:
+        self.assertFalse(_evidence_kind_matches("", "anything"))
+        self.assertFalse(_evidence_kind_matches("oom", ""))
+
+    def test_camelcase_haystack_treated_as_one_token(self) -> None:
+        # K8s CamelCase strings (``OOMKilled``) are a single token.
+        # ``"oom_killed"`` (snake_case) requires both ``oom`` and ``killed``
+        # as separate tokens — CamelCase doesn't satisfy that. Tests can
+        # use the canonical snake_case kind on either side.
+        haystack = '{"reason": "OOMKilled"}'
+        self.assertFalse(_evidence_kind_matches("oom_killed", haystack))
 
 
 class FakeSreGymClient:

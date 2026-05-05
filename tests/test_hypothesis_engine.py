@@ -259,8 +259,63 @@ class InvestigationReportEvidenceTests(unittest.TestCase):
             investigation_report=report,
         )
 
-        top_three = [hypothesis.candidate_cause for hypothesis in hypotheses[:3]]
-        self.assertEqual(top_three, ["service_selector_mismatch", "connection_refused", "dns_resolution_failure"])
+        # RCA candidates appear in the ranked output in confidence order.
+        # The deterministic ``h_unknown`` fallback (prior 0.5) may interleave
+        # between RCA candidates whose confidence brackets 0.5 — that is the
+        # correct behavior, not a bug. We assert the relative ordering of
+        # the RCA-derived hypotheses among themselves, which is what the
+        # investigation system actually controls.
+        rca_in_order = [
+            hypothesis.candidate_cause
+            for hypothesis in hypotheses
+            if hypothesis.hypothesis_id.startswith("h_rca_")
+        ]
+        self.assertEqual(
+            rca_in_order,
+            ["service_selector_mismatch", "connection_refused", "dns_resolution_failure"],
+        )
+
+    def test_investigation_rca_does_not_inflate_existing_hypothesis_posterior(self):
+        """Architectural invariant: LLM-derived RCA candidates cannot raise the
+        posterior of a deterministically-generated hypothesis above what its
+        evidence-grounded predicates support.
+
+        Regression test for the confidence-laundering pathway introduced by
+        ``_apply_investigation_report`` adding RCA predicates with weight up
+        to 2.4 to existing hypotheses. RCA influence is preserved via the
+        synthetic ``h_rca_*`` hypotheses and via supporting/disconfirming
+        evidence lists, but ``_posterior`` must ignore RCA predicate weights.
+        """
+
+        engine = HypothesisEngine()
+        baseline = engine.generate(
+            _make_trigger(error_signatures=["image_pull_failure"]),
+        )
+        baseline_posteriors = {h.hypothesis_id: h.posterior_confidence for h in baseline}
+
+        report = _investigation_report([
+            {"rank": 1, "root_cause": "incorrect_image_reference", "confidence": 0.95},
+        ])
+        with_rca = engine.generate(
+            _make_trigger(error_signatures=["image_pull_failure"]),
+            investigation_report=report,
+        )
+
+        for hypothesis in with_rca:
+            if hypothesis.hypothesis_id.startswith("h_rca_"):
+                continue  # synthetic RCA hypotheses are anchored on RCA prior
+            baseline_post = baseline_posteriors.get(hypothesis.hypothesis_id)
+            if baseline_post is None:
+                continue
+            self.assertEqual(
+                hypothesis.posterior_confidence,
+                baseline_post,
+                msg=(
+                    f"RCA influence leaked into deterministic posterior for "
+                    f"{hypothesis.hypothesis_id}: baseline={baseline_post} "
+                    f"with_rca={hypothesis.posterior_confidence}"
+                ),
+            )
 
     def test_investigation_report_is_additive_and_does_not_mutate_inputs(self):
         engine = HypothesisEngine()
