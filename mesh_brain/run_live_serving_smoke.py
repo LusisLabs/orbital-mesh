@@ -231,7 +231,8 @@ def run_live_serving_smoke(
 def evaluate_live_smoke_gate(*, summary: dict[str, Any], policy: LiveSmokeGatePolicy) -> LiveSmokeGateResult:
     reasons: list[str] = []
     review_reasons: list[str] = []
-    usage = summary.get("usage") if isinstance(summary.get("usage"), dict) else {}
+    usage_raw = summary.get("usage")
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
     total_tokens = int(usage.get("total_tokens", 0) or 0)
     content_preview = str(summary.get("content_preview") or "").strip()
     latency_ms = float(summary.get("latency_ms", 0.0) or 0.0)

@@ -16,6 +16,8 @@ Implemented in this slice:
 - pilot live-feedback requirement;
 - explicit disabling requirement for unfinished feature-flag and incident adapters;
 - consolidated kill-switch API and UI panel;
+- trust-ladder API rationale and browser UI visibility for autonomy ceilings, blockers, and next promotion requirements;
+- run export package API and UI action for timeline JSON, Markdown postmortem, evidence artifacts, decision/evaluation/execution/feedback records, approvals, vault notes, and Merkle proof;
 - enterprise and startup evaluation kit packaging from active repository paths;
 - community governance and contribution boundary documentation;
 - design-partner pilot packet;
@@ -25,7 +27,9 @@ Implemented in this slice:
 - production-like compose defaults for Postgres state, named operator identity, approval-gated smoke, and disabled unfinished feature-flag and incident adapters;
 - release provenance generator with an explicit `--require-complete` pilot gate;
 - authenticated ingress rehearsal harness and proxy trust-boundary documentation;
+- Mesh Brain durable artifact URI contract for model-kernel, live-smoke, rollback, and backend-matrix evidence refs;
 - release-cut guard for active image names, API markers, docs, compose pilot defaults, provenance markers, authenticated ingress markers, and smoke paths.
+- OpenSSF-oriented security audit baseline: private vulnerability reporting policy, CODEOWNERS for critical paths, Dependabot coverage, pinned GitHub Actions, weekly security audit workflow, dependency review, secret scanning, lockfile vulnerability scanning, npm audit, CodeQL where supported, OpenSSF Scorecard where supported, and `scripts/verify_security_audit_readiness.py`.
 
 Deferred from the immediate list:
 
@@ -33,7 +37,7 @@ Deferred from the immediate list:
 - production smoke against real authenticated TLS/SSO ingress;
 - Helm, Terraform, marketplace, and ingress-controller-specific reference packages;
 - deployment-specific ingress, Prometheus, audit-sink, signed-release, and load/concurrency SLO evidence;
-- external audit-sink certification, SBOM generation, vulnerability scan, image digest capture, and signed CI release packet production.
+- external audit-sink certification, SBOM generation, release-packet vulnerability scan artifact capture, image digest capture, and signed CI release packet production.
 
 ## Readiness Profiles
 
@@ -41,7 +45,7 @@ Deferred from the immediate list:
 
 - `local` checks that local state, vault paths, and security headers are present. Promptfoo, Hermes, Goose, Evo, LatentMAS, and Deep Agents are optional lanes.
 - `staging` additionally requires proxy-propagated operator identity, protected OTel ingest when enabled, live Kubernetes allowlists when live execution is enabled, and audit logging availability.
-- `pilot` additionally requires Postgres state, `MESH_DATABASE_URL`, forced approval gate, live feedback source configuration, and disabled unfinished feature-flag and incident adapters.
+- `pilot` additionally requires Postgres state, `MESH_DATABASE_URL`, forced approval gate, live feedback source configuration, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_SERVING_BASE_URL`, `MESH_BRAIN_SERVING_MODEL`, and disabled unfinished feature-flag and incident adapters.
 - `expansion` keeps pilot checks and adds the external audit-sink certification requirement.
 
 `GET /api/readiness` returns `profile`, `status`, `required_checks`, `optional_checks`, `blockers`, and `connector_certification`.
@@ -91,11 +95,48 @@ The response includes `trigger`, `evidence_pack`, `scenario_analysis`, `decision
 
 The kill switch records a `kill_switch` artifact and forces active run controls out of `interruptible_auto` by adding the `evaluation_ready` pause point.
 
+## Trust Ladder Rationale
+
+`GET /api/trust-ladder` and `GET /api/trust-ladder/{action_class}/{service}` return the persisted per-service/action evidence plus computed rationale fields:
+
+- `next_level`;
+- `promotion_requirements`;
+- `promotion_blockers`;
+- `autonomy_ceiling_reason`.
+
+The computed fields are not persisted into `learning/trust_ladder.json`; they are derived from current thresholds so API clients, GPUI, and exported evidence do not need to reimplement threshold math. Manual override reason is surfaced as a blocker so operators can distinguish earned autonomy from forced autonomy.
+
+The browser trust ladder renders current level, next threshold, recent blockers, run count, success rate, consecutive failures, overrides, and the current ceiling reason for each service/action entry.
+
 ## Pilot Go/No-Go Packet
 
-`GET /api/pilot/go-no-go` generates `pilot.go_no_go.v1` from observed state. It is blocked until the runtime has actual evidence for readiness, observed runs, operator approval, live action proof, denied action proof, Merkle proof, and rollback metadata.
+`GET /api/pilot/go-no-go` generates `pilot.go_no_go.v1` from observed state. It is blocked until the runtime has actual evidence for readiness, observed runs, operator approval, live action proof, denied action proof, Merkle proof, rollback metadata, a passed Mesh Brain model-kernel gate, a canary live-serving smoke run, a single CROPS canary lane, and a Mesh Brain rollback drill.
 
 This packet is not a manual intent record. Missing evidence appears under `missing_evidence`.
+
+## Run Export Package
+
+`POST /api/runs/{run_id}/export` materializes the run vault notes and writes a portable JSON package under `${MESH_STATE_DIR}/run_exports/{run_id}.json`. When proxy identity is required, the route accepts `viewer`, `launcher`, `approver`, or `admin` and rejects anonymous export attempts.
+
+Export packages redact secret-shaped fields before writing. The default size cap is `MESH_RUN_EXPORT_MAX_BYTES=5242880`; oversized exports deterministically omit vault document bodies, event payloads and summaries, duplicated session artifacts, evidence artifacts, operator notes, and finally the long Markdown body until the package fits the cap.
+
+`POST /api/runs/{run_id}/export/archive` writes and returns a zip archive with `Content-Disposition: attachment`. The archive contains `manifest.json`, the canonical `package.json`, `timeline.json`, `postmortem.md`, `merkle.json`, `checks.json`, record JSON files, and redacted vault Markdown files.
+
+Each export carries retention metadata: `retention_days`, `delete_after`, `reviewed`, and the deletion command expectation. The default is `MESH_RUN_EXPORT_RETENTION_DAYS=30`; pilot readiness blocks until `MESH_RUN_EXPORT_RETENTION_REVIEWED=1` and the retention window is positive.
+
+`scripts/purge_run_exports.py --state-dir ${MESH_STATE_DIR}` audits expired generated exports without deleting by default. Add `--apply` to delete only expired `run_exports/{run_id}.json` packages and matching `run_exports/{run_id}.zip` archives whose `retention.delete_after` has passed. The utility accepts `--json` for CI evidence and `--now` for rehearsal tests.
+
+The package includes:
+
+- timeline JSON for all run events;
+- Markdown postmortem summary;
+- evidence artifacts, including signal, trigger, evidence graph, investigation, scenario analysis, agent tasks, readiness, and memory crystallization when present;
+- decision, evaluation, execution, feedback, approval, and operator-note records;
+- Merkle snapshot and latest-event proof;
+- vault Markdown documents for the run and linked artifacts;
+- package checksum and persisted path.
+
+The browser audit surface exposes `Build export` and `Archive` actions and shows event count, vault document count, package checksum, compaction state, and retention state.
 
 Observed local-stack packet on 2026-05-04:
 
@@ -105,6 +146,17 @@ Observed local-stack packet on 2026-05-04:
 - denied-action proof run: `run_20260504T204409_5229c69a`, blocked with `approval required before execution`;
 - Merkle proof observed for six runs, including the live action, denied action, and Postgres restart-proof runs;
 - missing evidence: none.
+
+Observed local-stack packet on 2026-05-05 after the live compose smoke:
+
+- status: `blocked`;
+- readiness: `pilot` profile, `status: blocked`;
+- readiness blockers: `mesh_brain_artifact_uri_prefix_configured`, `mesh_brain_serving_backend_configured`, `run_export_retention_reviewed`;
+- live-action and approved proof run: `run_20260505T054747_9a8c2386`;
+- run outcome: `completed`, decision `rollback_deployment`, execution `succeeded`, feedback `successful`;
+- Merkle root for the live run: `5b962a4e378546c7373271148fc9f420303ea20b11183a0d94eab32a647e5f06`, with `58` leaves;
+- pilot packet observed `8` runs, live-action proof, denied-action proof, operator approval, rollback plan, and Merkle proof;
+- missing pilot evidence: `readiness_green`, Mesh Brain model-kernel gate, Mesh Brain live canary smoke, single CROPS canary lane, and Mesh Brain rollback drill.
 
 ## Connector Certification States
 
@@ -134,7 +186,8 @@ Initial authority boundaries:
 | Kubeconfig | live execution disabled by default | least-privilege context and namespace allowlists |
 | Proposal lanes | advisory artifacts only | no kubeconfig, repo write, or actuator credentials |
 | State store | file or Postgres backend | encrypted persistent storage and restore rehearsal |
-| Run exports | vault and Merkle artifacts | redaction rules and export-size limits |
+| Run exports | vault and Merkle artifacts | redaction rules, export-size limits, archive format, and pilot retention review gate |
+| Mesh Brain artifacts | state-store refs with SHA-256 and optional durable URI prefix | object-storage upload proof for every production URI |
 
 Open findings must be tracked with owner, decision, expiry, and compensating control before staging exposure.
 
@@ -185,12 +238,24 @@ Run:
 scripts/verify_release_cut_list.py --json
 ```
 
-The guard checks active Docker image defaults, required production docs, smoke scripts, API markers, compose pilot defaults, release-provenance markers, authenticated ingress markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, authenticated ingress rehearsal, Postgres restart proof, or signed CI provenance.
+The guard checks active Docker image defaults, required production docs, smoke scripts, run-export purge utility, API markers, compose pilot defaults, release-provenance markers, authenticated ingress markers, and release-packet references. It is a static guard; it does not replace live compose smoke, production smoke, browser e2e, authenticated ingress rehearsal, Postgres restart proof, or signed CI provenance.
+
+The guard also checks that `docs/post-training/runtime.md`, `mesh_brain/artifact_registry.py`, and the control-plane artifact recorder retain the Mesh Brain durable artifact contract. Production deployments must set `MESH_BRAIN_ARTIFACT_URI_PREFIX` to a durable object-storage prefix and must upload each recorded blob to the corresponding URI. Local paths in the state store are audit/debug refs only.
 
 ## Current Validation Evidence
 
 Validated in this slice:
 
+- `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list` passed with `13` tests after adding the run export package API/UI path, secret redaction, size-cap compaction, zip archive endpoint, and retention readiness gate;
+- `PYTHONPATH=. python3 -m unittest tests.test_run_export_retention tests.test_trust_ladder` passed with `13` tests after adding the dry-run-first purge utility and computed trust-ladder autonomy rationale;
+- `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` passed on 2026-05-05 and produced live run `run_20260505T054747_9a8c2386` with `rollback_deployment`, execution `succeeded`, and feedback `successful`;
+- `./scripts/prod_smoke.sh` passed against `http://127.0.0.1:8787` after the stack remained healthy;
+- `PYTHONPATH=. python3 -m unittest tests.test_authenticated_ingress tests.test_release_provenance tests.test_production_faults_and_packaging tests.test_run_export_retention tests.test_trust_ladder` passed with `26` tests when localhost binding was allowed for the authenticated-ingress rehearsal;
+- `python3 scripts/verify_postgres_restart_proof.py --skip-if-missing --json` returned `status: skipped` because `MESH_DATABASE_URL` was not set in the local shell;
+- `scripts/generate_release_provenance.py --json` returned `status: incomplete` because the worktree is dirty and CI release artifacts are absent;
+- `npm --prefix web run lint` passed after adding the run export API client, archive blob client, audit UI controls, compaction metadata, and retention state;
+- `npm --prefix web run build` passed after adding the run export UI controls, archive blob client, compaction metadata, and retention state, with the existing Vite chunk-size warning;
+- `npm --prefix web run test:e2e` passed with `12` Playwright tests after adding the run export audit controls, archive action, compaction metadata, retention state, and trust-ladder rationale rendering;
 - `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list tests.test_production_faults_and_packaging` passed with `15` tests;
 - `PYTHONPATH=. python3 -m unittest tests.test_release_provenance tests.test_production_faults_and_packaging` passed with `11` tests;
 - `python3 -m unittest tests.test_authenticated_ingress` passed with `2` tests and asserted that `scripts/verify_authenticated_ingress.py --json` returned `status: passed`;

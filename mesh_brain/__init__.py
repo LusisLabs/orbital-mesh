@@ -9,6 +9,14 @@ from .agent_runtime import (
     ToolDefinition,
     build_agent_runtime_e2e,
 )
+from .artifact_registry import (
+    DURABLE_ARTIFACT_URI_SCHEMES,
+    MeshBrainProductionArtifactRef,
+    build_production_artifact_ref,
+    production_blob_uri,
+    validate_durable_artifact_uri,
+    verify_production_artifact_record,
+)
 from .backend_matrix import (
     BackendMatrixResult,
     BackendMatrixSummary,
@@ -133,14 +141,20 @@ from .mvp import (
     write_mvp_result,
 )
 from .control_plane import (
+    MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS,
     MESH_BRAIN_LIVE_SERVING_ARTIFACT_KEYS,
     MESH_BRAIN_MODEL_KERNEL_ARTIFACT_KEYS,
+    MESH_BRAIN_ROLLBACK_DRILL_ARTIFACT_KEYS,
     MeshBrainArtifactBundle,
     MeshBrainArtifactRef,
+    backend_matrix_to_run_record,
+    build_backend_matrix_artifact_bundle,
     build_live_serving_artifact_bundle,
     build_model_kernel_artifact_bundle,
+    build_rollback_drill_artifact_bundle,
     live_serving_smoke_to_run_record,
     model_kernel_probe_to_run_record,
+    rollback_drill_to_run_record,
 )
 from .observability import (
     REQUIRED_OBSERVABILITY_LABELS,
@@ -181,6 +195,7 @@ from .quality_training import (
     build_curated_quality_dataset,
     collect_quality_runtime_evidence,
     compare_base_vs_adapter,
+    evaluate_quality_dataset_provenance,
     plan_quality_preference_stage,
     plan_quality_sft_stage,
     write_quality_dataset_splits,
@@ -201,6 +216,11 @@ from .readiness_gaps import (
     build_readiness_gap_report,
     write_readiness_gap_report,
 )
+from .rollback_drill import (
+    RollbackDrillResult,
+    run_mesh_brain_rollback_drill,
+    write_rollback_drill_artifacts,
+)
 from .runtime import (
     DatasetBundle,
     DatasetRow,
@@ -216,6 +236,7 @@ from .runtime import (
     ToolPolicy,
     TrainingManifest,
     build_dataset_bundle,
+    curated_quality_source_coverage_pass,
     evaluate_release_gate,
     export_trace_dataset_row,
     launch_training_job,

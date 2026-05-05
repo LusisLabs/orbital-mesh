@@ -22,6 +22,7 @@ class CuratedQualityDataset:
     eval_rows: list[dict[str, Any]]
     red_team_rows: list[dict[str, Any]]
     provenance: list[dict[str, Any]]
+    source_coverage: dict[str, Any]
     created_at: str
 
     def to_dict(self) -> dict[str, Any]:
@@ -125,6 +126,13 @@ def build_curated_quality_dataset(
     eval_rows = [_eval_prompt(row) for row in _rows(data_result.bundle.rows, "eval_case")]
     red_team_rows = [_red_team_prompt(row) for row in _rows(data_result.bundle.rows, "red_team_case")]
     provenance = [_row_provenance(row) for row in data_result.bundle.rows]
+    source_coverage = _quality_source_coverage(
+        provenance=provenance,
+        sft_rows=sft_rows,
+        preference_rows=preference_rows,
+        eval_rows=eval_rows,
+        red_team_rows=red_team_rows,
+    )
     dataset_version = f"quality_dataset_{stable_digest({'source': data_result.bundle.dataset_version, 'provenance': provenance})[:12]}"
     return CuratedQualityDataset(
         dataset_version=dataset_version,
@@ -135,6 +143,7 @@ def build_curated_quality_dataset(
         eval_rows=eval_rows,
         red_team_rows=red_team_rows,
         provenance=provenance,
+        source_coverage=source_coverage,
         created_at=utc_now(),
     )
 
@@ -461,6 +470,7 @@ def run_quality_training_plan(
         benchmark_iterations=model_kernel_benchmark_iterations,
     )
     promotion_gate = _promotion_gate(
+        dataset=dataset,
         sft_stage=sft_stage,
         preference_stage=preference_stage,
         runtime_evidence=runtime_evidence,
@@ -634,10 +644,87 @@ def _row_provenance(row: DatasetRow) -> dict[str, Any]:
         "row_id": row.row_id,
         "row_type": row.row_type,
         "tenant_id": row.tenant_id,
+        "source": row.source,
         "license_usage_class": row.license_usage_class,
         "provenance_pointer": row.provenance_pointer,
         "excluded_from_training": row.excluded_from_training,
         "row_sha256": stable_digest(row.to_dict()),
+    }
+
+
+def _quality_source_coverage(
+    *,
+    provenance: list[dict[str, Any]],
+    sft_rows: list[dict[str, Any]],
+    preference_rows: list[dict[str, Any]],
+    eval_rows: list[dict[str, Any]],
+    red_team_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    sources = [str(row.get("source") or "unknown") for row in provenance]
+    source_counts = {source: sources.count(source) for source in sorted(set(sources))}
+    trainable_sources = [
+        str(row.get("source") or "unknown")
+        for row in provenance
+        if row.get("excluded_from_training") is not True and row.get("row_type") in {"sft", "preference_pair"}
+    ]
+    trainable_source_counts = {source: trainable_sources.count(source) for source in sorted(set(trainable_sources))}
+    has_incident_corpus = any(source.startswith("corpus:") for source in sources)
+    has_runtime_session = "runtime:run_session" in source_counts
+    has_runtime_event = "runtime:run_event" in source_counts
+    has_non_bootstrap_training_source = any(
+        source.startswith("corpus:") or source.startswith("runtime:")
+        for source in trainable_source_counts
+    )
+    return {
+        "source_counts": source_counts,
+        "trainable_source_counts": trainable_source_counts,
+        "row_counts": {
+            "sft": len(sft_rows),
+            "preference_pair": len(preference_rows),
+            "eval_case": len(eval_rows),
+            "red_team_case": len(red_team_rows),
+            "provenance": len(provenance),
+        },
+        "has_incident_corpus": has_incident_corpus,
+        "has_runtime_session": has_runtime_session,
+        "has_runtime_event": has_runtime_event,
+        "has_preference_rows": bool(preference_rows),
+        "has_eval_rows": bool(eval_rows),
+        "has_red_team_rows": bool(red_team_rows),
+        "has_non_bootstrap_training_source": has_non_bootstrap_training_source,
+    }
+
+
+def evaluate_quality_dataset_provenance(dataset: CuratedQualityDataset) -> dict[str, Any]:
+    coverage = dataset.source_coverage
+    reasons: list[str] = []
+    if not coverage["has_runtime_session"]:
+        reasons.append("quality_dataset_missing_runtime_sessions")
+    if not coverage["has_runtime_event"]:
+        reasons.append("quality_dataset_missing_runtime_events")
+    if not coverage["has_incident_corpus"]:
+        reasons.append("quality_dataset_missing_incident_corpus")
+    if not coverage["has_eval_rows"]:
+        reasons.append("quality_dataset_missing_eval_prompts")
+    if not coverage["has_preference_rows"]:
+        reasons.append("quality_dataset_missing_preference_rows")
+    if not coverage["has_red_team_rows"]:
+        reasons.append("quality_dataset_missing_red_team_rows")
+    if not coverage["has_non_bootstrap_training_source"]:
+        reasons.append("quality_dataset_reference_or_synthetic_only")
+    return {
+        "passed": not reasons,
+        "reasons": reasons,
+        "required": [
+            "runtime_sessions",
+            "runtime_events",
+            "incident_corpus",
+            "preference_rows",
+            "eval_prompts",
+            "red_team_rows",
+            "non_bootstrap_training_source",
+        ],
+        "coverage": coverage,
     }
 
 
@@ -774,6 +861,7 @@ def _has_truncated_bounded_remediation(normalized_response: str) -> bool:
 
 def _promotion_gate(
     *,
+    dataset: CuratedQualityDataset,
     sft_stage: QualityTrainingStage,
     preference_stage: QualityTrainingStage,
     runtime_evidence: QualityRuntimeEvidence,
@@ -783,6 +871,9 @@ def _promotion_gate(
     require_model_kernel_probe: bool,
 ) -> dict[str, Any]:
     reasons = []
+    provenance_gate = evaluate_quality_dataset_provenance(dataset)
+    if not provenance_gate["passed"]:
+        reasons.extend(provenance_gate["reasons"])
     if sft_stage.status != "completed" or not sft_stage.gate["passed"]:
         reasons.append("sft_stage_failed")
     if preference_stage.status != "completed" or not preference_stage.gate["passed"]:
@@ -806,8 +897,10 @@ def _promotion_gate(
             "adapter_beats_base_by_rubric",
             "no_red_team_regression",
             "model_kernel_probe_passes",
+            "curated_runtime_corpus_provenance",
         ],
         "metrics": {
+            "quality_source_coverage": provenance_gate["coverage"],
             "sft_valid_loss_final": sft_stage.metrics["valid_loss_final"],
             "preference_margin": preference_stage.metrics["preference_margin"],
             "base_score": comparison.base_score,

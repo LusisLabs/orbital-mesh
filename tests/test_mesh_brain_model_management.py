@@ -10,8 +10,10 @@ from mesh_brain import (
     ModelRouteRequest,
     PromotionApproval,
     ReleaseGatePolicy,
+    ReleaseGateResult,
     artifact_fingerprint,
     build_model_management_e2e,
+    curated_quality_source_coverage_pass,
     deterministic_alias,
     evaluate_release_gate,
 )
@@ -127,6 +129,46 @@ class MeshBrainModelManagementTests(unittest.TestCase):
                 approval=_approval("approval_missing_rollback"),
             )
 
+    def test_catalog_rejects_promotion_without_curated_quality_training_gate(self) -> None:
+        catalog = MeshBrainModelCatalog()
+        artifact = catalog.register_tenant_adapter(
+            tenant_id="tenant_a",
+            task_type="crops",
+            version="v1",
+            signed_manifest_ref="sha256:v1",
+        )
+        gate = _gate(artifact.artifact_id, "canary")
+        gate.metrics.pop("curated_quality_training_passed")
+
+        with self.assertRaisesRegex(ValueError, "curated_quality_training_passed"):
+            catalog.promote(
+                artifact_id=artifact.artifact_id,
+                gate_result=gate,
+                alias="tenant_a/crops",
+                approval=_approval("approval_missing_quality"),
+                rollback_manifest_ref="rollback://tenant_a/crops",
+            )
+
+    def test_catalog_rejects_promotion_without_curated_quality_source_coverage(self) -> None:
+        catalog = MeshBrainModelCatalog()
+        artifact = catalog.register_tenant_adapter(
+            tenant_id="tenant_a",
+            task_type="crops",
+            version="v1",
+            signed_manifest_ref="sha256:v1",
+        )
+        gate = _gate(artifact.artifact_id, "canary")
+        gate.metrics.pop("quality_source_coverage")
+
+        with self.assertRaisesRegex(ValueError, "curated quality coverage"):
+            catalog.promote(
+                artifact_id=artifact.artifact_id,
+                gate_result=gate,
+                alias="tenant_a/crops",
+                approval=_approval("approval_missing_quality_coverage"),
+                rollback_manifest_ref="rollback://tenant_a/crops",
+            )
+
     def test_route_resolution_filters_by_tenant_and_task(self) -> None:
         catalog = MeshBrainModelCatalog()
         base = catalog.register_base_model(version="base", signed_manifest_ref="sha256:base")
@@ -173,7 +215,7 @@ class MeshBrainModelManagementTests(unittest.TestCase):
         self.assertEqual(artifact_fingerprint(tenant_a), artifact_fingerprint(tenant_a))
 
 
-def _gate(artifact_id: str, decision: str):
+def _gate(artifact_id: str, decision: str) -> ReleaseGateResult:
     gate = evaluate_release_gate(
         candidate_artifact_id=artifact_id,
         metrics={
@@ -187,6 +229,8 @@ def _gate(artifact_id: str, decision: str):
             "response_eval_passed": True,
             "judge_rubric_passed": True,
             "red_team_regression_passed": True,
+            "curated_quality_training_passed": True,
+            "quality_source_coverage": curated_quality_source_coverage_pass(),
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8),
     )

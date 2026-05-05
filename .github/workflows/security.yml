@@ -1,0 +1,119 @@
+name: Security Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  schedule:
+    - cron: "17 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Verify audit controls
+        run: python scripts/verify_security_audit_readiness.py --json
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/dependency-review-action@595b5aeba73380359d98a5e087f648dbb0edce1b
+        with:
+          fail-on-severity: high
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc
+        with:
+          args: detect --source=. --redact --verbose
+
+  lockfile-vulnerability-scan:
+    if: github.event.repository.private == false || vars.EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: google/osv-scanner-action@b77c075a1235514558f0eb88dbd31e22c45e0cd2
+        with:
+          scan-args: |-
+            --lockfile=uv.lock
+            --lockfile=web/package-lock.json
+            --lockfile=Cargo.lock
+            --lockfile=latent-mesh/LatentMAS/Cargo.lock
+
+  npm-audit:
+    if: github.event.repository.private == false || vars.EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm audit --audit-level=high
+        working-directory: web
+
+  codeql:
+    if: github.event.repository.private == false || vars.CODEQL_ON_PRIVATE == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: github/codeql-action/init@ed410739ba306e4ebe5e123421a6bd694e494a2b
+        with:
+          languages: ${{ matrix.language }}
+      - uses: github/codeql-action/analyze@ed410739ba306e4ebe5e123421a6bd694e494a2b
+
+  openssf-scorecard:
+    if: github.event.repository.private == false || vars.OPENSSF_SCORECARD_ON_PRIVATE == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: false
+      - uses: github/codeql-action/upload-sarif@ed410739ba306e4ebe5e123421a6bd694e494a2b
+        with:
+          sarif_file: scorecard-results.sarif
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openssf-scorecard-sarif
+          path: scorecard-results.sarif
+          retention-days: 30

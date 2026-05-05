@@ -61,3 +61,15 @@ scripts/generate_release_provenance.py \
 - `packet_sha256` is the hash of the packet payload before the hash field is attached. Use it as the audit pointer in a release record.
 
 The packet does not replace the pilot go/no-go API. The go/no-go packet proves runtime evidence. The release provenance packet proves build and supply-chain evidence. Both must pass before a signed pilot record is valid.
+
+Mesh Brain artifact durability is a separate rollout gate. After the model-kernel, live-serving smoke, quality-training, rollback, or backend artifacts are registered in Mesh, run:
+
+```bash
+scripts/verify_mesh_brain_artifact_registry.py \
+  --artifacts-json .mesh-runtime-state/artifacts.json \
+  --proof-manifest dist/mesh-brain-artifact-upload-proof.json \
+  --require-upload-proof \
+  --json
+```
+
+This verifier checks that every Mesh Brain production artifact record uses a durable object-storage URI, keeps immutable production metadata, and has matching upload proof for hash and byte count.

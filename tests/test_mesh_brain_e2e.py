@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import unittest
 from tempfile import TemporaryDirectory
+from typing import Any
 
 from mesh_brain import (
     MeshBrainRuntime,
+    MeshBrainRegistry,
+    ReleaseGatePolicy,
     ToolCall,
     ToolPolicy,
     build_dataset_bundle,
+    curated_quality_source_coverage_pass,
+    evaluate_release_gate,
+    new_model_artifact,
     run_e2e_reference_flow,
 )
 
@@ -80,6 +86,8 @@ class MeshBrainReferenceFlowTests(unittest.TestCase):
 
         self.assertEqual(result.training_manifest.method, "lora")
         self.assertEqual(result.artifact.state, "production")
+        self.assertEqual(result.artifact.metadata["promotion_approval"]["approval_id"], "approval_reference_flow")
+        self.assertEqual(result.artifact.metadata["rollback_manifest_ref"], "rollback://tenant_a/crops/reference-flow")
         self.assertEqual(result.gate_result.release_decision, "promote")
         self.assertEqual(result.serving_route.engine, "sglang")
         self.assertTrue(result.serving_route.verification_required)
@@ -87,10 +95,81 @@ class MeshBrainReferenceFlowTests(unittest.TestCase):
         self.assertEqual(result.trace_dataset_row.row_type, "rl_trajectory")
         self.assertEqual(result.trace_dataset_row.payload["terminal_outcome"], "approval_required")
 
+    def test_registry_rejects_promotion_without_operator_approval_and_rollback_metadata(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            registry = MeshBrainRegistry(temp_dir)
+            artifact = registry.register_artifact(
+                new_model_artifact(
+                    artifact_type="tenant_adapter",
+                    version="dataset_test",
+                    signed_manifest_ref="sha256:adapter",
+                    tenant_id="tenant_a",
+                    task_type="crops",
+                )
+            )
+            gate_result = evaluate_release_gate(
+                candidate_artifact_id=artifact.artifact_id,
+                metrics={
+                    "critical_policy_regressions": 0,
+                    "unsafe_autonomous_action_rate_delta": 0,
+                    "schema_validity_delta": 0,
+                    "task_success_rate": 1.0,
+                    "canary_passed": False,
+                    "model_kernel_passed": True,
+                    "live_serving_smoke_passed": True,
+                    "response_eval_passed": True,
+                    "judge_rubric_passed": True,
+                    "red_team_regression_passed": True,
+                    "curated_quality_training_passed": True,
+                    "quality_source_coverage": curated_quality_source_coverage_pass(),
+                },
+                policy=ReleaseGatePolicy(task_success_threshold=0.8),
+            )
 
-def _route():
+            missing_quality_coverage_gate = evaluate_release_gate(
+                candidate_artifact_id=artifact.artifact_id,
+                metrics={
+                    key: value
+                    for key, value in gate_result.metrics.items()
+                    if key != "quality_source_coverage"
+                },
+                policy=ReleaseGatePolicy(task_success_threshold=0.8),
+            )
+            with self.assertRaisesRegex(ValueError, "curated quality coverage"):
+                registry.promote_artifact(
+                    artifact.artifact_id,
+                    missing_quality_coverage_gate,
+                    alias="tenant_a/crops",
+                    approval={
+                        "approval_id": "approval_test",
+                        "operator_id": "operator_1",
+                        "roles": ["approver"],
+                        "approved_at": "2026-05-04T00:00:00+00:00",
+                        "approved": True,
+                    },
+                    rollback_manifest_ref="rollback://tenant_a/crops",
+                )
+
+            with self.assertRaisesRegex(ValueError, "operator approval"):
+                registry.promote_artifact(artifact.artifact_id, gate_result, alias="tenant_a/crops")
+            with self.assertRaisesRegex(ValueError, "rollback metadata"):
+                registry.promote_artifact(
+                    artifact.artifact_id,
+                    gate_result,
+                    alias="tenant_a/crops",
+                    approval={
+                        "approval_id": "approval_test",
+                        "operator_id": "operator_1",
+                        "roles": ["approver"],
+                        "approved_at": "2026-05-04T00:00:00+00:00",
+                        "approved": True,
+                    },
+                )
+
+
+def _route() -> Any:
     class Route:
-        def to_dict(self):
+        def to_dict(self) -> dict[str, str]:
             return {
                 "tenant_id": "tenant_a",
                 "task_type": "crops",

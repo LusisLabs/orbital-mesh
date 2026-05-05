@@ -18,6 +18,7 @@ REQUIRED_OBSERVABILITY_LABELS = (
     "task_type",
     "eval_outcome",
     "policy_route",
+    "approval_route",
 )
 
 
@@ -40,8 +41,14 @@ class MeshBrainObservation:
     labels: dict[str, str]
     token_count: int
     cache_hit_rate: float
+    latency_p50_ms: float
+    latency_p95_ms: float
+    latency_p99_ms: float
+    token_throughput: float
+    error_rate: float
     eval_outcome: str
     policy_route: str
+    approval_route: str
     samples: list[MeshBrainMetricSample]
 
     def to_dict(self) -> dict[str, Any]:
@@ -51,8 +58,14 @@ class MeshBrainObservation:
             "labels": dict(self.labels),
             "token_count": self.token_count,
             "cache_hit_rate": self.cache_hit_rate,
+            "latency_p50_ms": self.latency_p50_ms,
+            "latency_p95_ms": self.latency_p95_ms,
+            "latency_p99_ms": self.latency_p99_ms,
+            "token_throughput": self.token_throughput,
+            "error_rate": self.error_rate,
             "eval_outcome": self.eval_outcome,
             "policy_route": self.policy_route,
+            "approval_route": self.approval_route,
             "samples": [sample.to_dict() for sample in self.samples],
         }
 
@@ -65,9 +78,16 @@ def build_mesh_brain_observation(
     engine_metrics: dict[str, dict[str, Any]] | None = None,
 ) -> MeshBrainObservation:
     token_count = int(serving_plan.trace.get("estimated_tokens", 0) or 0)
-    cache_hit_rate = _cache_hit_rate(serving_plan=serving_plan, engine_metrics=engine_metrics or {})
+    pool_metrics = _pool_metrics(serving_plan=serving_plan, engine_metrics=engine_metrics or {})
+    cache_hit_rate = _cache_hit_rate(serving_plan=serving_plan, pool_metrics=pool_metrics)
+    latency_p50_ms = _metric(pool_metrics, "latency_p50_ms", default=_metric(pool_metrics, "latency_p95_ms", default=0.0))
+    latency_p95_ms = _metric(pool_metrics, "latency_p95_ms", default=latency_p50_ms)
+    latency_p99_ms = _metric(pool_metrics, "latency_p99_ms", default=latency_p95_ms)
+    token_throughput = _metric(pool_metrics, "tokens_per_second", default=0.0)
+    error_rate = _metric(pool_metrics, "error_rate", default=0.0)
     eval_outcome = eval_job.release_decision
     policy_route = _policy_route(agent_result)
+    approval_route = _approval_route(agent_result)
     labels = {
         "model": serving_plan.model_artifact_id or "unresolved",
         "adapter": ",".join(serving_plan.adapter_artifact_ids) if serving_plan.adapter_artifact_ids else "none",
@@ -76,6 +96,7 @@ def build_mesh_brain_observation(
         "task_type": serving_plan.route.task_type,
         "eval_outcome": eval_outcome,
         "policy_route": policy_route,
+        "approval_route": approval_route,
     }
     _validate_labels(labels)
     samples = [
@@ -99,6 +120,36 @@ def build_mesh_brain_observation(
             help_text="Serving engine cache hit rate observed for Mesh Brain request path",
         ),
         MeshBrainMetricSample(
+            name="mesh_brain_latency_p50_ms",
+            value=latency_p50_ms,
+            labels=labels,
+            help_text="Mesh Brain serving latency p50 in milliseconds for the selected backend route",
+        ),
+        MeshBrainMetricSample(
+            name="mesh_brain_latency_p95_ms",
+            value=latency_p95_ms,
+            labels=labels,
+            help_text="Mesh Brain serving latency p95 in milliseconds for the selected backend route",
+        ),
+        MeshBrainMetricSample(
+            name="mesh_brain_latency_p99_ms",
+            value=latency_p99_ms,
+            labels=labels,
+            help_text="Mesh Brain serving latency p99 in milliseconds for the selected backend route",
+        ),
+        MeshBrainMetricSample(
+            name="mesh_brain_token_throughput",
+            value=token_throughput,
+            labels=labels,
+            help_text="Mesh Brain backend token throughput in tokens per second",
+        ),
+        MeshBrainMetricSample(
+            name="mesh_brain_error_rate",
+            value=error_rate,
+            labels=labels,
+            help_text="Mesh Brain backend error rate for the selected route",
+        ),
+        MeshBrainMetricSample(
             name="mesh_brain_eval_outcome",
             value=_outcome_value(eval_outcome),
             labels=labels,
@@ -110,6 +161,12 @@ def build_mesh_brain_observation(
             labels=labels,
             help_text="Policy route for Mesh Brain tool path: block=0, approval_required=0.5, allow=1",
         ),
+        MeshBrainMetricSample(
+            name="mesh_brain_approval_route",
+            value=_approval_value(approval_route),
+            labels=labels,
+            help_text="Approval route for Mesh Brain canary/tool path: blocked=0, not_required=0.5, operator_approval_required=1",
+        ),
     ]
     return MeshBrainObservation(
         observation_id=f"mb_obs_{stable_digest({'labels': labels, 'tokens': token_count, 'cache': cache_hit_rate})[:12]}",
@@ -117,8 +174,14 @@ def build_mesh_brain_observation(
         labels=labels,
         token_count=token_count,
         cache_hit_rate=cache_hit_rate,
+        latency_p50_ms=latency_p50_ms,
+        latency_p95_ms=latency_p95_ms,
+        latency_p99_ms=latency_p99_ms,
+        token_throughput=token_throughput,
+        error_rate=error_rate,
         eval_outcome=eval_outcome,
         policy_route=policy_route,
+        approval_route=approval_route,
         samples=samples,
     )
 
@@ -153,13 +216,24 @@ def write_mesh_brain_observability(*, observation: MeshBrainObservation, output_
     }
 
 
-def _cache_hit_rate(*, serving_plan: ServingPlan, engine_metrics: dict[str, dict[str, Any]]) -> float:
+def _pool_metrics(*, serving_plan: ServingPlan, engine_metrics: dict[str, dict[str, Any]]) -> dict[str, Any]:
     pool_metrics = engine_metrics.get(serving_plan.route.hardware_tier, {}).get("metrics", {})
-    if isinstance(pool_metrics, dict) and "cache_hit_rate" in pool_metrics:
+    return dict(pool_metrics) if isinstance(pool_metrics, dict) else {}
+
+
+def _cache_hit_rate(*, serving_plan: ServingPlan, pool_metrics: dict[str, Any]) -> float:
+    if "cache_hit_rate" in pool_metrics:
         return float(pool_metrics["cache_hit_rate"])
     if serving_plan.route.prefix_cache:
         return 1.0
     return 0.0
+
+
+def _metric(metrics: dict[str, Any], key: str, *, default: float) -> float:
+    value = metrics.get(key)
+    if value is None:
+        return default
+    return float(value)
 
 
 def _policy_route(agent_result: AgentRuntimeResult) -> str:
@@ -168,6 +242,14 @@ def _policy_route(agent_result: AgentRuntimeResult) -> str:
     if agent_result.status.startswith("blocked"):
         return "block"
     return "allow"
+
+
+def _approval_route(agent_result: AgentRuntimeResult) -> str:
+    if agent_result.status == "approval_required":
+        return "operator_approval_required"
+    if agent_result.status.startswith("blocked"):
+        return "blocked"
+    return "not_required"
 
 
 def _validate_labels(labels: dict[str, str]) -> None:
@@ -191,6 +273,14 @@ def _policy_value(policy_route: str) -> float:
         "approval_required": 0.5,
         "allow": 1.0,
     }.get(policy_route, 0.0)
+
+
+def _approval_value(approval_route: str) -> float:
+    return {
+        "blocked": 0.0,
+        "not_required": 0.5,
+        "operator_approval_required": 1.0,
+    }.get(approval_route, 0.0)
 
 
 def _escape(value: str) -> str:

@@ -299,6 +299,17 @@ REQUIRED_PROMOTION_GATE_METRICS = (
     "response_eval_passed",
     "judge_rubric_passed",
     "red_team_regression_passed",
+    "curated_quality_training_passed",
+)
+
+REQUIRED_CURATED_QUALITY_COVERAGE = (
+    "has_runtime_session",
+    "has_runtime_event",
+    "has_incident_corpus",
+    "has_preference_rows",
+    "has_eval_rows",
+    "has_red_team_rows",
+    "has_non_bootstrap_training_source",
 )
 
 
@@ -315,6 +326,9 @@ def _validate_promotion_controls(
     ]
     if missing_gates:
         raise ValueError(f"promotion missing required gates: {', '.join(missing_gates)}")
+    missing_quality_coverage = _missing_curated_quality_coverage(gate_result.metrics)
+    if missing_quality_coverage:
+        raise ValueError(f"promotion missing curated quality coverage: {', '.join(missing_quality_coverage)}")
     approval_record = approval.to_dict() if isinstance(approval, PromotionApproval) else dict(approval or {})
     if approval_record.get("approved") is not True:
         raise ValueError("promotion requires operator approval")
@@ -392,11 +406,25 @@ def deterministic_alias(tenant_id: str, task_type: str) -> str:
 
 
 def artifact_fingerprint(artifact: ModelArtifact) -> str:
-    return stable_digest(artifact.to_dict())
+    return str(stable_digest(artifact.to_dict()))
 
 
-def _required_gate_metrics() -> dict[str, bool]:
-    return {gate: True for gate in REQUIRED_PROMOTION_GATE_METRICS}
+def _required_gate_metrics() -> dict[str, Any]:
+    return {
+        **{gate: True for gate in REQUIRED_PROMOTION_GATE_METRICS},
+        "quality_source_coverage": _curated_quality_source_coverage(),
+    }
+
+
+def _missing_curated_quality_coverage(metrics: dict[str, Any]) -> list[str]:
+    coverage = metrics.get("quality_source_coverage")
+    if not isinstance(coverage, dict):
+        return list(REQUIRED_CURATED_QUALITY_COVERAGE)
+    return [key for key in REQUIRED_CURATED_QUALITY_COVERAGE if coverage.get(key) is not True]
+
+
+def _curated_quality_source_coverage() -> dict[str, bool]:
+    return {key: True for key in REQUIRED_CURATED_QUALITY_COVERAGE}
 
 
 def _approval(approval_id: str) -> PromotionApproval:

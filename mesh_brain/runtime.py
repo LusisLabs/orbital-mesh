@@ -41,6 +41,25 @@ DEPLOYABLE_ARTIFACT_TYPES = {
 
 PROMOTABLE_DECISIONS = {"canary", "promote"}
 
+REQUIRED_PRODUCTION_PROMOTION_GATES = (
+    "model_kernel_passed",
+    "live_serving_smoke_passed",
+    "response_eval_passed",
+    "judge_rubric_passed",
+    "red_team_regression_passed",
+    "curated_quality_training_passed",
+)
+
+REQUIRED_CURATED_QUALITY_COVERAGE = (
+    "has_runtime_session",
+    "has_runtime_event",
+    "has_incident_corpus",
+    "has_preference_rows",
+    "has_eval_rows",
+    "has_red_team_rows",
+    "has_non_bootstrap_training_source",
+)
+
 ENGINE_BY_HARDWARE_TIER = {
     "nvidia_datacenter": ("sglang", "vllm"),
     "nvidia_large_cluster": ("dynamo", "llm-d"),
@@ -458,11 +477,24 @@ class MeshBrainRegistry:
             artifacts = payload.get("artifacts", {})
         return [ModelArtifact.from_dict(row) for row in artifacts.values() if isinstance(row, dict)] if isinstance(artifacts, dict) else []
 
-    def promote_artifact(self, artifact_id: str, gate_result: ReleaseGateResult, *, alias: str) -> ModelArtifact:
+    def promote_artifact(
+        self,
+        artifact_id: str,
+        gate_result: ReleaseGateResult,
+        *,
+        alias: str,
+        approval: dict[str, Any] | None = None,
+        rollback_manifest_ref: str | None = None,
+    ) -> ModelArtifact:
         if gate_result.candidate_artifact_id != artifact_id:
             raise ValueError("gate result does not belong to artifact")
         if gate_result.release_decision not in PROMOTABLE_DECISIONS:
             raise ValueError("blocked artifacts cannot be promoted")
+        approval_record = _validate_registry_promotion_controls(
+            gate_result=gate_result,
+            approval=approval,
+            rollback_manifest_ref=rollback_manifest_ref,
+        )
         with LockedJsonFile(self._path) as payload:
             artifacts = payload.setdefault("artifacts", {})
             row = artifacts.get(artifact_id) if isinstance(artifacts, dict) else None
@@ -474,6 +506,9 @@ class MeshBrainRegistry:
             artifact.state = "canary" if gate_result.release_decision == "canary" else "production"
             artifact.eval_report_id = gate_result.gate_result_id
             artifact.rollback_artifact_id = previous_id if isinstance(previous_id, str) else None
+            artifact.metadata["promotion_approval"] = approval_record
+            artifact.metadata["rollback_manifest_ref"] = rollback_manifest_ref
+            artifact.metadata["promotion_gate_metrics"] = dict(gate_result.metrics)
             artifacts[artifact.artifact_id] = artifact.to_dict()
             if artifact.state == "production" and isinstance(previous_id, str) and previous_id in artifacts:
                 previous = ModelArtifact.from_dict(artifacts[previous_id])
@@ -510,6 +545,50 @@ class MeshBrainRegistry:
             aliases[alias] = restored.artifact_id
             payload["aliases"] = aliases
             return restored
+
+
+def _validate_registry_promotion_controls(
+    *,
+    gate_result: ReleaseGateResult,
+    approval: dict[str, Any] | None,
+    rollback_manifest_ref: str | None,
+) -> dict[str, Any]:
+    missing_gates = [
+        gate
+        for gate in REQUIRED_PRODUCTION_PROMOTION_GATES
+        if gate_result.metrics.get(gate) is not True
+    ]
+    if missing_gates:
+        raise ValueError(f"promotion missing required gates: {', '.join(missing_gates)}")
+    missing_quality_coverage = _missing_curated_quality_coverage(gate_result.metrics)
+    if missing_quality_coverage:
+        raise ValueError(f"promotion missing curated quality coverage: {', '.join(missing_quality_coverage)}")
+    approval_record = dict(approval or {})
+    if approval_record.get("approved") is not True:
+        raise ValueError("promotion requires operator approval")
+    if not str(approval_record.get("approval_id") or "").strip():
+        raise ValueError("promotion approval requires approval_id")
+    if not str(approval_record.get("operator_id") or "").strip():
+        raise ValueError("promotion approval requires operator_id")
+    roles = approval_record.get("roles")
+    if not isinstance(roles, list) or not roles:
+        raise ValueError("promotion approval requires operator roles")
+    if not str(approval_record.get("approved_at") or "").strip():
+        raise ValueError("promotion approval requires approved_at")
+    if not rollback_manifest_ref:
+        raise ValueError("promotion requires rollback metadata")
+    return approval_record
+
+
+def _missing_curated_quality_coverage(metrics: dict[str, Any]) -> list[str]:
+    coverage = metrics.get("quality_source_coverage")
+    if not isinstance(coverage, dict):
+        return list(REQUIRED_CURATED_QUALITY_COVERAGE)
+    return [key for key in REQUIRED_CURATED_QUALITY_COVERAGE if coverage.get(key) is not True]
+
+
+def curated_quality_source_coverage_pass() -> dict[str, bool]:
+    return {key: True for key in REQUIRED_CURATED_QUALITY_COVERAGE}
 
 
 def select_serving_route(*, context: InferenceRequestContext, artifacts: list[ModelArtifact]) -> ServingRoute:
@@ -640,10 +719,30 @@ def run_e2e_reference_flow(*, state_directory: str | Path, tenant_id: str = "ten
             "latency_p95_ms": 850,
             "cost_per_completed_task": 0.07,
             "canary_passed": True,
+            "model_kernel_passed": True,
+            "live_serving_smoke_passed": True,
+            "response_eval_passed": True,
+            "judge_rubric_passed": True,
+            "red_team_regression_passed": True,
+            "curated_quality_training_passed": True,
+            "quality_source_coverage": curated_quality_source_coverage_pass(),
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
     )
-    artifact = registry.promote_artifact(artifact.artifact_id, gate_result, alias=f"{tenant_id}/crops")
+    artifact = registry.promote_artifact(
+        artifact.artifact_id,
+        gate_result,
+        alias=f"{tenant_id}/crops",
+        approval={
+            "approval_id": "approval_reference_flow",
+            "operator_id": "operator_1",
+            "roles": ["approver"],
+            "approved_at": utc_now(),
+            "evidence_refs": ["mesh://approval/reference-flow"],
+            "approved": True,
+        },
+        rollback_manifest_ref=f"rollback://{tenant_id}/crops/reference-flow",
+    )
     serving_route = select_serving_route(
         context=InferenceRequestContext(
             tenant_id=tenant_id,

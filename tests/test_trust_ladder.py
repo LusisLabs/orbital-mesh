@@ -24,6 +24,11 @@ class TrustLadderTests(unittest.TestCase):
 
     def test_unknown_pair_defaults_to_suggest(self):
         self.assertEqual(self.ladder.get_level("restart_deployment", "search"), "suggest")
+        entry = self.ladder.get_entry("restart_deployment", "search")
+        self.assertEqual(entry["next_level"], "draft")
+        self.assertEqual(entry["promotion_requirements"], {"min_runs": 3, "min_success_rate": 0.5})
+        self.assertIn("3 more successful or reviewed runs before draft", entry["promotion_blockers"])
+        self.assertIn("success rate 0% below 50% for draft", entry["autonomy_ceiling_reason"])
 
     def test_graduation_suggest_to_draft(self):
         for _ in range(3):
@@ -37,6 +42,9 @@ class TrustLadderTests(unittest.TestCase):
         entry = self.ladder.get_entry("restart_deployment", "search")
         self.assertEqual(entry["level"], "auto")
         self.assertEqual(entry["success_rate"], 1.0)
+        self.assertIsNone(entry["next_level"])
+        self.assertEqual(entry["promotion_blockers"], [])
+        self.assertIn("auto ceiling reached", entry["autonomy_ceiling_reason"])
 
     def test_demotion_on_consecutive_failures(self):
         # Graduate to auto first
@@ -66,6 +74,7 @@ class TrustLadderTests(unittest.TestCase):
         entry = self.ladder.get_entry("scale_deployment", "api")
         self.assertEqual(entry["level"], "auto")
         self.assertEqual(entry["manual_override_reason"], "operator_bootstrap")
+        self.assertIn("manual override: operator_bootstrap", entry["promotion_blockers"])
 
     def test_override_rejects_unknown_level(self):
         with self.assertRaises(ValueError):

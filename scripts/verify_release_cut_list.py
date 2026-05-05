@@ -29,6 +29,8 @@ REQUIRED_DOCS = (
     "docs/authenticated-ingress.md",
     "docs/reference-architectures.md",
     "docs/pilot-slo-error-budget.md",
+    "docs/post-training/runtime.md",
+    "docs/security-audit-readiness.md",
 )
 
 REQUIRED_SCRIPTS = (
@@ -38,6 +40,9 @@ REQUIRED_SCRIPTS = (
     "scripts/verify_postgres_restart_proof.py",
     "scripts/generate_release_provenance.py",
     "scripts/verify_authenticated_ingress.py",
+    "scripts/verify_mesh_brain_artifact_registry.py",
+    "scripts/purge_run_exports.py",
+    "scripts/verify_security_audit_readiness.py",
 )
 
 REQUIRED_API_MARKERS = (
@@ -48,10 +53,28 @@ REQUIRED_API_MARKERS = (
 )
 
 REQUIRED_MARKERS = {
+    "docker-compose.prod.yml": (
+        '${MESH_PUBLISH_HOST:-127.0.0.1}:${MESH_PUBLISH_PORT:-8787}:8787',
+        'MESH_READINESS_PROFILE: "${MESH_READINESS_PROFILE:-pilot}"',
+        'MESH_STATE_BACKEND: "${MESH_STATE_BACKEND:-postgres}"',
+        'MESH_DATABASE_URL: "${MESH_DATABASE_URL:?set Postgres database URL for production state}"',
+        'MESH_OPERATOR_IDENTITY_REQUIRED: "${MESH_OPERATOR_IDENTITY_REQUIRED:-1}"',
+        'MESH_FORCE_APPROVAL_GATE: "${MESH_FORCE_APPROVAL_GATE:-1}"',
+        'MESH_LIVE_FEEDBACK_REQUIRED: "${MESH_LIVE_FEEDBACK_REQUIRED:-1}"',
+        'MESH_FEEDBACK_PROMETHEUS_ENABLED: "${MESH_FEEDBACK_PROMETHEUS_ENABLED:-1}"',
+        'MESH_PROMETHEUS_URL: "${MESH_PROMETHEUS_URL:?set production Prometheus URL for feedback and telemetry}"',
+        'MESH_BRAIN_ARTIFACT_URI_PREFIX: "${MESH_BRAIN_ARTIFACT_URI_PREFIX:?set durable object-storage URI prefix for Mesh Brain artifacts}"',
+        'MESH_BRAIN_SERVING_BASE_URL: "${MESH_BRAIN_SERVING_BASE_URL:?set OpenAI-compatible Mesh Brain serving backend URL}"',
+        'MESH_BRAIN_SERVING_MODEL: "${MESH_BRAIN_SERVING_MODEL:?set Mesh Brain serving model name}"',
+    ),
     "docker-compose.stack.yml": (
         'MESH_STATE_BACKEND: "${MESH_STATE_BACKEND:-postgres}"',
         'MESH_DEFAULT_STEERING_MODE: "${MESH_DEFAULT_STEERING_MODE:-approval_gate}"',
         'MESH_OPERATOR_IDENTITY_REQUIRED: "${MESH_OPERATOR_IDENTITY_REQUIRED:-1}"',
+        'MESH_BRAIN_ARTIFACT_URI_PREFIX: "${MESH_BRAIN_ARTIFACT_URI_PREFIX:-}"',
+        'MESH_BRAIN_SERVING_BASE_URL: "${MESH_BRAIN_SERVING_BASE_URL:-}"',
+        'MESH_BRAIN_SERVING_MODEL: "${MESH_BRAIN_SERVING_MODEL:-}"',
+        'MESH_RUN_EXPORT_RETENTION_REVIEWED: "${MESH_RUN_EXPORT_RETENTION_REVIEWED:-0}"',
         'MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE: "${MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE:-false}"',
         'MESH_INCIDENT_CREDENTIALS_AVAILABLE: "${MESH_INCIDENT_CREDENTIALS_AVAILABLE:-false}"',
         'E2E_AUTO_APPROVE: "${E2E_AUTO_APPROVE:-1}"',
@@ -80,6 +103,7 @@ REQUIRED_MARKERS = {
         "MESH_IMAGE_DIGEST",
         "MESH_SBOM_PATH",
         "MESH_VULNERABILITY_SCAN_PATH",
+        "scripts/verify_mesh_brain_artifact_registry.py",
     ),
     "scripts/verify_authenticated_ingress.py": (
         "mesh.authenticated_ingress_rehearsal.v1",
@@ -94,6 +118,10 @@ REQUIRED_MARKERS = {
     ),
     "docs/authenticated-ingress.md": (
         "MESH_OPERATOR_IDENTITY_REQUIRED=1",
+        "MESH_PUBLISH_HOST",
+        "MESH_STATE_BACKEND=postgres",
+        "MESH_BRAIN_ARTIFACT_URI_PREFIX",
+        "MESH_BRAIN_SERVING_BASE_URL",
         "X-Mesh-Operator",
         "X-Mesh-Roles",
         "viewer",
@@ -126,6 +154,94 @@ REQUIRED_MARKERS = {
         "scripts/generate_release_provenance.py",
         "Hard Stop Conditions",
         "Error Budget",
+    ),
+    "docs/post-training/runtime.md": (
+        "MESH_BRAIN_ARTIFACT_URI_PREFIX",
+        "MESH_BRAIN_SERVING_BASE_URL",
+        "MESH_BRAIN_SERVING_MODEL",
+        "build_production_artifact_ref()",
+        "verify_production_artifact_record()",
+        "scripts/verify_mesh_brain_artifact_registry.py",
+        "mesh.artifact_upload_proof.v1",
+        "prior stable live-serving smoke",
+        "durable object-storage URIs",
+        "curated_quality_training_passed",
+        "quality_source_coverage",
+        "evaluate_quality_dataset_provenance()",
+        "rollback metadata",
+        "operator approval",
+    ),
+    "mesh_brain/artifact_registry.py": (
+        "DURABLE_ARTIFACT_URI_SCHEMES",
+        "build_production_artifact_ref",
+        "verify_production_artifact_record",
+        "production artifact URI must use durable object storage scheme",
+    ),
+    "scripts/verify_mesh_brain_artifact_registry.py": (
+        "mesh.mesh_brain_artifact_registry_proof.v1",
+        "--require-upload-proof",
+        "mesh.artifact_upload_proof.v1",
+        "verify_production_artifact_record",
+        "upload_proofs_present",
+    ),
+    "scripts/purge_run_exports.py": (
+        "mesh.run_export.v1",
+        "--apply",
+        "retention.delete_after",
+        "would_delete",
+        "run_exports",
+    ),
+    "SECURITY.md": (
+        "Reporting Vulnerabilities",
+        "MESH_OPERATOR_IDENTITY_REQUIRED=1",
+        "MESH_FORCE_APPROVAL_GATE=1",
+        "complete release provenance",
+    ),
+    ".github/CODEOWNERS": (
+        "/services/control_plane.py",
+        "/control_plane_server.py",
+        "/shared/mesh_runtime/schemas/",
+        "/policies/",
+    ),
+    ".github/dependabot.yml": (
+        'package-ecosystem: "github-actions"',
+        'package-ecosystem: "npm"',
+        'package-ecosystem: "pip"',
+        'package-ecosystem: "cargo"',
+        'directory: "/latent-mesh/LatentMAS"',
+    ),
+    ".github/workflows/security.yml": (
+        "Security Audit",
+        "cron:",
+        "verify_security_audit_readiness.py --json",
+        "actions/dependency-review-action@",
+        "gitleaks/gitleaks-action@",
+        "google/osv-scanner-action@",
+        "npm audit --audit-level=high",
+        "EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE",
+        "github/codeql-action/init@",
+        "ossf/scorecard-action@",
+        "OPENSSF_SCORECARD_ON_PRIVATE",
+    ),
+    ".github/workflows/ci.yml": (
+        "permissions:",
+        "contents: read",
+        "npm run lint",
+        "docker build",
+    ),
+    "docs/security-audit-readiness.md": (
+        "OpenSSF Control Map",
+        "Regular Audit Cadence",
+        "E2E Audit Commands",
+        "Audit Evidence Package",
+        "OpenSSF Best Practices Badge",
+    ),
+    "services/control_plane.py": (
+        "mesh_brain_artifact_uri_prefix",
+        "mesh_brain_serving_base_url",
+        "mesh_brain_serving_model",
+        "build_production_artifact_ref",
+        "production_artifact",
     ),
 }
 
@@ -232,6 +348,7 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
         ),
         "docs/release-provenance.md": (
             "scripts/generate_release_provenance.py",
+            "scripts/verify_mesh_brain_artifact_registry.py",
         ),
         "docs/authenticated-ingress.md": (
             "control_plane_server.py",
@@ -258,6 +375,20 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
             "scripts/verify_authenticated_ingress.py",
             "scripts/verify_postgres_restart_proof.py",
             "scripts/generate_release_provenance.py",
+            "scripts/verify_mesh_brain_artifact_registry.py",
+        ),
+        "docs/post-training/runtime.md": (
+            "mesh_brain/artifact_registry.py",
+            "scripts/verify_mesh_brain_artifact_registry.py",
+        ),
+        "docs/security-audit-readiness.md": (
+            "SECURITY.md",
+            ".github/workflows/security.yml",
+            ".github/dependabot.yml",
+            ".github/CODEOWNERS",
+            "scripts/verify_security_audit_readiness.py",
+            "scripts/generate_release_provenance.py",
+            "scripts/verify_release_cut_list.py",
         ),
     }
     checks: list[dict[str, Any]] = []

@@ -69,6 +69,9 @@ class RuntimeConfig:
     web_asset_path: str = str(DEFAULT_WEB_ASSET_PATH)
     vault_path: str = str(DEFAULT_VAULT_PATH)
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
+    mesh_brain_artifact_uri_prefix: str | None = None
+    mesh_brain_serving_base_url: str | None = None
+    mesh_brain_serving_model: str | None = None
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
     readiness_profile: str = "local"
@@ -94,6 +97,9 @@ class RuntimeConfig:
     gitnexus_sidecar_command: str | None = None
     gitnexus_disable_autostart: bool = False
     max_json_body_bytes: int = 1_048_576
+    run_export_max_bytes: int = 5_242_880
+    run_export_retention_days: int = 30
+    run_export_retention_reviewed: bool = False
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
     vault_ai_postprocess_enabled: bool = False
@@ -322,6 +328,9 @@ class RuntimeConfig:
                 "MESH_INTEGRATIONS_CONFIG_PATH",
                 str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
             ),
+            mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
+            mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
+            mesh_brain_serving_model=os.getenv("MESH_BRAIN_SERVING_MODEL") or None,
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
             readiness_profile=_normalize_readiness_profile(
@@ -357,6 +366,9 @@ class RuntimeConfig:
             gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()
             in ("1", "true", "yes"),
             max_json_body_bytes=int(os.getenv("MESH_MAX_JSON_BODY_BYTES", "1048576")),
+            run_export_max_bytes=int(os.getenv("MESH_RUN_EXPORT_MAX_BYTES", "5242880")),
+            run_export_retention_days=int(os.getenv("MESH_RUN_EXPORT_RETENTION_DAYS", "30")),
+            run_export_retention_reviewed=_env_bool("MESH_RUN_EXPORT_RETENTION_REVIEWED", default=False),
             access_log_enabled=os.getenv("MESH_ACCESS_LOG", "").lower() in ("1", "true", "yes"),
             security_headers_enabled=os.getenv("MESH_SECURITY_HEADERS", "true").lower()
             not in ("0", "false", "no"),

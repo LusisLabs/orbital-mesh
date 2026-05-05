@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .backend_matrix import BackendMatrixSummary
 from .model_kernel_probe import ModelKernelProbeResult
 from .mvp import MeshBrainMVPResult
 from .observability import mesh_brain_observation_to_prometheus
+from .rollback_drill import RollbackDrillResult
 from .run_mvp_e2e import persisted_artifact_paths
 from .runtime import utc_now
 
@@ -38,6 +40,7 @@ MESH_BRAIN_LIVE_ADAPTER_RUNTIME_ARTIFACT_KEYS = (
 MESH_BRAIN_BACKEND_MATRIX_ARTIFACT_KEYS = (
     "mesh_brain_backend_matrix_results",
     "mesh_brain_backend_matrix_summary",
+    "mesh_brain_backend_matrix_record",
 )
 
 MESH_BRAIN_POSTTRAINING_PROOF_ARTIFACT_KEYS = (
@@ -74,6 +77,15 @@ MESH_BRAIN_MODEL_KERNEL_ARTIFACT_KEYS = (
     "mesh_brain_model_kernel_runtime_benchmark",
     "mesh_brain_model_kernel_gate",
     "mesh_brain_model_kernel_probe_summary",
+)
+
+MESH_BRAIN_ROLLBACK_DRILL_ARTIFACT_KEYS = (
+    "mesh_brain_rollback_drill_before",
+    "mesh_brain_rollback_manifest",
+    "mesh_brain_rollback_audit_events",
+    "mesh_brain_rollback_drill_metrics",
+    "mesh_brain_rollback_drill_after",
+    "mesh_brain_rollback_drill_summary",
 )
 
 
@@ -297,6 +309,7 @@ def live_serving_smoke_to_run_record(
         "summary_metrics": {
             "model": summary.get("model"),
             "requested_model": summary.get("requested_model"),
+            "base_url": summary.get("base_url"),
             "backend_name": summary.get("backend_name"),
             "hardware_tier": summary.get("hardware_tier"),
             "task_type": summary.get("task_type"),
@@ -311,8 +324,125 @@ def live_serving_smoke_to_run_record(
     }
 
 
+def build_rollback_drill_artifact_bundle(
+    *,
+    result: RollbackDrillResult,
+) -> MeshBrainArtifactBundle:
+    key_map = {
+        "mesh_brain_rollback_drill_before": "rollback_drill_before",
+        "mesh_brain_rollback_manifest": "rollback_manifest",
+        "mesh_brain_rollback_audit_events": "rollback_audit_events",
+        "mesh_brain_rollback_drill_metrics": "rollback_drill_metrics",
+        "mesh_brain_rollback_drill_after": "rollback_drill_after",
+        "mesh_brain_rollback_drill_summary": "rollback_drill_summary",
+    }
+    refs = {
+        artifact_key: _artifact_ref(artifact_key, Path(result.artifact_paths[source_key]))
+        for artifact_key, source_key in key_map.items()
+    }
+    return MeshBrainArtifactBundle(
+        workflow_id=result.drill_id,
+        tenant_id=result.tenant_id,
+        output_directory=str(Path(result.artifact_paths["rollback_drill_summary"]).parent),
+        artifacts=refs,
+        release_decision=result.release_decision,
+        deployment_record={
+            "status": result.status,
+            "deployed": False,
+            "release_decision": result.release_decision,
+            "alias": result.alias,
+            "previous_artifact_id": result.previous_artifact_id,
+            "candidate_artifact_id": result.candidate_artifact_id,
+            "restored_artifact_id": result.restored_artifact_id,
+            "rollback_manifest": result.rollback_manifest,
+        },
+    )
+
+
+def rollback_drill_to_run_record(
+    *,
+    result: RollbackDrillResult,
+    bundle: MeshBrainArtifactBundle,
+    run_id: str,
+) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "tenant_id": bundle.tenant_id,
+        "stage": "completed" if result.status == "completed" else "failed",
+        "status": result.status,
+        "artifact_refs": {key: ref.to_dict() for key, ref in bundle.artifacts.items()},
+        "audit_events": list(result.audit_events),
+        "policy_events": [],
+        "summary_metrics": dict(result.metrics),
+        "final_release_decision": bundle.release_decision,
+    }
+
+
+def build_backend_matrix_artifact_bundle(
+    *,
+    summary: BackendMatrixSummary,
+) -> MeshBrainArtifactBundle:
+    artifact_paths = summary.artifact_paths
+    refs = {
+        "mesh_brain_backend_matrix_results": _artifact_ref(
+            "mesh_brain_backend_matrix_results",
+            Path(artifact_paths["backend_matrix_results"]),
+        ),
+        "mesh_brain_backend_matrix_summary": _artifact_ref(
+            "mesh_brain_backend_matrix_summary",
+            Path(artifact_paths["backend_matrix_summary"]),
+        ),
+    }
+    tenant_id = "unknown"
+    if summary.results:
+        tenant_id = str(summary.results[0].summary.get("tenant_id") or "unknown")
+    return MeshBrainArtifactBundle(
+        workflow_id=f"mesh_brain_backend_matrix_{summary.result_count}_{summary.release_decision}",
+        tenant_id=tenant_id,
+        output_directory=summary.output_directory,
+        artifacts=refs,
+        release_decision=summary.release_decision,
+        deployment_record={
+            "status": summary.status,
+            "deployed": False,
+            "release_decision": summary.release_decision,
+            "result_count": summary.result_count,
+            "passed_count": summary.passed_count,
+            "manual_review_count": summary.manual_review_count,
+            "blocked_count": summary.blocked_count,
+        },
+    )
+
+
+def backend_matrix_to_run_record(
+    *,
+    summary: BackendMatrixSummary,
+    bundle: MeshBrainArtifactBundle,
+    run_id: str,
+) -> dict[str, Any]:
+    completed = summary.status == "pass"
+    return {
+        "run_id": run_id,
+        "tenant_id": bundle.tenant_id,
+        "stage": "completed" if completed else "failed",
+        "status": "completed" if completed else summary.status,
+        "artifact_refs": {key: ref.to_dict() for key, ref in bundle.artifacts.items()},
+        "audit_events": [],
+        "policy_events": [],
+        "summary_metrics": {
+            "result_count": summary.result_count,
+            "passed_count": summary.passed_count,
+            "manual_review_count": summary.manual_review_count,
+            "blocked_count": summary.blocked_count,
+            "target_names": [result.target.name for result in summary.results],
+        },
+        "results": [result.to_dict() for result in summary.results],
+        "final_release_decision": bundle.release_decision,
+    }
+
+
 def mesh_brain_result_prometheus(result: MeshBrainMVPResult) -> str:
-    return mesh_brain_observation_to_prometheus(result.observability)
+    return str(mesh_brain_observation_to_prometheus(result.observability))
 
 
 def _artifact_ref(artifact_key: str, path: Path) -> MeshBrainArtifactRef:

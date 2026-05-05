@@ -303,6 +303,8 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 
 `override_level()` forces a level without affecting stats. `record_outcome(override=True)` bypasses ladder entirely.
 
+API reads annotate each entry with `next_level`, `promotion_requirements`, `promotion_blockers`, and `autonomy_ceiling_reason`. These fields are derived at read time from the active thresholds and are not stored in `learning/trust_ladder.json`.
+
 ---
 
 ## 9. Steering (operator interventions)
@@ -544,8 +546,8 @@ When Kubernetes live execution is enabled, successful live deployment actions al
 ### Trust ladder
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/trust-ladder` | All entries |
-| GET | `/api/trust-ladder/{action_class}/{service}` | Single entry |
+| GET | `/api/trust-ladder` | All entries with computed autonomy-ceiling rationale |
+| GET | `/api/trust-ladder/{action_class}/{service}` | Single entry with computed autonomy-ceiling rationale |
 | POST | `/api/trust-ladder/override` | Operator override |
 
 ### Agent SLO / Prometheus

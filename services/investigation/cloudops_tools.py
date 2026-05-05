@@ -36,7 +36,7 @@ from .harness.native_selector import RootCauseCandidate, RootCauseRanker
 
 
 _RESOURCE_LINE_RE = re.compile(
-    r"^\s*([a-z][a-z0-9-]+(?:-[a-z0-9]+)*)\s+(\d+)/(\d+)\s+([A-Za-z]+)\s+(\d+)\b"
+    r"^\s*([a-z][a-z0-9-]+(?:-[a-z0-9]+)*)\s+(\d+)/(\d+)\s+([A-Za-z]+)(?:\s+(\d+))?\b"
 )
 _HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
 
@@ -386,7 +386,7 @@ def _discover_suspect_resource(text: str | None, *, include_restarts: bool = Fal
         name, ready, desired, status, restarts = match.groups()
         unhealthy_status = status.lower() not in {"running", "completed", "succeeded"}
         below_ready = int(ready) < int(desired)
-        recently_restarted = include_restarts and int(restarts) > 0
+        recently_restarted = include_restarts and int(restarts or 0) > 0
         if unhealthy_status or below_ready or recently_restarted:
             return _strip_replicaset_suffix(name)
     return None

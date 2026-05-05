@@ -65,6 +65,7 @@ import type {
   ResearchSessionDetail,
   ResearchSessionRecord,
   RunDetail,
+  RunExportPackage,
   RunEventRecord,
   RunSessionRecord,
   AgentTask,
@@ -415,6 +416,7 @@ export default function App() {
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
+  const [runExport, setRunExport] = useState<RunExportPackage | null>(null);
 
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
@@ -426,6 +428,8 @@ export default function App() {
   const [killSwitching, setKillSwitching] = useState(false);
   const [simulatingPolicy, setSimulatingPolicy] = useState(false);
   const [runningSimulation, setRunningSimulation] = useState("");
+  const [exportingRun, setExportingRun] = useState(false);
+  const [exportingArchive, setExportingArchive] = useState(false);
 
   const { toasts, addToast, dismissToast } = useToast();
 
@@ -498,6 +502,7 @@ export default function App() {
       setScenarioAnalysis(null);
       setEvidenceGraph(null);
       setMemoryCrystallization(null);
+      setRunExport(null);
       setRunConnection("disconnected");
       return;
     }
@@ -666,8 +671,56 @@ export default function App() {
       setScenarioAnalysis(analysisResponse);
       setEvidenceGraph(evidenceResponse);
       setMemoryCrystallization(memoryResponse);
+      setRunExport((current) => (current?.run_id === runId ? current : null));
     } catch (error) {
       addToast({ variant: "error", title: "Failed to load run", description: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
+  async function handleBuildRunExport() {
+    if (!activeRunId) {
+      addToast({ variant: "warning", title: "No run selected" });
+      return;
+    }
+    setExportingRun(true);
+    try {
+      const exported = await api.getRunExport(baseUrl, activeRunId);
+      setRunExport(exported);
+      await loadRun(activeRunId);
+      addToast({
+        variant: "success",
+        title: "Run export generated",
+        description: `${exported.timeline_json.length} events, ${exported.vault_documents.length} vault documents`,
+      });
+    } catch (error) {
+      addToast({ variant: "error", title: "Run export failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setExportingRun(false);
+    }
+  }
+
+  async function handleBuildRunArchive() {
+    if (!activeRunId) {
+      addToast({ variant: "warning", title: "No run selected" });
+      return;
+    }
+    setExportingArchive(true);
+    try {
+      const { blob, filename } = await api.getRunExportArchive(baseUrl, activeRunId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      await loadRun(activeRunId);
+      addToast({ variant: "success", title: "Run archive generated", description: filename });
+    } catch (error) {
+      addToast({ variant: "error", title: "Run archive failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setExportingArchive(false);
     }
   }
 
@@ -1436,6 +1489,9 @@ export default function App() {
               recentEvidenceEvents={recentEvidenceEvents}
               selectedEventInsights={selectedEventInsights}
               merkleProof={merkleProof}
+              runExport={runExport}
+              exportingRun={exportingRun}
+              exportingArchive={exportingArchive}
               onSelectRun={(runId) => {
                 setActiveRunId(runId);
                 setActiveResearchSessionId("");
@@ -1445,6 +1501,8 @@ export default function App() {
               onRunDetailTabChange={setRunDetailTab}
               onCanvasModeChange={setCanvasMode}
               onToggleCanvasFullscreen={toggleCanvasFullscreen}
+              onBuildRunExport={() => void handleBuildRunExport()}
+              onBuildRunArchive={() => void handleBuildRunArchive()}
               onJumpContext={(tab) => {
                 setRightRailTab(tab);
                 setRightRailOpen(true);
@@ -1523,8 +1581,13 @@ export default function App() {
               activeRun={activeRun}
               events={recentEvidenceEvents}
               merkleProof={merkleProof}
+              runExport={runExport}
+              exportingRun={exportingRun}
+              exportingArchive={exportingArchive}
               vaultDocument={vaultDocument}
               vaultTree={vaultTree}
+              onBuildRunExport={() => void handleBuildRunExport()}
+              onBuildRunArchive={() => void handleBuildRunArchive()}
               onVaultSelect={handleVaultSelect}
               onJumpRun={() => {
                 setActiveView("runs");
@@ -2005,11 +2068,16 @@ function RunsView({
   recentEvidenceEvents,
   selectedEventInsights,
   merkleProof,
+  runExport,
+  exportingRun,
+  exportingArchive,
   onSelectRun,
   onSelectEvent,
   onRunDetailTabChange,
   onCanvasModeChange,
   onToggleCanvasFullscreen,
+  onBuildRunExport,
+  onBuildRunArchive,
   onJumpContext,
 }: {
   runs: RunSessionRecord[];
@@ -2032,11 +2100,16 @@ function RunsView({
   recentEvidenceEvents: RunEventRecord[];
   selectedEventInsights: Array<{ label: string; value: string; tone?: string }>;
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
   onSelectRun: (runId: string) => void;
   onSelectEvent: (eventId: string) => void;
   onRunDetailTabChange: (tab: RunDetailTab) => void;
   onCanvasModeChange: (mode: CanvasMode) => void;
   onToggleCanvasFullscreen: () => void;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onJumpContext: (tab: RightRailTab) => void;
 }) {
   return (
@@ -2090,7 +2163,16 @@ function RunsView({
         ) : runDetailTab === "actions" ? (
           <RunActionPanel activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "audit" ? (
-          <RunAuditPanel activeRun={activeRun} merkleProof={merkleProof} onJumpContext={onJumpContext} />
+          <RunAuditPanel
+            activeRun={activeRun}
+            merkleProof={merkleProof}
+            runExport={runExport}
+            exportingRun={exportingRun}
+            exportingArchive={exportingArchive}
+            onBuildRunExport={onBuildRunExport}
+            onBuildRunArchive={onBuildRunArchive}
+            onJumpContext={onJumpContext}
+          />
         ) : runDetailTab === "agents" ? (
           <AgentMeshPanel run={activeRun} tasks={agentTasks} active="" onSteer={() => undefined} />
         ) : (
@@ -2832,6 +2914,10 @@ function TrustLadderView({
 function TrustLadderCard({ entry }: { entry: TrustLadderEntry }) {
   const levels = ["suggest", "draft", "approve", "auto"];
   const levelIndex = Math.max(0, levels.indexOf(entry.level));
+  const nextLevel = entry.next_level ? humanize(entry.next_level) : "Max";
+  const requiredRuns = entry.promotion_requirements?.min_runs ?? 0;
+  const requiredRate = entry.promotion_requirements?.min_success_rate ?? 0;
+  const blockers = entry.promotion_blockers ?? [];
   return (
     <article className="trust-card">
       <div className="mesh-section-header">
@@ -2852,6 +2938,20 @@ function TrustLadderCard({ entry }: { entry: TrustLadderEntry }) {
         <ContextStat label="Failures" value={String(entry.consecutive_failures)} />
         <ContextStat label="Overrides" value={String(entry.override_count)} />
       </div>
+      <div className="trust-rationale">
+        <ContextLink
+          label="Next"
+          value={entry.next_level ? `${nextLevel}: ${requiredRuns} runs / ${Math.round(clamp01(requiredRate) * 100)}% success` : "Max ceiling reached"}
+        />
+        <ContextLink label="Ceiling" value={entry.autonomy_ceiling_reason ?? "No autonomy rationale reported."} />
+      </div>
+      {blockers.length > 0 ? (
+        <div className="trust-blocker-list">
+          {blockers.map((blocker) => (
+            <span key={blocker}>{blocker}</span>
+          ))}
+        </div>
+      ) : null}
       <p className="mesh-muted">{entry.last_outcome ? `Last outcome: ${humanize(entry.last_outcome)}` : "No outcome recorded."}</p>
     </article>
   );
@@ -3027,8 +3127,13 @@ function EvidenceAuditView({
   activeRun,
   events,
   merkleProof,
+  runExport,
+  exportingRun,
+  exportingArchive,
   vaultDocument,
   vaultTree,
+  onBuildRunExport,
+  onBuildRunArchive,
   onVaultSelect,
   onJumpRun,
 }: {
@@ -3036,11 +3141,17 @@ function EvidenceAuditView({
   activeRun: RunDetail | null;
   events: RunEventRecord[];
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onVaultSelect: (path: string) => void;
   onJumpRun: () => void;
 }) {
+  const activeExport = runExport?.run_id === activeRun?.run_id ? runExport : null;
   return (
     <div className="mesh-dashboard-grid">
       <section className="mesh-card">
@@ -3052,6 +3163,15 @@ function EvidenceAuditView({
           <ContextStat label="Run" value={activeRun?.run_id ?? "No run selected"} />
           <ContextStat label="Merkle root" value={activeRun?.latest_merkle_root ?? "Unavailable"} />
           <ContextStat label="Proof" value={merkleProof?.valid ? "Valid" : merkleProof ? "Invalid" : "Unavailable"} />
+          <ContextStat label="Export" value={activeExport ? activeExport.package_sha256.slice(0, 16) : "Not generated"} />
+        </div>
+        <div className="context-action-row">
+          <button className="action-button compact primary" type="button" disabled={!activeRun || exportingRun} onClick={onBuildRunExport}>
+            {exportingRun ? "Building export" : "Build export"}
+          </button>
+          <button className="action-button compact" type="button" disabled={!activeRun || exportingArchive} onClick={onBuildRunArchive}>
+            {exportingArchive ? "Building archive" : "Archive"}
+          </button>
         </div>
       </section>
       <section className="mesh-card">
@@ -3619,12 +3739,23 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
 function RunAuditPanel({
   activeRun,
   merkleProof,
+  runExport,
+  exportingRun,
+  exportingArchive,
+  onBuildRunExport,
+  onBuildRunArchive,
   onJumpContext,
 }: {
   activeRun: RunDetail | null;
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onJumpContext: (tab: RightRailTab) => void;
 }) {
+  const activeExport = runExport?.run_id === activeRun?.run_id ? runExport : null;
   return (
     <div className="mesh-detail-grid">
       <section className="context-panel">
@@ -3635,7 +3766,27 @@ function RunAuditPanel({
           <ContextStat label="Proof event" value={merkleProof?.event_id ?? "Unavailable"} />
           <ContextStat label="Proof valid" value={merkleProof ? String(merkleProof.valid) : "Unavailable"} />
         </div>
-        <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Open Merkle inspector</button>
+        <div className="context-action-row">
+          <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Open Merkle inspector</button>
+          <button className="action-button compact primary" type="button" disabled={!activeRun || exportingRun} onClick={onBuildRunExport}>
+            {exportingRun ? "Building export" : "Build export"}
+          </button>
+          <button className="action-button compact" type="button" disabled={!activeRun || exportingArchive} onClick={onBuildRunArchive}>
+            {exportingArchive ? "Building archive" : "Archive"}
+          </button>
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<FolderGit2 size={14} />} title="Run Export Package" />
+        <div className="context-stat-grid">
+          <ContextStat label="Status" value={activeExport ? "Generated" : "Not generated"} />
+          <ContextStat label="Events" value={activeExport ? String(activeExport.timeline_json.length) : "0"} />
+          <ContextStat label="Vault docs" value={activeExport ? String(activeExport.vault_documents.length) : "0"} />
+          <ContextStat label="Checksum" value={activeExport?.package_sha256.slice(0, 18) ?? "Unavailable"} />
+          <ContextStat label="Compacted" value={activeExport ? String(activeExport.size_control.truncated) : "Unavailable"} />
+          <ContextStat label="Retention" value={activeExport ? `${activeExport.retention.retention_days}d${activeExport.retention.reviewed ? "" : " review"}` : "Unavailable"} />
+        </div>
+        {activeExport ? <pre className="timeline-summary">{activeExport.postmortem_markdown}</pre> : null}
       </section>
     </div>
   );

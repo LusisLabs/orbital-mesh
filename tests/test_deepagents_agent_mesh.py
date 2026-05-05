@@ -431,8 +431,9 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                     output={"diff": "", "workspace_path": "/tmp/mesh-da", "deepagents_final_message": "{}"},
                 )
 
-            with patch.object(DeepAgentsAdapter, "build_lane_attempt", stub_lane):
-                server, thread = start_server_in_thread(config, start_sidecar=False)
+            patcher = patch.object(DeepAgentsAdapter, "build_lane_attempt", stub_lane)
+            patcher.start()
+            server, thread = start_server_in_thread(config, start_sidecar=False)
             base = f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 req = Request(
@@ -484,5 +485,6 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+                patcher.stop()
         finally:
             temp_dir.cleanup()

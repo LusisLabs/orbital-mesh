@@ -14,6 +14,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from .config import RuntimeConfig
@@ -31,6 +32,7 @@ PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 HERMES_BRIDGE_MODULE = "services.orchestrator.hermes_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
 _PROFILE_ORDER = {"local": 0, "staging": 1, "pilot": 2, "expansion": 3}
+_DURABLE_ARTIFACT_URI_SCHEMES = frozenset({"s3", "gs", "az", "azblob", "r2", "https"})
 
 
 @dataclass
@@ -132,6 +134,8 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.latentmas_model_name,
         runtime_config.agent_fabric_mode,
         runtime_config.mesh_deepagents_model,
+        runtime_config.run_export_retention_days,
+        runtime_config.run_export_retention_reviewed,
     )
     now = time.monotonic()
     if not force:
@@ -356,6 +360,14 @@ def _profile_checks(
                 or runtime_config.default_steering_mode == "approval_gate",
                 "live_feedback_required": live_feedback_required,
                 "live_feedback_source_configured": live_feedback_source_configured,
+                "mesh_brain_artifact_uri_prefix_configured": _durable_artifact_uri_prefix_configured(
+                    runtime_config.mesh_brain_artifact_uri_prefix
+                ),
+                "mesh_brain_serving_backend_configured": bool(
+                    runtime_config.mesh_brain_serving_base_url and runtime_config.mesh_brain_serving_model
+                ),
+                "run_export_retention_reviewed": runtime_config.run_export_retention_reviewed,
+                "run_export_retention_days_positive": runtime_config.run_export_retention_days > 0,
                 "unfinished_feature_flag_adapter_disabled": not runtime_config.feature_flag_credentials_available,
                 "unfinished_incident_adapter_disabled": not runtime_config.incident_credentials_available,
             }
@@ -378,6 +390,11 @@ def _profile_checks(
 
 def _profile_at_least(profile: str, minimum: str) -> bool:
     return _PROFILE_ORDER.get(profile, 0) >= _PROFILE_ORDER.get(minimum, 0)
+
+
+def _durable_artifact_uri_prefix_configured(uri_prefix: str | None) -> bool:
+    parsed = urlparse((uri_prefix or "").strip())
+    return parsed.scheme in _DURABLE_ARTIFACT_URI_SCHEMES and bool(parsed.netloc)
 
 
 def invalidate_readiness_cache() -> None:

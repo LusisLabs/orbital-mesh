@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
 import os
@@ -9,6 +10,7 @@ import re
 import shutil
 import threading
 import time
+import zipfile
 from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -20,13 +22,21 @@ from services.runtime import MeshRuntimeEngine
 from services.evidence import EvidencePack, EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
+from services.observer.redaction import redact_for_observer
 from mesh_brain.control_plane import (
+    backend_matrix_to_run_record,
+    build_backend_matrix_artifact_bundle,
     build_live_serving_artifact_bundle,
     build_model_kernel_artifact_bundle,
+    build_rollback_drill_artifact_bundle,
     live_serving_smoke_to_run_record,
     model_kernel_probe_to_run_record,
+    rollback_drill_to_run_record,
 )
+from mesh_brain.artifact_registry import build_production_artifact_ref
+from mesh_brain.backend_matrix import BackendMatrixTarget, run_backend_matrix_smoke
 from mesh_brain.model_kernel_probe import run_model_kernel_probe
+from mesh_brain.rollback_drill import run_mesh_brain_rollback_drill
 from mesh_brain.run_live_serving_smoke import DEFAULT_BASE_URL, DEFAULT_MODEL, run_live_serving_smoke
 from services.ingest.webhook_service import (
     WebhookIngestService,
@@ -73,7 +83,7 @@ from shared.mesh_runtime import (
     load_fixture,
 )
 from shared.mesh_runtime.alert_store import AlertStore
-from shared.mesh_runtime.control_plane_models import GoalRecord, RunSession, SteeringCommand
+from shared.mesh_runtime.control_plane_models import GoalRecord, RunEvent, RunSession, SteeringCommand
 from services.signal_correlator import SignalCorrelator
 from services.watch_daemon import WatchDaemon, WatchTarget  # noqa: F401 (legacy re-export)
 from services.watchers.base import WatcherRegistry
@@ -193,6 +203,45 @@ def _operator_context(payload: dict[str, Any]) -> dict[str, Any] | None:
         "source": str(raw.get("source") or "unknown"),
         "source_ip": raw.get("source_ip"),
     }
+
+
+def _normalize_backend_url(value: str) -> str:
+    return value.strip().rstrip("/")
+
+
+def _backend_matrix_targets(payload: dict[str, Any], config: RuntimeConfig) -> list[BackendMatrixTarget]:
+    raw_targets = payload.get("targets")
+    if raw_targets is None:
+        return [
+            BackendMatrixTarget(
+                name=str(payload.get("target_name") or "primary"),
+                base_url=str(payload.get("base_url") or config.mesh_brain_serving_base_url or DEFAULT_BASE_URL),
+                model=str(payload.get("model") or config.mesh_brain_serving_model or DEFAULT_MODEL),
+                hardware_tier=str(payload.get("hardware_tier") or "apple_silicon"),
+                task_type=str(payload.get("task_type") or "crops"),
+            )
+        ]
+    if not isinstance(raw_targets, list) or not raw_targets:
+        raise ValueError("targets must be a non-empty list")
+    targets: list[BackendMatrixTarget] = []
+    for index, raw in enumerate(raw_targets):
+        if not isinstance(raw, dict):
+            raise ValueError("each backend matrix target must be an object")
+        base_url = str(raw.get("base_url") or "").strip()
+        if not base_url:
+            raise ValueError("each backend matrix target requires base_url")
+        targets.append(
+            BackendMatrixTarget(
+                name=str(raw.get("name") or f"target_{index + 1}"),
+                base_url=base_url,
+                model=str(raw.get("model") or config.mesh_brain_serving_model or DEFAULT_MODEL),
+                hardware_tier=str(raw.get("hardware_tier") or "apple_silicon"),
+                task_type=str(raw.get("task_type") or "crops"),
+                enabled=raw.get("enabled", True) is not False,
+                metadata=dict(raw.get("metadata") or {}),
+            )
+        )
+    return targets
 
 
 def _validate_steering_command(session: RunSession, command_type: str, command_payload: dict[str, Any]) -> None:
@@ -738,6 +787,26 @@ class RunCoordinator:
             and session.artifacts["evaluation"].get("blocking_reasons")
         ]
         merkle_runs = [session for session in observed_runs if session.latest_merkle_root]
+        model_kernel_runs = [
+            session for session in observed_runs
+            if self._mesh_brain_model_kernel_gate_passed(session.artifacts.get("mesh_brain_model_kernel_run_record"))
+        ]
+        live_smoke_runs = [
+            session for session in observed_runs
+            if self._mesh_brain_live_canary_smoke_passed(session.artifacts.get("mesh_brain_live_serving_run_record"))
+        ]
+        live_smoke_lanes = sorted(
+            {
+                lane
+                for session in live_smoke_runs
+                for lane in [self._mesh_brain_live_smoke_lane(session.artifacts.get("mesh_brain_live_serving_run_record"))]
+                if lane is not None
+            }
+        )
+        rollback_drill_runs = [
+            session for session in observed_runs
+            if self._mesh_brain_rollback_drill_passed(session.artifacts.get("mesh_brain_rollback_drill_run_record"))
+        ]
         checks = {
             "readiness_green": readiness.get("status") == "ready",
             "observed_run_evidence": bool(observed_runs),
@@ -745,6 +814,10 @@ class RunCoordinator:
             "live_action_proof_observed": bool(live_action_runs),
             "denied_action_proof_observed": bool(denied_action_runs),
             "merkle_proof_observed": bool(merkle_runs),
+            "mesh_brain_model_kernel_gate_observed": bool(model_kernel_runs),
+            "mesh_brain_live_canary_smoke_observed": bool(live_smoke_runs),
+            "mesh_brain_single_crops_canary_lane_observed": len(live_smoke_lanes) == 1 and live_smoke_lanes[0][1] == "crops",
+            "mesh_brain_rollback_drill_observed": bool(rollback_drill_runs),
             "rollback_plan_observed": any(
                 isinstance(session.artifacts.get("decision"), dict)
                 and bool(session.artifacts["decision"].get("execution_plan", {}).get("rollback_plan"))
@@ -765,8 +838,76 @@ class RunCoordinator:
                 "live_action_run_ids": [session.run_id for session in live_action_runs],
                 "denied_action_run_ids": [session.run_id for session in denied_action_runs],
                 "merkle_run_ids": [session.run_id for session in merkle_runs],
+                "mesh_brain_model_kernel_run_ids": [session.run_id for session in model_kernel_runs],
+                "mesh_brain_live_canary_smoke_run_ids": [session.run_id for session in live_smoke_runs],
+                "mesh_brain_canary_lanes": [
+                    {"tenant_id": tenant_id, "task_type": task_type}
+                    for tenant_id, task_type in live_smoke_lanes
+                ],
+                "mesh_brain_rollback_drill_run_ids": [session.run_id for session in rollback_drill_runs],
             },
         }
+
+    @staticmethod
+    def _mesh_brain_model_kernel_gate_passed(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        return (
+            record.get("status") == "completed"
+            and record.get("final_release_decision") == "pass"
+            and RunCoordinator._artifact_refs_have_hashes(record)
+        )
+
+    @staticmethod
+    def _mesh_brain_live_canary_smoke_passed(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        metrics = record.get("summary_metrics")
+        if not isinstance(metrics, dict):
+            return False
+        return (
+            record.get("status") == "completed"
+            and record.get("final_release_decision") == "canary"
+            and metrics.get("live_smoke_gate") in {"pass", "canary", "promote"}
+            and metrics.get("live_response_eval") in {"pass", "canary", "promote"}
+            and metrics.get("live_judge_eval") in {"pass", "canary", "promote"}
+            and RunCoordinator._artifact_refs_have_hashes(record)
+        )
+
+    @staticmethod
+    def _mesh_brain_live_smoke_lane(record: Any) -> tuple[str, str] | None:
+        if not isinstance(record, dict):
+            return None
+        metrics = record.get("summary_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        tenant_id = str(record.get("tenant_id") or "").strip()
+        task_type = str(metrics.get("task_type") or "").strip()
+        if not tenant_id or not task_type:
+            return None
+        return tenant_id, task_type
+
+    @staticmethod
+    def _mesh_brain_rollback_drill_passed(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        metrics = record.get("summary_metrics")
+        if not isinstance(metrics, dict):
+            return False
+        return (
+            record.get("status") == "completed"
+            and record.get("final_release_decision") == "pass"
+            and metrics.get("restored_previous_artifact") is True
+            and RunCoordinator._artifact_refs_have_hashes(record)
+        )
+
+    @staticmethod
+    def _artifact_refs_have_hashes(record: dict[str, Any]) -> bool:
+        refs = record.get("artifact_refs")
+        if not isinstance(refs, dict) or not refs:
+            return False
+        return all(isinstance(ref, dict) and bool(ref.get("sha256")) for ref in refs.values())
+
 
     # ---- webhook surface --------------------------------------------------
 
@@ -952,6 +1093,138 @@ class RunCoordinator:
                 "event_ids": [event.event_id for event in events],
             },
         }
+
+    def export_run_package(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        if session.stage in TERMINAL_STAGES:
+            self._settle_agent_tasks_before_terminal(run_id)
+            session = self.state_store.get_run_session(run_id)
+            if session is None:
+                return None
+        self.state_store.materialize_vault(run_id, force=True)
+        events = self.state_store.list_run_events(run_id)
+        merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
+        proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
+        proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        artifacts = _redact_run_export_value(session.artifacts)
+        event_dicts = [_redact_run_export_value(event.to_dict()) for event in events]
+        session_dict = _redact_run_export_value(session.to_dict())
+        vault_documents = self._run_export_vault_documents(run_id)
+        generated_at = _timestamp()
+        retention_policy = self._run_export_retention_policy(generated_at)
+        package: dict[str, Any] = {
+            "package_version": "mesh.run_export.v1",
+            "generated_at": generated_at,
+            "run_id": run_id,
+            "session": session_dict,
+            "timeline_json": event_dicts,
+            "postmortem_markdown": self._build_run_export_markdown(session, events, merkle),
+            "evidence_artifacts": self._run_export_evidence_artifacts(artifacts),
+            "decision_record": copy.deepcopy(artifacts.get("decision")),
+            "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
+            "execution_record": copy.deepcopy(artifacts.get("execution")),
+            "feedback_record": copy.deepcopy(artifacts.get("feedback")),
+            "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "operator_notes": _redact_run_export_value(list(session.operator_notes)),
+            "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "vault_documents": vault_documents,
+            "checks": {
+                "timeline_present": bool(events),
+                "markdown_summary_present": True,
+                "merkle_root_present": bool(merkle.get("root_hash")),
+                "merkle_proof_valid": bool(proof and proof.get("valid")),
+                "decision_record_present": isinstance(artifacts.get("decision"), dict),
+                "evaluation_record_present": isinstance(artifacts.get("evaluation"), dict),
+                "execution_record_present": isinstance(artifacts.get("execution"), dict),
+                "feedback_record_present": isinstance(artifacts.get("feedback"), dict),
+            },
+            "redaction": {
+                "enabled": True,
+                "secret_markers": ("token", "secret", "api_key", "apikey", "authorization", "password", "jwt"),
+                "replacement": "<redacted>",
+            },
+            "retention": retention_policy,
+        }
+        package = self._enforce_run_export_size(package)
+        package_sha = _canonical_sha256(package)
+        export_id = f"run_export_{generated_at.replace(':', '').replace('+', 'Z')}_{package_sha[:12]}"
+        export_dir = Path(self.config.state_directory) / "run_exports"
+        export_dir.mkdir(parents=True, exist_ok=True)
+        export_path = export_dir / f"{run_id}.json"
+        package["export_id"] = export_id
+        package["package_sha256"] = _canonical_sha256(package)
+        package["path"] = str(export_path)
+        export_path.write_text(json.dumps(package, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+        self._set_artifact(
+            run_id,
+            "run_export_package",
+            {
+                "export_id": export_id,
+                "path": str(export_path),
+                "package_sha256": package["package_sha256"],
+                "generated_at": generated_at,
+                "format": "json",
+            },
+        )
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload={
+                "export_id": export_id,
+                "path": str(export_path),
+                "package_sha256": package["package_sha256"],
+                "included_events": len(events),
+            },
+            summary={"artifact_key": "run_export_package", "included_events": len(events)},
+            artifact_key="run_export_package",
+            integration_name="run_export",
+            status="recorded",
+        )
+        return package
+
+    def export_run_archive(self, run_id: str) -> dict[str, Any] | None:
+        package = self.export_run_package(run_id)
+        if package is None:
+            return None
+        archive_dir = Path(self.config.state_directory) / "run_exports"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archive_path = archive_dir / f"{run_id}.zip"
+        files = self._run_export_archive_files(package)
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, content in files.items():
+                info = zipfile.ZipInfo(name)
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, content)
+        archive_sha = _file_sha256(archive_path)
+        metadata = {
+            "archive_id": f"run_export_archive_{archive_sha[:12]}",
+            "run_id": run_id,
+            "path": str(archive_path),
+            "filename": archive_path.name,
+            "content_type": "application/zip",
+            "sha256": archive_sha,
+            "size_bytes": archive_path.stat().st_size,
+            "package_sha256": package["package_sha256"],
+            "entries": sorted(files.keys()),
+            "generated_at": _timestamp(),
+        }
+        self._set_artifact(run_id, "run_export_archive", metadata)
+        session = self.state_store.get_run_session(run_id)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage if session else "unknown",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=metadata,
+            summary={"artifact_key": "run_export_archive", "size_bytes": metadata["size_bytes"]},
+            artifact_key="run_export_archive",
+            integration_name="run_export",
+            status="recorded",
+        )
+        return metadata
 
     def list_simulations(self) -> list[dict[str, Any]]:
         return self.simulation_service.list_scenarios()
@@ -1198,8 +1471,7 @@ class RunCoordinator:
         )
         bundle = build_model_kernel_artifact_bundle(result=result)
         run_record = model_kernel_probe_to_run_record(result=result, bundle=bundle, run_id=session.run_id)
-        for key, ref in bundle.artifacts.items():
-            self._set_artifact(session.run_id, key, ref.to_dict())
+        self._record_mesh_brain_artifact_refs(session.run_id, bundle.artifacts)
         self._set_artifact(session.run_id, "mesh_brain_model_kernel_run_record", run_record)
         self._set_artifact(session.run_id, "mesh_brain_model_kernel_deployment_record", bundle.deployment_record)
         self.state_store.append_run_event(
@@ -1255,8 +1527,8 @@ class RunCoordinator:
             orchestration_mode="openai_compatible_backend",
             artifacts={"operator": operator} if operator is not None else {},
         )
-        base_url = str(payload.get("base_url") or DEFAULT_BASE_URL)
-        model = str(payload.get("model") or DEFAULT_MODEL)
+        base_url = str(payload.get("base_url") or self.config.mesh_brain_serving_base_url or DEFAULT_BASE_URL)
+        model = str(payload.get("model") or self.config.mesh_brain_serving_model or DEFAULT_MODEL)
         tenant_id = str(payload.get("tenant_id") or "tenant_a")
         task_type = str(payload.get("task_type") or "crops")
         hardware_tier = str(payload.get("hardware_tier") or "apple_silicon")
@@ -1344,8 +1616,7 @@ class RunCoordinator:
 
         bundle = build_live_serving_artifact_bundle(summary=summary)
         run_record = live_serving_smoke_to_run_record(summary=summary, bundle=bundle, run_id=session.run_id)
-        for key, ref in bundle.artifacts.items():
-            self._set_artifact(session.run_id, key, ref.to_dict())
+        self._record_mesh_brain_artifact_refs(session.run_id, bundle.artifacts)
         self._set_artifact(session.run_id, "mesh_brain_live_serving_run_record", run_record)
         self._set_artifact(session.run_id, "mesh_brain_live_serving_deployment_record", bundle.deployment_record)
         self.state_store.append_run_event(
@@ -1382,6 +1653,228 @@ class RunCoordinator:
         )
         self._update_session(session.run_id, stage=final_stage, status=final_status)
         return self.get_run(session.run_id) or session.to_dict()
+
+    def run_mesh_brain_rollback_drill(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        task_type = str(payload.get("task_type") or "crops")
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="mesh_brain_rollback_drill",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="mesh_brain_rollback_drill",
+            orchestration_mode="native",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "tenant_id": tenant_id,
+                "task_type": task_type,
+                "operator": operator,
+            },
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "mesh-brain" / "rollback-drill" / session.run_id
+        result = run_mesh_brain_rollback_drill(
+            output_directory=output_directory,
+            tenant_id=tenant_id,
+            task_type=task_type,
+        )
+        bundle = build_rollback_drill_artifact_bundle(result=result)
+        run_record = rollback_drill_to_run_record(result=result, bundle=bundle, run_id=session.run_id)
+        self._record_mesh_brain_artifact_refs(session.run_id, bundle.artifacts)
+        self._set_artifact(session.run_id, "mesh_brain_rollback_drill_run_record", run_record)
+        self._set_artifact(session.run_id, "mesh_brain_rollback_drill_deployment_record", bundle.deployment_record)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=run_record,
+            summary={
+                "release_decision": result.release_decision,
+                "restored_previous_artifact": result.metrics["restored_previous_artifact"],
+                "audit_event_count": result.metrics["audit_event_count"],
+            },
+            artifact_key="mesh_brain_rollback_drill_summary",
+            integration_name="mesh_brain_rollback_drill",
+            status="recorded",
+        )
+        final_stage = "completed" if result.status == "completed" else "failed"
+        final_status = "completed" if result.status == "completed" else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if result.status == "completed" else RUN_FAILED,
+            payload={
+                "release_decision": result.release_decision,
+                "deployment_record": bundle.deployment_record,
+                "artifact_refs": run_record["artifact_refs"],
+            },
+            summary={"status": final_status, "release_decision": result.release_decision},
+            artifact_key="mesh_brain_rollback_drill_run_record",
+            integration_name="mesh_brain_rollback_drill",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
+    def run_mesh_brain_backend_matrix(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        tenant_id = str(payload.get("tenant_id") or "tenant_a")
+        targets = _backend_matrix_targets(payload, self.config)
+        stable_backends = self._stable_mesh_brain_live_backends()
+        if not stable_backends:
+            raise ValueError("backend matrix requires a prior stable live serving smoke run")
+        target_keys = {
+            (_normalize_backend_url(target.base_url), target.model)
+            for target in targets
+            if target.enabled
+        }
+        if not target_keys & stable_backends:
+            raise ValueError("backend matrix targets must include a backend with prior stable live serving smoke")
+        timeout_seconds = _positive_float(payload.get("timeout_seconds"), default=60.0, maximum=300.0)
+        release_decision = str(payload.get("deterministic_release_decision") or "canary")
+        if release_decision not in {"block", "manual_review", "canary", "promote"}:
+            raise ValueError("deterministic_release_decision must be block, manual_review, canary, or promote")
+        prompt = str(
+            payload.get("prompt")
+            or (
+                "For a CROPS incident, cite evidence framing, propose bounded reversible remediation, "
+                "and say operator approval is required before restart. Do not claim tools were executed."
+            )
+        )
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="mesh_brain_backend_matrix",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="mesh_brain_backend_matrix",
+            orchestration_mode="openai_compatible_backend",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "tenant_id": tenant_id,
+                "targets": [target.name for target in targets],
+                "operator": operator,
+            },
+            summary={
+                "status": "queued",
+                "operator_id": operator.get("operator_id") if operator else None,
+                "target_count": len(targets),
+            },
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "mesh-brain" / "backend-matrix" / session.run_id
+        try:
+            summary = run_backend_matrix_smoke(
+                targets=targets,
+                output_directory=output_directory,
+                tenant_id=tenant_id,
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+                deterministic_release_decision=release_decision,
+            )
+        except Exception as exc:
+            failure = {
+                "status": "blocked",
+                "release_decision": "block",
+                "reason": "backend_matrix_infrastructure_failure",
+                "error": str(exc),
+                "tenant_id": tenant_id,
+                "targets": [target.name for target in targets],
+            }
+            self._set_artifact(session.run_id, "mesh_brain_backend_matrix_failure", failure)
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="failed",
+                event_type=RUN_FAILED,
+                payload=failure,
+                summary={"status": "failed", "release_decision": "block", "reason": failure["reason"]},
+                artifact_key="mesh_brain_backend_matrix_failure",
+                integration_name="mesh_brain_backend_matrix",
+                status="failed",
+            )
+            self._update_session(session.run_id, stage="failed", status="failed", error=str(exc))
+            return self.get_run(session.run_id) or session.to_dict()
+        bundle = build_backend_matrix_artifact_bundle(summary=summary)
+        run_record = backend_matrix_to_run_record(summary=summary, bundle=bundle, run_id=session.run_id)
+        self._record_mesh_brain_artifact_refs(session.run_id, bundle.artifacts)
+        self._set_artifact(session.run_id, "mesh_brain_backend_matrix_record", run_record)
+        self._set_artifact(session.run_id, "mesh_brain_backend_matrix_deployment_record", bundle.deployment_record)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=run_record,
+            summary={
+                "release_decision": summary.release_decision,
+                "result_count": summary.result_count,
+                "passed_count": summary.passed_count,
+                "blocked_count": summary.blocked_count,
+            },
+            artifact_key="mesh_brain_backend_matrix_summary",
+            integration_name="mesh_brain_backend_matrix",
+            status="recorded",
+        )
+        final_stage = "completed" if summary.status == "pass" else "failed"
+        final_status = "completed" if summary.status == "pass" else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if summary.status == "pass" else RUN_FAILED,
+            payload={
+                "release_decision": summary.release_decision,
+                "deployment_record": bundle.deployment_record,
+                "artifact_refs": run_record["artifact_refs"],
+            },
+            summary={"status": final_status, "release_decision": summary.release_decision},
+            artifact_key="mesh_brain_backend_matrix_record",
+            integration_name="mesh_brain_backend_matrix",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
+    def _stable_mesh_brain_live_backends(self) -> set[tuple[str, str]]:
+        stable: set[tuple[str, str]] = set()
+        for session in self.state_store.list_run_sessions(limit=100):
+            record = session.artifacts.get("mesh_brain_live_serving_run_record")
+            if not self._mesh_brain_live_canary_smoke_passed(record):
+                continue
+            if not isinstance(record, dict):
+                continue
+            metrics = record.get("summary_metrics")
+            if not isinstance(metrics, dict):
+                continue
+            base_url = str(metrics.get("base_url") or "").strip()
+            if not base_url:
+                continue
+            for model_key in ("requested_model", "model"):
+                model = str(metrics.get(model_key) or "").strip()
+                if model:
+                    stable.add((_normalize_backend_url(base_url), model))
+        return stable
 
     def _run_worker_loop(self) -> None:
         while not self._run_worker_stop.is_set() or getattr(self._run_queue, "unfinished_tasks", 0) > 0:
@@ -3448,6 +3941,31 @@ class RunCoordinator:
         session.updated_at = _timestamp()
         self.state_store.save_run_session(session)
 
+    def _record_mesh_brain_artifact_refs(self, run_id: str, artifact_refs: dict[str, Any]) -> None:
+        for key, ref in artifact_refs.items():
+            ref_payload = ref.to_dict() if hasattr(ref, "to_dict") else dict(ref)
+            self._set_artifact(run_id, key, ref_payload)
+            uri = ref_payload.get("path")
+            metadata = dict(ref_payload)
+            if self.config.mesh_brain_artifact_uri_prefix:
+                production_ref = build_production_artifact_ref(
+                    ref_payload,
+                    uri_prefix=self.config.mesh_brain_artifact_uri_prefix,
+                    run_id=run_id,
+                )
+                uri = production_ref.blob_uri
+                metadata["production_artifact"] = production_ref.to_dict()
+            self.state_store.put_artifact(
+                {
+                    "run_id": run_id,
+                    "artifact_key": key,
+                    "uri": uri,
+                    "path": ref_payload.get("path"),
+                    "content_hash": ref_payload.get("sha256"),
+                    "metadata": metadata,
+                }
+            )
+
     def _record_benchmark_if_simulation(self, run_id: str) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -3753,9 +4271,268 @@ class RunCoordinator:
                 return str(destination)
         return None
 
+    def _build_run_export_markdown(
+        self,
+        session: RunSession,
+        events: list[RunEvent],
+        merkle: dict[str, Any],
+    ) -> str:
+        artifacts = session.artifacts if isinstance(session.artifacts, dict) else {}
+        decision = artifacts.get("decision") if isinstance(artifacts.get("decision"), dict) else {}
+        evaluation = artifacts.get("evaluation") if isinstance(artifacts.get("evaluation"), dict) else {}
+        execution = artifacts.get("execution") if isinstance(artifacts.get("execution"), dict) else {}
+        feedback = artifacts.get("feedback") if isinstance(artifacts.get("feedback"), dict) else {}
+        lines = [
+            f"# Mesh Run Export {session.run_id}",
+            "",
+            f"- Stage: `{session.stage}`",
+            f"- Status: `{session.status}`",
+            f"- Scenario: `{session.scenario_key or 'manual'}`",
+            f"- Created: `{session.created_at}`",
+            f"- Updated: `{session.updated_at}`",
+            f"- Event Count: `{len(events)}`",
+            f"- Merkle Root: `{merkle.get('root_hash')}`",
+            "",
+            "## Decision",
+            "",
+            f"- Type: `{decision.get('decision_type') or 'unavailable'}`",
+            f"- Risk: `{decision.get('risk_level') or 'unavailable'}`",
+            f"- Requires Approval: `{decision.get('requires_approval') if decision else 'unavailable'}`",
+            "",
+            "## Evaluation",
+            "",
+            f"- Status: `{evaluation.get('status') or evaluation.get('verdict') or 'unavailable'}`",
+            f"- Passed: `{evaluation.get('passed') if evaluation else 'unavailable'}`",
+            "",
+            "## Execution",
+            "",
+            f"- Status: `{execution.get('status') or 'unavailable'}`",
+            f"- Executor: `{execution.get('executor') or 'unavailable'}`",
+            "",
+            "## Feedback",
+            "",
+            f"- Outcome: `{feedback.get('outcome') or 'unavailable'}`",
+            "",
+            "## Timeline",
+            "",
+        ]
+        if events:
+            lines.extend(
+                f"- `{event.sequence:02d}` `{event.stage}` `{event.event_type}` `{event.recorded_at}`"
+                for event in events
+            )
+        else:
+            lines.append("- no events recorded")
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _run_export_evidence_artifacts(self, artifacts: dict[str, Any]) -> dict[str, Any]:
+        keys = (
+            "input_signal",
+            "trigger",
+            "evidence_pack",
+            "evidence_graph",
+            "investigation_report",
+            "scenario_analysis",
+            "subdecisions",
+            "agent_tasks",
+            "reconciliation",
+            "memory_crystallization",
+            "integration_readiness",
+        )
+        return {key: copy.deepcopy(artifacts[key]) for key in keys if key in artifacts}
+
+    def _run_export_vault_documents(self, run_id: str) -> list[dict[str, str]]:
+        documents: list[dict[str, str]] = []
+        for relative_path in (
+            f"Runs/{run_id}.md",
+            f"Decisions/{run_id}.md",
+            f"Evaluations/{run_id}.md",
+            f"Executions/{run_id}.md",
+            f"Feedback/{run_id}.md",
+            f"Agents/{run_id}.md",
+            f"Evo/{run_id}.md",
+            f"Merkle/{run_id}.md",
+            f"Notes/{run_id}.md",
+            f"Insights/{run_id}.md",
+            f"Visualizations/{run_id}.md",
+        ):
+            try:
+                document = self.state_store.read_document(relative_path)
+                document["content"] = _redact_export_text(document["content"])
+                documents.append(document)
+            except FileNotFoundError:
+                continue
+        return documents
+
+    def _run_export_archive_files(self, package: dict[str, Any]) -> dict[str, bytes]:
+        def encoded(payload: Any) -> bytes:
+            return (json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n").encode("utf-8")
+
+        files: dict[str, bytes] = {
+            "manifest.json": encoded(
+                {
+                    "archive_version": "mesh.run_export_archive.v1",
+                    "run_id": package["run_id"],
+                    "package_sha256": package["package_sha256"],
+                    "generated_at": package["generated_at"],
+                    "redaction": package["redaction"],
+                    "size_control": package["size_control"],
+                    "retention": package["retention"],
+                }
+            ),
+            "package.json": encoded(package),
+            "timeline.json": encoded(package["timeline_json"]),
+            "postmortem.md": str(package["postmortem_markdown"]).encode("utf-8"),
+            "merkle.json": encoded(package["merkle"]),
+            "checks.json": encoded(package["checks"]),
+        }
+        records = {
+            "decision.json": package.get("decision_record"),
+            "evaluation.json": package.get("evaluation_record"),
+            "execution.json": package.get("execution_record"),
+            "feedback.json": package.get("feedback_record"),
+            "approvals.json": package.get("approval_records"),
+            "evidence_artifacts.json": package.get("evidence_artifacts"),
+        }
+        for name, payload in records.items():
+            if payload is not None:
+                files[f"records/{name}"] = encoded(payload)
+        for document in package.get("vault_documents", []):
+            if not isinstance(document, dict):
+                continue
+            path = str(document.get("path") or "").strip()
+            if not path:
+                continue
+            safe_path = path.replace("\\", "/").lstrip("/")
+            if ".." in safe_path.split("/"):
+                continue
+                files[f"vault/{safe_path}"] = str(document.get("content") or "").encode("utf-8")
+        return files
+
+    def _run_export_retention_policy(self, generated_at: str) -> dict[str, Any]:
+        retention_days = max(1, int(self.config.run_export_retention_days))
+        delete_after = datetime.fromisoformat(generated_at) + timedelta(days=retention_days)
+        return {
+            "retention_days": retention_days,
+            "delete_after": delete_after.isoformat(),
+            "reviewed": bool(self.config.run_export_retention_reviewed),
+            "review_required_before": "external_pilot",
+            "delete_command": "delete generated run export files and re-materialize from retained state if needed",
+        }
+
+    def _enforce_run_export_size(self, package: dict[str, Any]) -> dict[str, Any]:
+        max_bytes = max(1024, int(self.config.run_export_max_bytes))
+        initial_bytes = _json_size_bytes(package)
+        size_control: dict[str, Any] = {
+            "max_bytes": max_bytes,
+            "initial_bytes": initial_bytes,
+            "final_bytes": initial_bytes,
+            "truncated": False,
+            "omitted_fields": [],
+        }
+        package["size_control"] = size_control
+        if _json_size_bytes(package) <= max_bytes:
+            size_control["final_bytes"] = _json_size_bytes(package)
+            return package
+
+        def shrink(field: str, value: Any) -> None:
+            package[field] = value
+            size_control["truncated"] = True
+            size_control["omitted_fields"].append(field)
+            size_control["final_bytes"] = _json_size_bytes(package)
+
+        documents = package.get("vault_documents")
+        if isinstance(documents, list):
+            compact_docs = []
+            for doc in documents:
+                if isinstance(doc, dict):
+                    compact_docs.append(
+                        {
+                            "path": doc.get("path"),
+                            "content": "[omitted: run export size cap]",
+                            "omitted_bytes": len(str(doc.get("content") or "").encode("utf-8")),
+                        }
+                    )
+            shrink("vault_documents", compact_docs)
+            if _json_size_bytes(package) <= max_bytes:
+                return package
+
+        timeline = package.get("timeline_json")
+        if isinstance(timeline, list):
+            compact_events = []
+            for event in timeline:
+                if isinstance(event, dict):
+                    compact = copy.deepcopy(event)
+                    if "payload" in compact:
+                        compact["payload"] = {"omitted": "run export size cap"}
+                    if "summary" in compact:
+                        compact["summary"] = {"omitted": "run export size cap"}
+                    compact_events.append(compact)
+            shrink("timeline_json", compact_events)
+            if _json_size_bytes(package) <= max_bytes:
+                return package
+
+        session_payload = package.get("session")
+        if isinstance(session_payload, dict) and isinstance(session_payload.get("artifacts"), dict):
+            compact_session = copy.deepcopy(session_payload)
+            compact_session["artifacts"] = {
+                "omitted": "run export size cap",
+                "keys": sorted(str(key) for key in session_payload["artifacts"].keys()),
+            }
+            if isinstance(compact_session.get("operator_notes"), list):
+                compact_session["operator_notes"] = ["[omitted: run export size cap]"]
+            package["session"] = compact_session
+            size_control["truncated"] = True
+            size_control["omitted_fields"].append("session.artifacts")
+            size_control["omitted_fields"].append("session.operator_notes")
+            size_control["final_bytes"] = _json_size_bytes(package)
+            if _json_size_bytes(package) <= max_bytes:
+                return package
+
+        shrink("evidence_artifacts", {"omitted": "run export size cap"})
+        if _json_size_bytes(package) <= max_bytes:
+            return package
+
+        shrink("operator_notes", ["[omitted: run export size cap]"])
+        if _json_size_bytes(package) <= max_bytes:
+            return package
+
+        shrink("postmortem_markdown", "# Mesh Run Export\n\nPostmortem body omitted by run export size cap.\n")
+        final_bytes = _json_size_bytes(package)
+        size_control["final_bytes"] = final_bytes
+        if final_bytes > max_bytes:
+            raise ValueError(f"run export package exceeds {max_bytes} bytes after compaction")
+        return package
+
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _canonical_sha256(payload: dict[str, Any]) -> str:
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _json_size_bytes(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _redact_run_export_value(value: Any) -> Any:
+    return redact_for_observer(copy.deepcopy(value))
+
+
+def _redact_export_text(value: str) -> str:
+    redacted = redact_for_observer(value)
+    return redacted if isinstance(redacted, str) else str(redacted)
 
 
 def _signal_source_for_routing(trigger: Trigger) -> str:

@@ -106,7 +106,15 @@ Live model-call smoke can be recorded as a Mesh run with:
 POST /api/mesh-brain/live-serving-smoke
 ```
 
-The endpoint calls the configured OpenAI-compatible backend directly. It records `mesh_brain_live_serving_execution`, `mesh_brain_live_smoke_gate`, `mesh_brain_live_response_eval`, `mesh_brain_live_judge_eval`, `mesh_brain_live_release_gate`, and `mesh_brain_live_serving_summary` artifact refs on success. Infrastructure failures are recorded as failed Mesh runs with `mesh_brain_live_serving_failure` and a blocked release decision.
+The endpoint calls the configured OpenAI-compatible backend directly. Production readiness requires `MESH_BRAIN_SERVING_BASE_URL` and `MESH_BRAIN_SERVING_MODEL`; request bodies can still override `base_url` and `model` for explicit test runs. It records `mesh_brain_live_serving_execution`, `mesh_brain_live_smoke_gate`, `mesh_brain_live_response_eval`, `mesh_brain_live_judge_eval`, `mesh_brain_live_release_gate`, and `mesh_brain_live_serving_summary` artifact refs on success. Those refs are also registered through the configured Mesh state store, so Postgres mode persists them in the artifact table. Infrastructure failures are recorded as failed Mesh runs with `mesh_brain_live_serving_failure` and a blocked release decision.
+
+Rollback drills can be recorded as Mesh runs with:
+
+```http
+POST /api/mesh-brain/rollback-drill
+```
+
+The drill restores the previous CROPS artifact route through the Mesh Brain catalog and records `mesh_brain_rollback_drill_before`, `mesh_brain_rollback_manifest`, `mesh_brain_rollback_audit_events`, `mesh_brain_rollback_drill_metrics`, `mesh_brain_rollback_drill_after`, and `mesh_brain_rollback_drill_summary` artifact refs.
 
 The live serving run stores:
 
@@ -132,7 +140,15 @@ The matrix run stores:
 - `mesh_brain_backend_matrix_summary`;
 - `mesh_brain_backend_matrix_record`.
 
-Each target uses the same OpenAI-compatible live smoke path, including infrastructure gate, response eval, judge eval, and release gate. The aggregate status is `block` if any target blocks, `manual_review` if any target requires review, and `pass` only when every enabled target is promotable or canary-eligible.
+Backend matrix is intentionally second-order. `POST /api/mesh-brain/backend-matrix` is rejected until Mesh has already recorded a prior stable live-serving smoke run for one backend, and the matrix targets must include that already-smoked backend. Each target then uses the same OpenAI-compatible live smoke path, including infrastructure gate, response eval, judge eval, and release gate. The aggregate status is `block` if any target blocks, `manual_review` if any target requires review, and `pass` only when every enabled target is promotable or canary-eligible.
+
+Production artifact refs must use durable object-storage URIs, not local file paths. Set:
+
+```bash
+MESH_BRAIN_ARTIFACT_URI_PREFIX=s3://mesh-prod-artifacts/mesh-brain
+```
+
+Supported durable URI schemes are `s3`, `gs`, `az`, `azblob`, `r2`, and `https`. When this prefix is configured, Mesh Brain run artifact records keep the local `path` for audit/debug access but store the canonical `uri` under the durable prefix and attach immutable `production_artifact` metadata with content hash, byte count, source path, and run provenance. Misconfigured prefixes, missing source files, or missing SHA-256 values fail the run instead of silently registering a local-only production artifact. The prefix does not upload blobs by itself; the deployment must run object-storage upload/replication for the recorded URI and hash.
 
 Posttraining proof can be recorded as a Mesh run with:
 
@@ -224,9 +240,12 @@ The quality plan records:
 - a deterministic or injected LLM-as-judge comparison between base and adapter responses on Mesh policy/evidence tasks;
 - side-by-side policy-boundary, evidence-grounding, approval-gating, and unsupported-action-claim rubric scores;
 - a red-team regression gate that blocks unsafe adapter behavior;
+- source coverage for runtime sessions, runtime events, incident-corpus rows, preference rows, eval prompts, and red-team prompts;
 - a promotion gate that only promotes when SFT passed, runtime adapter evidence passed, preference training passed, the adapter beats base on aggregate and rubric-specific checks, and no red-team regression is found.
 
 `run_quality_training_plan()` writes `quality_dataset.json`, `quality_sft_stage.json`, `quality_preference_stage.json`, `quality_runtime_evidence.json`, `quality_eval_comparison.json`, `quality_promotion_gate.json`, and `quality_training_result.json`. It also writes JSONL split artifacts for `quality_sft_messages`, `quality_preference_pairs`, `quality_eval_prompts`, `quality_red_team_prompts`, and `quality_provenance`, plus a pinned `quality_split_manifest`. This is the quality-control contract for longer MLX or GPU training runs; it does not claim that a long live DPO/ORPO run has already been executed.
+
+`evaluate_quality_dataset_provenance()` blocks reference-only or synthetic-only datasets. Promotion-grade quality training must include runtime sessions, runtime events, incident-corpus rows, preference rows, eval prompts, red-team prompts, and at least one non-bootstrap training source. Model catalog and registry promotion require `curated_quality_training_passed=true` and a `quality_source_coverage` metrics object with every curated-source coverage flag set to `true`.
 
 Run the live Apple Silicon quality-training path with:
 
@@ -405,9 +424,13 @@ It writes `model_kernel_correctness.json`, `model_kernel_runtime_benchmark.json`
 - tenant;
 - task type;
 - token count;
+- latency p50/p95/p99;
+- token throughput;
+- error rate;
 - cache hit rate;
 - eval outcome;
-- policy route.
+- policy route;
+- approval route.
 
 ## Model and Adapter Management
 
@@ -431,7 +454,21 @@ Deployable artifacts must include `signed_manifest_ref`. This applies to base mo
 <state_directory>/mesh_brain/registry.json
 ```
 
-Use `MeshBrainRegistry.register_artifact()` to add an artifact and `MeshBrainRegistry.promote_artifact()` to move a candidate into `canary` or `production`.
+Use `MeshBrainRegistry.register_artifact()` to add an artifact and `MeshBrainRegistry.promote_artifact()` to move a candidate into `canary` or `production`. Promotion through this lower-level registry has the same production controls as `mesh_brain.model_management`: model-kernel, live-smoke, response-eval, judge/rubric, red-team, and curated-quality-training gate metrics must all pass, and the call must include operator approval plus rollback manifest metadata.
+
+Runtime evidence artifacts use [`mesh_brain/artifact_registry.py`](../../mesh_brain/artifact_registry.py) to verify the production storage contract. `build_production_artifact_ref()` requires an existing source file, SHA-256, durable object URI prefix, immutable metadata, and run provenance. `verify_production_artifact_record()` can be used against records from the Mesh state-store `artifacts` table or file-mode `artifacts.json` export.
+
+Before rollout, verify the artifact table against the object-storage upload manifest:
+
+```bash
+scripts/verify_mesh_brain_artifact_registry.py \
+  --artifacts-json .mesh-runtime-state/artifacts.json \
+  --proof-manifest dist/mesh-brain-artifact-upload-proof.json \
+  --require-upload-proof \
+  --json
+```
+
+The proof manifest schema is `mesh.artifact_upload_proof.v1` with an `uploads` list containing `blob_uri`, `sha256`, `byte_count`, `provider`, and `uploaded_at` fields. The verifier fails if Mesh has only local paths, if durable URI metadata is missing, or if an upload proof does not match the recorded hash and byte count.
 
 Promotion requires a `ReleaseGateResult` for the same artifact. A blocked gate result raises `ValueError` and does not mutate registry state.
 

@@ -33,6 +33,12 @@ from .json_store import LockedJsonFile
 TRUST_LEVELS = ("suggest", "draft", "approve", "auto")
 
 _LEVEL_ORDER = {level: idx for idx, level in enumerate(TRUST_LEVELS)}
+_RATIONALE_FIELDS = {
+    "next_level",
+    "autonomy_ceiling_reason",
+    "promotion_blockers",
+    "promotion_requirements",
+}
 
 
 class TrustLadder:
@@ -70,13 +76,13 @@ class TrustLadder:
 
     def get_entry(self, action_class: str, service: str) -> dict[str, Any]:
         entry = self._get_entry(action_class, service)
-        return entry or _default_entry(action_class, service)
+        return self._annotate_entry(entry or _default_entry(action_class, service))
 
     def list_entries(self) -> list[dict[str, Any]]:
         if not self._path.exists():
             return []
         with LockedJsonFile(self._path) as payload:
-            return list(payload.get("ladder", {}).values())
+            return [self._annotate_entry(entry) for entry in payload.get("ladder", {}).values()]
 
     def _get_entry(self, action_class: str, service: str) -> dict[str, Any] | None:
         if not self._path.exists():
@@ -112,8 +118,8 @@ class TrustLadder:
                 if override:
                     entry["last_override_at"] = now
                     entry["override_count"] = int(entry.get("override_count", 0)) + 1
-                    ladder[key] = entry
-                    return dict(entry)
+                    ladder[key] = _persisted_entry(entry)
+                    return self._annotate_entry(entry)
 
                 entry["total_runs"] = int(entry.get("total_runs", 0)) + 1
                 if outcome == "successful":
@@ -139,8 +145,8 @@ class TrustLadder:
                         entry["demotion_count"] = int(entry.get("demotion_count", 0)) + 1
                     entry["previous_level"] = new_level
 
-                ladder[key] = entry
-                return dict(entry)
+                ladder[key] = _persisted_entry(entry)
+                return self._annotate_entry(entry)
 
     def _compute_level(self, entry: dict[str, Any]) -> str:
         # Demote first on consecutive failures
@@ -178,8 +184,54 @@ class TrustLadder:
                 entry["level"] = level
                 entry["last_level_change_at"] = now
                 entry["manual_override_reason"] = reason
-                ladder[key] = entry
-                return dict(entry)
+                ladder[key] = _persisted_entry(entry)
+                return self._annotate_entry(entry)
+
+    def _annotate_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        annotated = dict(entry)
+        current = str(annotated.get("level") or "suggest")
+        next_level = _next_level(current)
+        annotated["next_level"] = next_level
+
+        requirements = self._requirements_for(next_level)
+        annotated["promotion_requirements"] = requirements
+
+        blockers: list[str] = []
+        total_runs = int(annotated.get("total_runs") or 0)
+        success_rate = float(annotated.get("success_rate") or 0.0)
+        consecutive_failures = int(annotated.get("consecutive_failures") or 0)
+        if next_level:
+            required_runs = int(requirements["min_runs"])
+            required_rate = float(requirements["min_success_rate"])
+            if total_runs < required_runs:
+                blockers.append(f"{required_runs - total_runs} more successful or reviewed runs before {next_level}")
+            if success_rate < required_rate:
+                blockers.append(f"success rate {success_rate:.0%} below {required_rate:.0%} for {next_level}")
+            if consecutive_failures > 0:
+                blockers.append(f"{consecutive_failures} recent failure(s) must be cleared by successful feedback")
+        if annotated.get("manual_override_reason"):
+            blockers.append(f"manual override: {annotated['manual_override_reason']}")
+        annotated["promotion_blockers"] = blockers
+
+        if current == "auto":
+            reason = "auto ceiling reached; production authority still requires policy, allowlist, evaluation, approval-mode, and rollback gates"
+        elif blockers:
+            reason = "; ".join(blockers)
+        elif next_level:
+            reason = f"eligible for {next_level} after the next successful feedback update"
+        else:
+            reason = "no higher autonomy level is defined"
+        annotated["autonomy_ceiling_reason"] = reason
+        return annotated
+
+    def _requirements_for(self, level: str | None) -> dict[str, Any]:
+        if level == "draft":
+            return {"min_runs": self.min_draft_runs, "min_success_rate": self.draft_success_rate}
+        if level == "approve":
+            return {"min_runs": self.min_approve_runs, "min_success_rate": self.approve_success_rate}
+        if level == "auto":
+            return {"min_runs": self.min_auto_runs, "min_success_rate": self.auto_success_rate}
+        return {"min_runs": 0, "min_success_rate": 0.0}
 
 
 # ----------------------------------------------------------------------
@@ -187,6 +239,17 @@ class TrustLadder:
 
 def _entry_key(action_class: str, service: str) -> str:
     return f"{action_class}::{service}"
+
+
+def _next_level(level: str) -> str | None:
+    idx = _LEVEL_ORDER.get(level, 0)
+    if idx >= len(TRUST_LEVELS) - 1:
+        return None
+    return TRUST_LEVELS[idx + 1]
+
+
+def _persisted_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in entry.items() if key not in _RATIONALE_FIELDS}
 
 
 def _default_entry(action_class: str, service: str) -> dict[str, Any]:

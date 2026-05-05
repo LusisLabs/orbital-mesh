@@ -248,7 +248,14 @@ def build_serving_fabric_e2e(*, artifacts: list[ModelArtifact]) -> tuple[MeshBra
                 backend_name="sgl-project/sglang",
                 prefill_pool="prefill-a",
                 decode_pool="decode-a",
-                metrics={"latency_p95_ms": 850, "tokens_per_second": 120.0, "cache_hit_rate": 0.72},
+                metrics={
+                    "latency_p50_ms": 420,
+                    "latency_p95_ms": 850,
+                    "latency_p99_ms": 970,
+                    "tokens_per_second": 120.0,
+                    "error_rate": 0.0,
+                    "cache_hit_rate": 0.72,
+                },
             )
         ],
         artifacts=artifacts,

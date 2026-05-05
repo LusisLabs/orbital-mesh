@@ -266,6 +266,54 @@ export interface PilotGoNoGoPacket {
     live_action_run_ids: string[];
     denied_action_run_ids: string[];
     merkle_run_ids: string[];
+    mesh_brain_model_kernel_run_ids?: string[];
+    mesh_brain_live_canary_smoke_run_ids?: string[];
+    mesh_brain_canary_lanes?: { tenant_id: string; task_type: string }[];
+    mesh_brain_rollback_drill_run_ids?: string[];
+  };
+}
+
+export interface RunExportPackage {
+  package_version: string;
+  export_id: string;
+  generated_at: string;
+  run_id: string;
+  path: string;
+  package_sha256: string;
+  session: RunSessionRecord;
+  timeline_json: RunEventRecord[];
+  postmortem_markdown: string;
+  evidence_artifacts: Record<string, any>;
+  decision_record?: Record<string, any> | null;
+  evaluation_record?: Record<string, any> | null;
+  execution_record?: Record<string, any> | null;
+  feedback_record?: Record<string, any> | null;
+  approval_records: Array<Record<string, any>>;
+  operator_notes: string[];
+  merkle: {
+    snapshot: MerkleSnapshot;
+    latest_event_proof?: MerkleProof | null;
+  };
+  vault_documents: Array<{ path: string; content: string }>;
+  checks: Record<string, boolean>;
+  redaction: {
+    enabled: boolean;
+    secret_markers: string[];
+    replacement: string;
+  };
+  retention: {
+    retention_days: number;
+    delete_after: string;
+    reviewed: boolean;
+    review_required_before: string;
+    delete_command: string;
+  };
+  size_control: {
+    max_bytes: number;
+    initial_bytes: number;
+    final_bytes: number;
+    truncated: boolean;
+    omitted_fields: string[];
   };
 }
 
@@ -286,6 +334,13 @@ export interface TrustLadderEntry {
   last_level_change_at?: string | null;
   last_override_at?: string | null;
   manual_override_reason?: string | null;
+  next_level?: string | null;
+  autonomy_ceiling_reason?: string | null;
+  promotion_blockers?: string[];
+  promotion_requirements?: {
+    min_runs?: number;
+    min_success_rate?: number;
+  };
 }
 
 export interface ServiceAgentRecord {

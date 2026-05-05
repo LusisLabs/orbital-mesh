@@ -12,6 +12,21 @@ MESH_OPERATOR_HEADER=X-Mesh-Operator
 MESH_OPERATOR_ROLES_HEADER=X-Mesh-Roles
 ```
 
+`docker-compose.prod.yml` binds the Mesh container to `127.0.0.1` on the host by default through `MESH_PUBLISH_HOST`. Keep that default when the reverse proxy runs on the same host, or set `MESH_PUBLISH_HOST` only to a private interface reachable by the authenticated proxy. Do not set it to `0.0.0.0` for Internet-facing deployments.
+
+The production compose contract also defaults to:
+
+```bash
+MESH_READINESS_PROFILE=pilot
+MESH_STATE_BACKEND=postgres
+MESH_OPERATOR_IDENTITY_REQUIRED=1
+MESH_FORCE_APPROVAL_GATE=1
+MESH_LIVE_FEEDBACK_REQUIRED=1
+MESH_FEEDBACK_PROMETHEUS_ENABLED=1
+```
+
+It requires deployment-specific `MESH_DATABASE_URL`, `MESH_PROMETHEUS_URL`, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_SERVING_BASE_URL`, and `MESH_BRAIN_SERVING_MODEL` values before startup.
+
 The proxy is responsible for:
 
 - terminating TLS;

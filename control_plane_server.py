@@ -591,6 +591,48 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(result)
             return
+        if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/export/archive"):
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+                run_id = _safe_segment(parsed.path, 2)
+                if run_id is None:
+                    self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                archive = self.server.coordinator.export_run_archive(run_id)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if archive is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_file_response(
+                Path(archive["path"]),
+                content_type=str(archive["content_type"]),
+                download_name=str(archive["filename"]),
+            )
+            return
+        if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/export"):
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+                run_id = _safe_segment(parsed.path, 2)
+                if run_id is None:
+                    self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                package = self.server.coordinator.export_run_package(run_id)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if package is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(package)
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
@@ -630,6 +672,30 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             try:
                 payload["_operator"] = self._authorize({"launcher", "admin"})
                 run = self.server.coordinator.run_mesh_brain_live_serving_smoke(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/rollback-drill":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_rollback_drill(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/backend-matrix":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_backend_matrix(payload)
             except AuthorizationError as exc:
                 self._send_json({"error": str(exc)}, status=exc.status)
                 return
@@ -934,6 +1000,23 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
             self.wfile.write(raw)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
+    def _send_file_response(self, path: Path, *, content_type: str, download_name: str) -> None:
+        try:
+            raw = path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self._add_security_headers()
+            self._add_cors_headers()
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        except FileNotFoundError:
+            self._send_json({"error": "file not found"}, status=HTTPStatus.NOT_FOUND)
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 

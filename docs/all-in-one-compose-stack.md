@@ -209,6 +209,10 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_POSTGRES_PUBLISH_PORT` | `5432` | Host port for local Postgres |
 | `MESH_STATE_BACKEND` | `file` | `file` or `postgres` runtime state backend |
 | `MESH_DATABASE_URL` | `postgresql://mesh:mesh@postgres:5432/mesh` | Postgres/Supabase connection URL |
+| `MESH_BRAIN_ARTIFACT_URI_PREFIX` | empty | Durable Mesh Brain artifact URI prefix passed through to Mesh for pilot-readiness rehearsals |
+| `MESH_BRAIN_SERVING_BASE_URL` | empty | OpenAI-compatible Mesh Brain serving backend passed through to Mesh for live-serving smoke |
+| `MESH_BRAIN_SERVING_MODEL` | empty | Mesh Brain serving model name used by live-serving smoke |
+| `MESH_RUN_EXPORT_RETENTION_REVIEWED` | `0` | Set to `1` only after export retention/deletion rules have been reviewed for the rehearsal |
 | `MESH_LATENTMAS_PUBLISH_PORT` | `8791` | Host port for optional LatentMAS |
 | `MESH_STACK_KUBE_CONTEXT` | `mesh-compose` | Normalized kube context in the shared kubeconfig |
 | `MESH_STACK_NAMESPACE` | `search` | Seeded namespace and Mesh allowlist |

@@ -79,8 +79,10 @@ Before pilot:
 1. Run `scripts/prod_smoke.sh`.
 2. Run `scripts/verify_authenticated_ingress.py --json`.
 3. Run `scripts/verify_postgres_restart_proof.py --database-url "$MESH_DATABASE_URL" --json`.
-4. Run `scripts/generate_release_provenance.py --require-complete --json`.
-5. Capture `GET /api/readiness`, `GET /api/agent/slo`, `GET /metrics`, and `GET /api/pilot/go-no-go`.
+4. Run the Mesh Brain model-kernel probe, live-serving smoke, and rollback drill. The pilot go/no-go packet requires a passed model-kernel gate, a canary live-serving smoke run, a single CROPS canary lane, and rollback-drill evidence.
+5. Run `scripts/verify_mesh_brain_artifact_registry.py --artifacts-json .mesh-runtime-state/artifacts.json --proof-manifest dist/mesh-brain-artifact-upload-proof.json --require-upload-proof --json`.
+6. Run `scripts/generate_release_provenance.py --require-complete --json`.
+7. Capture `GET /api/readiness`, `GET /api/agent/slo`, `GET /metrics`, and `GET /api/pilot/go-no-go`.
 
 During pilot:
 

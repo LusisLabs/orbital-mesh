@@ -4173,6 +4173,30 @@ body {
   background: rgba(84, 138, 247, 0.12);
 }
 
+.trust-rationale {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.trust-blocker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.trust-blocker-list span {
+  max-width: 100%;
+  padding: 0.18rem 0.4rem;
+  border: 1px solid rgba(255, 193, 112, 0.32);
+  border-radius: 999px;
+  color: #ffd29a;
+  background: rgba(255, 193, 112, 0.08);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
 .roadmap-surface-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

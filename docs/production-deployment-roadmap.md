@@ -202,12 +202,12 @@ Exit gates:
 | Executable invariant suite | local production-like e2e | Focused production cut-list tests cover readiness, role gates, simulator non-mutation, kill switch, feedback gates, and proposal-lane isolation. |
 | Distributed-systems fault tests | local production-like e2e | Focused tests cover duplicate/correlated signals, delayed deferred runs, queue backpressure, and packaging drift; broader clock-skew and partial-network coverage remains. |
 | Threat model and abuse-case register | private staging | Initial authority-boundary register is documented; owner/expiry tracking remains before external staging. |
-| Data classification and retention controls | private staging | Initial classification table is documented; enforceable retention, redaction, and deletion controls remain. |
+| Data classification and retention controls | private staging | Initial classification table is documented; run export redaction, size caps, retention metadata, pilot retention-review gate, and dry-run-first purge utility exist. Broader signal/log/trace deletion controls remain. |
 | Supply-chain provenance | private staging | `scripts/generate_release_provenance.py` emits a release packet and `--require-complete` fails without CI artifacts; SBOM, vulnerability scan, image digest, and clean signed CI packet generation remain. |
 | Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, and rollback evidence. |
 | Connector certification matrix | private staging | Machine-readable certification states are exposed in `/api/readiness` and documented. |
 | Failure-mode library | private staging | Core denied-action and fault tests exist; explicit product library and UI replay catalog remain. |
-| Operator trust ladder UI | private staging | Trust ladder store/API exists; visible autonomy rationale is backlog. |
+| Operator trust ladder UI | private staging | API and browser trust surface now expose current ceiling, next level, threshold requirements, blockers, manual override reason, and per-service/action evidence. GPUI parity remains. |
 | Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
 | Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
 | Release provenance packet | production pilot | Local generator and completeness gate exist; CI must supply image digests, base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity before a signed pilot packet is valid. |
@@ -229,7 +229,7 @@ Exit gates:
 | Backup and restore automation | private staging | Runbook exists; rehearsal evidence required. |
 | Live Prometheus feedback | production action validation | Pilot readiness requires live feedback; current local proof uses Kubernetes re-harvest, while Prometheus service metrics remain deployment-specific. |
 | Watcher ownership and pause controls | production watchers | Watcher registry exists; operator ownership workflow needs polish. |
-| Run export for postmortems | production pilot | Vault and API exist; one-click/export packaging remains backlog. |
+| Run export for postmortems | production pilot | API and UI can generate a portable JSON package and downloadable zip archive with timeline, Markdown postmortem, evidence artifacts, decision/evaluation/execution/feedback records, approvals, vault notes, Merkle snapshot, and latest-event proof; secret-shaped fields are redacted, `MESH_RUN_EXPORT_MAX_BYTES` compacts bulky fields, packages carry delete-after metadata, `scripts/purge_run_exports.py` purges expired generated files only with `--apply`, and pilot readiness blocks until `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`. |
 | Role-stamped approvals | production pilot | Implemented; approvals record operator id, roles, source, and event id. |
 | Integration readiness contract per deployment tier | private staging | Implemented in `/api/readiness` with required checks, optional checks, blockers, and connector certification. |
 | Load and concurrency testing | production expansion | Not a current release gate. |

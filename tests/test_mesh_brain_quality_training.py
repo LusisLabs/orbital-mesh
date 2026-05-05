@@ -9,6 +9,7 @@ from mesh_brain import (
     build_curated_quality_dataset,
     collect_quality_runtime_evidence,
     compare_base_vs_adapter,
+    evaluate_quality_dataset_provenance,
     plan_quality_preference_stage,
     plan_quality_sft_stage,
     run_quality_training_plan,
@@ -33,6 +34,25 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
         self.assertTrue(dataset.dataset_version.startswith("quality_dataset_"))
         self.assertTrue(all("row_sha256" in row for row in dataset.provenance))
         self.assertTrue(any(row["license_usage_class"] == "public_bootstrap" for row in dataset.provenance))
+        self.assertTrue(dataset.source_coverage["has_incident_corpus"])
+        self.assertTrue(dataset.source_coverage["has_runtime_session"])
+        self.assertTrue(dataset.source_coverage["has_runtime_event"])
+        self.assertTrue(evaluate_quality_dataset_provenance(dataset)["passed"])
+
+    def test_quality_dataset_provenance_blocks_reference_only_or_synthetic_only_promotion(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            dataset = build_curated_quality_dataset(
+                tenant_id="tenant_a",
+                output_directory=Path(temp_dir),
+            )
+
+        gate = evaluate_quality_dataset_provenance(dataset)
+
+        self.assertFalse(gate["passed"])
+        self.assertIn("quality_dataset_missing_runtime_sessions", gate["reasons"])
+        self.assertIn("quality_dataset_missing_runtime_events", gate["reasons"])
+        self.assertIn("quality_dataset_missing_incident_corpus", gate["reasons"])
+        self.assertIn("quality_dataset_reference_or_synthetic_only", gate["reasons"])
 
     def test_quality_sft_and_dpo_orpo_stage_plans_have_measurable_gates(self) -> None:
         with TemporaryDirectory() as temp_dir:
@@ -220,6 +240,7 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
             (adapter_dir / "adapters.safetensors").write_text("adapter", encoding="utf-8")
             result = run_quality_training_plan(
                 output_directory=Path(temp_dir),
+                corpus_rows=[_corpus_row("corpus_1")],
                 runtime_sessions=[_runtime_session("run_1")],
                 runtime_events=[_runtime_event("run_1", "evt_1")],
                 native_inference={"status": "completed", "content": _structured_native_response()},
@@ -266,6 +287,7 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
             (adapter_dir / "adapters.safetensors").write_text("adapter", encoding="utf-8")
             result = run_quality_training_plan(
                 output_directory=Path(temp_dir),
+                corpus_rows=[_corpus_row("corpus_1")],
                 runtime_sessions=[_runtime_session("run_1")],
                 runtime_events=[_runtime_event("run_1", "evt_1")],
                 native_inference={"status": "completed", "content": _structured_native_response()},
@@ -279,6 +301,7 @@ class MeshBrainQualityTrainingTests(unittest.TestCase):
         self.assertEqual(result.promotion_gate["decision"], "promote")
         self.assertEqual(result.model_kernel_probe.release_decision, "pass")
         self.assertIn("model_kernel_max_gradient_relative_error", result.promotion_gate["metrics"])
+        self.assertTrue(result.promotion_gate["metrics"]["quality_source_coverage"]["has_incident_corpus"])
 
 
 def _corpus_row(row_id: str) -> dict[str, object]:

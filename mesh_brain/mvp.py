@@ -17,7 +17,7 @@ from .eval_jobs import EvalJobResult, EvalJobRequest, run_eval_job, write_eval_j
 from .eval_plane import build_eval_cases_from_dataset
 from .model_management import ArtifactAlias, MeshBrainModelCatalog, PromotionApproval
 from .observability import MeshBrainObservation, build_mesh_brain_observation, write_mesh_brain_observability
-from .runtime import DatasetRow, ModelArtifact, ReleaseGatePolicy, evaluate_release_gate, stable_digest, utc_now
+from .runtime import DatasetRow, ModelArtifact, ReleaseGatePolicy, curated_quality_source_coverage_pass, evaluate_release_gate, stable_digest, utc_now
 from .serving import MeshBrainServingFabric, OpenAIChatRequest, ServingPlan, ServingPool, TenantQuota, write_serving_plan
 from .training_jobs import TrainingJobResult, TrainingJobRequest, launch_lora_job, write_training_job_result
 
@@ -107,6 +107,8 @@ def run_private_crops_mvp_e2e(
             "response_eval_passed": True,
             "judge_rubric_passed": True,
             "red_team_regression_passed": True,
+            "curated_quality_training_passed": True,
+            "quality_source_coverage": curated_quality_source_coverage_pass(),
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
     )
@@ -246,6 +248,8 @@ def _build_initial_catalog(*, tenant_id: str) -> tuple[ModelArtifact, ModelArtif
             "response_eval_passed": True,
             "judge_rubric_passed": True,
             "red_team_regression_passed": True,
+            "curated_quality_training_passed": True,
+            "quality_source_coverage": curated_quality_source_coverage_pass(),
         },
         policy=ReleaseGatePolicy(task_success_threshold=0.8, latency_p95_budget_ms=1000, cost_per_completed_task_budget=0.1),
     )
@@ -268,7 +272,14 @@ def _build_mvp_serving_fabric(*, artifacts: list[ModelArtifact], tenant_id: str)
                 backend_name="sgl-project/sglang",
                 prefill_pool="mvp-prefill",
                 decode_pool="mvp-decode",
-                metrics={"latency_p95_ms": 850, "tokens_per_second": 120.0, "cache_hit_rate": 0.72},
+                metrics={
+                    "latency_p50_ms": 420,
+                    "latency_p95_ms": 850,
+                    "latency_p99_ms": 970,
+                    "tokens_per_second": 120.0,
+                    "error_rate": 0.0,
+                    "cache_hit_rate": 0.72,
+                },
             )
         ],
         artifacts=artifacts,
