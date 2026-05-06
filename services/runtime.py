@@ -371,7 +371,6 @@ class MeshRuntimeEngine:
         raw_signal: dict,
         scenario_name: str = "manual",
         *,
-        tool_provider: object | None = None,
         registry: object | None = None,
         planner: object | None = None,
     ) -> dict:
@@ -419,7 +418,7 @@ class MeshRuntimeEngine:
         # skipped investigation entirely (this was the source of
         # 0-of-521 tool-coverage on CloudOpsBench). See
         # ``_auto_wire_investigation_harness`` for the rationale.
-        if registry is None and planner is None and tool_provider is None:
+        if registry is None and planner is None:
             auto_registry, auto_planner = _auto_wire_investigation_harness(
                 raw_signal, trigger, self.config,
                 root_registry=self.root_registry,
@@ -463,7 +462,6 @@ class MeshRuntimeEngine:
             investigation_report = self.investigation.investigate(
                 trigger=trigger,
                 evidence_pack=evidence_pack.to_dict(),
-                tool_provider=tool_provider,
                 registry=registry,
                 planner=planner,
             )

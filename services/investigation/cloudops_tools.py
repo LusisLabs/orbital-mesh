@@ -95,9 +95,20 @@ def register_cloudops_tools(registry: ToolRegistry, snapshot_tools: Any) -> None
     snapshot tool cache is read-only: every registration here carries
     ``mutation_class="read_only"`` so the critic cannot let one slip
     through to a mutating path.
+
+    Also registers the K8sGPT-style analyzer tools (admission events,
+    node dataplane, service routing) — these compose multiple snapshot
+    calls into pre-canned investigation recipes whose summaries match
+    the cloudops ontology, addressing the failure modes documented in
+    ``cloudops_analyzers.py``.
     """
     for definition in CLOUDOPS_TOOL_DEFINITIONS:
         registry.register(definition, _make_cloudops_invoker(definition.name, snapshot_tools))
+    # Imported here to avoid a circular import at module load — analyzers
+    # depend on the registry types this module exports.
+    from .cloudops_analyzers import register_cloudops_analyzers
+
+    register_cloudops_analyzers(registry, snapshot_tools)
 
 
 def _make_cloudops_invoker(tool_name: str, snapshot_tools: Any):
