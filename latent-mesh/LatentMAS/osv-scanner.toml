@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+ignoreUntil = 2026-08-06
+reason = "paste is an unmaintained transitive dependency via tokenizers 0.22.2, not a direct LatentMAS dependency. Revisit when tokenizers removes paste or a compatible tokenizer replacement is available."

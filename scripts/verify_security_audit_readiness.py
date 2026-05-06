@@ -21,6 +21,7 @@ REQUIRED_PATHS = (
     "docs/production-hardening-records.md",
     "docs/release-provenance.md",
     "config/procurement-security.package.json",
+    "latent-mesh/LatentMAS/osv-scanner.toml",
     "scripts/generate_release_provenance.py",
     "scripts/verify_procurement_security_package.py",
 )
@@ -60,9 +61,11 @@ REQUIRED_MARKERS = {
         "actions/dependency-review-action@",
         "GITLEAKS_LINUX_X64_SHA256",
         "gitleaks detect --source=.",
-        "google/osv-scanner-action@",
+        "ghcr.io/google/osv-scanner@sha256:",
+        "osv-lockfile-scan.json",
         "npm audit --audit-level=high",
-        "EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE",
+        "npm-audit.json",
+        "GHAS_DEPENDENCY_REVIEW_ON_PRIVATE",
         "github/codeql-action/init@",
         "ossf/scorecard-action@",
     ),
@@ -95,6 +98,11 @@ REQUIRED_MARKERS = {
         "SBOM path",
         "vulnerability scan path",
         "builder identity",
+    ),
+    "latent-mesh/LatentMAS/osv-scanner.toml": (
+        "RUSTSEC-2024-0436",
+        "tokenizers",
+        "2026-08-06",
     ),
 }
 

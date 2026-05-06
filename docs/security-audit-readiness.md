@@ -10,7 +10,7 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | Scorecard | `.github/workflows/security.yml` runs OpenSSF Scorecard on public repositories, and on private repositories only when `OPENSSF_SCORECARD_ON_PRIVATE=true` is set. |
 | Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, pip, root Cargo, and LatentMAS Cargo dependencies. |
 | Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes when the repository is public or `GHAS_DEPENDENCY_REVIEW_ON_PRIVATE=true` confirms private-repository support. |
-| Known vulnerabilities | The scheduled security workflow scans lockfiles with OSV and runs `npm audit --audit-level=high` for public repositories, and for private repositories only when `EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE=true` is set. |
+| Known vulnerabilities | The security workflow scans lockfiles with a pinned OSV scanner image, uploads `osv-lockfile-scan.json`, runs `npm audit --audit-level=high`, and uploads `npm-audit.json` for release-candidate evidence. |
 | Token permissions | GitHub workflows use `contents: read` by default, with scoped write permissions only for SARIF upload jobs. |
 | Pinned workflow dependencies | First-party workflows pin external GitHub Actions to full commit SHAs. |
 | Code review ownership | `.github/CODEOWNERS` names owners for critical runtime, schema, policy, docs, and workflow paths. |
@@ -37,7 +37,7 @@ Weekly:
 - scheduled security workflow;
 - OpenSSF Scorecard where repository visibility and GitHub security features permit it;
 - CodeQL where repository visibility and GitHub security features permit it;
-- external dependency vulnerability scans only for public repositories or explicitly approved private-repo runs;
+- dependency-review, OSV lockfile scan, and npm audit release-candidate outputs;
 - Dependabot update proposals.
 
 Release candidate:
@@ -89,6 +89,8 @@ Auditors should receive:
 - Mesh Brain artifact upload proof when model artifacts are in scope.
 
 Audit packages must not include raw secrets, kubeconfigs, bearer tokens, database URLs with credentials, private keys, or unredacted production traces.
+
+The LatentMAS lockfile carries a scoped OSV exception in `latent-mesh/LatentMAS/osv-scanner.toml` for `RUSTSEC-2024-0436`. The advisory is informational/unmaintained, comes from transitive `tokenizers` dependency `paste`, and expires on 2026-08-06 for review. This exception does not apply to release-image SBOM or Grype vulnerability gates.
 
 ## Procurement Security Package
 
