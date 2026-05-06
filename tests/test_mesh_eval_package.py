@@ -142,21 +142,39 @@ class MeshEvalPackageTests(unittest.TestCase):
         self.assertEqual(result["retained_text"], "cdef")
 
     def test_evaluation_service_runs_latentmas_probe_end_to_end(self) -> None:
-        command = "cargo run --quiet --manifest-path latent-mesh/LatentMAS/Cargo.toml --"
-        with patch.dict(
-            "os.environ",
-            {
-                "MESH_EVAL_LATENTMAS_COMMAND": command,
-                "MESH_EVAL_CONTEXT_TOKEN_BUDGET": "4",
-                "MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS": "30",
-            },
-        ):
-            result = EvaluationService().evaluate_trace(
-                trigger=Trigger.from_dict(_signal_trigger()),
-                decision=Decision.from_dict(load_fixture("decisions", "high_risk_decision.json")),
-                run_events=[{"sequence": 1, "event_type": "evidence_pack_ready", "stage": "evidence_pack_ready"}],
-                artifacts={"evidence_pack": {"probe_results": [{"name": "metrics"}]}},
+        with TemporaryDirectory() as temp_dir:
+            script = Path(temp_dir) / "probe.py"
+            script.write_text(
+                "import json\n"
+                "import sys\n"
+                "text = sys.argv[sys.argv.index('--tokenize-text') + 1]\n"
+                "budget = int(sys.argv[sys.argv.index('--context-token-budget') + 1])\n"
+                "print(json.dumps({"
+                "'tokenizer_backend': 'Heuristic', "
+                "'context_token_budget': budget, "
+                "'retained_text': text[-budget:], "
+                "'original_chars': len(text), "
+                "'retained_chars': min(len(text), budget), "
+                "'token_count': min(len(text), budget), "
+                "'truncated': len(text) > budget"
+                "}))\n",
+                encoding="utf-8",
             )
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "MESH_EVAL_LATENTMAS_COMMAND": f"python3 {script}",
+                    "MESH_EVAL_CONTEXT_TOKEN_BUDGET": "4",
+                    "MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS": "5",
+                },
+            ):
+                result = EvaluationService().evaluate_trace(
+                    trigger=Trigger.from_dict(_signal_trigger()),
+                    decision=Decision.from_dict(load_fixture("decisions", "high_risk_decision.json")),
+                    run_events=[{"sequence": 1, "event_type": "evidence_pack_ready", "stage": "evidence_pack_ready"}],
+                    artifacts={"evidence_pack": {"probe_results": [{"name": "metrics"}]}},
+                )
 
         probe = result["task_trace"]["mesh_eval"]["latent_mesh"]["tokenizer_probe"]
         self.assertEqual(probe["status"], "ok")

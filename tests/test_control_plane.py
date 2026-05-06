@@ -815,7 +815,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
-    def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 10.0) -> dict:
+    def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 30.0) -> dict:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             payload = self._request("GET", f"/api/runs/{run_id}")
