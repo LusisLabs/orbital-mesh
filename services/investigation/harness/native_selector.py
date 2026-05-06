@@ -221,10 +221,27 @@ class LlmProbeSelector:
     ) -> None:
         self._rule_pack = rule_pack
         definitions = tuple(tool_definitions) if tool_definitions is not None else tuple(rule_pack.tool_definitions)
+        # Index by qualified name (``{domain}:{name}``) so the LLM can
+        # see and pick from every read-only tool the harness exposes
+        # — CloudOps snapshot tools alongside always-on Prometheus,
+        # AWS, kubectl, GitHub, etc. The legacy domain-only filter is
+        # gone: the LLM should decide which source is most useful for
+        # the current trigger, and the critic + registry enforce the
+        # read-only floor regardless of which domain the call lands in.
         self._tool_definitions = {
+            definition.qualified_name: definition
+            for definition in definitions
+            if definition.mutation_class == "read_only"
+        }
+        # Also keep a per-domain unqualified index so a planner that
+        # passes ``tool_name`` without a domain (legacy LLM output, or
+        # a model trained against a single-domain prompt) still resolves
+        # against its own rule pack's domain. Cross-domain calls must
+        # use qualified names — the dict-by-name path cannot disambiguate.
+        self._unqualified_in_domain = {
             definition.name: definition
             for definition in definitions
-            if definition.domain == rule_pack.domain
+            if definition.domain == rule_pack.domain and definition.mutation_class == "read_only"
         }
         self._decision_provider = decision_provider
         self._enabled = enabled
@@ -261,14 +278,30 @@ class LlmProbeSelector:
         reason = str(proposed.get("reason") or "llm_selector_proposed_stop")
         if action != "continue":
             return LoopDecision(action="stop", reason=reason, confidence=confidence, debug={**base_debug, "proposal": proposed})
+        # Resolve the LLM-proposed tool. Two acceptable shapes from the
+        # model:
+        #   1. ``tool_name="cloudops:GetResources"`` — qualified, the
+        #      preferred form. Required for cross-domain calls.
+        #   2. ``tool_name="GetResources"`` — unqualified, falls back
+        #      to the planner's own rule_pack domain. Backward-compat
+        #      for single-domain prompts.
+        # Optional ``domain`` field is also honored; if present it
+        # combines with ``tool_name`` to form a qualified key.
         tool_name = str(proposed.get("tool_name") or "")
-        definition = self._tool_definitions.get(tool_name)
+        proposed_domain = str(proposed.get("domain") or "")
+        if proposed_domain and ":" not in tool_name:
+            qualified = f"{proposed_domain}:{tool_name}"
+        elif ":" in tool_name:
+            qualified = tool_name
+        else:
+            qualified = f"{self._rule_pack.domain}:{tool_name}"
+        definition = self._tool_definitions.get(qualified) or self._unqualified_in_domain.get(tool_name)
         if definition is None:
             return LoopDecision(
                 action="stop",
                 reason="llm_selector_invalid_tool",
                 confidence=0.0,
-                debug={**base_debug, "proposal": proposed},
+                debug={**base_debug, "proposal": proposed, "resolved_qualified": qualified},
             )
         args = proposed.get("args") if isinstance(proposed.get("args"), dict) else {}
         return LoopDecision(
