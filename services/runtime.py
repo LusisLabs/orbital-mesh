@@ -179,7 +179,6 @@ def _auto_wire_investigation_harness(
     if isinstance(snapshot, dict):
         from services.benchmark.cloudopsbench import CloudOpsSnapshotTools
         from services.investigation.cloudops_tools import (
-            CLOUDOPS_TOOL_DEFINITIONS,
             CloudOpsLoopPlanner,
             CloudOpsRulePack,
             register_cloudops_tools,
@@ -200,15 +199,19 @@ def _auto_wire_investigation_harness(
         decision_provider = build_llm_decision_provider(config) if config is not None else None
         if decision_provider is not None:
             rule_pack = CloudOpsRulePack(trigger)
-            # The LLM planner only sees tool *definitions* it knows
-            # how to describe to the model. Today that's the
-            # CloudOps definitions; once the LLM-only pathway is
-            # ready, ``registry.list_definitions(mutation_class=
-            # "read_only")`` will replace this hard-coded set so it
-            # picks up Prometheus/AWS/etc. without code changes.
+            # Hand the LLM planner every read-only tool the registry
+            # currently exposes — CloudOps snapshot tools plus all
+            # always-on root packs that auto-registered (Prometheus,
+            # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP).
+            # The LLM picks tools by qualified name, so a CloudOps
+            # investigation can branch into "what changed in GitHub
+            # 30 minutes ago" or "what does Prometheus show for this
+            # service right now" without leaving the same loop.
+            # Critic + per-tool runtime checks remain the safety floor.
+            llm_tool_definitions = registry.list_definitions(mutation_class="read_only")
             planner = LlmProbeSelector(
                 rule_pack,
-                tool_definitions=CLOUDOPS_TOOL_DEFINITIONS,
+                tool_definitions=llm_tool_definitions,
                 decision_provider=decision_provider,
                 enabled=True,
             )

@@ -258,6 +258,24 @@ Auto-registration via `MESH_MCP_SERVERS=id1=url1,id2=url2` env requires a caller
 | `mcp` | dynamic | `MESH_MCP_SERVERS` + factory | configurable per-server |
 | **Total native** | **32** | | |
 
+## LLM planner sees the full surface
+
+`LlmProbeSelector` is keyed by **qualified name** (`{domain}:{name}`), not just `name`. When the engine auto-wires it, it passes `registry.list_definitions(mutation_class="read_only")` — every read-only tool the registry exposes after the root+per-run overlay. The LLM can therefore decide between `cloudops:GetResources`, `prometheus:query_metrics_instant`, and `github:github_pr_diff` in the same loop.
+
+Two acceptable response shapes from the model:
+
+```json
+{ "action": "continue", "tool_name": "prometheus:query_metrics_instant", "args": {"query": "..."}, "reason": "...", "confidence": 0.75 }
+```
+
+or with a separate domain field:
+
+```json
+{ "action": "continue", "domain": "github", "tool_name": "github_pr_diff", "args": {...}, "reason": "...", "confidence": 0.8 }
+```
+
+Bare `tool_name` (no colon, no domain) falls back to the planner's own rule-pack domain — backward compat for single-domain prompts. Mutating tools never appear in the LLM's `available_tools` context (filtered at `LlmProbeSelector.__init__` by `mutation_class == "read_only"`); the critic + per-tool runtime checks are the second and third lines of defense.
+
 ## How tool results reach RCA
 
 This is the deliberate wiring. When the harness loop completes:

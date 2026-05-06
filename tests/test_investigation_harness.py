@@ -357,6 +357,140 @@ class RethPeerStarvationPortTests(unittest.TestCase):
         self.assertIn("engine_api_reachable=false", joined)
 
 
+class LlmProbeSelectorCrossDomainTests(unittest.TestCase):
+    """LlmProbeSelector now sees every read-only tool the registry
+    holds — its domain isn't a fence, it's a default. The LLM can pick
+    a CloudOps snapshot tool, a Prometheus query, or a GitHub diff in
+    the same loop. The critic + per-tool runtime checks remain the
+    safety floor.
+    """
+
+    def _cloudops_pack_with_extras(self) -> tuple[Any, list[ToolDefinition]]:
+        from services.investigation.cloudops_tools import CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
+
+        rule_pack = CloudOpsRulePack(_cloudops_trigger())
+        prometheus_def = ToolDefinition(
+            name="query_metrics_instant",
+            domain="prometheus",
+            description="Prometheus instant query",
+            args_schema={"query": {"type": "str", "required": True}},
+            mutation_class="read_only",
+        )
+        github_def = ToolDefinition(
+            name="github_pr_diff",
+            domain="github",
+            description="GitHub PR diff",
+            args_schema={"repo": {"type": "str", "required": True}, "pr_number": {"type": "int", "required": True}},
+            mutation_class="read_only",
+        )
+        cross_domain_defs = list(CLOUDOPS_TOOL_DEFINITIONS) + [prometheus_def, github_def]
+        return rule_pack, cross_domain_defs
+
+    def test_llm_can_pick_cross_domain_tool_via_qualified_name(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "prometheus:query_metrics_instant",
+                "args": {"query": 'up{service="frontend"}'},
+                "reason": "check_freshness",
+                "confidence": 0.75,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.action, "continue")
+        self.assertEqual(decision.next_calls[0].domain, "prometheus")
+        self.assertEqual(decision.next_calls[0].tool_name, "query_metrics_instant")
+
+    def test_llm_can_pick_cross_domain_via_separate_domain_field(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "domain": "github",
+                "tool_name": "github_pr_diff",
+                "args": {"repo": "owner/repo", "pr_number": 42},
+                "reason": "investigate_recent_change",
+                "confidence": 0.8,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.next_calls[0].domain, "github")
+        self.assertEqual(decision.next_calls[0].tool_name, "github_pr_diff")
+
+    def test_llm_unqualified_tool_falls_back_to_rule_pack_domain(self) -> None:
+        # Backward compat: a model that emits a bare ``tool_name``
+        # (no domain, no colon) still lands on the planner's own
+        # domain. This is the legacy single-domain prompt shape.
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "DescribeResource",
+                "args": {"resource_type": "pods", "name": "frontend", "namespace": "default"},
+                "reason": "legacy_single_domain",
+                "confidence": 0.6,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.next_calls[0].domain, "cloudops")
+        self.assertEqual(decision.next_calls[0].tool_name, "DescribeResource")
+
+    def test_llm_unknown_tool_stops_with_invalid_tool_reason(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "imaginary:nonexistent_tool",
+                "args": {},
+                "reason": "hallucinated",
+                "confidence": 0.5,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.action, "stop")
+        self.assertEqual(decision.reason, "llm_selector_invalid_tool")
+        self.assertEqual(decision.debug["resolved_qualified"], "imaginary:nonexistent_tool")
+
+    def test_llm_only_sees_read_only_tools(self) -> None:
+        # Critical safety property: even if a domain pack accidentally
+        # registered a mutating tool, the LLM selector's view of
+        # ``available_tools`` excludes it. The critic is the second
+        # defense; this is the first.
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        mutating_def = ToolDefinition(
+            name="dangerous",
+            domain="cloudops",
+            description="should never appear in LLM context",
+            args_schema={},
+            mutation_class="hard_mutation",
+        )
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=list(definitions) + [mutating_def],
+            decision_provider=lambda _ctx: {"action": "stop", "reason": "no", "confidence": 0.0},
+            enabled=True,
+        )
+        # The LLM never sees the mutating tool.
+        self.assertNotIn("cloudops:dangerous", selector._tool_definitions)
+
+
 class _CloudOpsSnapshotCall:
     def __init__(self, *, valid: bool) -> None:
         self.valid = valid
