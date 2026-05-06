@@ -28,13 +28,34 @@ class BenchmarkBackend(Protocol):
 @dataclass
 class MeshBackend:
     runtime_config: RuntimeConfig
+    cloudopsbench_root: Path | None = None
     name: str = "mesh"
 
     def __post_init__(self) -> None:
         self._engine = MeshRuntimeEngine(config=self.runtime_config)
 
     def run_scenario(self, scenario: BenchmarkScenario, raw_signal: dict[str, Any], *, iteration: int) -> dict[str, Any]:
-        return self._engine.run_sync(raw_signal, scenario_name=f"benchmark_{scenario.scenario_id}_{iteration}")
+        # If the scenario references a CloudOpsBench case, load the
+        # snapshot and embed it on the signal so the runtime's
+        # auto-wiring (services/runtime.py:_auto_wire_investigation_harness)
+        # can register cloudops tools + the CloudOps planner. Without
+        # this, MeshBackend ran the deterministic engine only and
+        # 0/521 scenarios used any investigation tool.
+        signal = raw_signal
+        if (
+            self.cloudopsbench_root is not None
+            and not isinstance(raw_signal.get("cloudopsbench_snapshot"), dict)
+            and (scenario.source.get("snapshot_file") or scenario.source.get("cloudopsbench_case"))
+        ):
+            from .cloudopsbench import CloudOpsSnapshotRunner
+
+            loader = CloudOpsSnapshotRunner(
+                runtime_config=self.runtime_config,
+                cloudopsbench_root=self.cloudopsbench_root,
+            )
+            snapshot = loader._load_snapshot(scenario, raw_signal)
+            signal = {**raw_signal, "cloudopsbench_snapshot": snapshot}
+        return self._engine.run_sync(signal, scenario_name=f"benchmark_{scenario.scenario_id}_{iteration}")
 
 
 @dataclass

@@ -171,7 +171,10 @@ def _build_backend(config: BenchmarkRunConfig, *, output_dir: Path, iteration: i
     if provider == "mesh":
         state_directory = _state_directory(config, output_dir=output_dir, iteration=iteration)
         runtime_config = _runtime_config(config, state_directory=state_directory)
-        return MeshBackend(runtime_config=runtime_config)
+        return MeshBackend(
+            runtime_config=runtime_config,
+            cloudopsbench_root=config.cloudopsbench_root,
+        )
     if provider in {"mesh-control-plane", "mesh-agentic"}:
         state_directory = _state_directory(config, output_dir=output_dir, iteration=iteration)
         runtime_config = _runtime_config(config, state_directory=state_directory)

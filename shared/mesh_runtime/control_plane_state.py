@@ -620,6 +620,9 @@ class FileStateStore:
             time.sleep(0.01)
         return True
 
+    def materialize_vault_now(self, run_id: str) -> None:
+        self._materialize_vault(run_id, force=True)
+
     def close(self, timeout: float = 5.0) -> None:
         vault_queue = self._vault_queue
         vault_thread = self._vault_thread

@@ -53,6 +53,178 @@ def _requires_live_feedback(config: RuntimeConfig) -> bool:
     return config.live_feedback_required or config.readiness_profile in {"pilot", "expansion"}
 
 
+def _register_root_diagnostic_packs(root_registry: object, config: RuntimeConfig) -> None:
+    """Auto-register always-on diagnostic packs onto the engine root.
+
+    Each pack is gated on its own config/env signal. Failures are
+    logged but never raised — a misconfigured Prometheus URL must not
+    keep the engine from starting; the registry simply stays empty
+    for that domain. The ``maybe_register_*`` helpers each return a
+    bool indicating whether they fired, used here only for telemetry.
+
+    Order is intentional: cheap-and-local first (Prometheus needs
+    only a URL, kubectl needs only a kubeconfig), then heavier auth
+    surfaces (GitHub `gh auth status`, AWS env-gated, MCP).
+    """
+    import logging
+
+    log = logging.getLogger("mesh.runtime")
+
+    try:
+        prometheus_url = getattr(config, "prometheus_url", None)
+        if prometheus_url:
+            from services.investigation.prometheus_tools import register_prometheus_tools
+
+            client = PrometheusClient(
+                prometheus_url,
+                timeout_seconds=getattr(config, "prometheus_query_timeout_seconds", 10.0),
+            )
+            register_prometheus_tools(root_registry, client)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: prometheus pack failed (non-fatal)")
+
+    try:
+        from services.investigation.kubectl_tools import maybe_register_kubectl_at_root
+
+        maybe_register_kubectl_at_root(root_registry)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: kubectl pack failed (non-fatal)")
+
+    try:
+        from services.investigation.github_tools import maybe_register_github_at_root
+
+        maybe_register_github_at_root(root_registry)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: github pack failed (non-fatal)")
+
+    try:
+        from services.investigation.loki_jaeger_tools import (
+            maybe_register_jaeger_at_root,
+            maybe_register_loki_at_root,
+        )
+
+        maybe_register_loki_at_root(root_registry)  # type: ignore[arg-type]
+        maybe_register_jaeger_at_root(root_registry)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: loki/jaeger pack failed (non-fatal)")
+
+    try:
+        from services.investigation.db_tools import maybe_register_pg_at_root
+
+        maybe_register_pg_at_root(root_registry)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: postgres pack failed (non-fatal)")
+
+    try:
+        import os
+
+        if os.environ.get("MESH_AWS_TOOLS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
+            from services.investigation.aws_tools import register_aws_tools
+
+            region = os.environ.get("MESH_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+            register_aws_tools(root_registry, default_region=region)  # type: ignore[arg-type]
+    except Exception:
+        log.exception("root tool registration: aws pack failed (non-fatal)")
+
+
+def _overlay_root_registry(per_run_registry: object, root_registry: object | None) -> object:
+    """Merge the engine's always-on root tools onto a per-run registry.
+
+    Re-registers each root tool on the per-run instance using
+    ``has`` to skip ones the per-run already shadowed (per-run wins
+    on conflict — the LLM should see the freshest snapshot tools
+    without losing access to root diagnostics that share a name).
+    """
+    if root_registry is None:
+        return per_run_registry
+    from services.investigation.harness import ToolRegistry as _ToolRegistry
+
+    if not isinstance(root_registry, _ToolRegistry) or not isinstance(per_run_registry, _ToolRegistry):
+        return per_run_registry
+    for definition in root_registry.list_definitions():
+        if per_run_registry.has(definition.domain, definition.name):
+            continue
+        entry = root_registry.get(definition.domain, definition.name)
+        if entry is None:
+            continue
+        per_run_registry.register(definition, entry[1])
+    return per_run_registry
+
+
+def _auto_wire_investigation_harness(
+    raw_signal: dict,
+    trigger: object,
+    config: RuntimeConfig | None = None,
+    *,
+    root_registry: object | None = None,
+) -> tuple[object | None, object | None]:
+    """When the caller doesn't supply a harness, auto-wire one from the signal.
+
+    The single biggest gap on CloudOpsBench: ``MeshBackend.run_scenario``
+    invoked ``run_sync`` without ``registry``/``planner``, so the
+    investigation tool-loop short-circuited on every scenario (0/521 used
+    any tool). The machinery existed; only the wiring was missing.
+
+    Two planner shapes are produced depending on config:
+
+    * If ``MESH_OBSERVER_ENABLED=1`` and a key is configured, an
+      ``LlmProbeSelector`` is built. Each harness iteration calls the
+      observer LLM with the current observation state and asks for the
+      next tool to invoke. The LLM cannot pick mutating tools (the
+      registry rejects them) and cannot crash the loop (failures
+      collapse to ``stop``).
+    * Otherwise the rule-based ``CloudOpsLoopPlanner`` is used — pattern
+      matching over the snapshot. This is the deterministic safety floor.
+
+    Returns ``(registry, planner)`` if a domain match is found, or
+    ``(None, None)`` to leave the harness disabled.
+    """
+    snapshot = raw_signal.get("cloudopsbench_snapshot") if isinstance(raw_signal, dict) else None
+    if isinstance(snapshot, dict):
+        from services.benchmark.cloudopsbench import CloudOpsSnapshotTools
+        from services.investigation.cloudops_tools import (
+            CloudOpsLoopPlanner,
+            CloudOpsRulePack,
+            register_cloudops_tools,
+        )
+        from services.investigation.harness.native_selector import LlmProbeSelector
+        from services.investigation.harness.registry import ToolRegistry
+        from services.investigation.llm_planner import build_llm_decision_provider
+
+        registry = ToolRegistry()
+        register_cloudops_tools(registry, CloudOpsSnapshotTools(snapshot))
+        # Overlay always-on root diagnostic packs (Prometheus, AWS,
+        # kubectl, GitHub, Loki, Jaeger, Postgres, MCP) so the
+        # planner — especially the LLM planner — can mix CloudOps
+        # snapshot tools with live observability sources in the same
+        # loop. Per-run CloudOps tools win on name conflicts.
+        _overlay_root_registry(registry, root_registry)
+
+        decision_provider = build_llm_decision_provider(config) if config is not None else None
+        if decision_provider is not None:
+            rule_pack = CloudOpsRulePack(trigger)
+            # Hand the LLM planner every read-only tool the registry
+            # currently exposes — CloudOps snapshot tools plus all
+            # always-on root packs that auto-registered (Prometheus,
+            # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP).
+            # The LLM picks tools by qualified name, so a CloudOps
+            # investigation can branch into "what changed in GitHub
+            # 30 minutes ago" or "what does Prometheus show for this
+            # service right now" without leaving the same loop.
+            # Critic + per-tool runtime checks remain the safety floor.
+            llm_tool_definitions = registry.list_definitions(mutation_class="read_only")
+            planner = LlmProbeSelector(
+                rule_pack,
+                tool_definitions=llm_tool_definitions,
+                decision_provider=decision_provider,
+                enabled=True,
+            )
+        else:
+            planner = CloudOpsLoopPlanner(trigger)
+        return registry, planner
+    return None, None
+
+
 class MeshRuntimeEngine:
     def __init__(
         self,
@@ -106,6 +278,19 @@ class MeshRuntimeEngine:
         self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
         self.investigation = investigation or InvestigationService()
         self.reth_planner = RethInvestigationPlanner(self.config)
+        # Root tool registry. Always-on diagnostic packs (Prometheus,
+        # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP) auto-
+        # register here at engine construction time, gated on config
+        # / env presence. Per-run domain packs (CloudOps snapshot,
+        # Reth live probes) are overlaid on top of a clone in
+        # ``_auto_wire_investigation_harness``. Mesh deployments
+        # without a given backend pay zero cost for it — the registry
+        # stays empty for that domain and the planner never sees its
+        # tools. See docs/investigation-harness.md for the full map.
+        from services.investigation.harness import ToolRegistry as _ToolRegistry
+
+        self.root_registry: _ToolRegistry = _ToolRegistry()
+        _register_root_diagnostic_packs(self.root_registry, self.config)
         escalation_reasoner = None
         if self.config.llm_escalation_enabled and (learning_store or context_store):
             from services.decision.llm_reasoning import EscalationReasoner
@@ -191,7 +376,6 @@ class MeshRuntimeEngine:
         raw_signal: dict,
         scenario_name: str = "manual",
         *,
-        tool_provider: object | None = None,
         registry: object | None = None,
         planner: object | None = None,
     ) -> dict:
@@ -233,6 +417,20 @@ class MeshRuntimeEngine:
             result["run_metadata"] = run_record.__dict__
             return result
 
+        # Auto-wire the investigation harness when the caller didn't
+        # supply one. Without this, every benchmark/test/ad-hoc call hit
+        # the tool-loop's "registry+planner are None" short-circuit and
+        # skipped investigation entirely (this was the source of
+        # 0-of-521 tool-coverage on CloudOpsBench). See
+        # ``_auto_wire_investigation_harness`` for the rationale.
+        if registry is None and planner is None:
+            auto_registry, auto_planner = _auto_wire_investigation_harness(
+                raw_signal, trigger, self.config,
+                root_registry=self.root_registry,
+            )
+            registry = auto_registry
+            planner = auto_planner
+
         record_event(
             "trigger_ready",
             "trigger_ready",
@@ -269,7 +467,6 @@ class MeshRuntimeEngine:
             investigation_report = self.investigation.investigate(
                 trigger=trigger,
                 evidence_pack=evidence_pack.to_dict(),
-                tool_provider=tool_provider,
                 registry=registry,
                 planner=planner,
             )

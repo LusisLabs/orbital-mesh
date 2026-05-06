@@ -5,12 +5,13 @@ The investigation service has two modes:
 1. **Deterministic** (default) — local probes against already-normalized
    Mesh artifacts. No I/O, no mutation. Used in production and golden
    benchmarks.
-2. **Tool-driven** — a caller injects an ``InvestigationToolProvider``
-   that exposes read-only diagnostic tools (e.g. CloudOps snapshot
-   tools). The service then runs a bounded hypothesis loop: it picks a
-   probe, observes output, ranks candidate root causes, and either calls
-   another probe or stops. This is what powers benchmark-grade RCA
-   without giving the agent any mutation surface.
+2. **Harness-driven** — a caller injects a ``ToolRegistry`` plus
+   ``LoopPlanner`` (rule-based ``NativeProbeSelector`` or
+   LLM-driven ``LlmProbeSelector``). The service then runs a bounded
+   hypothesis loop: planner picks probes, observes output, ranks
+   candidate root causes, and either calls another probe or stops.
+   This is what powers benchmark-grade RCA without giving the agent
+   any mutation surface.
 
 Both modes return the same ``InvestigationReport`` contract; downstream
 stages don't know or care which path produced it.
@@ -20,7 +21,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 from uuid import uuid4
 
 from shared.mesh_runtime import (
@@ -30,18 +31,14 @@ from shared.mesh_runtime import (
     Trigger,
 )
 
-from .cloudops_tools import CLOUDOPS_DOMAIN, CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
 from .cloudops_ontology import RankedCause, rank_root_causes
 from .harness import (
     InvestigationLoopState,
     LoopCritic,
     LoopPlanner,
-    NativeProbeSelector,
-    RawToolOutput,
     ToolRegistry,
     run_investigation_loop,
 )
-from .tool_provider import InvestigationToolProvider
 
 
 ProbeFn = Callable[[Trigger, dict[str, Any], dict[str, Any]], tuple[str, list[dict[str, Any]], list[dict[str, Any]]]]
@@ -52,9 +49,9 @@ class InvestigationService:
 
     The service accepts already-normalized Mesh artifacts, runs local
     deterministic probes, and returns a contract-backed report. When a
-    ``tool_provider`` is supplied to ``investigate``, the service also
-    runs a bounded diagnostic-tool loop and produces ranked root-cause
-    hypotheses from the observed snapshot text.
+    ``registry`` and ``planner`` are supplied to ``investigate``, the
+    service also runs a bounded harness loop and produces ranked
+    root-cause hypotheses from the observed tool output text.
     """
 
     def __init__(
@@ -83,7 +80,6 @@ class InvestigationService:
         service_context: dict[str, Any] | None = None,
         topology: dict[str, Any] | None = None,
         recent_runs: list[dict[str, Any]] | None = None,
-        tool_provider: InvestigationToolProvider | None = None,
         registry: ToolRegistry | None = None,
         planner: LoopPlanner | None = None,
     ) -> InvestigationReport:
@@ -97,7 +93,6 @@ class InvestigationService:
         plan = self._build_plan(
             trigger,
             context,
-            tool_provider=tool_provider,
             registry=registry,
             planner=planner,
         )
@@ -105,7 +100,6 @@ class InvestigationService:
         findings: list[dict[str, Any]] = []
         citations: list[dict[str, Any]] = []
         root_cause_candidates: list[dict[str, Any]] = []
-        tool_stop_reason: str | None = None
         loop_state: InvestigationLoopState | None = None
 
         deterministic_probes = [probe for probe in plan.probes if "provider" not in probe]
@@ -123,14 +117,6 @@ class InvestigationService:
             findings.extend(harness_findings)
             citations.extend(harness_citations)
             root_cause_candidates.extend(harness_candidates)
-        elif tool_provider is not None:
-            tool_results, tool_findings, tool_citations, tool_candidates, tool_stop_reason = self._run_tool_loop(
-                trigger, tool_provider
-            )
-            probe_results.extend(tool_results)
-            findings.extend(tool_findings)
-            citations.extend(tool_citations)
-            root_cause_candidates.extend(tool_candidates)
 
         if not root_cause_candidates:
             evidence_candidates = _root_cause_candidates_from_evidence(trigger, evidence)
@@ -145,8 +131,6 @@ class InvestigationService:
             stop_reason = "evidence_insufficient_route_to_existing_safety_gates"
         elif loop_state is not None:
             stop_reason = f"harness_{loop_state.stop_reason or 'completed'}"
-        elif tool_provider is not None:
-            stop_reason = tool_stop_reason or "tool_probe_budget_exhausted"
         else:
             stop_reason = "deterministic_probe_budget_exhausted"
         report = InvestigationReport(
@@ -311,46 +295,11 @@ class InvestigationService:
         findings.append(_planner_telemetry_finding(state, root_cause_candidates))
         return probe_results, findings, citations, root_cause_candidates
 
-    def _run_tool_loop(
-        self,
-        trigger: Trigger,
-        tool_provider: InvestigationToolProvider,
-    ) -> tuple[
-        list[InvestigationProbeResult],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        list[dict[str, Any]],
-        str,
-    ]:
-        """Run provider-backed CloudOps probes through the native selector."""
-
-        registry = _registry_for_tool_provider(tool_provider)
-        selector = NativeProbeSelector(
-            CloudOpsRulePack(trigger),
-            tool_definitions=registry.list_definitions(domain=CLOUDOPS_DOMAIN, mutation_class="read_only"),
-        )
-        state = InvestigationLoopState(
-            trigger_id=trigger.trigger_id,
-            budget_remaining=float(self.max_tool_probes),
-        )
-        run_investigation_loop(
-            state=state,
-            planner=selector,
-            registry=registry,
-            critic=LoopCritic(registry),
-            trigger_context={"trigger": trigger.to_dict()},
-            max_iterations=self.max_tool_probes + 2,
-        )
-        results, findings, citations, root_cause_candidates = self._project_loop_state(state)
-        stop_reason = _provider_stop_reason(state.stop_reason)
-        return results, findings, citations, root_cause_candidates, stop_reason
-
     def _build_plan(
         self,
         trigger: Trigger,
         context: dict[str, Any],
         *,
-        tool_provider: InvestigationToolProvider | None = None,
         registry: ToolRegistry | None = None,
         planner: LoopPlanner | None = None,
     ) -> InvestigationPlan:
@@ -402,21 +351,6 @@ class InvestigationService:
                         "provider": definition.domain,
                     }
                 )
-        elif tool_provider is not None:
-            for tool_name in tool_provider.available_tools():
-                probes.append(
-                    {
-                        "probe_id": f"probe_tool_{tool_name.lower()}",
-                        "name": tool_name,
-                        "purpose": (
-                            f"Read-only diagnostic tool {tool_name} via "
-                            f"{tool_provider.name} provider; invoked by "
-                            "hypothesis loop when relevant."
-                        ),
-                        "read_only": True,
-                        "provider": tool_provider.name,
-                    }
-                )
         plan = InvestigationPlan(
             plan_id=f"plan_{trigger.trigger_id}_{uuid4().hex[:8]}",
             trigger_id=trigger.trigger_id,
@@ -426,14 +360,11 @@ class InvestigationService:
                 "max_probes": self.max_probes,
                 "max_total_latency_ms": self.max_total_latency_ms,
                 "max_tool_probes": self.max_tool_probes,
-                "tool_provider": (
-                    getattr(planner, "domain", None) if planner is not None
-                    else (tool_provider.name if tool_provider else None)
-                ),
+                "tool_provider": getattr(planner, "domain", None) if planner is not None else None,
                 "mode": (
                     "harness_loop"
                     if registry is not None and planner is not None
-                    else ("tool_loop" if tool_provider is not None else "deterministic_builtin")
+                    else "deterministic_builtin"
                 ),
             },
             probes=probes,
@@ -484,42 +415,6 @@ class InvestigationService:
         )
         result.validate()
         return result
-
-
-def _registry_for_tool_provider(tool_provider: InvestigationToolProvider) -> ToolRegistry:
-    registry = ToolRegistry()
-    definitions = {definition.name: definition for definition in CLOUDOPS_TOOL_DEFINITIONS}
-    for tool_name in tool_provider.available_tools():
-        definition = definitions.get(tool_name)
-        if definition is None:
-            continue
-        registry.register(definition, _make_provider_invoker(tool_provider, tool_name))
-    return registry
-
-
-def _make_provider_invoker(tool_provider: InvestigationToolProvider, tool_name: str) -> Callable[[dict[str, Any]], RawToolOutput]:
-    def invoke(args: dict[str, Any]) -> RawToolOutput:
-        response = tool_provider.invoke(tool_name, args)
-        output = response.get("output") if isinstance(response, dict) else None
-        valid = bool(response.get("valid", True)) if isinstance(response, dict) else False
-        raw_status = str(response.get("status") or "completed").lower() if isinstance(response, dict) else "failed"
-        status: Literal["completed", "failed"] = "failed" if raw_status in {"failed", "error"} else "completed"
-        return RawToolOutput(
-            output=output,
-            output_summary=_summarize_tool_output(output),
-            citations=[_citation(f"{tool_provider.name}:{tool_name}", _arg_summary(args) or tool_name)],
-            valid=valid,
-            redaction_status="clean",
-            status=status,
-        )
-
-    return invoke
-
-
-def _provider_stop_reason(stop_reason: str | None) -> str:
-    if stop_reason == "budget_exhausted":
-        return "tool_probe_budget_exhausted"
-    return stop_reason or "evidence_value_exhausted"
 
 
 def _probe_evidence_sufficiency(
