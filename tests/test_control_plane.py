@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import tempfile
 import time
 import unittest
@@ -348,8 +349,10 @@ class ControlPlaneApiTests(unittest.TestCase):
             cfg.agent_fabric_mode = "deepagents"
             cfg.agent_mesh_task_timeout_seconds = 0.05
 
+        release_lanes = threading.Event()
+
         def slow_lane(_self, *, agent, task, trigger, decision, evaluation):
-            time.sleep(0.2)
+            release_lanes.wait(timeout=5)
             return build_agent_attempt(
                 task_id=task.task_id,
                 run_id=task.run_id,
@@ -362,24 +365,27 @@ class ControlPlaneApiTests(unittest.TestCase):
                 output={},
             )
 
-        with patch("services.orchestrator.deepagents_adapter.DeepAgentsAdapter.build_lane_attempt", slow_lane):
-            run = self._request(
-                "POST",
-                "/api/runs",
-                {
-                    "scenario_key": "search_latency_regression",
-                    "evaluation_mode": "native",
-                    "orchestration_mode": "native",
-                    "steering_mode": "interruptible_auto",
-                },
-            )
-            completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
-        self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
-        attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
-        self.assertEqual([attempt["agent"] for attempt in attempts], list(DEFAULT_AGENT_WORKERS))
-        for attempt in attempts:
-            self.assertEqual(attempt["status"], "failed")
-            self.assertEqual(attempt["risk_flags"], ["agent_mesh_timeout"])
+        try:
+            with patch("services.orchestrator.deepagents_adapter.DeepAgentsAdapter.build_lane_attempt", slow_lane):
+                run = self._request(
+                    "POST",
+                    "/api/runs",
+                    {
+                        "scenario_key": "search_latency_regression",
+                        "evaluation_mode": "native",
+                        "orchestration_mode": "native",
+                        "steering_mode": "interruptible_auto",
+                    },
+                )
+                completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+            self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
+            attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+            self.assertEqual([attempt["agent"] for attempt in attempts], list(DEFAULT_AGENT_WORKERS))
+            for attempt in attempts:
+                self.assertEqual(attempt["status"], "failed")
+                self.assertEqual(attempt["risk_flags"], ["agent_mesh_timeout"])
+        finally:
+            release_lanes.set()
 
     def test_kubernetes_fixture_repo_placeholder_resolves_before_evaluation(self) -> None:
         run = self._request(
