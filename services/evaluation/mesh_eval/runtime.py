@@ -10,7 +10,9 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from shared.mesh_runtime import Decision, Trigger
+from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 
+from services.evaluation.evaluation_stack import build_evaluation_stack
 from services.evaluation.mesh_evaluator import evaluate_trajectory
 
 from .config import MeshEvalConfig
@@ -40,7 +42,7 @@ def evaluate_native_mesh(
         trigger=trigger,
         decision=decision,
     )
-    return evaluate_trajectory(
+    result = evaluate_trajectory(
         trigger=trigger,
         decision=decision,
         evaluation=evaluation,
@@ -49,6 +51,18 @@ def evaluate_native_mesh(
         run_events=run_events,
         artifacts=artifact_payload,
     )
+    phoenix_spans = build_phoenix_spans(result["task_trace"])
+    result["phoenix_spans"] = phoenix_spans
+    result["evaluation_stack"] = build_evaluation_stack(
+        requested_lanes=mesh_eval_config.integration_lanes,
+        trace=result["task_trace"],
+        stage_results={
+            "trajectory_quality": result["trajectory_score"],
+            "verifier_output": result["verifier_output"],
+        },
+        phoenix_spans=phoenix_spans,
+    )
+    return result
 
 
 def mesh_eval_artifact_with_probe(

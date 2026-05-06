@@ -20,7 +20,9 @@ REQUIRED_PATHS = (
     "docs/security-audit-readiness.md",
     "docs/production-hardening-records.md",
     "docs/release-provenance.md",
+    "config/procurement-security.package.json",
     "scripts/generate_release_provenance.py",
+    "scripts/verify_procurement_security_package.py",
 )
 
 REQUIRED_MARKERS = {
@@ -68,12 +70,25 @@ REQUIRED_MARKERS = {
         "Regular Audit Cadence",
         "E2E Audit Commands",
         "Audit Evidence Package",
+        "Procurement Security Package",
         "OpenSSF Best Practices Badge",
     ),
     "docs/production-hardening-records.md": (
         "OpenSSF",
         "scripts/verify_security_audit_readiness.py",
+        "procurement_security_package_verified",
         "security audit workflow",
+    ),
+    "config/procurement-security.package.json": (
+        "mesh.procurement_security_package.v1",
+        "sso_identity",
+        "audit_export",
+        "retention_controls",
+        "data_boundaries",
+        "deployment_modes",
+        "security_answers",
+        "support_escalation",
+        "known_limits",
     ),
     "docs/release-provenance.md": (
         "SBOM path",

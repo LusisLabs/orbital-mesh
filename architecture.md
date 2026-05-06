@@ -247,9 +247,10 @@ stamped onto `decision.reasoning` for audit.)
 - `native` mode keeps everything local and in-process while using the same contracts and
   persistence model.
 - Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
-  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, and OpenClaw. These
-  artifacts let agents plug into Mesh without getting production write access; Mesh still owns
-  evaluation, tests, audit, Kubernetes actuation, and promotion gates.
+  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, and native
+  orchestration platform lanes for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes,
+  and n8n. These artifacts let agents and external orchestrators plug into Mesh without getting production
+  write access; Mesh still owns evaluation, tests, audit, Kubernetes actuation, and promotion gates.
 
 ### 4. AI reasoning layer (LLM observer)
 

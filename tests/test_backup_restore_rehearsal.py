@@ -88,6 +88,12 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
 
 
 def _config(tmp: str, **overrides) -> RuntimeConfig:
+    authenticated_ingress_proof_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
+    if not authenticated_ingress_proof_path.exists():
+        authenticated_ingress_proof_path.write_text(
+            json.dumps(_authenticated_ingress_deployment_proof(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     values = {
         "state_directory": tmp,
         "vault_path": str(Path(tmp) / "vault"),
@@ -99,6 +105,7 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
         "hermes_command": "/missing/hermes",
         "goose_command": "/missing/goose",
         "evo_command": "/missing/evo",
+        "authenticated_ingress_proof_path": str(authenticated_ingress_proof_path),
     }
     values.update(overrides)
     return RuntimeConfig(**values)
@@ -135,4 +142,61 @@ def _proof() -> dict:
                 "research_artifacts",
             )
         ],
+    }
+
+
+def _authenticated_ingress_deployment_proof() -> dict:
+    return {
+        "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
+        "proof_id": "authenticated_ingress_deployment_test",
+        "generated_at": "2026-05-06T04:10:00Z",
+        "environment": "staging",
+        "operator_id": "platform@example.com",
+        "ingress_url": "https://mesh.staging.example.com",
+        "tls": {
+            "terminated": True,
+            "public_listener": True,
+            "minimum_version": "TLSv1.3",
+            "certificate_ref": "acm://mesh-staging-cert",
+            "evidence_ref": "ingress-proof://tls/test",
+        },
+        "identity_provider": {
+            "type": "oidc",
+            "sso_enforced": True,
+            "identity_claim": "email",
+            "roles_claim": "groups",
+            "evidence_ref": "ingress-proof://oidc/test",
+        },
+        "header_sanitization": {
+            "client_mesh_operator_header_stripped": True,
+            "client_mesh_roles_header_stripped": True,
+            "proxy_operator_header_stamped": True,
+            "proxy_roles_header_stamped": True,
+            "evidence_ref": "ingress-proof://headers/test",
+        },
+        "role_mapping": {
+            "viewer": "group://mesh/viewers",
+            "launcher": "group://mesh/launchers",
+            "approver": "group://mesh/approvers",
+            "admin": "group://mesh/admins",
+            "evidence_ref": "ingress-proof://role-mapping/test",
+        },
+        "network_boundary": {
+            "raw_service_publicly_reachable": False,
+            "upstream_private": True,
+            "allowed_proxy_ref": "security-group://mesh-ingress-to-control-plane",
+            "evidence_ref": "ingress-proof://network/test",
+        },
+        "app_rehearsal": {
+            "schema_version": "mesh.authenticated_ingress_rehearsal.v1",
+            "status": "passed",
+            "run_id": "run_ingress_rehearsal",
+            "evidence_ref": "run-artifact://authenticated-ingress-rehearsal.json",
+        },
+        "audit": {
+            "source_ip_or_proxy_identity_recorded": True,
+            "operator_identity_recorded": True,
+            "evidence_ref": "ingress-proof://audit/test",
+        },
+        "raw_secret_material_present": False,
     }

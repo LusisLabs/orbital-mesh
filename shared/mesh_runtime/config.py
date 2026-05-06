@@ -19,9 +19,18 @@ DEFAULT_FAILURE_MODE_LIBRARY_PATH = _REPO_ROOT / "config" / "failure-mode.librar
 DEFAULT_THREAT_MODEL_REGISTER_PATH = _REPO_ROOT / "config" / "threat-model.register.json"
 DEFAULT_DATA_CLASSIFICATION_POLICY_PATH = _REPO_ROOT / "config" / "data-classification.policy.json"
 DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH = _REPO_ROOT / "config" / "agentic-operator-source.provenance.json"
+DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH = _REPO_ROOT / "config" / "deployment-compatibility.registry.json"
+DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH = _REPO_ROOT / "config" / "procurement-security.package.json"
+DEFAULT_PUBLIC_PROOF_PACKAGE_PATH = _REPO_ROOT / "config" / "public-proof.package.json"
 DEFAULT_RELEASE_PROVENANCE_PATH = DEFAULT_STATE_DIRECTORY / "release-provenance.json"
+DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "authenticated-ingress-deployment-proof.json"
+DEFAULT_DESIGN_PARTNER_PACKET_PATH = DEFAULT_STATE_DIRECTORY / "design-partner-packet.json"
 DEFAULT_AUDIT_SINK_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-proof.json"
+DEFAULT_AUDIT_SINK_CERTIFICATION_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-certification.json"
 DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "backup-restore-rehearsal.json"
+DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "load-concurrency-rehearsal.json"
+DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "feature-flag-provider-proof.json"
+DEFAULT_INCIDENT_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "incident-provider-proof.json"
 DEFAULT_ON_CALL_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "on-call-drill.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
@@ -99,9 +108,18 @@ class RuntimeConfig:
     threat_model_register_path: str = str(DEFAULT_THREAT_MODEL_REGISTER_PATH)
     data_classification_policy_path: str = str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH)
     agentic_operator_source_provenance_path: str = str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH)
+    deployment_compatibility_registry_path: str = str(DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH)
+    procurement_security_package_path: str = str(DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH)
+    public_proof_package_path: str = str(DEFAULT_PUBLIC_PROOF_PACKAGE_PATH)
     release_provenance_path: str = str(DEFAULT_RELEASE_PROVENANCE_PATH)
+    authenticated_ingress_proof_path: str | None = None
+    design_partner_packet_path: str | None = None
     audit_sink_proof_path: str | None = None
+    audit_sink_certification_path: str | None = None
     backup_restore_rehearsal_path: str | None = None
+    load_concurrency_rehearsal_path: str | None = None
+    feature_flag_provider_proof_path: str | None = None
+    incident_provider_proof_path: str | None = None
     on_call_drill_path: str | None = None
     policy_signing_key: str | None = None
     policy_signing_key_id: str = "policy-lifecycle-hmac"
@@ -403,9 +421,37 @@ class RuntimeConfig:
                 os.getenv("MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH"),
                 default=str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH),
             ),
+            deployment_compatibility_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH"),
+                default=str(DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH),
+            ),
+            procurement_security_package_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_PROCUREMENT_SECURITY_PACKAGE_PATH"),
+                default=str(DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH),
+            ),
+            public_proof_package_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_PUBLIC_PROOF_PACKAGE_PATH"),
+                default=str(DEFAULT_PUBLIC_PROOF_PACKAGE_PATH),
+            ),
             release_provenance_path=_env_path_anchored_to_repo(
                 os.getenv("MESH_RELEASE_PROVENANCE_PATH"),
                 default=str(DEFAULT_RELEASE_PROVENANCE_PATH),
+            ),
+            authenticated_ingress_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUTHENTICATED_INGRESS_PROOF_PATH"),
+                    default=str(DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH),
+                )
+                if os.getenv("MESH_AUTHENTICATED_INGRESS_PROOF_PATH")
+                else None
+            ),
+            design_partner_packet_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_DESIGN_PARTNER_PACKET_PATH"),
+                    default=str(DEFAULT_DESIGN_PARTNER_PACKET_PATH),
+                )
+                if os.getenv("MESH_DESIGN_PARTNER_PACKET_PATH")
+                else None
             ),
             audit_sink_proof_path=(
                 _env_path_anchored_to_repo(
@@ -415,12 +461,44 @@ class RuntimeConfig:
                 if os.getenv("MESH_AUDIT_SINK_PROOF_PATH")
                 else None
             ),
+            audit_sink_certification_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUDIT_SINK_CERTIFICATION_PATH"),
+                    default=str(DEFAULT_AUDIT_SINK_CERTIFICATION_PATH),
+                )
+                if os.getenv("MESH_AUDIT_SINK_CERTIFICATION_PATH")
+                else None
+            ),
             backup_restore_rehearsal_path=(
                 _env_path_anchored_to_repo(
                     os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH"),
                     default=str(DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH),
                 )
                 if os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH")
+                else None
+            ),
+            load_concurrency_rehearsal_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_LOAD_CONCURRENCY_REHEARSAL_PATH"),
+                    default=str(DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH),
+                )
+                if os.getenv("MESH_LOAD_CONCURRENCY_REHEARSAL_PATH")
+                else None
+            ),
+            feature_flag_provider_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH"),
+                    default=str(DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH),
+                )
+                if os.getenv("MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH")
+                else None
+            ),
+            incident_provider_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_INCIDENT_PROVIDER_PROOF_PATH"),
+                    default=str(DEFAULT_INCIDENT_PROVIDER_PROOF_PATH),
+                )
+                if os.getenv("MESH_INCIDENT_PROVIDER_PROOF_PATH")
                 else None
             ),
             on_call_drill_path=(

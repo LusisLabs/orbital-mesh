@@ -11,11 +11,96 @@ from typing import Any, Callable
 _LOG = logging.getLogger("mesh.orchestrator.agent_mesh")
 
 from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, build_evo_status
-from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
+from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
 from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from .deepagents_adapter import DeepAgentsAdapter
 from .latentmas_adapter import LatentMasAdapter
+
+
+_NATIVE_PLATFORM_PROFILES: dict[str, dict[str, Any]] = {
+    "airflow": {
+        "display_name": "Apache Airflow",
+        "category": "workflow_engine",
+        "best_fit": "data_ml_pipelines",
+        "agentic_surface": "dag_scheduling_operators_ui_monitoring",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "dag_dependency_coverage",
+        "integration_contract": ["dag_import", "operator_task_status", "schedule_state", "lineage_metadata"],
+    },
+    "temporal": {
+        "display_name": "Temporal",
+        "category": "workflow_engine",
+        "best_fit": "durable_execution",
+        "agentic_surface": "workflows_and_activities",
+        "supports_agentic_execution": True,
+        "evaluator_signal": "durability_retry_idempotency",
+        "integration_contract": ["workflow_id", "run_id", "activity_attempts", "retry_policy", "failure_history"],
+    },
+    "dagster": {
+        "display_name": "Dagster",
+        "category": "data_orchestrator",
+        "best_fit": "asset_centric_pipelines",
+        "agentic_surface": "asset_lineage_testing_type_safety",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "asset_lineage_materialization",
+        "integration_contract": ["asset_key", "materialization_status", "lineage_edges", "asset_checks"],
+    },
+    "prefect": {
+        "display_name": "Prefect",
+        "category": "workflow_engine",
+        "best_fit": "python_workflows",
+        "agentic_surface": "hybrid_cloud_local_observability",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "flow_state_observability",
+        "integration_contract": ["flow_run_id", "task_run_states", "deployment_name", "work_pool"],
+    },
+    "flyte": {
+        "display_name": "Flyte",
+        "category": "ml_workflow",
+        "best_fit": "reproducible_ml",
+        "agentic_surface": "caching_versioning_kubernetes_native",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "reproducibility_cache_version",
+        "integration_contract": ["project", "domain", "launch_plan", "cache_key", "execution_id"],
+    },
+    "luigi": {
+        "display_name": "Luigi",
+        "category": "pipeline_manager",
+        "best_fit": "simple_dags",
+        "agentic_surface": "lightweight_dependency_graphs",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "task_dependency_completion",
+        "integration_contract": ["task_id", "requires", "output_target", "scheduler_state"],
+    },
+    "oozie": {
+        "display_name": "Apache Oozie",
+        "category": "hadoop_orchestrator",
+        "best_fit": "big_data_jobs",
+        "agentic_surface": "mapreduce_hive_integration",
+        "supports_agentic_execution": False,
+        "evaluator_signal": "hadoop_job_state",
+        "integration_contract": ["coordinator_id", "workflow_id", "action_status", "hive_or_mapreduce_ref"],
+    },
+    "kubernetes": {
+        "display_name": "Kubernetes",
+        "category": "container_orchestration",
+        "best_fit": "microservices",
+        "agentic_surface": "operators_scaling_self_healing_service_mesh",
+        "supports_agentic_execution": True,
+        "evaluator_signal": "controller_reconciliation_health",
+        "integration_contract": ["context", "namespace", "workload_ref", "controller_status", "events"],
+    },
+    "n8n": {
+        "display_name": "n8n",
+        "category": "low_code_workflows",
+        "best_fit": "automation",
+        "agentic_surface": "nodes_ai_visual_builder_integrations",
+        "supports_agentic_execution": True,
+        "evaluator_signal": "node_execution_trace",
+        "integration_contract": ["workflow_id", "execution_id", "node_statuses", "credentials_scope"],
+    },
+}
 
 
 class AgentMeshService:
@@ -210,6 +295,15 @@ class AgentMeshService:
         for agent, adapter, builder in native_specs:
             if agent in routed_agents:
                 specs.append({"agent": agent, "adapter": adapter, "builder": builder})
+        for agent in _NATIVE_PLATFORM_PROFILES:
+            if agent in routed_agents:
+                specs.append(
+                    {
+                        "agent": agent,
+                        "adapter": "native_orchestration_contract",
+                        "builder": lambda agent=agent: self._platform_attempt(agent, task, trigger, decision, evaluation),
+                    }
+                )
         return specs
 
     def _goose_attempt(
@@ -458,6 +552,72 @@ class AgentMeshService:
             memory_actions_requested=["defer"],
         )
 
+    def _platform_attempt(
+        self,
+        agent: str,
+        task: AgentTask,
+        trigger: Trigger,
+        decision: Decision,
+        evaluation: EvaluationResult,
+    ):
+        profile = _NATIVE_PLATFORM_PROFILES[agent]
+        risk_flags = self._platform_risk_flags(agent, task)
+        recommended_action = "integration_ready_proposal" if not risk_flags else "prepare_integration_scope"
+        summary = (
+            f"{profile['display_name']} mapped into native orchestration for "
+            f"{profile['best_fit']} with evaluator signal {profile['evaluator_signal']}."
+        )
+        return build_agent_attempt(
+            task_id=task.task_id,
+            run_id=task.run_id,
+            agent=agent,
+            adapter="native_orchestration_contract",
+            status="completed",
+            summary=summary,
+            risk_flags=risk_flags,
+            recommended_action=recommended_action,
+            output={
+                "platform": profile["display_name"],
+                "category": profile["category"],
+                "best_fit": profile["best_fit"],
+                "supports_agentic_execution": profile["supports_agentic_execution"],
+                "agentic_surface": profile["agentic_surface"],
+                "native_evaluator_signal": profile["evaluator_signal"],
+                "integration_contract": profile["integration_contract"],
+                "mesh_authority": {
+                    "evaluation_policy_authoritative": True,
+                    "production_actuation_authoritative": True,
+                    "external_platform_authority": "proposal_and_evidence_adapter",
+                },
+                "decision_type": decision.decision_type,
+                "execution_plan": decision.execution_plan,
+                "evaluation": {
+                    "passed": evaluation.passed,
+                    "final_recommendation": evaluation.final_recommendation,
+                    "blocking_reasons": evaluation.blocking_reasons,
+                },
+                "kubernetes_scope": task.kubernetes_scope if agent == "kubernetes" else {},
+            },
+            citations=task.memory_packet.get("citations", []),
+            observations_proposed=[
+                _proposal_observation(
+                    agent,
+                    trigger.service,
+                    f"{profile['display_name']} integration can contribute {profile['evaluator_signal']} evidence.",
+                )
+            ],
+            claims_proposed=[
+                {
+                    "statement": (
+                        f"{profile['display_name']} must remain a Mesh-governed adapter; "
+                        "external platform state can inform evaluation but cannot override policy."
+                    ),
+                    "confidence": 0.74,
+                }
+            ],
+            memory_actions_requested=["defer"],
+        )
+
     def _task_kind(self, decision: Decision) -> str:
         if decision.execution_plan.get("system") == "repo_patch_service":
             return "patch"
@@ -497,28 +657,38 @@ class AgentMeshService:
         decision: Decision,
         service_agent: dict[str, Any] | None = None,
     ) -> list[str]:
-        legacy_agents = ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"]
+        default_agents = list(DEFAULT_AGENT_WORKERS)
         matched_agent = bool((service_agent or {}).get("matched")) if isinstance(service_agent, dict) else False
         if not matched_agent:
-            return self._filter_configured_agents(legacy_agents, legacy_agents)
+            return self._filter_configured_agents(default_agents, default_agents)
         source = _signal_source(trigger)
         routing = {
-            "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
-            "otel": ["hermes", "goose", "evo"],
-            "feature_flag": ["hermes", "goose", "evo"],
-            "argocd": ["goose", "hermes", "openclaw"],
+            "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo", "temporal", "kubernetes", "n8n"],
+            "otel": ["hermes", "goose", "evo", "temporal", "dagster", "prefect", "kubernetes"],
+            "feature_flag": ["hermes", "goose", "evo", "temporal", "prefect", "n8n"],
+            "argocd": ["goose", "hermes", "openclaw", "temporal", "kubernetes"],
             "log": ["hermes", "codex", "claudecode"],
+            "data": ["airflow", "dagster", "prefect", "flyte", "luigi", "oozie", "temporal"],
+            "ml": ["flyte", "dagster", "airflow", "prefect", "temporal"],
+            "workflow": ["temporal", "airflow", "prefect", "dagster", "flyte", "luigi", "oozie", "n8n"],
         }
-        agents = list(routing.get(source, legacy_agents))
+        agents = list(routing.get(source, default_agents))
         agent_payload = (service_agent or {}).get("agent") if isinstance(service_agent, dict) else None
         preferred = agent_payload.get("preferred_lanes", []) if isinstance(agent_payload, dict) else []
         if preferred:
             preferred_set = {str(item) for item in preferred}
             agents = [agent for agent in agents if agent in preferred_set] or agents
-        agents = self._filter_configured_agents(agents, legacy_agents)
+        agents = self._filter_configured_agents(agents, default_agents)
         if decision.decision_type not in {"investigate_and_patch", "repo_patch_service"}:
             agents = [agent for agent in agents if agent != "codex" or self._allowed_paths(trigger)]
         return agents
+
+    def _platform_risk_flags(self, agent: str, task: AgentTask) -> list[str]:
+        if agent != "kubernetes":
+            return []
+        if task.kubernetes_scope.get("context") and task.kubernetes_scope.get("namespace"):
+            return []
+        return ["kubernetes_scope_missing"]
 
     def _filter_configured_agents(self, agents: list[str], known_agents: list[str]) -> list[str]:
         if not self.config.agent_mesh_agents:

@@ -107,6 +107,16 @@ Sample exported run:
 - verify the resulting benchmark directory with `scripts/verify_benchmark_run_artifacts.py`;
 - treat target-environment sample exports and durable benchmark publication as deployment-specific evidence.
 
+## Public Proof Package
+
+`config/public-proof.package.json` is the release manifest for public proof claims. It uses `mesh.public_proof_package.v1` and must verify with:
+
+```bash
+scripts/verify_public_proof_package.py --json
+```
+
+The manifest binds benchmark reports, architecture papers, demo datasets, run exports, and limitations statements to repository artifacts and verification commands. Passing verification means the repository proof package is complete and secret-free. It does not replace durable public publication, target-environment benchmark outputs, or target-environment run exports.
+
 Developer pass criteria:
 
 - local readiness loads without requiring optional proposal CLIs;

@@ -1,0 +1,154 @@
+{
+  "schema_version": "mesh.procurement_security_package.v1",
+  "package_id": "orbital_mesh_procurement_security_package",
+  "status": "ready",
+  "owner": "purna-platform",
+  "review_cadence": "release-candidate-and-quarterly",
+  "sections": [
+    {
+      "section_id": "sso_identity",
+      "status": "ready",
+      "required_before": "pilot",
+      "owner": "platform-security",
+      "summary": "SSO/OIDC/SAML deployment evidence, proxy identity headers, role mapping, and raw-upstream isolation are documented and tied to deployed ingress proof verification.",
+      "artifact_refs": [
+        "docs/authenticated-ingress.md",
+        "control_plane_server.py",
+        "scripts/verify_authenticated_ingress.py",
+        "scripts/verify_authenticated_ingress_deployment.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_authenticated_ingress.py --json",
+        "scripts/verify_authenticated_ingress_deployment.py --proof \"$MESH_AUTHENTICATED_INGRESS_PROOF_PATH\" --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "audit_export",
+      "status": "ready",
+      "required_before": "expansion",
+      "owner": "platform-security",
+      "summary": "Run export, archive retrieval, durable upload proof, external audit-sink proof, and redaction boundaries are documented and verified by repository-local commands.",
+      "artifact_refs": [
+        "docs/security-audit-readiness.md",
+        "docs/pilot-slo-error-budget.md",
+        "scripts/verify_run_export_retrieval.py",
+        "scripts/verify_run_export_upload.py",
+        "scripts/verify_audit_sink_contract.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_run_export_retrieval.py --package <path> --archive <path> --json",
+        "scripts/verify_run_export_upload.py --package <path> --archive <path> --proof <path> --json",
+        "scripts/verify_audit_sink_contract.py --proof \"$MESH_AUDIT_SINK_PROOF_PATH\" --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "retention_controls",
+      "status": "ready",
+      "required_before": "pilot",
+      "owner": "platform-security",
+      "summary": "Retention, redaction, deletion-control, and secret-export policy coverage is documented for signals, logs, traces, model outputs, audit proof, run exports, and training candidates.",
+      "artifact_refs": [
+        "config/data-classification.policy.json",
+        "shared/mesh_runtime/data_classification.py",
+        "scripts/verify_data_classification_policy.py",
+        "docs/pilot-slo-error-budget.md"
+      ],
+      "verification_commands": [
+        "scripts/verify_data_classification_policy.py --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "data_boundaries",
+      "status": "ready",
+      "required_before": "pilot",
+      "owner": "platform-security",
+      "summary": "Ownership and tenant-boundary artifacts bind service, owner, approver roles, namespace, customer boundary, reservoirs, export policy, retention, and legal-action scope.",
+      "artifact_refs": [
+        "config/ownership.registry.json",
+        "config/data-classification.policy.json",
+        "shared/mesh_runtime/ownership.py",
+        "docs/production-hardening-records.md"
+      ],
+      "verification_commands": [
+        "scripts/verify_data_classification_policy.py --json"
+      ],
+      "external_evidence_required": false
+    },
+    {
+      "section_id": "deployment_modes",
+      "status": "ready",
+      "required_before": "expansion",
+      "owner": "platform-engineering",
+      "summary": "Deployment claims are constrained to validated, next-target, recipe, support, and not-planned states and backed by compatibility registry verification.",
+      "artifact_refs": [
+        "docs/reference-architectures.md",
+        "docs/deployment-compatibility.md",
+        "config/deployment-compatibility.registry.json",
+        "scripts/verify_deployment_compatibility.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_deployment_compatibility.py --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "security_answers",
+      "status": "ready",
+      "required_before": "expansion",
+      "owner": "platform-security",
+      "summary": "Security policy, OpenSSF-oriented controls, release provenance, SBOM/vulnerability scan expectations, and known audit boundaries are documented and verified.",
+      "artifact_refs": [
+        "SECURITY.md",
+        "docs/security-audit-readiness.md",
+        "docs/release-provenance.md",
+        "scripts/verify_security_audit_readiness.py",
+        "scripts/verify_release_cut_list.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_security_audit_readiness.py --json",
+        "scripts/verify_release_cut_list.py --json",
+        "scripts/generate_release_provenance.py --require-complete --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "support_escalation",
+      "status": "ready",
+      "required_before": "pilot",
+      "owner": "platform-operations",
+      "summary": "Design-partner support model, escalation channel, on-call drill, rollback plan, postmortem packet, and operator signoff expectations are documented.",
+      "artifact_refs": [
+        "docs/design-partner-packet.md",
+        "docs/pilot-slo-error-budget.md",
+        "shared/mesh_runtime/design_partner.py",
+        "scripts/verify_design_partner_packet.py",
+        "scripts/verify_on_call_drill.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_design_partner_packet.py --packet \"$MESH_DESIGN_PARTNER_PACKET_PATH\" --json",
+        "scripts/verify_on_call_drill.py --proof \"$MESH_ON_CALL_DRILL_PATH\" --json"
+      ],
+      "external_evidence_required": true
+    },
+    {
+      "section_id": "known_limits",
+      "status": "ready",
+      "required_before": "expansion",
+      "owner": "platform-engineering",
+      "summary": "Known production gaps are documented separately from implemented controls so procurement and security review cannot infer unverified deployment claims.",
+      "artifact_refs": [
+        "docs/production-hardening-records.md",
+        "docs/production-deployment-roadmap.md",
+        "docs/release-provenance.md"
+      ],
+      "verification_commands": [
+        "scripts/verify_release_cut_list.py --json"
+      ],
+      "external_evidence_required": false
+    }
+  ],
+  "raw_secret_material_present": false
+}

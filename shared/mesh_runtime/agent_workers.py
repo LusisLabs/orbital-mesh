@@ -7,7 +7,27 @@ from uuid import uuid4
 from .control_plane_models import AgentAttempt, AgentTask
 
 
-DEFAULT_AGENT_WORKERS = ("goose", "hermes", "codex", "claudecode", "openclaw", "evo")
+NATIVE_ORCHESTRATION_PLATFORM_WORKERS = (
+    "airflow",
+    "temporal",
+    "dagster",
+    "prefect",
+    "flyte",
+    "luigi",
+    "oozie",
+    "kubernetes",
+    "n8n",
+)
+
+DEFAULT_AGENT_WORKERS = (
+    "goose",
+    "hermes",
+    "codex",
+    "claudecode",
+    "openclaw",
+    "evo",
+    *NATIVE_ORCHESTRATION_PLATFORM_WORKERS,
+)
 
 
 def build_agent_task(

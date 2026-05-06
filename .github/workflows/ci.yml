@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+env:
+  SYFT_VERSION: "1.44.0"
+  SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
+  GRYPE_VERSION: "0.112.0"
+  GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -121,18 +127,23 @@ jobs:
       - name: Stop container
         if: always()
         run: docker stop mesh-ci || true
-      - name: Rehearse release assurance artifacts
+      - name: Install release scanners
         run: |
-          python scripts/generate_release_assurance_rehearsal_inputs.py \
-            --output-dir dist/release-assurance-raw \
-            --component-version '${{ github.sha }}'
-          python scripts/normalize_release_assurance_artifacts.py \
-            --sbom-input dist/release-assurance-raw/raw-sbom.cdx.json \
-            --scan-input dist/release-assurance-raw/raw-vulnerability-scan.json \
-            --scanner release-assurance-rehearsal \
-            --output-dir dist/release-assurance \
-            --require-scan \
-            --fail-on-blocking
+          curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
+          echo "${SYFT_DEB_SHA256}  /tmp/syft.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/syft.deb
+          curl -fsSLo /tmp/grype.deb "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.deb"
+          echo "${GRYPE_DEB_SHA256}  /tmp/grype.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/grype.deb
+          syft version
+          grype version
+      - name: Generate release image assurance artifacts
+        run: |
+          python scripts/generate_release_image_assurance.py \
+            --image-tag orbital-mesh:ci \
+            --image-digest "$MESH_IMAGE_DIGEST" \
+            --raw-output-dir dist/release-assurance-raw \
+            --output-dir dist/release-assurance
       - name: Generate CI attestation
         run: |
           mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
@@ -162,8 +173,10 @@ jobs:
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: release-assurance-contract-rehearsal
-          path: dist/release-assurance/
+          name: release-assurance-artifacts
+          path: |
+            dist/release-assurance/
+            dist/release-assurance-raw/
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

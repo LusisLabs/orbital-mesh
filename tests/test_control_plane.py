@@ -14,7 +14,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from control_plane_server import MeshControlPlaneRequestHandler, start_server_in_thread
-from shared.mesh_runtime.agent_workers import build_agent_attempt
+from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt
 from shared.mesh_runtime import RuntimeConfig, load_fixture
 from tests.test_kubernetes_live_execution import _write_fake_kubectl
 
@@ -300,9 +300,9 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(len(tasks), 1)
         self.assertEqual(
             [attempt["agent"] for attempt in tasks[0]["attempts"]],
-            ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
+            list(DEFAULT_AGENT_WORKERS),
         )
-        evo_attempt = tasks[0]["attempts"][-1]
+        evo_attempt = next(attempt for attempt in tasks[0]["attempts"] if attempt["agent"] == "evo")
         self.assertEqual(evo_attempt["adapter"], "native_contract")
         self.assertEqual(evo_attempt["recommended_action"], "human_review")
         self.assertIn("evo_cli_missing", evo_attempt["risk_flags"])
@@ -381,7 +381,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
         attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
-        self.assertEqual([attempt["agent"] for attempt in attempts], ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"])
+        self.assertEqual([attempt["agent"] for attempt in attempts], list(DEFAULT_AGENT_WORKERS))
         for attempt in attempts:
             self.assertEqual(attempt["status"], "failed")
             self.assertEqual(attempt["risk_flags"], ["agent_mesh_timeout"])

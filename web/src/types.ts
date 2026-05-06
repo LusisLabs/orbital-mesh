@@ -210,6 +210,41 @@ export interface ConnectorCertificationPacket {
   connectors: Record<string, ConnectorCertificationRecord>;
 }
 
+export interface ApprovalQueueItem {
+  queue_id: string;
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  scenario_key?: string | null;
+  service?: string | null;
+  namespace?: string | null;
+  environment: string;
+  stage: string;
+  pending_pause_stage?: string | null;
+  steering_mode: string;
+  decision_type?: string | null;
+  risk_level?: string | null;
+  final_recommendation?: string | null;
+  approval_state: "pending" | "blocked";
+  blockers: string[];
+  requested_by?: Record<string, any> | null;
+  owner?: Record<string, any> | null;
+  approver_roles: string[];
+  allowed_commands: string[];
+  evidence_refs: string[];
+  latest_event_id?: string | null;
+}
+
+export interface ApprovalQueuePacket {
+  schema_version: string;
+  generated_at: string;
+  status: "empty" | "ready" | "blocked";
+  pending_count: number;
+  blocked_count: number;
+  source_refs: string[];
+  items: ApprovalQueueItem[];
+}
+
 export interface HealthSnapshot {
   status: string;
   timestamp: string;

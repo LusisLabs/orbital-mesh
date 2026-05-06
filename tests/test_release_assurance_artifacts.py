@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NORMALIZER = "scripts/normalize_release_assurance_artifacts.py"
 PROVENANCE = "scripts/generate_release_provenance.py"
+IMAGE_ASSURANCE = "scripts/generate_release_image_assurance.py"
 
 
 class ReleaseAssuranceArtifactTests(unittest.TestCase):
@@ -130,12 +132,95 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             self.assertEqual(packet["sbom"]["missing"], ["real_release_image_sbom"])
             self.assertEqual(packet["vulnerability_scan"]["missing"], ["real_release_image_vulnerability_scan"])
 
-    def test_ci_workflow_uploads_release_assurance_rehearsal_artifact(self) -> None:
+    def test_ci_workflow_uploads_real_release_assurance_artifacts(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("scripts/generate_release_assurance_rehearsal_inputs.py", workflow)
-        self.assertIn("scripts/normalize_release_assurance_artifacts.py", workflow)
-        self.assertIn("release-assurance-contract-rehearsal", workflow)
+        self.assertIn('SYFT_VERSION: "1.44.0"', workflow)
+        self.assertIn("SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b", workflow)
+        self.assertIn('GRYPE_VERSION: "0.112.0"', workflow)
+        self.assertIn("GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2", workflow)
+        self.assertIn("sha256sum -c -", workflow)
+        self.assertIn("scripts/generate_release_image_assurance.py", workflow)
+        self.assertIn("release-assurance-artifacts", workflow)
         self.assertIn("dist/release-assurance/", workflow)
+        self.assertIn("dist/release-assurance-raw/", workflow)
+        self.assertNotIn("release-assurance-contract-rehearsal", workflow)
+
+    def test_release_image_assurance_script_uses_real_scanner_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            syft_bin = tmp_path / "syft"
+            grype_bin = tmp_path / "grype"
+            raw_dir = tmp_path / "raw"
+            output_dir = tmp_path / "dist"
+            image_digest = f"sha256:{'b' * 64}"
+            syft_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('{\"bomFormat\":\"CycloneDX\",\"components\":[]}')\n",
+                encoding="utf-8",
+            )
+            grype_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('{\"matches\":[{\"vulnerability\":{\"id\":\"CVE-LOW\",\"severity\":\"Low\"},\"artifact\":{\"name\":\"pkg\",\"version\":\"1.0\"}}]}')\n",
+                encoding="utf-8",
+            )
+            os.chmod(syft_bin, 0o755)
+            os.chmod(grype_bin, 0o755)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    IMAGE_ASSURANCE,
+                    "--image-tag",
+                    "orbital-mesh:ci",
+                    "--image-digest",
+                    image_digest,
+                    "--raw-output-dir",
+                    str(raw_dir),
+                    "--output-dir",
+                    str(output_dir),
+                    "--syft-bin",
+                    str(syft_bin),
+                    "--grype-bin",
+                    str(grype_bin),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["schema_version"], "mesh.release_image_assurance.v1")
+            self.assertEqual(payload["blocking_finding_count"], 0)
+            self.assertTrue((raw_dir / "raw-sbom.cdx.json").exists())
+            self.assertTrue((raw_dir / "raw-vulnerability-scan.grype.json").exists())
+            normalized_scan = json.loads((output_dir / "vulnerability-scan.json").read_text(encoding="utf-8"))
+            self.assertEqual(normalized_scan["scanner"], "grype")
+            self.assertEqual(normalized_scan["image_digest"], image_digest)
+
+            provenance = subprocess.run(
+                [
+                    sys.executable,
+                    PROVENANCE,
+                    "--json",
+                    "--allow-dirty",
+                    "--image-digest",
+                    image_digest,
+                    "--sbom",
+                    str(output_dir / "sbom.cdx.json"),
+                    "--vulnerability-scan",
+                    str(output_dir / "vulnerability-scan.json"),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(provenance.returncode, 0, provenance.stderr + provenance.stdout)
+            packet = json.loads(provenance.stdout)
+            self.assertTrue(packet["checks"]["sbom_path"])
+            self.assertTrue(packet["checks"]["vulnerability_scan_path"])
 
     def test_normalizer_writes_release_provenance_compatible_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

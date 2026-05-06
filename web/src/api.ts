@@ -1,4 +1,5 @@
 import type {
+  ApprovalQueuePacket,
   GoalRecord,
   ConnectorCertificationPacket,
   DarkharnessPilotPacket,
@@ -126,6 +127,10 @@ export const api = {
 
   getConnectorCertification(baseUrl: string) {
     return request<ConnectorCertificationPacket>(baseUrl, "/api/connectors/certification");
+  },
+
+  getApprovals(baseUrl: string) {
+    return request<ApprovalQueuePacket>(baseUrl, "/api/approvals");
   },
 
   getKillSwitch(baseUrl: string) {

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/approval-queue.schema.json",
+  "title": "ApprovalQueue",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "pending_count",
+    "blocked_count",
+    "source_refs",
+    "items"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.approval_queue.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["empty", "ready", "blocked"]
+    },
+    "pending_count": { "type": "integer" },
+    "blocked_count": { "type": "integer" },
+    "source_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "queue_id",
+          "run_id",
+          "created_at",
+          "updated_at",
+          "scenario_key",
+          "service",
+          "namespace",
+          "environment",
+          "stage",
+          "pending_pause_stage",
+          "steering_mode",
+          "decision_type",
+          "risk_level",
+          "final_recommendation",
+          "approval_state",
+          "blockers",
+          "requested_by",
+          "owner",
+          "approver_roles",
+          "allowed_commands",
+          "evidence_refs",
+          "latest_event_id"
+        ],
+        "properties": {
+          "queue_id": { "type": "string" },
+          "run_id": { "type": "string" },
+          "created_at": { "type": "string" },
+          "updated_at": { "type": "string" },
+          "scenario_key": { "type": ["string", "null"] },
+          "service": { "type": ["string", "null"] },
+          "namespace": { "type": ["string", "null"] },
+          "environment": { "type": "string" },
+          "stage": { "type": "string" },
+          "pending_pause_stage": { "type": ["string", "null"] },
+          "steering_mode": { "type": "string" },
+          "decision_type": { "type": ["string", "null"] },
+          "risk_level": { "type": ["string", "null"] },
+          "final_recommendation": { "type": ["string", "null"] },
+          "approval_state": {
+            "type": "string",
+            "enum": ["pending", "blocked"]
+          },
+          "blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "requested_by": { "type": ["object", "null"] },
+          "owner": { "type": ["object", "null"] },
+          "approver_roles": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "allowed_commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "latest_event_id": { "type": ["string", "null"] }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

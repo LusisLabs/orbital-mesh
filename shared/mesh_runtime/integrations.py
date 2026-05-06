@@ -20,13 +20,21 @@ from urllib.request import urlopen
 from .config import RuntimeConfig
 from .control_plane_models import IntegrationReadiness, IntegrationStatus
 from .agentic_operator_provenance import agentic_operator_source_provenance_ready
+from .authenticated_ingress import authenticated_ingress_deployment_ready
 from .audit_sink import audit_sink_proof_ready, verify_audit_sink_proof
+from .audit_sink_certification import audit_sink_certification_ready
 from .backup_restore import backup_restore_rehearsal_ready
 from .connector_certification import build_connector_certification_matrix, connector_certification_registry_ready
 from .data_classification import data_classification_policy_ready
+from .deployment_compatibility import deployment_compatibility_registry_ready
+from .design_partner import design_partner_packet_ready
 from .failure_modes import failure_mode_library_ready
+from .load_concurrency import load_concurrency_rehearsal_ready
 from .ownership import ownership_registry_ready
 from .policy_lifecycle import policy_lifecycle_ready
+from .procurement_security import procurement_security_package_ready
+from .provider_adapter import provider_adapter_proof_ready
+from .public_proof import public_proof_package_ready
 from .threat_model import threat_model_register_ready
 
 
@@ -124,8 +132,17 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.threat_model_register_path,
         runtime_config.data_classification_policy_path,
         runtime_config.agentic_operator_source_provenance_path,
+        runtime_config.deployment_compatibility_registry_path,
+        runtime_config.procurement_security_package_path,
+        runtime_config.public_proof_package_path,
+        runtime_config.authenticated_ingress_proof_path,
+        runtime_config.design_partner_packet_path,
         runtime_config.audit_sink_proof_path,
+        runtime_config.audit_sink_certification_path,
         runtime_config.backup_restore_rehearsal_path,
+        runtime_config.load_concurrency_rehearsal_path,
+        runtime_config.feature_flag_provider_proof_path,
+        runtime_config.incident_provider_proof_path,
         bool(runtime_config.policy_signing_key),
         runtime_config.policy_signing_key_id,
         runtime_config.promptfoo_command,
@@ -371,6 +388,9 @@ def _profile_checks(
         required_checks.update(
             {
                 "operator_identity_required": runtime_config.operator_identity_required,
+                "authenticated_ingress_deployment_verified": authenticated_ingress_deployment_ready(
+                    runtime_config.authenticated_ingress_proof_path
+                ),
                 "ownership_registry_configured": ownership_registry_ready(runtime_config.ownership_registry_path),
                 "connector_certification_registry_configured": connector_certification_registry_ready(
                     runtime_config.connector_certification_registry_path
@@ -391,6 +411,9 @@ def _profile_checks(
                 ),
                 "agentic_operator_source_provenance_recorded": agentic_operator_source_provenance_ready(
                     runtime_config.agentic_operator_source_provenance_path
+                ),
+                "deployment_compatibility_registry_reviewed": deployment_compatibility_registry_ready(
+                    runtime_config.deployment_compatibility_registry_path
                 ),
                 "backup_restore_rehearsal_verified": backup_restore_rehearsal_ready(
                     runtime_config.backup_restore_rehearsal_path
@@ -431,8 +454,23 @@ def _profile_checks(
                 ),
                 "run_export_retention_reviewed": runtime_config.run_export_retention_reviewed,
                 "run_export_retention_days_positive": runtime_config.run_export_retention_days > 0,
-                "unfinished_feature_flag_adapter_disabled": not runtime_config.feature_flag_credentials_available,
-                "unfinished_incident_adapter_disabled": not runtime_config.incident_credentials_available,
+                "design_partner_packet_verified": design_partner_packet_ready(
+                    runtime_config.design_partner_packet_path
+                ),
+                "unfinished_feature_flag_adapter_disabled": (
+                    not runtime_config.feature_flag_credentials_available
+                    or provider_adapter_proof_ready(
+                        runtime_config.feature_flag_provider_proof_path,
+                        adapter_id="feature_flag_provider",
+                    )
+                ),
+                "unfinished_incident_adapter_disabled": (
+                    not runtime_config.incident_credentials_available
+                    or provider_adapter_proof_ready(
+                        runtime_config.incident_provider_proof_path,
+                        adapter_id="incident_provider",
+                    )
+                ),
             }
         )
     if _profile_at_least(profile, "expansion"):
@@ -443,6 +481,20 @@ def _profile_checks(
                 in {"pilot-ready", "production-ready"},
                 "external_audit_sink_contract_verified": audit_sink_proof_ready(
                     runtime_config.audit_sink_proof_path
+                ),
+                "external_audit_sink_certification_verified": audit_sink_certification_ready(
+                    runtime_config.audit_sink_certification_path,
+                    proof_path=runtime_config.audit_sink_proof_path,
+                    registry_path=runtime_config.connector_certification_registry_path,
+                ),
+                "procurement_security_package_verified": procurement_security_package_ready(
+                    runtime_config.procurement_security_package_path
+                ),
+                "public_proof_package_verified": public_proof_package_ready(
+                    runtime_config.public_proof_package_path
+                ),
+                "load_concurrency_rehearsal_verified": load_concurrency_rehearsal_ready(
+                    runtime_config.load_concurrency_rehearsal_path
                 ),
             }
         )

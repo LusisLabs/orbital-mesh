@@ -27,6 +27,8 @@ MESH_FEEDBACK_PROMETHEUS_ENABLED=1
 
 It requires deployment-specific `MESH_DATABASE_URL`, `MESH_PROMETHEUS_URL`, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_SERVING_BASE_URL`, and `MESH_BRAIN_SERVING_MODEL` values before startup.
 
+Staging and pilot readiness require `MESH_AUTHENTICATED_INGRESS_PROOF_PATH` to point at a passing `mesh.authenticated_ingress_deployment_proof.v1` packet. Production compose refuses to start without that path because `MESH_OPERATOR_IDENTITY_REQUIRED=1` is not enough by itself; Mesh also needs evidence that the deployed proxy terminates TLS, enforces identity, strips client-supplied Mesh headers, stamps trusted role headers, keeps the raw upstream private, and records operator/source identity for audit.
+
 The proxy is responsible for:
 
 - terminating TLS;
@@ -99,3 +101,26 @@ It proves:
 - an `admin` can force the approval gate through `POST /api/kill-switch`.
 
 It does not prove external TLS, SSO, group mapping, or network isolation. Those remain deployment evidence and must be captured from the actual ingress.
+
+## Deployment Proof
+
+Capture the deployed proxy evidence as JSON and verify it before claiming private-staging or pilot readiness:
+
+```bash
+scripts/verify_authenticated_ingress_deployment.py --proof "$MESH_AUTHENTICATED_INGRESS_PROOF_PATH" --json
+```
+
+The proof must include:
+
+- non-local environment and operator id;
+- HTTPS ingress URL;
+- TLS termination evidence, public listener evidence, minimum TLS version, and certificate ref;
+- SSO/OIDC/SAML or equivalent identity enforcement evidence;
+- identity and role claim mapping;
+- proof that client-supplied `X-Mesh-Operator` and `X-Mesh-Roles` are stripped before upstream forwarding;
+- proof that the proxy stamps `X-Mesh-Operator` and `X-Mesh-Roles` only from trusted identity claims;
+- viewer, launcher, approver, and admin group mappings;
+- proof that the raw Mesh service is not publicly reachable and that the upstream path is private;
+- a passing `mesh.authenticated_ingress_rehearsal.v1` app-level rehearsal reference;
+- audit evidence that operator identity and source IP or proxy identity are recorded;
+- `raw_secret_material_present: false`.

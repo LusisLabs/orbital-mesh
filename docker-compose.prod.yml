@@ -20,8 +20,10 @@ services:
       MESH_STATE_BACKEND: "${MESH_STATE_BACKEND:-postgres}"
       MESH_DATABASE_URL: "${MESH_DATABASE_URL:?set Postgres database URL for production state}"
       MESH_OPERATOR_IDENTITY_REQUIRED: "${MESH_OPERATOR_IDENTITY_REQUIRED:-1}"
+      MESH_AUTHENTICATED_INGRESS_PROOF_PATH: "${MESH_AUTHENTICATED_INGRESS_PROOF_PATH:?set authenticated ingress deployment proof path}"
       MESH_FORCE_APPROVAL_GATE: "${MESH_FORCE_APPROVAL_GATE:-1}"
       MESH_TENANT_ACTIVE_RUN_QUOTA: "${MESH_TENANT_ACTIVE_RUN_QUOTA:-4}"
+      MESH_DESIGN_PARTNER_PACKET_PATH: "${MESH_DESIGN_PARTNER_PACKET_PATH:?set design partner pilot packet path}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
       HERMES_HOME: /workspace/orbital-mesh/.hermes-local
@@ -35,9 +37,16 @@ services:
       MESH_THREAT_MODEL_REGISTER_PATH: "${MESH_THREAT_MODEL_REGISTER_PATH:-/app/config/threat-model.register.json}"
       MESH_DATA_CLASSIFICATION_POLICY_PATH: "${MESH_DATA_CLASSIFICATION_POLICY_PATH:-/app/config/data-classification.policy.json}"
       MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH: "${MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH:-/app/config/agentic-operator-source.provenance.json}"
+      MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH: "${MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH:-/app/config/deployment-compatibility.registry.json}"
+      MESH_PROCUREMENT_SECURITY_PACKAGE_PATH: "${MESH_PROCUREMENT_SECURITY_PACKAGE_PATH:-/app/config/procurement-security.package.json}"
+      MESH_PUBLIC_PROOF_PACKAGE_PATH: "${MESH_PUBLIC_PROOF_PACKAGE_PATH:-/app/config/public-proof.package.json}"
       MESH_RELEASE_PROVENANCE_PATH: "${MESH_RELEASE_PROVENANCE_PATH:?set complete release provenance packet path}"
       MESH_AUDIT_SINK_PROOF_PATH: "${MESH_AUDIT_SINK_PROOF_PATH:-}"
+      MESH_AUDIT_SINK_CERTIFICATION_PATH: "${MESH_AUDIT_SINK_CERTIFICATION_PATH:-}"
       MESH_BACKUP_RESTORE_REHEARSAL_PATH: "${MESH_BACKUP_RESTORE_REHEARSAL_PATH:?set backup and restore rehearsal proof path}"
+      MESH_LOAD_CONCURRENCY_REHEARSAL_PATH: "${MESH_LOAD_CONCURRENCY_REHEARSAL_PATH:-}"
+      MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH: "${MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH:-}"
+      MESH_INCIDENT_PROVIDER_PROOF_PATH: "${MESH_INCIDENT_PROVIDER_PROOF_PATH:-}"
       MESH_MIGRATION_REHEARSAL_PATH: "${MESH_MIGRATION_REHEARSAL_PATH:?set Postgres migration rehearsal proof path}"
       MESH_ON_CALL_DRILL_PATH: "${MESH_ON_CALL_DRILL_PATH:?set production on-call drill proof path}"
       MESH_POLICY_SIGNING_KEY: "${MESH_POLICY_SIGNING_KEY:?inject policy lifecycle signing key through your platform secret store}"

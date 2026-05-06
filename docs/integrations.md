@@ -7,19 +7,23 @@
 - Evaluation modes:
   - `native` runs the `services.evaluation.mesh_eval` package: deterministic contract checks, Mesh trajectory scoring, verifier output, and LatentMAS tokenizer metadata in-process.
   - `promptfoo` is legacy-compatible input only. It no longer controls pass/fail; Mesh still evaluates `task -> trace -> verifier -> scorer -> memory`.
+  - Native evaluation emits `stage_results.evaluation_stack` for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix. These are advisory lanes mapped to Mesh artifacts, not approval authorities.
 - Orchestration modes:
   - `native` keeps orchestration in-process through the bounded local actuators.
   - `goose` runs `services/orchestrator/goose_bridge.py`, which invokes the configured Goose command and returns structured review metadata before actuation.
   - `hermes` runs `services/orchestrator/hermes_bridge.py`, which invokes the configured Hermes command and returns structured review metadata before actuation.
 - Proposal lanes:
   - `evo` is bounded in Mesh. Readiness verifies the configured Evo CLI, agent tasks record whether a bounded code-remediation run is suitable for Evo discovery or benchmark preparation, and operator steering can explicitly launch a scoped Evo bootstrap or status check for eligible runs.
+  - Native orchestration platform lanes are built into agent tasks for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n. They emit evaluator-contract metadata and integration evidence requirements inside Mesh; they are not alternate orchestration modes and do not replace Mesh authority.
 - Agent fabric modes:
   - `native` keeps agent-task lanes as deterministic `native_contract` artifacts.
-  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw/Evo proposal lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
+  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw/Evo plus the native orchestration platform lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
 
 ## Environment variables
 
 - `MESH_PROMPTFOO_COMMAND`
+- `MESH_EVAL_INTEGRATION_LANES`
+- `MESH_EVAL_EXPORT_ENABLED`
 - `MESH_GOOSE_COMMAND`
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_RUN_TIMEOUT_SECONDS`
@@ -42,6 +46,7 @@ inspection and never blocks execution.
 - `MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS`
 - `MESH_READINESS_PROBE_TIMEOUT_SECONDS`
 - `MESH_AGENT_FABRIC_MODE`
+- `MESH_AGENT_MESH_AGENTS`
 - `MESH_DEEPAGENTS_MODEL`
 - `MESH_DEEPAGENTS_TIMEOUT_SECONDS`
 - `MESH_DEEPAGENTS_WORKSPACE_ROOT`
@@ -56,6 +61,14 @@ If `setup_integrations.py` has already written a command into `.mesh-runtime-sta
 `mesh_eval` is the package boundary for the Promptfoo replacement. It packages
 the native trajectory evaluator with the LatentMAS tokenizer boundary so every
 task trace records the context-budget basis used for evaluation.
+
+The full advisory framework map is documented in
+[`docs/evaluation-integrations.md`](./evaluation-integrations.md).
+That document also lists the account-binding variables for Promptfoo,
+LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave,
+Maxim AI, ZenML, and Arize Phoenix. Mesh records redacted connection state for
+configured accounts; outbound export remains disabled unless
+`MESH_EVAL_EXPORT_ENABLED=true` or the lane-specific export flag is set.
 
 Set either `MESH_EVAL_TOKENIZER_JSON` or `MESH_EVAL_SENTENCEPIECE_MODEL`, not
 both. If neither is set, `mesh_eval` records the explicit heuristic fallback.

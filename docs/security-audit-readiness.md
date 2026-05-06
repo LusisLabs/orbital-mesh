@@ -17,6 +17,7 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | Secret handling | `.gitignore`, `SECURITY.md`, production docs, run-export redaction, and the scheduled secret scan cover committed and exported secret material. |
 | Release provenance | `scripts/generate_release_provenance.py` records commit, image digest, base-image digests, lockfile hashes, policy hashes, migrations, SBOM, vulnerability scan, build command, and builder identity. |
 | Runtime evidence | `docs/production-hardening-records.md` points auditors to identity gates, policy simulation, kill switch, run exports, Merkle proof, retention, and go/no-go evidence. |
+| Procurement security package | `config/procurement-security.package.json` and `scripts/verify_procurement_security_package.py` bind SSO, audit export, retention, data boundaries, deployment modes, security answers, support escalation, and known limitations into one reviewed artifact set. |
 
 OpenSSF Best Practices Badge self-certification is a maintainer attestation step. The executable evidence for that attestation comes from this document, `SECURITY.md`, the security workflow, release provenance, and production hardening records.
 
@@ -61,6 +62,7 @@ Quarterly:
 
 ```bash
 scripts/verify_security_audit_readiness.py --json
+scripts/verify_procurement_security_package.py --json
 scripts/verify_release_cut_list.py --json
 scripts/verify_authenticated_ingress.py --json
 scripts/prod_smoke.sh
@@ -87,3 +89,13 @@ Auditors should receive:
 - Mesh Brain artifact upload proof when model artifacts are in scope.
 
 Audit packages must not include raw secrets, kubeconfigs, bearer tokens, database URLs with credentials, private keys, or unredacted production traces.
+
+## Procurement Security Package
+
+`config/procurement-security.package.json` is the maintained manifest for enterprise procurement and security review. It uses `mesh.procurement_security_package.v1` and must verify with:
+
+```bash
+scripts/verify_procurement_security_package.py --json
+```
+
+The manifest covers SSO identity, audit export, retention controls, data boundaries, deployment modes, security answers, support escalation, and known limitations. Passing verification means the repository artifact set is complete and secret-free. It does not replace target-environment evidence for deployed SSO, external audit sink receipts, signed release provenance, or customer-specific support terms.

@@ -13,6 +13,22 @@ Orbital Mesh claims open deployment compatibility by contract, not first-class s
 
 Do not use "supports" for a target unless it is at least `supported`. Do not use "validated" without a current smoke, readiness, or release artifact.
 
+The machine-readable source for these claims is `config/deployment-compatibility.registry.json`. Verify it with:
+
+```bash
+python3 scripts/verify_deployment_compatibility.py --json
+```
+
+Runtime operators can inspect the current packet at `GET /api/deployment/compatibility`. Staging readiness blocks on `deployment_compatibility_registry_reviewed`, so compatibility claims fail closed if the registry is missing or invalid.
+
+ECS/Fargate promotion requires a `mesh.ecs_fargate_promotion_proof.v1` packet verified by:
+
+```bash
+python3 scripts/verify_ecs_fargate_promotion.py --proof <ecs-fargate-promotion-proof.json> --json
+```
+
+The proof must show ECS health and readiness, proxy identity handling, Postgres persistence, live feedback, audit proof, rollback rehearsal, release provenance, image digest, scoped task roles, scoped secret refs, and no raw secret material. Passing this verifier is necessary but not sufficient by itself; the target remains `next_validated_target` until the registry is reviewed and updated.
+
 ## Runtime And Build Matrix
 
 | Target | Category | Level | Product stance |

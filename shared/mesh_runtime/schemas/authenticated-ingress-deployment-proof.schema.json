@@ -1,0 +1,193 @@
+{
+  "title": "AuthenticatedIngressDeploymentProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "environment",
+    "operator_id",
+    "ingress_url",
+    "tls",
+    "identity_provider",
+    "header_sanitization",
+    "role_mapping",
+    "network_boundary",
+    "app_rehearsal",
+    "audit",
+    "raw_secret_material_present"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.authenticated_ingress_deployment_proof.v1"]
+    },
+    "proof_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "environment": {
+      "type": "string"
+    },
+    "operator_id": {
+      "type": "string"
+    },
+    "ingress_url": {
+      "type": "string"
+    },
+    "tls": {
+      "type": "object",
+      "required": ["terminated", "public_listener", "minimum_version", "certificate_ref", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "terminated": {
+          "type": "boolean"
+        },
+        "public_listener": {
+          "type": "boolean"
+        },
+        "minimum_version": {
+          "type": "string"
+        },
+        "certificate_ref": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "identity_provider": {
+      "type": "object",
+      "required": ["type", "sso_enforced", "identity_claim", "roles_claim", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "sso_enforced": {
+          "type": "boolean"
+        },
+        "identity_claim": {
+          "type": "string"
+        },
+        "roles_claim": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "header_sanitization": {
+      "type": "object",
+      "required": [
+        "client_mesh_operator_header_stripped",
+        "client_mesh_roles_header_stripped",
+        "proxy_operator_header_stamped",
+        "proxy_roles_header_stamped",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "client_mesh_operator_header_stripped": {
+          "type": "boolean"
+        },
+        "client_mesh_roles_header_stripped": {
+          "type": "boolean"
+        },
+        "proxy_operator_header_stamped": {
+          "type": "boolean"
+        },
+        "proxy_roles_header_stamped": {
+          "type": "boolean"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "role_mapping": {
+      "type": "object",
+      "required": ["viewer", "launcher", "approver", "admin", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "viewer": {
+          "type": "string"
+        },
+        "launcher": {
+          "type": "string"
+        },
+        "approver": {
+          "type": "string"
+        },
+        "admin": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "network_boundary": {
+      "type": "object",
+      "required": ["raw_service_publicly_reachable", "upstream_private", "allowed_proxy_ref", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "raw_service_publicly_reachable": {
+          "type": "boolean"
+        },
+        "upstream_private": {
+          "type": "boolean"
+        },
+        "allowed_proxy_ref": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "app_rehearsal": {
+      "type": "object",
+      "required": ["schema_version", "status", "run_id", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "required": ["source_ip_or_proxy_identity_recorded", "operator_identity_recorded", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "source_ip_or_proxy_identity_recorded": {
+          "type": "boolean"
+        },
+        "operator_identity_recorded": {
+          "type": "boolean"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "raw_secret_material_present": {
+      "type": "boolean"
+    }
+  }
+}

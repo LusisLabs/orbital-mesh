@@ -9,12 +9,14 @@ from shared.mesh_runtime import (
     RunEvent,
     Trigger,
     build_connector_certification_matrix,
+    build_deployment_compatibility_matrix,
     build_ownership_boundary,
     build_policy_lifecycle_packet,
     build_run_admission,
     build_timeline_proof,
     evaluate_evidence_sufficiency,
     load_connector_certification_registry,
+    load_deployment_compatibility_registry,
     load_fixture,
     load_ownership_registry,
     load_schema,
@@ -34,6 +36,10 @@ class ContractValidationTests(unittest.TestCase):
     def test_connector_certification_schema_is_loadable(self) -> None:
         schema = load_schema("connector-certification-matrix.schema.json")
         self.assertEqual(schema["title"], "ConnectorCertificationMatrix")
+
+    def test_deployment_compatibility_schema_is_loadable(self) -> None:
+        schema = load_schema("deployment-compatibility-matrix.schema.json")
+        self.assertEqual(schema["title"], "DeploymentCompatibilityMatrix")
 
     def test_policy_lifecycle_schema_is_loadable(self) -> None:
         schema = load_schema("policy-lifecycle-packet.schema.json")
@@ -168,6 +174,21 @@ class ContractValidationTests(unittest.TestCase):
             matrix["connectors"]["deepagents"]["blockers"],
         )
         validate_payload("connector-certification-matrix.schema.json", matrix)
+
+    def test_deployment_compatibility_matrix_keeps_ecs_as_next_target(self) -> None:
+        registry_path = Path("config/deployment-compatibility.registry.json")
+
+        registry = load_deployment_compatibility_registry(str(registry_path))
+        self.assertIsNotNone(registry)
+        matrix = build_deployment_compatibility_matrix(str(registry_path))
+
+        self.assertEqual(matrix["schema_version"], "mesh.deployment_compatibility.v1")
+        self.assertEqual(matrix["status"], "complete")
+        self.assertIn("docker_compose", matrix["validated_targets"])
+        self.assertIn("kubernetes", matrix["validated_targets"])
+        self.assertEqual(matrix["next_validated_targets"], ["ecs_fargate"])
+        self.assertIn("ecs_fargate_smoke_missing", matrix["targets"]["ecs_fargate"]["promotion_blockers"])
+        validate_payload("deployment-compatibility-matrix.schema.json", matrix)
 
     def test_timeline_proof_contract_hashes_events_and_merkle_chain(self) -> None:
         events = [

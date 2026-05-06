@@ -49,6 +49,7 @@ Compatibility posture:
 - OCI image compatibility is a contract for Docker Engine, Podman, containerd, runc, crun, BuildKit, Buildah, and Kaniko outputs, but direct runtime APIs are not a product surface.
 - K3s, OpenShift, Rancher-managed Kubernetes, managed Kubernetes, Cloud Run, Azure Container Apps, Fly.io, Railway, and Render are recipes until target-specific release evidence exists.
 - ECS/Fargate is the first non-Kubernetes production target candidate for validation.
+- ECS/Fargate promotion requires `scripts/verify_ecs_fargate_promotion.py --proof <ecs-fargate-promotion-proof.json> --json` with health, readiness, ingress identity, Postgres persistence, feedback, audit, rollback, release provenance, image digest, scoped task roles, scoped secret refs, and no raw secret material.
 - Swarm, Mesos/Marathon, Windows Containers, and direct runc/containerd integration are not active roadmap targets.
 - `agentic-operator-core-main/` is source input for Kubernetes operator, CRD, Helm, Argo, MCP, LiteLLM, metering, and network-policy patterns. It is not active runtime until forked through Orbital Mesh authority gates.
 
@@ -110,7 +111,7 @@ scripts/verify_pilot_signoff.py --go-no-go dist/pilot-go-no-go.json --build-outp
 scripts/verify_pilot_signoff.py --signoff dist/pilot-signoff.json --go-no-go dist/pilot-go-no-go.json --expected-release-provenance-sha "$MESH_RELEASE_PROVENANCE_SHA" --json
 ```
 
-`scripts/verify_authenticated_ingress.py` is a local app-level rehearsal. The deployed proxy still needs its own evidence for TLS, header stripping, and group mapping.
+`scripts/verify_authenticated_ingress.py` is a local app-level rehearsal. `scripts/verify_authenticated_ingress_deployment.py --proof "$MESH_AUTHENTICATED_INGRESS_PROOF_PATH" --json` verifies the deployed proxy proof for TLS, SSO, header stripping, role mapping, private upstream, app rehearsal, audit identity, and absence of raw secret material.
 
 ## Kubernetes Platform Team
 

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/audit-sink-certification.schema.json",
+  "title": "AuditSinkCertification",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "certification_id",
+    "connector_id",
+    "sink_id",
+    "sink_state",
+    "environment",
+    "reviewed_by",
+    "approved_at",
+    "registry_ref",
+    "registry_state",
+    "audit_sink_proof_ref",
+    "audit_sink_proof_sha256",
+    "required_artifacts",
+    "authority_boundary",
+    "degraded_behavior",
+    "compliance_reliance_allowed",
+    "raw_secret_material_present",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.audit_sink_certification.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "certification_id": { "type": "string" },
+    "connector_id": { "type": "string" },
+    "sink_id": { "type": "string" },
+    "sink_state": {
+      "type": "string",
+      "enum": ["pilot-ready", "production-ready"]
+    },
+    "environment": { "type": "string" },
+    "reviewed_by": { "type": "string" },
+    "approved_at": { "type": "string" },
+    "registry_ref": { "type": "string" },
+    "registry_state": {
+      "type": "string",
+      "enum": ["pilot-ready", "production-ready"]
+    },
+    "audit_sink_proof_ref": { "type": "string" },
+    "audit_sink_proof_sha256": { "type": "string" },
+    "required_artifacts": {
+      "type": "object",
+      "required": [
+        "append_only_receipt_ref",
+        "run_export_ref",
+        "merkle_proof_ref",
+        "rotation_evidence_ref",
+        "break_glass_recording_ref",
+        "retention_policy_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "append_only_receipt_ref": { "type": "string" },
+        "run_export_ref": { "type": "string" },
+        "merkle_proof_ref": { "type": "string" },
+        "rotation_evidence_ref": { "type": "string" },
+        "break_glass_recording_ref": { "type": "string" },
+        "retention_policy_ref": { "type": "string" }
+      }
+    },
+    "authority_boundary": {
+      "type": "object",
+      "required": [
+        "service_account_ref",
+        "credential_mode",
+        "runtime_secret_mount_required",
+        "production_actuator_credentials_allowed",
+        "repo_write_credentials_allowed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "service_account_ref": { "type": "string" },
+        "credential_mode": { "type": "string" },
+        "runtime_secret_mount_required": { "type": "boolean" },
+        "production_actuator_credentials_allowed": { "type": "boolean" },
+        "repo_write_credentials_allowed": { "type": "boolean" }
+      }
+    },
+    "degraded_behavior": { "type": "string" },
+    "compliance_reliance_allowed": { "type": "boolean" },
+    "raw_secret_material_present": { "type": "boolean" },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

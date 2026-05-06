@@ -77,6 +77,12 @@
         },
         "blocker_analysis": {
           "type": "object"
+        },
+        "evaluation_stack": {
+          "type": "object"
+        },
+        "phoenix_spans": {
+          "type": "array"
         }
       },
       "additionalProperties": false

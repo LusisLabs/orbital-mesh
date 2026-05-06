@@ -22,7 +22,10 @@ Required references:
 - readiness validation: `docs/production-readiness-validation.md`;
 - production compose template: `docker-compose.prod.yml`;
 - production smoke: `scripts/prod_smoke.sh`;
-- Postgres restart proof: `scripts/verify_postgres_restart_proof.py`.
+- Postgres restart proof: `scripts/verify_postgres_restart_proof.py`;
+- design-partner packet verifier: `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json`.
+
+Pilot readiness requires `MESH_DESIGN_PARTNER_PACKET_PATH` to point at a passing `mesh.design_partner_packet.v1` packet. The packet is the machine-readable version of this document and must bind the scope, success metrics, data handling terms, support model, rollback plan, real-user experiment consent, go/no-go packet hash, release provenance hash, run export ref, and readiness ref.
 
 ## Success Metrics
 
@@ -88,3 +91,11 @@ Support model:
 The pilot moves forward only when `GET /api/pilot/go-no-go` is generated from observed evidence and returns `status: go`.
 
 Intent does not satisfy the standard. Missing evidence remains blocking until a run, smoke, proof, or packet records it.
+
+Verify the packet before pilot signoff:
+
+```bash
+scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json
+```
+
+The verifier rejects packets that expand beyond one environment, one Kubernetes context, one namespace, and two service classes; omit consent for real-user-impacting experiments; allow proposal-lane credentials; omit rollback or kill-switch references; retain data longer than the agreed 30-day pilot window; or fail to bind the packet to a `go` pilot go/no-go hash and complete release-provenance hash.

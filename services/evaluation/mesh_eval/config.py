@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from services.evaluation.evaluation_stack import EVALUATION_INTEGRATION_IDS, normalize_integration_lanes
+
 
 @dataclass(frozen=True)
 class MeshEvalConfig:
@@ -20,6 +22,7 @@ class MeshEvalConfig:
     latentmas_crate: str = "latent-mesh/LatentMAS"
     latentmas_command: str | None = None
     latentmas_timeout_seconds: float = 5.0
+    integration_lanes: tuple[str, ...] = EVALUATION_INTEGRATION_IDS
 
     @classmethod
     def from_env(cls) -> "MeshEvalConfig":
@@ -31,6 +34,7 @@ class MeshEvalConfig:
             latentmas_crate=os.environ.get("MESH_EVAL_LATENTMAS_CRATE", "latent-mesh/LatentMAS"),
             latentmas_command=os.environ.get("MESH_EVAL_LATENTMAS_COMMAND"),
             latentmas_timeout_seconds=float(os.environ.get("MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS", "5")),
+            integration_lanes=normalize_integration_lanes(os.environ.get("MESH_EVAL_INTEGRATION_LANES")),
         ).validate()
 
     def validate(self) -> "MeshEvalConfig":
@@ -74,6 +78,10 @@ class MeshEvalConfig:
                 "rust_args": self.latentmas_args(),
             },
             "promptfoo_role": "legacy_compatibility_only",
+            "evaluation_stack": {
+                "default_lanes": list(EVALUATION_INTEGRATION_IDS),
+                "enabled_lanes": list(self.integration_lanes),
+            },
         }
 
 

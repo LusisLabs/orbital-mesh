@@ -9,6 +9,16 @@ from .backup_restore import (
     load_backup_restore_rehearsal,
     verify_backup_restore_rehearsal,
 )
+from .authenticated_ingress import (
+    authenticated_ingress_deployment_ready,
+    load_authenticated_ingress_deployment_proof,
+    verify_authenticated_ingress_deployment_proof,
+)
+from .audit_sink_certification import (
+    audit_sink_certification_ready,
+    load_audit_sink_certification,
+    verify_audit_sink_certification,
+)
 from .breakthrough import BreakthroughCriterion, BreakthroughThresholds, breakthrough_threshold_report
 from .config import RuntimeConfig
 from .context_store import ContextStore
@@ -16,6 +26,7 @@ from .corpus_store import CorpusQuery, IncidentCorpusDatabase, project_corpus_ro
 from .failure_modes import build_failure_mode_library_packet, failure_mode_library_ready, load_failure_mode_library
 from .infra_graph import GraphEdge, GraphNode, GraphSnapshot, InfraGraph
 from .learning import LearningStore
+from .load_concurrency import load_concurrency_rehearsal_ready, verify_load_concurrency_rehearsal
 from .trust_ladder import TRUST_LEVELS, TrustLadder
 from .control_plane_models import (
     AgentAttempt,
@@ -103,6 +114,17 @@ from .connector_certification import (
     connector_certification_registry_ready,
     load_connector_certification_registry,
 )
+from .deployment_compatibility import (
+    build_deployment_compatibility_matrix,
+    deployment_compatibility_registry_ready,
+    load_deployment_compatibility_registry,
+    verify_deployment_compatibility_registry,
+)
+from .design_partner import design_partner_packet_ready, load_design_partner_packet, verify_design_partner_packet
+from .ecs_fargate import (
+    load_ecs_fargate_promotion_proof,
+    verify_ecs_fargate_promotion_proof,
+)
 from .evidence_sufficiency import evaluate_evidence_sufficiency
 from .ownership import build_ownership_boundary, load_ownership_registry, ownership_registry_ready
 from .operator_handoff import build_operator_handoff
@@ -110,6 +132,13 @@ from .override_review import build_override_review
 from .pilot_signoff import build_pilot_signoff_packet, load_pilot_signoff_packet, verify_pilot_signoff_packet
 from .policy_lifecycle import build_policy_lifecycle_packet, policy_lifecycle_ready
 from .postmortem_review import build_postmortem_review
+from .provider_adapter import load_provider_adapter_proof, provider_adapter_proof_ready, verify_provider_adapter_proof
+from .procurement_security import (
+    load_procurement_security_package,
+    procurement_security_package_ready,
+    verify_procurement_security_package,
+)
+from .public_proof import load_public_proof_package, public_proof_package_ready, verify_public_proof_package
 from .run_events import (
     AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,
@@ -158,6 +187,7 @@ from .webhook_templates import (
     verify_signature,
 )
 from .alert_store import AlertStore
+from .approval_queue import build_approval_queue_packet
 from .audit_sink import audit_sink_proof_ready, load_audit_sink_proof, verify_audit_sink_proof
 from .benchmark_artifacts import verify_benchmark_run_artifacts
 from .credential_rotation import load_credential_rotation_proof, verify_credential_rotation_proof

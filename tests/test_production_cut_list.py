@@ -27,6 +27,18 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
             json.dumps(_backup_restore_rehearsal(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+    authenticated_ingress_proof_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
+    if not authenticated_ingress_proof_path.exists():
+        authenticated_ingress_proof_path.write_text(
+            json.dumps(_authenticated_ingress_deployment_proof(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    design_partner_packet_path = Path(tmp) / "design-partner-packet.json"
+    if not design_partner_packet_path.exists():
+        design_partner_packet_path.write_text(
+            json.dumps(_design_partner_packet(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     values = {
         "state_directory": tmp,
         "vault_path": str(Path(tmp) / "vault"),
@@ -37,6 +49,8 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
         "evo_command": "/missing/evo",
         "policy_signing_key": "test-policy-signing-key",
         "backup_restore_rehearsal_path": str(backup_restore_rehearsal_path),
+        "authenticated_ingress_proof_path": str(authenticated_ingress_proof_path),
+        "design_partner_packet_path": str(design_partner_packet_path),
     }
     values.update(overrides)
     return RuntimeConfig(**values)
@@ -212,6 +226,138 @@ def _backup_restore_rehearsal() -> dict:
     }
 
 
+def _authenticated_ingress_deployment_proof() -> dict:
+    return {
+        "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
+        "proof_id": "authenticated_ingress_deployment_test",
+        "generated_at": "2026-05-06T04:10:00Z",
+        "environment": "staging",
+        "operator_id": "platform@example.com",
+        "ingress_url": "https://mesh.staging.example.com",
+        "tls": {
+            "terminated": True,
+            "public_listener": True,
+            "minimum_version": "TLSv1.3",
+            "certificate_ref": "acm://mesh-staging-cert",
+            "evidence_ref": "ingress-proof://tls/test",
+        },
+        "identity_provider": {
+            "type": "oidc",
+            "sso_enforced": True,
+            "identity_claim": "email",
+            "roles_claim": "groups",
+            "evidence_ref": "ingress-proof://oidc/test",
+        },
+        "header_sanitization": {
+            "client_mesh_operator_header_stripped": True,
+            "client_mesh_roles_header_stripped": True,
+            "proxy_operator_header_stamped": True,
+            "proxy_roles_header_stamped": True,
+            "evidence_ref": "ingress-proof://headers/test",
+        },
+        "role_mapping": {
+            "viewer": "group://mesh/viewers",
+            "launcher": "group://mesh/launchers",
+            "approver": "group://mesh/approvers",
+            "admin": "group://mesh/admins",
+            "evidence_ref": "ingress-proof://role-mapping/test",
+        },
+        "network_boundary": {
+            "raw_service_publicly_reachable": False,
+            "upstream_private": True,
+            "allowed_proxy_ref": "security-group://mesh-ingress-to-control-plane",
+            "evidence_ref": "ingress-proof://network/test",
+        },
+        "app_rehearsal": {
+            "schema_version": "mesh.authenticated_ingress_rehearsal.v1",
+            "status": "passed",
+            "run_id": "run_ingress_rehearsal",
+            "evidence_ref": "run-artifact://authenticated-ingress-rehearsal.json",
+        },
+        "audit": {
+            "source_ip_or_proxy_identity_recorded": True,
+            "operator_identity_recorded": True,
+            "evidence_ref": "ingress-proof://audit/test",
+        },
+        "raw_secret_material_present": False,
+    }
+
+
+def _design_partner_packet() -> dict:
+    return {
+        "schema_version": "mesh.design_partner_packet.v1",
+        "packet_id": "design_partner_test",
+        "generated_at": "2026-05-06T04:40:00Z",
+        "partner": {
+            "partner_id": "partner-a",
+            "technical_owner": "platform@example.com",
+            "escalation_channel": "pager://partner-a/platform",
+            "pilot_window_days": 30,
+        },
+        "pilot_scope": {
+            "environment": "pilot",
+            "kubernetes_contexts": ["prod-us-east-1"],
+            "namespaces": ["mesh-targets"],
+            "service_classes": ["search-api"],
+            "approval_gate_forced": True,
+            "live_execution_limited": True,
+            "feature_flag_adapter_disabled": True,
+            "incident_adapter_disabled": True,
+            "proposal_lanes_advisory_only": True,
+            "evidence_ref": "design-partner://scope/partner-a",
+        },
+        "success_metrics": {
+            "allowed_action_with_feedback": True,
+            "denied_action_with_blocker": True,
+            "no_proposal_lane_credentials": True,
+            "operator_identity_on_mutations": True,
+            "kill_switch_rehearsed": True,
+            "merkle_proofs_available": True,
+            "postgres_restart_proof_passed": True,
+            "evidence_ref": "design-partner://success-metrics/partner-a",
+        },
+        "data_handling": {
+            "retention_days": 30,
+            "training_use_opt_in": False,
+            "audit_records_excluded_from_training_by_default": True,
+            "raw_secrets_disallowed": True,
+            "kubeconfig_contents_disallowed": True,
+            "private_keys_disallowed": True,
+            "customer_payloads_excluded": True,
+            "evidence_ref": "design-partner://data-handling/partner-a",
+        },
+        "support_model": {
+            "mesh_support_hours": "business-hours",
+            "partner_owner_ref": "user://platform@example.com",
+            "emergency_owner": "operator",
+            "postmortem_packet_required": True,
+            "evidence_ref": "design-partner://support/partner-a",
+        },
+        "rollback_plan": {
+            "plan_ref": "rollback://partner-a/pilot",
+            "kill_switch_ref": "runbook://kill-switch",
+            "rollback_metadata_required": True,
+            "human_review_on_ambiguous_execution": True,
+        },
+        "consent": {
+            "partner_approved": True,
+            "mesh_approved": True,
+            "real_user_experiment_consent_required": True,
+            "real_user_experiment_consent_ref": "consent://partner-a/real-user-experiment",
+            "data_handling_terms_ref": "terms://partner-a/data-handling",
+            "signed_at": "2026-05-06T04:40:00Z",
+        },
+        "evidence_summary": {
+            "go_no_go_status": "go",
+            "go_no_go_packet_sha256": "a" * 64,
+            "release_provenance_sha256": "b" * 64,
+            "run_export_ref": "run-export://partner-a/run_1",
+            "readiness_ref": "readiness://partner-a/pilot",
+        },
+        "raw_secret_material_present": False,
+    }
+
+
 def _on_call_drill() -> dict:
     return {
         "schema_version": "mesh.on_call_drill.v1",
@@ -273,6 +419,7 @@ class ReadinessProfileTests(unittest.TestCase):
         self.assertTrue(readiness["required_checks"]["ownership_registry_configured"])
         self.assertTrue(readiness["required_checks"]["failure_mode_library_configured"])
         self.assertTrue(readiness["required_checks"]["threat_model_register_reviewed"])
+        self.assertTrue(readiness["required_checks"]["deployment_compatibility_registry_reviewed"])
         self.assertTrue(readiness["required_checks"]["backup_restore_rehearsal_verified"])
         self.assertNotIn("promptfoo", readiness["blockers"])
 
@@ -352,6 +499,23 @@ class ReadinessProfileTests(unittest.TestCase):
 
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("agentic_operator_source_provenance_recorded", readiness["blockers"])
+
+    def test_staging_profile_blocks_missing_deployment_compatibility_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            readiness = build_readiness(
+                _config(
+                    tmp,
+                    readiness_profile="staging",
+                    operator_identity_required=True,
+                    deployment_compatibility_registry_path=str(
+                        Path(tmp) / "missing-deployment-compatibility.json"
+                    ),
+                ),
+                force=True,
+            ).to_dict()
+
+        self.assertEqual(readiness["status"], "blocked")
+        self.assertIn("deployment_compatibility_registry_reviewed", readiness["blockers"])
 
     def test_staging_profile_passes_with_optional_lanes_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -461,6 +625,7 @@ class ProductionComposeContractTests(unittest.TestCase):
             'MESH_STATE_BACKEND: "${MESH_STATE_BACKEND:-postgres}"',
             'MESH_DATABASE_URL: "${MESH_DATABASE_URL:?set Postgres database URL for production state}"',
             'MESH_OPERATOR_IDENTITY_REQUIRED: "${MESH_OPERATOR_IDENTITY_REQUIRED:-1}"',
+            'MESH_DESIGN_PARTNER_PACKET_PATH: "${MESH_DESIGN_PARTNER_PACKET_PATH:?set design partner pilot packet path}"',
             'MESH_FORCE_APPROVAL_GATE: "${MESH_FORCE_APPROVAL_GATE:-1}"',
             'MESH_LIVE_FEEDBACK_REQUIRED: "${MESH_LIVE_FEEDBACK_REQUIRED:-1}"',
             'MESH_FEEDBACK_PROMETHEUS_ENABLED: "${MESH_FEEDBACK_PROMETHEUS_ENABLED:-1}"',
@@ -468,6 +633,7 @@ class ProductionComposeContractTests(unittest.TestCase):
             'MESH_BRAIN_ARTIFACT_URI_PREFIX: "${MESH_BRAIN_ARTIFACT_URI_PREFIX:?set durable object-storage URI prefix for Mesh Brain artifacts}"',
             'MESH_BRAIN_SERVING_BASE_URL: "${MESH_BRAIN_SERVING_BASE_URL:?set OpenAI-compatible Mesh Brain serving backend URL}"',
             'MESH_BRAIN_SERVING_MODEL: "${MESH_BRAIN_SERVING_MODEL:?set Mesh Brain serving model name}"',
+            'MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH: "${MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH:-/app/config/deployment-compatibility.registry.json}"',
             'MESH_POLICY_LIFECYCLE_MANIFEST_PATH: "${MESH_POLICY_LIFECYCLE_MANIFEST_PATH:-/app/config/policy-lifecycle.manifest.json}"',
             'MESH_FAILURE_MODE_LIBRARY_PATH: "${MESH_FAILURE_MODE_LIBRARY_PATH:-/app/config/failure-mode.library.json}"',
             'MESH_POLICY_SIGNING_KEY: "${MESH_POLICY_SIGNING_KEY:?inject policy lifecycle signing key through your platform secret store}"',
@@ -624,6 +790,21 @@ class OperatorRoleApiTests(unittest.TestCase):
         ]
         self.assertEqual(ownership_events[-1]["artifact_key"], "ownership_boundary")
         self.assertEqual(ownership_events[-1]["status"], "captured")
+
+        with self.assertRaises(HTTPError) as approval_queue_missing:
+            self._request("GET", "/api/approvals")
+        self.assertEqual(approval_queue_missing.exception.code, 401)
+        approval_queue = self._request(
+            "GET",
+            "/api/approvals",
+            headers={"X-Mesh-Operator": "viewer@example.com", "X-Mesh-Roles": "viewer"},
+        )
+        self.assertEqual(approval_queue["schema_version"], "mesh.approval_queue.v1")
+        self.assertEqual(approval_queue["pending_count"], 1)
+        self.assertEqual(approval_queue["items"][0]["run_id"], paused["run_id"])
+        self.assertEqual(approval_queue["items"][0]["approval_state"], "pending")
+        self.assertEqual(approval_queue["items"][0]["requested_by"]["operator_id"], "launcher@example.com")
+        self.assertIn("approve", approval_queue["items"][0]["allowed_commands"])
 
         with self.assertRaises(HTTPError) as steering_forbidden:
             self._request(

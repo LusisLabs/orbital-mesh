@@ -23,8 +23,8 @@
         "break_glass_recording_required": true
       },
       "degraded_behavior": "fall back to read-only evidence collection and operator approval without live mutation",
-      "allowed_scopes": ["read-only", "rollout-restart", "rollback"],
-      "evidence_refs": ["docs/authenticated-ingress.md", "docs/postgres-restart-proof.md"],
+      "allowed_scopes": ["read-only", "rollout-restart", "rollback", "orchestration-evidence", "operator-proposal"],
+      "evidence_refs": ["docs/authenticated-ingress.md", "docs/postgres-restart-proof.md", "docs/agent-mesh.md"],
       "blockers": []
     },
     {
@@ -201,6 +201,182 @@
       "degraded_behavior": "disable sandbox lane without blocking core runtime",
       "allowed_scopes": ["proposal"],
       "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "airflow",
+      "display_name": "Apache Airflow orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "DAG state can inform Mesh evaluation but cannot approve or execute production actions",
+      "credential_policy": "no Airflow admin token, production actuator credential, or repo write token in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Airflow DAG evidence",
+      "allowed_scopes": ["dag-read", "task-state-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "temporal",
+      "display_name": "Temporal orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "workflow and activity history can inform Mesh durability checks but Mesh owns policy and actuation",
+      "credential_policy": "no Temporal namespace mutation token unless a future connector is certified for a bounded action class",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native retry and idempotency evaluation without Temporal history",
+      "allowed_scopes": ["workflow-read", "activity-history-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "dagster",
+      "display_name": "Dagster orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "asset lineage and checks can inform Mesh evaluation but cannot override Mesh policy",
+      "credential_policy": "no Dagster launch or repository write credential in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Dagster asset lineage",
+      "allowed_scopes": ["asset-read", "lineage-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "prefect",
+      "display_name": "Prefect orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "flow and task state can inform Mesh evaluation while Mesh owns approval and actuation",
+      "credential_policy": "no Prefect deployment mutation credential in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Prefect flow evidence",
+      "allowed_scopes": ["flow-read", "task-state-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "flyte",
+      "display_name": "Flyte orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "ML workflow versioning and cache evidence can inform Mesh evaluation but not approve execution",
+      "credential_policy": "no Flyte launch or Kubernetes mutation credential in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Flyte reproducibility evidence",
+      "allowed_scopes": ["execution-read", "cache-read", "version-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "luigi",
+      "display_name": "Luigi orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "task dependency state can inform Mesh evaluation but cannot approve or execute actions",
+      "credential_policy": "no scheduler mutation or repository write credential in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Luigi scheduler evidence",
+      "allowed_scopes": ["task-read", "dependency-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "oozie",
+      "display_name": "Apache Oozie orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "Hadoop workflow action state can inform Mesh evaluation but cannot override Mesh policy",
+      "credential_policy": "no Hadoop mutation, Hive mutation, or Kerberos material in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without Oozie workflow evidence",
+      "allowed_scopes": ["workflow-read", "action-state-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "n8n",
+      "display_name": "n8n orchestration lane",
+      "domain": "orchestration",
+      "state": "proposal-only",
+      "required_before": "expansion",
+      "authority_posture": "workflow node traces can inform Mesh evaluation but n8n cannot hold production authority",
+      "credential_policy": "no n8n credential export, node credential, or production actuator credential in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue Mesh-native evaluation without n8n node execution traces",
+      "allowed_scopes": ["workflow-read", "execution-trace-read", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
       "blockers": []
     },
     {

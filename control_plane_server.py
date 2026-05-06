@@ -146,8 +146,19 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/connectors/certification":
             self._send_json(self.server.coordinator.build_connector_certification())
             return
+        if path == "/api/deployment/compatibility":
+            self._send_json(self.server.coordinator.build_deployment_compatibility())
+            return
         if path == "/api/failure-modes":
             self._send_json(self.server.coordinator.build_failure_mode_library())
+            return
+        if path == "/api/approvals":
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            self._send_json(self.server.coordinator.build_approval_queue())
             return
         if path == "/api/kill-switch":
             self._send_json(self.server.coordinator.kill_switch_status())

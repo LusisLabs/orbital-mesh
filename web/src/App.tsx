@@ -50,6 +50,8 @@ import {
   type RunGraphNode,
 } from "./lib/runGraph";
 import type {
+  ApprovalQueueItem,
+  ApprovalQueuePacket,
   BenchmarkRecord,
   ConnectorCertificationPacket,
   DarkharnessPilotPacket,
@@ -174,14 +176,6 @@ interface DashboardMetric {
   value: string;
   detail: string;
   tone: "good" | "warn" | "danger" | "neutral";
-}
-
-interface ApprovalQueueItem {
-  id: string;
-  title: string;
-  detail: string;
-  stage: string;
-  blocked: boolean;
 }
 
 interface ConfidencePoint {
@@ -373,6 +367,7 @@ export default function App() {
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
   const [connectorCertification, setConnectorCertification] = useState<ConnectorCertificationPacket | null>(null);
+  const [approvalPacket, setApprovalPacket] = useState<ApprovalQueuePacket | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
@@ -489,6 +484,7 @@ export default function App() {
         setRuns(snapshot.runs);
         setReadiness(snapshot.readiness);
         void api.getConnectorCertification(baseUrl).then(setConnectorCertification).catch(() => setConnectorCertification(null));
+        void api.getApprovals(baseUrl).then(setApprovalPacket).catch(() => setApprovalPacket(null));
         void api.getWatchers(baseUrl).then(setWatchers).catch(() => setWatchers(null));
         if (!activeRunId && snapshot.runs.length > 0) {
           setActiveRunId(snapshot.runs[0].run_id);
@@ -612,6 +608,7 @@ export default function App() {
         trustLadderRes,
         killSwitchRes,
         connectorCertificationRes,
+        approvalQueueRes,
         pilotPacketRes,
       ] = await Promise.all([
         boot(api.getHealth(baseUrl), null),
@@ -627,6 +624,7 @@ export default function App() {
         boot(api.getTrustLadder(baseUrl), { entries: [] }),
         boot(api.getKillSwitch(baseUrl), null),
         boot(api.getConnectorCertification(baseUrl), null),
+        boot(api.getApprovals(baseUrl), null),
         boot(api.getPilotGoNoGo(baseUrl), null),
       ]);
       if (!healthRes) {
@@ -645,6 +643,7 @@ export default function App() {
       setTrustLadder(trustLadderRes.entries);
       setKillSwitchStatus(killSwitchRes);
       setConnectorCertification(connectorCertificationRes);
+      setApprovalPacket(approvalQueueRes);
       setPilotPacket(pilotPacketRes);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
@@ -1183,8 +1182,8 @@ export default function App() {
     [activeSignal, readiness, watchers],
   );
   const approvalQueue = useMemo(
-    () => buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
-    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked],
+    () => approvalPacket?.items ?? buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
+    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked, approvalPacket?.items],
   );
   const incidentRuns = useMemo(
     () =>
@@ -1982,9 +1981,9 @@ function OverviewDashboard({
         </div>
         <div className="mesh-stack">
           {approvalQueue.slice(0, 4).map((item) => (
-            <button key={item.id} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <button key={approvalItemId(item)} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </button>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No operator approvals are pending." /> : null}
@@ -3286,9 +3285,9 @@ function ApprovalsView({
         <SectionTitle icon={<ShieldCheck size={15} />} title="Approval Queue" />
         <div className="mesh-stack">
           {approvalQueue.map((item) => (
-            <div key={item.id} className="mesh-list-row static">
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <div key={approvalItemId(item)} className="mesh-list-row static">
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </div>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No pending approvals." /> : null}
@@ -3795,7 +3794,14 @@ function RunApprovalPanel({
         <div className="mesh-stack">
           <ContextStat label="Run" value={activeRun?.run_id ?? "No run"} />
           <ContextStat label="Stage" value={activeRun ? humanize(activeRun.stage) : "Idle"} />
-          {queue.map((item) => <ConnectorRow key={item.id} name={item.title} detail={item.detail} state={item.blocked ? "degraded" : "config-only"} />)}
+          {queue.map((item) => (
+            <ConnectorRow
+              key={approvalItemId(item)}
+              name={approvalItemTitle(item)}
+              detail={approvalItemDetail(item)}
+              state={approvalItemBlocked(item) ? "degraded" : "config-only"}
+            />
+          ))}
           {queue.length === 0 ? <EmptyState text="No pending approval for this run." /> : null}
           <button className="action-button compact" type="button" onClick={() => onJumpContext("steering")}>Open steering</button>
         </div>
@@ -4194,12 +4200,45 @@ function buildDashboardMetrics({
 function buildApprovalQueue(run: RunDetail | null, blocked: boolean, reasons: string[]): ApprovalQueueItem[] {
   if (!run || run.stage !== "awaiting_operator") return [];
   return [{
-    id: `${run.run_id}-approval`,
-    title: blocked ? "Approval blocked" : "Awaiting operator approval",
-    detail: reasons[0] ?? "Run is paused at the operator gate.",
-    stage: run.pending_pause_stage ?? run.stage,
-    blocked,
+    queue_id: `approval://${run.run_id}`,
+    run_id: run.run_id,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    scenario_key: run.scenario_key,
+    service: asRecord(run.artifacts?.input_signal).service ?? asRecord(run.artifacts?.ownership_boundary).service ?? null,
+    namespace: asRecord(run.artifacts?.input_signal).namespace ?? asRecord(run.artifacts?.ownership_boundary).namespace ?? null,
+    environment: asRecord(run.artifacts?.input_signal).environment ?? "local",
+    stage: run.stage,
+    pending_pause_stage: run.pending_pause_stage,
+    steering_mode: run.steering_mode,
+    decision_type: asRecord(run.artifacts?.decision).decision_type ?? null,
+    risk_level: asRecord(run.artifacts?.decision).risk_level ?? null,
+    final_recommendation: asRecord(run.artifacts?.evaluation).final_recommendation ?? null,
+    approval_state: blocked ? "blocked" : "pending",
+    blockers: reasons,
+    requested_by: asRecord(run.artifacts?.operator),
+    owner: asRecord(run.artifacts?.ownership_boundary).owner ?? null,
+    approver_roles: firstArray(asRecord(run.artifacts?.ownership_boundary).approver_roles),
+    allowed_commands: blocked ? ["explain_blockers", "override_decision", "cancel", "handoff"] : ["approve", "resume", "cancel", "handoff"],
+    evidence_refs: [`run://${run.run_id}`, ...(run.latest_event_id ? [`event://${run.latest_event_id}`] : [])],
+    latest_event_id: run.latest_event_id,
   }];
+}
+
+function approvalItemId(item: ApprovalQueueItem): string {
+  return item.queue_id || `approval://${item.run_id}`;
+}
+
+function approvalItemBlocked(item: ApprovalQueueItem): boolean {
+  return item.approval_state === "blocked";
+}
+
+function approvalItemTitle(item: ApprovalQueueItem): string {
+  return approvalItemBlocked(item) ? "Approval blocked" : "Awaiting operator approval";
+}
+
+function approvalItemDetail(item: ApprovalQueueItem): string {
+  return item.blockers[0] ?? item.decision_type ?? item.service ?? "Run is paused at the operator gate.";
 }
 
 function buildRcaSnapshot(

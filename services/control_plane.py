@@ -119,7 +119,9 @@ from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readi
 from shared.mesh_runtime.on_call_drill import verify_on_call_drill
 from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
+from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
 from shared.mesh_runtime.failure_modes import build_failure_mode_library_packet
+from shared.mesh_runtime.approval_queue import build_approval_queue_packet
 from shared.mesh_runtime.watcher_ownership import build_watcher_ownership_packet
 from shared.mesh_runtime.timeline_proof import build_timeline_proof
 from shared.mesh_runtime.learning import LearningStore
@@ -782,6 +784,9 @@ class RunCoordinator:
             runtime_states=runtime_states if isinstance(runtime_states, dict) else {},
         )
 
+    def build_deployment_compatibility(self) -> dict[str, Any]:
+        return build_deployment_compatibility_matrix(self.config.deployment_compatibility_registry_path)
+
     def build_failure_mode_library(self) -> dict[str, Any]:
         return build_failure_mode_library_packet(self.config.failure_mode_library_path)
 
@@ -1250,6 +1255,23 @@ class RunCoordinator:
 
     def list_run_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
         return [_run_session_summary(session) for session in self.state_store.list_run_sessions(limit=limit)]
+
+    def build_approval_queue(self, limit: int = 100) -> dict[str, Any]:
+        sessions = self.state_store.list_run_sessions(limit=limit)
+        pending_sessions = [
+            session
+            for session in sessions
+            if session.stage == "awaiting_operator" or session.status == "awaiting_operator"
+        ]
+        events_by_run = {
+            session.run_id: self.state_store.list_run_events(session.run_id)
+            for session in pending_sessions
+        }
+        return build_approval_queue_packet(
+            pending_sessions,
+            events_by_run,
+            environment=self.config.environment,
+        )
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)

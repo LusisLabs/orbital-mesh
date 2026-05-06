@@ -69,6 +69,10 @@ def main() -> int:
         default=os.getenv("MESH_CONNECTOR_CERTIFICATION_REGISTRY_PATH") or "config/connector-certification.registry.json",
     )
     parser.add_argument(
+        "--deployment-compatibility-registry",
+        default=os.getenv("MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH") or "config/deployment-compatibility.registry.json",
+    )
+    parser.add_argument(
         "--base-image-digest",
         action="append",
         default=[],
@@ -89,6 +93,7 @@ def main() -> int:
 
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
+    from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
     from shared.mesh_runtime.policy_lifecycle import build_policy_lifecycle_packet
 
     ci_attestation_payload = _json_artifact_payload(args.ci_attestation)
@@ -107,6 +112,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     connector_certification = build_connector_certification_matrix(
         registry_path=args.connector_certification_registry,
     )
+    deployment_compatibility = build_deployment_compatibility_matrix(
+        args.deployment_compatibility_registry,
+    )
     migrations = _hash_directory("migrations/postgres", "*.sql")
     migration_rehearsal = _migration_rehearsal_record(args.migration_rehearsal, migrations)
     dependency_locks = _hash_paths(DEPENDENCY_LOCKFILES)
@@ -124,6 +132,7 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         policies=policies,
         policy_lifecycle=policy_lifecycle,
         connector_certification=connector_certification,
+        deployment_compatibility=deployment_compatibility,
         migrations=migrations,
         migration_rehearsal=migration_rehearsal,
         dependency_locks=dependency_locks,
@@ -154,6 +163,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         },
         "connectors": {
             "certification": connector_certification,
+        },
+        "deployment": {
+            "compatibility": deployment_compatibility,
         },
         "migrations": {
             "directory": "migrations/postgres",
@@ -189,6 +201,7 @@ def _checks(
     policies: list[dict[str, str]],
     policy_lifecycle: dict[str, Any],
     connector_certification: dict[str, Any],
+    deployment_compatibility: dict[str, Any],
     migrations: list[dict[str, str]],
     migration_rehearsal: dict[str, Any],
     dependency_locks: list[dict[str, str]],
@@ -206,6 +219,7 @@ def _checks(
         "policy_hashes": bool(policies),
         "policy_lifecycle_signed": policy_lifecycle.get("status") == "complete",
         "connector_certification_registry": connector_certification.get("status") == "complete",
+        "deployment_compatibility_registry": deployment_compatibility.get("status") == "complete",
         "migration_version": bool(_migration_version(migrations)),
         "migration_rehearsal": migration_rehearsal.get("status") == "pass",
         "sbom_path": bool(sbom.get("exists") and sbom.get("valid")),

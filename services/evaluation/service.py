@@ -20,6 +20,7 @@ from shared.mesh_runtime.review_blockers import classify_blocking_reasons
 from shared.mesh_runtime.remediation_safety import evaluate_remediation_safety, safety_blocking_reason
 from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 
+from .evaluation_stack import build_evaluation_stack
 from .mesh_eval import MeshEvalConfig
 from .mesh_eval.runtime import mesh_eval_artifact_with_probe
 from .mesh_evaluator import BehavioralScorer, ContractCheckAdapter, TrajectoryEvaluator, Verifier, temperature_policy_for_trace
@@ -260,6 +261,23 @@ class EvaluationService:
             blocking_reasons,
             scenario_review_reasons=scenario_review_reasons,
         )
+        phoenix_spans = build_phoenix_spans(trace)
+        evaluation_stack = build_evaluation_stack(
+            requested_lanes=self.mesh_eval_config.integration_lanes,
+            trace=trace,
+            stage_results={
+                "trajectory_quality": {
+                    "passed": trajectory_score.passed,
+                    "score": trajectory_score.score,
+                    "notes": trajectory_score.notes,
+                    "artifacts": trajectory_score.artifacts,
+                },
+                "verifier": verifier_output,
+                "evidence_sufficiency": evidence_sufficiency,
+                "blocker_analysis": blocker_analysis,
+            },
+            phoenix_spans=phoenix_spans,
+        )
         preliminary_stage_results = {
             "schema_validation": schema_validation,
             "policy_validation": policy_validation,
@@ -277,6 +295,8 @@ class EvaluationService:
             "evidence_sufficiency": evidence_sufficiency,
             "remediation_safety": safety_case.to_dict(),
             "blocker_analysis": blocker_analysis,
+            "evaluation_stack": evaluation_stack,
+            "phoenix_spans": phoenix_spans,
         }
         sre_judgment = self.sre_judge.evaluate(
             trigger=trigger,
@@ -361,6 +381,21 @@ class EvaluationService:
         trace["temperature_policy"] = temperature_policy_for_trace(trace)
         trajectory_score = self.scorer.score(trace)
         verifier_output = self.verifier.verify(trace)
+        phoenix_spans = build_phoenix_spans(trace)
+        evaluation_stack = build_evaluation_stack(
+            requested_lanes=self.mesh_eval_config.integration_lanes,
+            trace=trace,
+            stage_results={
+                "trajectory_quality": {
+                    "passed": trajectory_score.passed,
+                    "score": trajectory_score.score,
+                    "notes": trajectory_score.notes,
+                    "artifacts": trajectory_score.artifacts,
+                },
+                "verifier_output": verifier_output,
+            },
+            phoenix_spans=phoenix_spans,
+        )
         return {
             "task_trace": trace,
             "trajectory_score": {
@@ -370,7 +405,8 @@ class EvaluationService:
                 "artifacts": trajectory_score.artifacts,
             },
             "verifier_output": verifier_output,
-            "phoenix_spans": build_phoenix_spans(trace),
+            "phoenix_spans": phoenix_spans,
+            "evaluation_stack": evaluation_stack,
         }
 
     def _credentials_available(self, trigger: Trigger, system: str) -> bool:
