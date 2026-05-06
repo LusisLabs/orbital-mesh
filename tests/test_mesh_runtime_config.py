@@ -21,6 +21,7 @@ from shared.mesh_runtime.config import (
     DEFAULT_INCIDENT_PROVIDER_PROOF_PATH,
     DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH,
     DEFAULT_ON_CALL_DRILL_PATH,
+    DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH,
     DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH,
     DEFAULT_PUBLIC_PROOF_PACKAGE_PATH,
     DEFAULT_RESEARCH_DIRECTORY,
@@ -243,6 +244,21 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertEqual(
             Path(cfg.load_concurrency_rehearsal_path),
             DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH.resolve(),
+        )
+
+    def test_orchestration_topology_drill_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH": ".mesh-runtime-state/orchestration-topology-drill.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.orchestration_topology_drill_path)
+        assert cfg.orchestration_topology_drill_path is not None
+        self.assertTrue(Path(cfg.orchestration_topology_drill_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.orchestration_topology_drill_path),
+            DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH.resolve(),
         )
 
     def test_audit_sink_certification_path_env_is_repo_anchored(self) -> None:

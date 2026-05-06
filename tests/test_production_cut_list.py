@@ -18,6 +18,7 @@ from services.trigger.service import TriggerService
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import ExecutionRecord, RuntimeConfig, load_fixture
 from shared.mesh_runtime.integrations import build_readiness
+from shared.mesh_runtime.orchestration_topology import ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION
 
 
 def _config(tmp: str, **overrides) -> RuntimeConfig:
@@ -1015,6 +1016,23 @@ class RunExportPackageTests(unittest.TestCase):
                         "evaluation": {"status": "passed", "passed": True},
                         "execution": {"status": "succeeded", "executor": "native"},
                         "feedback": {"outcome": "recovered"},
+                        "lane_routing": {
+                            "version": ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION,
+                            "active_topology": "hybrid",
+                            "rule_id": "search-kubernetes-hybrid",
+                            "selected_agents": ["temporal", "kubernetes", "hermes"],
+                            "selected_lanes": [
+                                {
+                                    "lane_id": "temporal",
+                                    "role": "hybrid_lane",
+                                    "authority": "proposal_only",
+                                    "certified_state": "read-only",
+                                }
+                            ],
+                            "routing_reason": "search rollback uses topology-governed lanes",
+                            "reconciliation": "mesh_reconciles_hybrid_lane_outputs",
+                            "blockers": [],
+                        },
                         "evidence_graph": {"nodes": [{"id": "signal"}], "edges": []},
                         "operator": {"operator_id": "launcher@example.com", "roles": ["launcher"], "source": "proxy_header"},
                         "approvals": [{"operator_id": "approver@example.com", "command": "approve"}],
@@ -1071,6 +1089,11 @@ class RunExportPackageTests(unittest.TestCase):
                 self.assertEqual(package["execution_record"]["status"], "succeeded")
                 self.assertEqual(package["feedback_record"]["outcome"], "recovered")
                 self.assertEqual(package["evidence_artifacts"]["input_signal"]["api_key"], "<redacted>")
+                self.assertEqual(
+                    package["evidence_artifacts"]["lane_routing"]["version"],
+                    ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION,
+                )
+                self.assertEqual(package["evidence_artifacts"]["lane_routing"]["active_topology"], "hybrid")
                 self.assertEqual(package["timeline_json"][0]["payload"]["authorization"], "<redacted>")
                 self.assertEqual(package["evidence_artifacts"]["evidence_graph"]["nodes"][0]["id"], "signal")
                 self.assertTrue(package["merkle"]["latest_event_proof"]["valid"])
@@ -1183,6 +1206,59 @@ class RunExportPackageTests(unittest.TestCase):
                     self.assertEqual(manifest["archive_version"], "mesh.run_export_archive.v1")
                     self.assertEqual(manifest["run_id"], session.run_id)
                     self.assertEqual(manifest["retention"]["retention_days"], 30)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_run_export_derives_approval_records_from_steering_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            try:
+                session = coordinator.state_store.create_run_session(
+                    goal_id=coordinator.state_store.ensure_default_goal().goal_id,
+                    scenario_key="approval_event_export",
+                    steering_mode="approval_gate",
+                    auto_mode=False,
+                    pause_points=[],
+                    evaluation_mode="native",
+                    orchestration_mode="native",
+                    artifacts={
+                        "decision": {"decision_type": "rollback_deployment"},
+                        "evaluation": {"passed": True, "final_recommendation": "execute"},
+                        "execution": {"status": "succeeded"},
+                        "feedback": {"outcome": "successful"},
+                    },
+                )
+                approval_event = coordinator.state_store.append_run_event(
+                    session.run_id,
+                    stage="awaiting_operator",
+                    event_type="steering_command",
+                    payload={
+                        "command_id": "cmd_approve_1",
+                        "run_id": session.run_id,
+                        "command_type": "approve",
+                        "issued_at": "2026-05-06T00:00:00Z",
+                        "payload": {"summary": "operator approval"},
+                        "operator": {
+                            "operator_id": "approver@example.com",
+                            "roles": ["approver"],
+                            "source": "proxy_header",
+                        },
+                    },
+                    artifact_key="operator_command",
+                    status="received",
+                )
+                current = coordinator.state_store.get_run_session(session.run_id)
+                assert current is not None
+                current.stage = "completed"
+                current.status = "completed"
+                coordinator.state_store.save_run_session(current)
+
+                package = coordinator.export_run_package(session.run_id)
+
+                assert package is not None
+                self.assertEqual(package["approval_records"][0]["event_id"], approval_event.event_id)
+                self.assertEqual(package["approval_records"][0]["command_type"], "approve")
+                self.assertEqual(package["approval_records"][0]["operator"]["operator_id"], "approver@example.com")
             finally:
                 coordinator.stop_background_workers()
 

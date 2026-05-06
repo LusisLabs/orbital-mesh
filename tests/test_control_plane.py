@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 import time
 import unittest
@@ -302,10 +301,6 @@ class ControlPlaneApiTests(unittest.TestCase):
             [attempt["agent"] for attempt in tasks[0]["attempts"]],
             list(DEFAULT_AGENT_WORKERS),
         )
-        evo_attempt = next(attempt for attempt in tasks[0]["attempts"] if attempt["agent"] == "evo")
-        self.assertEqual(evo_attempt["adapter"], "native_contract")
-        self.assertEqual(evo_attempt["recommended_action"], "human_review")
-        self.assertIn("evo_cli_missing", evo_attempt["risk_flags"])
         self.assertTrue(tasks[0]["selected_attempt_id"])
 
         api_tasks = self._request("GET", f"/api/runs/{run['run_id']}/agent-tasks")["tasks"]
@@ -322,7 +317,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         )
         self.assertIn("Agent Mesh", document["content"])
         self.assertIn("native_contract", document["content"])
-        self.assertIn("\"agent\": \"evo\"", document["content"])
+        self.assertNotIn("\"agent\": \"evo\"", document["content"])
 
     def test_latentmas_unavailable_does_not_block_control_plane_run(self) -> None:
         self.server.config.latentmas_enabled = True
@@ -493,7 +488,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(recovery["retry_index"], 1)
         self.assertTrue(parent["artifacts"]["evaluation"]["stage_results"]["blocker_analysis"]["can_auto_remediate"])
 
-        child = self._poll_run(recovery["child_run_id"], lambda payload: payload["stage"] == "completed")
+        child = self._poll_run(recovery["child_run_id"], lambda payload: payload["stage"] == "completed", timeout_seconds=25.0)
         self.assertEqual(child["artifacts"]["execution"]["status"], "succeeded")
         self.assertEqual(child["artifacts"]["input_signal"]["related_context"]["recovery_context"]["retry_index"], 1)
 
@@ -657,8 +652,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertFalse(readiness["promptfoo"]["ready"])
         self.assertFalse(readiness["hermes"]["ready"])
         self.assertFalse(readiness["goose"]["ready"])
-        self.assertFalse(readiness["evo"]["ready"])
-        self.assertEqual(readiness["evo"]["detail"], "command not found")
+        self.assertNotIn("evo", readiness)
         self.assertFalse(readiness["latentmas"]["ready"])
         self.assertEqual(readiness["latentmas"]["detail"], "disabled")
         self.assertFalse(readiness["deepagents"]["ready"])
@@ -666,156 +660,29 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(readiness["state_path"], self.temp_dir.name)
         self.assertEqual(readiness["vault_path"], str(Path(self.temp_dir.name) / "vault"))
 
-    def test_launch_evo_records_run_scoped_launch_artifact(self) -> None:
-        repo = Path(self.temp_dir.name) / "evo-repo"
-        (repo / "app").mkdir(parents=True)
-        (repo / "tests").mkdir(parents=True)
-        (repo / "app" / "search.py").write_text("PARSE_TIMEOUT_MS = 120\n", encoding="utf-8")
-        subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.email", "mesh@example.com"], cwd=repo, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "config", "user.name", "Mesh"], cwd=repo, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True, text=True)
-        subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True, text=True)
-
-        fake_evo = Path(self.temp_dir.name) / "evo"
-        fake_evo.write_text("#!/bin/sh\n", encoding="utf-8")
-        fake_evo.chmod(0o755)
-        for cfg in (self.server.config, self.server.coordinator.config, self.server.coordinator.evo_launcher.config):
-            cfg.evo_command = str(fake_evo)
-
-        signal = load_fixture("signals", "kubernetes_crashloop_patch.json")
-        signal["related_context"]["repo_path"] = str(repo)
-        signal["related_context"]["allowed_paths"] = ["app/search.py"]
-        signal["related_context"]["test_commands"] = ["python3 -m unittest discover -s tests"]
-
-        def fake_run(
-            args: list[str],
-            cwd: Path | str | None = None,
-            capture_output: bool = False,
-            text: bool = False,
-            check: bool = False,
-            timeout: int | float | None = None,
-        ) -> subprocess.CompletedProcess[str]:
-            if args == [str(fake_evo), "--version"]:
-                return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo-hq-cli 0.2.0\n", stderr="")
-            if len(args) >= 3 and args[1] == "-m":
-                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="command not found")
-            if args == ["git", "status", "--porcelain"]:
-                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
-            if args[:2] == [str(fake_evo), "init"]:
-                return subprocess.CompletedProcess(
-                    args=args,
-                    returncode=0,
-                    stdout="Dashboard live: http://127.0.0.1:8080 (pid 12345)\nInitialized evo workspace run_1\n",
-                    stderr="",
-                )
-            if args[:2] == [str(fake_evo), "new"]:
-                return subprocess.CompletedProcess(
-                    args=args,
-                    returncode=0,
-                    stdout=json.dumps({"id": "exp_0000", "worktree": "/tmp/worktree", "target": str(repo / "app" / "search.py")}),
-                    stderr="",
-                )
-            if args[:2] == [str(fake_evo), "run"]:
-                return subprocess.CompletedProcess(args=args, returncode=0, stdout="COMMITTED exp_0000 0.73\n", stderr="")
-            raise AssertionError(f"unexpected subprocess args: {args}")
-
-        with patch("subprocess.run", side_effect=fake_run):
-            run = self._request(
-                "POST",
-                "/api/runs",
-                {
-                    "signal_payload": signal,
-                    "evaluation_mode": "native",
-                    "orchestration_mode": "native",
-                    "steering_mode": "approval_gate",
-                },
-            )
-            self._poll_run(
-                run["run_id"],
-                lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
-            )
-            self._request(
-                "POST",
-                f"/api/runs/{run['run_id']}/steer",
-                {
-                    "command": "launch_evo",
-                    "target_path": "app/search.py",
-                    "benchmark_command": "python3 benchmark.py --target {target}",
-                    "instrumentation_mode": "inline",
-                    "metric": "max",
-                    "gate_command": "python3 -m unittest discover -s tests",
-                },
-            )
-            updated = self._poll_run(
-                run["run_id"],
-                lambda payload: payload["artifacts"].get("evo_launches", {}).get("launches", [{}])[0].get("status") == "completed",
-            )
-
-        launch = updated["artifacts"]["evo_launches"]["launches"][0]
-        self.assertEqual(launch["action"], "discover_bootstrap")
-        self.assertEqual(launch["status"], "completed")
-        self.assertEqual(launch["experiment_id"], "exp_0000")
-        self.assertEqual(launch["dashboard_url"], "http://127.0.0.1:8080")
-        self.assertEqual(len(launch["steps"]), 3)
-        evo_events = [event for event in updated["events"] if event.get("integration_name") == "evo"]
-        self.assertTrue(evo_events)
-        evo_doc_path = f"Evo/{run['run_id']}.md"
-        evo_doc = self._request("GET", f"/api/vault/document?{urlencode({'path': evo_doc_path})}")
-        self.assertIn("discover_bootstrap", evo_doc["content"])
-
-    def test_launch_evo_rejects_missing_benchmark_for_new_workspace(self) -> None:
-        repo = Path(self.temp_dir.name) / "evo-repo-no-benchmark"
-        (repo / "app").mkdir(parents=True)
-        (repo / "app" / "search.py").write_text("PARSE_TIMEOUT_MS = 120\n", encoding="utf-8")
-        fake_evo = Path(self.temp_dir.name) / "evo"
-        fake_evo.write_text("#!/bin/sh\n", encoding="utf-8")
-        fake_evo.chmod(0o755)
-        for cfg in (self.server.config, self.server.coordinator.config, self.server.coordinator.evo_launcher.config):
-            cfg.evo_command = str(fake_evo)
-
-        signal = load_fixture("signals", "kubernetes_crashloop_patch.json")
-        signal["related_context"]["repo_path"] = str(repo)
-        signal["related_context"]["allowed_paths"] = ["app/search.py"]
-        signal["related_context"]["test_commands"] = ["python3 -m unittest discover -s tests"]
-
-        def fake_run(
-            args: list[str],
-            cwd: Path | str | None = None,
-            capture_output: bool = False,
-            text: bool = False,
-            check: bool = False,
-            timeout: int | float | None = None,
-        ) -> subprocess.CompletedProcess[str]:
-            if args == [str(fake_evo), "--version"]:
-                return subprocess.CompletedProcess(args=args, returncode=0, stdout="evo-hq-cli 0.2.0\n", stderr="")
-            if len(args) >= 3 and args[1] == "-m":
-                return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="command not found")
-            raise AssertionError(f"unexpected subprocess args: {args}")
-
-        with patch("subprocess.run", side_effect=fake_run):
-            run = self._request(
-                "POST",
-                "/api/runs",
-                {
-                    "signal_payload": signal,
-                    "evaluation_mode": "native",
-                    "orchestration_mode": "native",
-                    "steering_mode": "approval_gate",
-                },
-            )
-            self._poll_run(
-                run["run_id"],
-                lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
-            )
-            bad = Request(
-                f"{self.base_url}/api/runs/{run['run_id']}/steer",
-                data=json.dumps({"command": "launch_evo", "target_path": "app/search.py"}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with self.assertRaises(HTTPError) as ctx:
-                urlopen(bad, timeout=10)
+    def test_launch_evo_command_is_no_longer_accepted(self) -> None:
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "approval_gate",
+            },
+        )
+        self._poll_run(
+            run["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+        bad = Request(
+            f"{self.base_url}/api/runs/{run['run_id']}/steer",
+            data=json.dumps({"command": "launch_evo", "target_path": "app/search.py"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(HTTPError) as ctx:
+            urlopen(bad, timeout=10)
         self.assertEqual(ctx.exception.code, 400)
 
     def test_unknown_scenario_key_returns_400_json(self) -> None:

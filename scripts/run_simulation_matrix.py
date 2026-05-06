@@ -132,7 +132,7 @@ def _run_one(
                     {
                         "service": "semantic-search",
                         "scope": {"services": ["semantic-search"], "namespaces": ["search"], "deployments": ["semantic-search"]},
-                        "preferred_lanes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
+                        "preferred_lanes": ["goose", "hermes", "codex", "claudecode", "openclaw"],
                     },
                     {
                         "service": "api-gateway",

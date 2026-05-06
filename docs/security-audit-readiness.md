@@ -9,12 +9,12 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | Security policy | `SECURITY.md` defines supported versions, private reporting, sensitive artifact handling, baseline controls, and audit cadence. |
 | Scorecard | `.github/workflows/security.yml` runs OpenSSF Scorecard on public repositories, and on private repositories only when `OPENSSF_SCORECARD_ON_PRIVATE=true` is set. |
 | Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, pip, root Cargo, and LatentMAS Cargo dependencies. |
-| Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes. |
+| Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes when the repository is public or `GHAS_DEPENDENCY_REVIEW_ON_PRIVATE=true` confirms private-repository support. |
 | Known vulnerabilities | The scheduled security workflow scans lockfiles with OSV and runs `npm audit --audit-level=high` for public repositories, and for private repositories only when `EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE=true` is set. |
 | Token permissions | GitHub workflows use `contents: read` by default, with scoped write permissions only for SARIF upload jobs. |
 | Pinned workflow dependencies | First-party workflows pin external GitHub Actions to full commit SHAs. |
 | Code review ownership | `.github/CODEOWNERS` names owners for critical runtime, schema, policy, docs, and workflow paths. |
-| Secret handling | `.gitignore`, `SECURITY.md`, production docs, run-export redaction, and the scheduled secret scan cover committed and exported secret material. |
+| Secret handling | `.gitignore`, `SECURITY.md`, production docs, run-export redaction, and the scheduled Gitleaks CLI secret scan cover committed and exported secret material. |
 | Release provenance | `scripts/generate_release_provenance.py` records commit, image digest, base-image digests, lockfile hashes, policy hashes, migrations, SBOM, vulnerability scan, build command, and builder identity. |
 | Runtime evidence | `docs/production-hardening-records.md` points auditors to identity gates, policy simulation, kill switch, run exports, Merkle proof, retention, and go/no-go evidence. |
 | Procurement security package | `config/procurement-security.package.json` and `scripts/verify_procurement_security_package.py` bind SSO, audit export, retention, data boundaries, deployment modes, security answers, support escalation, and known limitations into one reviewed artifact set. |

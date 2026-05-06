@@ -25,7 +25,6 @@ DEFAULT_AGENT_WORKERS = (
     "codex",
     "claudecode",
     "openclaw",
-    "evo",
     *NATIVE_ORCHESTRATION_PLATFORM_WORKERS,
 )
 
@@ -42,6 +41,8 @@ def build_agent_task(
     memory_write_policy: dict[str, Any] | None = None,
     open_questions: list[str] | None = None,
     agents: list[str] | None = None,
+    orchestration_topology: dict[str, Any] | None = None,
+    lane_routing: dict[str, Any] | None = None,
 ) -> AgentTask:
     now = _timestamp()
     selected_agents = agents or list(DEFAULT_AGENT_WORKERS)
@@ -60,6 +61,8 @@ def build_agent_task(
         memory_write_policy=dict(memory_write_policy or {}),
         open_questions=list(open_questions or []),
         agents=selected_agents,
+        orchestration_topology=dict(orchestration_topology or {}),
+        lane_routing=dict(lane_routing or {}),
         attempts=[],
     )
 

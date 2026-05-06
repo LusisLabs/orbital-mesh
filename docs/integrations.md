@@ -13,11 +13,10 @@
   - `goose` runs `services/orchestrator/goose_bridge.py`, which invokes the configured Goose command and returns structured review metadata before actuation.
   - `hermes` runs `services/orchestrator/hermes_bridge.py`, which invokes the configured Hermes command and returns structured review metadata before actuation.
 - Proposal lanes:
-  - `evo` is bounded in Mesh. Readiness verifies the configured Evo CLI, agent tasks record whether a bounded code-remediation run is suitable for Evo discovery or benchmark preparation, and operator steering can explicitly launch a scoped Evo bootstrap or status check for eligible runs.
   - Native orchestration platform lanes are built into agent tasks for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n. They emit evaluator-contract metadata and integration evidence requirements inside Mesh; they are not alternate orchestration modes and do not replace Mesh authority.
 - Agent fabric modes:
   - `native` keeps agent-task lanes as deterministic `native_contract` artifacts.
-  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw/Evo plus the native orchestration platform lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
+  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw plus the native orchestration platform lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
 
 ## Environment variables
 
@@ -30,8 +29,6 @@
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_HERMES_RUN_TIMEOUT_SECONDS`
-- `MESH_EVO_COMMAND`
-- `MESH_EVO_COMMAND_TIMEOUT_SECONDS`
 
 Promptfoo readiness may still appear for older stacks, but the active evaluation
 artifacts are `task_trace`, `trajectory_score`, `verifier_output`, and
@@ -141,7 +138,6 @@ Legacy host-driven e2e overlay variables:
 - Promptfoo readiness checks the resolved Promptfoo command.
 - Goose readiness checks the resolved Goose bridge target and reports provider/profile warnings when configuration is incomplete.
 - Hermes readiness checks the resolved Hermes bridge target and reports the resolved command description.
-- Evo readiness runs the resolved command with `--version` and only reports ready when the output identifies `evo-hq-cli`. The unrelated PyPI `evo` package is reported as an unexpected package.
 - Readiness probes run concurrently, use `MESH_READINESS_PROBE_TIMEOUT_SECONDS` for each generic CLI probe, and are cached briefly by the control plane so one slow optional integration does not serialize every `/api/readiness` or system stream response.
 - Deep Agents readiness reports:
   - disabled when `MESH_AGENT_FABRIC_MODE` is not `deepagents`
@@ -178,40 +174,6 @@ Certification states are documented in
 [`production-hardening-records.md`](production-hardening-records.md) and are
 separate from live probe readiness: a connector can be reachable while still
 classified as `proposal-only`, `unfinished`, or `mock`.
-
-## Evo proposal lane
-
-Use a globally installed `evo-hq-cli`:
-
-```bash
-MESH_EVO_COMMAND=evo
-```
-
-Or point Mesh at the vendored source checkout when `uv` is available in the runtime:
-
-```bash
-MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"
-```
-
-The stack image now installs `uv` into `/usr/local/bin`, so this command remains valid after the container drops from `root` to the non-root `mesh` user.
-
-Mesh stores Evo readiness and agent-task recommendations by default. Evo execution is not part of normal run progression; it requires an explicit `launch_evo` steering command on an eligible run.
-
-`launch_evo` rules:
-
-- accepted only when a run is paused at `evaluation_ready` or after completion
-- requires `evo.ready == true`
-- requires a `repo_patch_service` decision plus `repo_path`, `allowed_paths`, and `test_commands`
-- requires `target_path` to stay inside the run's `allowed_paths`
-- requires `benchmark_command` when `.evo/meta.json` is not already present
-
-`launch_evo` records run-scoped artifacts under `evo_launches`, writes an `Evo/<run_id>.md` vault note, and emits `integration_name="evo"` events as the launch moves through queued, running, and completed or failed states.
-
-Operational boundary:
-
-- Mesh may run `evo status` for an existing workspace or `evo init`, `evo new`, and `evo run` for an explicitly steered bounded bootstrap.
-- Mesh does not run `evo optimize`, create pull requests, merge branches, or bypass evaluation and operator gates.
-- Evo workspace state (`.evo/`), benchmark instrumentation, worktrees, and experiment commits must not be committed to `main` as a side effect of readiness or agent-task recording.
 
 ## Deep Agents agent fabric
 

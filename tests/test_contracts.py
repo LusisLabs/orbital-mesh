@@ -142,7 +142,7 @@ class ContractValidationTests(unittest.TestCase):
 
         self.assertEqual(matrix["schema_version"], "mesh.connector_certification.v1")
         self.assertEqual(matrix["status"], "complete")
-        self.assertEqual(matrix["connectors"]["audit_sink"]["state"], "mock")
+        self.assertEqual(matrix["connectors"]["audit_sink"]["state"], "staging-ready")
         self.assertTrue(matrix["connectors"]["audit_sink"]["credential_boundary"]["runtime_secret_mount_required"])
         self.assertEqual(matrix["connectors"]["kubernetes"]["state"], "pilot-ready")
         self.assertTrue(

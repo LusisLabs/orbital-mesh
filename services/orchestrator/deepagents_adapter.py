@@ -48,10 +48,6 @@ _LANE_SYSTEM_PROMPTS: dict[str, str] = {
         "You are the OpenClaw staging-validation lane. Validate scope against the provided kubernetes_scope only; "
         "never execute kubectl or cluster commands."
     ),
-    "evo": (
-        "You are the Evo benchmark-advisory lane. Advise on bounded discovery/benchmark readiness; "
-        "never run evo optimize/init/new/run or git worktrees from this task."
-    ),
 }
 
 
@@ -91,14 +87,6 @@ def _mesh_subagent_specs(*, include_rollback: bool) -> list[dict[str, Any]]:
             "description": "Outlines rollback steps consistent with Mesh policy (no live actuation).",
             "system_prompt": (
                 "Propose rollback steps as narrative checks only. Mesh owns Kubernetes actuation; do not run commands."
-            ),
-        },
-        {
-            "name": "evo-benchmark-advisor",
-            "description": "Advises on Evo discovery/benchmark gates for code-remediation tasks.",
-            "system_prompt": (
-                "Advise whether Evo-style benchmarking is appropriate given allowed_paths and test_commands. "
-                "Never instruct running evo CLI optimization commands."
             ),
         },
     ]

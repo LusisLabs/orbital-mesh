@@ -5,12 +5,17 @@ import queue
 import threading
 import time
 from dataclasses import replace
-from pathlib import Path
 from typing import Any, Callable
 
 _LOG = logging.getLogger("mesh.orchestrator.agent_mesh")
 
-from shared.mesh_runtime import Decision, EvaluationResult, RuntimeConfig, Trigger, build_evo_status
+from shared.mesh_runtime import (
+    Decision,
+    EvaluationResult,
+    RuntimeConfig,
+    Trigger,
+    resolve_orchestration_topology,
+)
 from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
 from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
@@ -131,10 +136,27 @@ class AgentMeshService:
         decision: Decision,
         evaluation: EvaluationResult,
         service_agent: dict[str, Any] | None = None,
+        integration_readiness: dict[str, Any] | None = None,
     ) -> list[AgentTask]:
         memory_scope = self._memory_scope(run_id, trigger)
         memory_packet = self._memory_packet(memory_scope, trigger)
-        agents = self._agents(trigger=trigger, decision=decision, service_agent=service_agent)
+        candidate_agents = self._agents(trigger=trigger, decision=decision, service_agent=service_agent)
+        readiness_snapshot = integration_readiness or {}
+        topology = resolve_orchestration_topology(
+            profile_path=self.config.orchestration_topology_profile_path,
+            trigger=trigger,
+            decision=decision,
+            candidate_lanes=candidate_agents,
+            configured_filter=self.config.agent_mesh_agents,
+            service_agent=service_agent,
+            readiness_snapshot=readiness_snapshot,
+            ownership_registry_path=self.config.ownership_registry_path,
+            connector_certification_registry_path=self.config.connector_certification_registry_path,
+            policy_lifecycle_manifest_path=self.config.policy_lifecycle_manifest_path,
+            threat_model_register_path=self.config.threat_model_register_path,
+            state_directory=self.config.state_directory,
+        )
+        agents = list(topology.get("selected_agents") or candidate_agents)
         task = build_agent_task(
             run_id=run_id,
             kind=self._task_kind(decision),
@@ -146,6 +168,8 @@ class AgentMeshService:
             memory_write_policy=self._memory_write_policy(),
             open_questions=self._open_questions(memory_packet),
             agents=agents,
+            orchestration_topology=topology,
+            lane_routing=topology,
         )
         attempts = self._collect_attempts(task=task, trigger=trigger, decision=decision, evaluation=evaluation)
         successful = [attempt for attempt in attempts if attempt.status == "completed" and not attempt.risk_flags]
@@ -254,7 +278,8 @@ class AgentMeshService:
         evaluation: EvaluationResult,
     ) -> list[dict[str, Any]]:
         specs: list[dict[str, Any]] = []
-        if self.config.latentmas_enabled:
+        routed_agents = list(task.agents)
+        if self.config.latentmas_enabled and "latentmas" in routed_agents:
             specs.append(
                 {
                     "agent": "latentmas",
@@ -264,12 +289,13 @@ class AgentMeshService:
                         trigger=trigger,
                         decision=decision,
                         evaluation=evaluation,
-                    ),
+                        ),
                 }
             )
-        routed_agents = list(task.agents)
         if self.config.agent_fabric_mode == "deepagents":
             for agent in routed_agents:
+                if agent == "latentmas":
+                    continue
                 specs.append(
                     {
                         "agent": agent,
@@ -290,7 +316,6 @@ class AgentMeshService:
             ("codex", "native_contract", lambda: self._codex_attempt(task, trigger, decision, evaluation)),
             ("claudecode", "native_contract", lambda: self._claude_code_attempt(task, trigger, decision, evaluation)),
             ("openclaw", "native_contract", lambda: self._openclaw_attempt(task, trigger, decision, evaluation)),
-            ("evo", "native_contract", lambda: self._evo_attempt(task, trigger, decision, evaluation)),
         )
         for agent, adapter, builder in native_specs:
             if agent in routed_agents:
@@ -479,79 +504,6 @@ class AgentMeshService:
             memory_actions_requested=["defer"],
         )
 
-    def _evo_attempt(
-        self,
-        task: AgentTask,
-        trigger: Trigger,
-        decision: Decision,
-        evaluation: EvaluationResult,
-    ):
-        related = trigger.related_context if isinstance(trigger.related_context, dict) else {}
-        parameters = decision.execution_plan.get("parameters", {})
-        repo_path = str(parameters.get("repo_path") or related.get("repo_path") or "")
-        evo_status = build_evo_status(self.config)
-        workspace_detected = self._evo_workspace_detected(repo_path)
-        code_candidate = (
-            task.kind == "patch"
-            and decision.execution_plan.get("system") == "repo_patch_service"
-            and bool(related.get("code_remediation_candidate"))
-        )
-
-        risk_flags: list[str] = []
-        if not evo_status.ready:
-            risk_flags.append("evo_cli_missing")
-        if not workspace_detected:
-            risk_flags.append("evo_workspace_missing")
-        if not task.allowed_paths:
-            risk_flags.append("allowed_paths_missing")
-        if not task.test_commands:
-            risk_flags.append("test_commands_missing")
-        if not code_candidate:
-            risk_flags.append("non_code_task")
-
-        if not code_candidate or not evo_status.ready:
-            recommended_action = "human_review"
-        elif task.allowed_paths and task.test_commands:
-            recommended_action = "evo_discover_candidate"
-        else:
-            recommended_action = "prepare_benchmark"
-
-        return build_agent_attempt(
-            task_id=task.task_id,
-            run_id=task.run_id,
-            agent="evo",
-            adapter="native_contract",
-            status="completed",
-            summary=self._evo_summary(
-                ready=evo_status.ready,
-                workspace_detected=workspace_detected,
-                recommended_action=recommended_action,
-            ),
-            risk_flags=risk_flags,
-            recommended_action=recommended_action,
-            output={
-                "evo_ready": evo_status.ready,
-                "workspace_detected": workspace_detected,
-                "recommended_bootstrap_command": self._evo_bootstrap_command(workspace_detected),
-                "required_allowed_paths": task.allowed_paths,
-                "required_test_commands": task.test_commands,
-                "risk_flags": risk_flags,
-                "repo_path": repo_path or None,
-                "evo_command": evo_status.command,
-                "evo_detail": evo_status.detail,
-                "evaluation_blocking_reasons": evaluation.blocking_reasons,
-            },
-            citations=task.memory_packet.get("citations", []),
-            observations_proposed=[
-                _proposal_observation("evo", trigger.service, self._evo_summary(
-                    ready=evo_status.ready,
-                    workspace_detected=workspace_detected,
-                    recommended_action=recommended_action,
-                ))
-            ],
-            memory_actions_requested=["defer"],
-        )
-
     def _platform_attempt(
         self,
         agent: str,
@@ -657,15 +609,15 @@ class AgentMeshService:
         decision: Decision,
         service_agent: dict[str, Any] | None = None,
     ) -> list[str]:
-        default_agents = list(DEFAULT_AGENT_WORKERS)
+        default_agents = self._known_agents()
         matched_agent = bool((service_agent or {}).get("matched")) if isinstance(service_agent, dict) else False
         if not matched_agent:
             return self._filter_configured_agents(default_agents, default_agents)
         source = _signal_source(trigger)
         routing = {
-            "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "evo", "temporal", "kubernetes", "n8n"],
-            "otel": ["hermes", "goose", "evo", "temporal", "dagster", "prefect", "kubernetes"],
-            "feature_flag": ["hermes", "goose", "evo", "temporal", "prefect", "n8n"],
+            "kubernetes": ["goose", "hermes", "codex", "claudecode", "openclaw", "temporal", "kubernetes", "n8n"],
+            "otel": ["hermes", "goose", "temporal", "dagster", "prefect", "kubernetes"],
+            "feature_flag": ["hermes", "goose", "temporal", "prefect", "n8n"],
             "argocd": ["goose", "hermes", "openclaw", "temporal", "kubernetes"],
             "log": ["hermes", "codex", "claudecode"],
             "data": ["airflow", "dagster", "prefect", "flyte", "luigi", "oozie", "temporal"],
@@ -681,6 +633,12 @@ class AgentMeshService:
         agents = self._filter_configured_agents(agents, default_agents)
         if decision.decision_type not in {"investigate_and_patch", "repo_patch_service"}:
             agents = [agent for agent in agents if agent != "codex" or self._allowed_paths(trigger)]
+        return agents
+
+    def _known_agents(self) -> list[str]:
+        agents = list(DEFAULT_AGENT_WORKERS)
+        if self.config.latentmas_enabled:
+            agents.append("latentmas")
         return agents
 
     def _platform_risk_flags(self, agent: str, task: AgentTask) -> list[str]:
@@ -730,32 +688,6 @@ class AgentMeshService:
             for item in packet.get("contradictions", [])[:3]
             if item.get("claim_id")
         ]
-
-    def _evo_workspace_detected(self, repo_path: str) -> bool:
-        if not repo_path:
-            return False
-        return (Path(repo_path) / ".evo" / "meta.json").is_file()
-
-    def _evo_bootstrap_command(self, workspace_detected: bool) -> str:
-        return "evo status" if workspace_detected else "$evo discover"
-
-    def _evo_summary(
-        self,
-        *,
-        ready: bool,
-        workspace_detected: bool,
-        recommended_action: str,
-    ) -> str:
-        if not ready:
-            return "Evo proposal lane is gated until evo-hq-cli is configured."
-        if recommended_action == "evo_discover_candidate":
-            if workspace_detected:
-                return "Evo workspace is present; bounded optimization can be reviewed from the existing benchmark."
-            return "Bounded code-remediation task has paths and tests; run Evo discovery before optimization."
-        if recommended_action == "prepare_benchmark":
-            return "Evo needs benchmark gates before this task can enter experiment-driven optimization."
-        return "Evo is limited to bounded code-remediation tasks with explicit repo, path, and test gates."
-
 
 def _proposal_observation(agent: str, service: str, content: str) -> dict[str, Any]:
     return {

@@ -15,6 +15,7 @@ DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_OWNERSHIP_REGISTRY_PATH = _REPO_ROOT / "config" / "ownership.registry.json"
 DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH = _REPO_ROOT / "config" / "connector-certification.registry.json"
 DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH = _REPO_ROOT / "config" / "policy-lifecycle.manifest.json"
+DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH = _REPO_ROOT / "config" / "orchestration-topology.profile.json"
 DEFAULT_FAILURE_MODE_LIBRARY_PATH = _REPO_ROOT / "config" / "failure-mode.library.json"
 DEFAULT_THREAT_MODEL_REGISTER_PATH = _REPO_ROOT / "config" / "threat-model.register.json"
 DEFAULT_DATA_CLASSIFICATION_POLICY_PATH = _REPO_ROOT / "config" / "data-classification.policy.json"
@@ -29,6 +30,7 @@ DEFAULT_AUDIT_SINK_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-proof.json
 DEFAULT_AUDIT_SINK_CERTIFICATION_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-certification.json"
 DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "backup-restore-rehearsal.json"
 DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "load-concurrency-rehearsal.json"
+DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "orchestration-topology-drill.json"
 DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "feature-flag-provider-proof.json"
 DEFAULT_INCIDENT_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "incident-provider-proof.json"
 DEFAULT_ON_CALL_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "on-call-drill.json"
@@ -104,6 +106,7 @@ class RuntimeConfig:
     ownership_registry_path: str = str(DEFAULT_OWNERSHIP_REGISTRY_PATH)
     connector_certification_registry_path: str = str(DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH)
     policy_lifecycle_manifest_path: str = str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH)
+    orchestration_topology_profile_path: str = str(DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH)
     failure_mode_library_path: str = str(DEFAULT_FAILURE_MODE_LIBRARY_PATH)
     threat_model_register_path: str = str(DEFAULT_THREAT_MODEL_REGISTER_PATH)
     data_classification_policy_path: str = str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH)
@@ -118,6 +121,7 @@ class RuntimeConfig:
     audit_sink_certification_path: str | None = None
     backup_restore_rehearsal_path: str | None = None
     load_concurrency_rehearsal_path: str | None = None
+    orchestration_topology_drill_path: str | None = None
     feature_flag_provider_proof_path: str | None = None
     incident_provider_proof_path: str | None = None
     on_call_drill_path: str | None = None
@@ -405,6 +409,10 @@ class RuntimeConfig:
                 os.getenv("MESH_POLICY_LIFECYCLE_MANIFEST_PATH"),
                 default=str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH),
             ),
+            orchestration_topology_profile_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH"),
+                default=str(DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH),
+            ),
             failure_mode_library_path=_env_path_anchored_to_repo(
                 os.getenv("MESH_FAILURE_MODE_LIBRARY_PATH"),
                 default=str(DEFAULT_FAILURE_MODE_LIBRARY_PATH),
@@ -483,6 +491,14 @@ class RuntimeConfig:
                     default=str(DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH),
                 )
                 if os.getenv("MESH_LOAD_CONCURRENCY_REHEARSAL_PATH")
+                else None
+            ),
+            orchestration_topology_drill_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH"),
+                    default=str(DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH),
+                )
+                if os.getenv("MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH")
                 else None
             ),
             feature_flag_provider_proof_path=(

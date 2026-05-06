@@ -98,6 +98,8 @@ export interface AgentTask {
   memory_write_policy: Record<string, any>;
   open_questions: string[];
   agents: string[];
+  orchestration_topology: Record<string, any>;
+  lane_routing: Record<string, any>;
   attempts: AgentAttempt[];
   selected_attempt_id?: string | null;
 }
@@ -124,10 +126,10 @@ export interface IntegrationReadiness {
   optional_checks: Record<string, any>;
   blockers: string[];
   connector_certification: Record<string, any>;
+  orchestration_topology: Record<string, any>;
   promptfoo: IntegrationStatus;
   hermes: IntegrationStatus;
   goose: IntegrationStatus;
-  evo: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
   vault_path: string;
@@ -461,32 +463,6 @@ export interface ServiceAgentRecord {
   runbook_path?: string | null;
   preferred_lanes: string[];
   autonomy_overrides: Record<string, string>;
-}
-
-export interface EvoLaunchRecord {
-  launch_id: string;
-  action: string;
-  status: string;
-  requested_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  repo_path: string;
-  target_path: string;
-  benchmark_command?: string | null;
-  metric?: string | null;
-  instrumentation_mode?: string | null;
-  gate_command?: string | null;
-  workspace_detected: boolean;
-  dashboard_url?: string | null;
-  steps: Array<{
-    argv: string[];
-    returncode: number;
-    stdout: string;
-    stderr: string;
-    duration_seconds: number;
-  }>;
-  experiment_id?: string | null;
-  error?: string | null;
 }
 
 export interface ResearchSessionRecord {

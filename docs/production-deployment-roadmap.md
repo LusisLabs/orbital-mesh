@@ -34,7 +34,6 @@ The first production test must prove:
 | Orchestration and actuation | `services/orchestrator/`, `services/actuators/` | Bounded actions only. Kubernetes and SSH remain off unless explicit live flags and allowlists pass. |
 | Goose and Hermes | `services/orchestrator/*_bridge.py`, `docs/integrations.md` | Review/proposal lanes. They do not own production actuation. |
 | Deep Agents fabric | `services/orchestrator/deepagents_adapter.py` | Proposal-only sandbox lane. No direct kubeconfig, repo writes, or actuation. |
-| Evo | `services/orchestrator/agent_mesh.py`, `docs/integrations.md` | Explicit operator-launched proposal lane for scoped repo patch runs. |
 | Mesh Brain | `mesh_brain/`, `docs/post-training/` | Model-lifecycle plane. Runtime hooks are ready for controlled MVP proof, not broad model-serving production. |
 | Readiness and SLO surfaces | `/api/readiness`, `/api/agent/slo`, `/metrics` | Existing observability base. Needs tier-specific readiness profiles before pilot. |
 | Persistence | `.mesh-runtime-state`, Postgres-backed stores | JSON state is replay-friendly; Postgres projection is required before multi-operator production reliance. |
@@ -137,7 +136,7 @@ Scope constraints:
 - one namespace allowlist;
 - approval gate as default;
 - no autonomous feature-flag or incident-provider writes until real provider adapters replace local seams;
-- Deep Agents, Goose, Hermes, Evo, and Mesh Brain remain proposal/review planes unless separately approved.
+- Deep Agents, Goose, Hermes, and Mesh Brain remain proposal/review planes unless separately approved.
 
 Required features:
 
@@ -387,7 +386,7 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 
 - No public Internet exposure without authenticated TLS.
 - No production kubeconfig in proposal-lane sandboxes.
-- No direct repo writes from Deep Agents, Goose, Hermes, Evo, or Mesh Brain lanes.
+- No direct repo writes from Deep Agents, Goose, Hermes, or Mesh Brain lanes.
 - No autonomous action without allowlists, policy pass, evaluation pass, rollback metadata, and trust-ladder evidence.
 - No production claim for an adapter classified as unfinished in `docs/integrations.md`.
 - No validated deployment claim for a runtime, orchestrator, or managed platform without target-specific health, readiness, persistence, feedback, audit, rollback, and release-packet evidence.
@@ -413,7 +412,7 @@ Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`comm
 10. Add a pilot go/no-go packet generator.
 11. Make live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
 12. Prove Postgres-backed state for run events, memory, and Merkle roots under restart.
-13. Replace or explicitly disable unfinished feature-flag, incident, and audit adapters for pilot deployments.
+13. Keep feature-flag and incident adapters disabled unless certified provider proof is mounted; require external audit-sink proof only before expansion or compliance reliance.
 14. Add a consolidated kill-switch panel before any production pilot.
 15. Package the enterprise evaluation kit and reference architectures from actual working paths, including `mesh.evaluation_kit_packet.v1` sample export and benchmark handoff evidence.
 16. Package the deployment compatibility matrix: Docker Compose and Kubernetes validated, OCI/container runtime compatibility supported by contract, non-core platforms documented as recipes or not planned until proven.

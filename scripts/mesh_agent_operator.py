@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-DEFAULT_AGENT_PRIORITY = ("hermes", "goose", "codex", "claudecode", "openclaw", "evo", "latentmas")
+DEFAULT_AGENT_PRIORITY = ("hermes", "goose", "codex", "claudecode", "openclaw", "latentmas")
 SAFE_EXECUTION_READINESS_NOTES = {"confidence below minimum threshold"}
 SAFE_BUSINESS_NOTES = {"approval required before execution"}
 SAFE_SAFETY_HARD_STOPS = {"execution readiness failed"}

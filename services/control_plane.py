@@ -43,7 +43,6 @@ from services.ingest.webhook_service import (
     build_signal_from_alert,
 )
 from services.orchestrator.agent_mesh import AgentMeshService
-from services.orchestrator.evo_launcher import EvoLaunchService
 from services.orchestrator.reconciliation import reconcile_agent_tasks
 from services.orchestrator.service_agents import ServiceAgentRegistry
 from services.simulation import SimulationService
@@ -157,7 +156,6 @@ ALLOWED_STEERING_COMMANDS = {
     "handoff",
     "override_review",
     "postmortem_review",
-    "launch_evo",
 }
 
 # Operator steering is analogous to activation steering: early / late interventions have different
@@ -285,22 +283,11 @@ def _validate_steering_command(session: RunSession, command_type: str, command_p
             "(cap from MESH_MAX_STEERING_PAYLOAD_BYTES)"
         )
     if session.stage in TERMINAL_STAGES:
-        if command_type == "launch_evo" and session.stage == "completed":
-            return
         if command_type not in {"attach_note", "override_review", "postmortem_review"}:
             raise ValueError(
                 f"steering command {command_type!r} is not allowed after run is {session.stage!r}; "
                 "only attach_note, override_review, and postmortem_review are permitted."
             )
-        return
-    if command_type == "launch_evo":
-        effective = session.pending_pause_stage or session.stage
-        if effective != "evaluation_ready":
-            raise ValueError(
-                f"steering command {command_type!r} is not allowed at stage {effective!r} "
-                f"(run stage {session.stage!r}). "
-                "Evo launch is accepted only when the run is paused at evaluation_ready or after completion."
-        )
         return
     if command_type == "explain_blockers":
         effective = session.pending_pause_stage or session.stage
@@ -438,7 +425,6 @@ class RunCoordinator:
         self._deferred_thread.start()
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
-        self.evo_launcher = EvoLaunchService(self.config)
         self.simulation_service = SimulationService(self.config)
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
@@ -1319,6 +1305,7 @@ class RunCoordinator:
             proof_event_id=proof_event_id,
         )
         artifacts = _redact_run_export_value(session.artifacts)
+        approval_records = _run_export_approval_records(artifacts, events)
         event_dicts = [_redact_run_export_value(event.to_dict()) for event in events]
         session_dict = _redact_run_export_value(session.to_dict())
         vault_documents = self._run_export_vault_documents(run_id)
@@ -1336,7 +1323,7 @@ class RunCoordinator:
             "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
             "execution_record": copy.deepcopy(artifacts.get("execution")),
             "feedback_record": copy.deepcopy(artifacts.get("feedback")),
-            "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "approval_records": approval_records,
             "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
             "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
             "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
@@ -1415,6 +1402,7 @@ class RunCoordinator:
         )
         artifacts = _redact_run_export_value(session.artifacts)
         generated_at = _timestamp()
+        approval_records = _run_export_approval_records(artifacts, events)
         package: dict[str, Any] = {
             "package_version": "mesh.run_export.v1",
             "generated_at": generated_at,
@@ -1427,7 +1415,7 @@ class RunCoordinator:
             "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
             "execution_record": copy.deepcopy(artifacts.get("execution")),
             "feedback_record": copy.deepcopy(artifacts.get("feedback")),
-            "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "approval_records": approval_records,
             "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
             "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
             "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
@@ -2037,7 +2025,6 @@ class RunCoordinator:
             summary={
                 "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
                 "goose_ready": readiness_snapshot["goose"]["ready"],
-                "evo_ready": readiness_snapshot["evo"]["ready"],
             },
             artifact_key="integration_readiness",
             status="captured",
@@ -2601,9 +2588,6 @@ class RunCoordinator:
                     "operator": operator,
                 },
             )
-        if command_type == "launch_evo":
-            self._launch_evo(run_id, session, command_payload)
-            return self.get_run(run_id) or session.to_dict()
         if command_type == "explain_blockers":
             self._explain_blockers(run_id, session)
             return self.get_run(run_id) or session.to_dict()
@@ -2849,7 +2833,6 @@ class RunCoordinator:
                 summary={
                     "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
                     "goose_ready": readiness_snapshot["goose"]["ready"],
-                    "evo_ready": readiness_snapshot["evo"]["ready"],
                 },
                 artifact_key="integration_readiness",
                 status="captured",
@@ -4134,20 +4117,26 @@ class RunCoordinator:
         try:
             session = self.state_store.get_run_session(run_id)
             service_agent = session.artifacts.get("service_agent") if session is not None else None
+            integration_readiness = session.artifacts.get("integration_readiness") if session is not None else None
             tasks = self.agent_mesh.build_tasks(
                 run_id=run_id,
                 trigger=trigger,
                 decision=decision,
                 evaluation=evaluation,
                 service_agent=service_agent if isinstance(service_agent, dict) else None,
+                integration_readiness=integration_readiness if isinstance(integration_readiness, dict) else None,
             )
             task_payload = [task.to_dict() for task in tasks]
-            lane_routing = {
-                "signal_source": _signal_source_for_routing(trigger),
-                "decision_type": decision.decision_type,
-                "service_agent": service_agent,
-                "agents": task_payload[0].get("agents", []) if task_payload else [],
-            }
+            lane_routing = (
+                task_payload[0].get("lane_routing", {})
+                if task_payload and isinstance(task_payload[0].get("lane_routing"), dict)
+                else {
+                    "signal_source": _signal_source_for_routing(trigger),
+                    "decision_type": decision.decision_type,
+                    "service_agent": service_agent,
+                    "agents": task_payload[0].get("agents", []) if task_payload else [],
+                }
+            )
             self._set_artifact(run_id, "lane_routing", lane_routing)
             status = "recorded"
             summary = {
@@ -4652,164 +4641,6 @@ class RunCoordinator:
                 data["execution_plan"]["rollback_plan"] = payload["rollback_plan"]
         return Decision.from_dict(data)
 
-    def _launch_evo(self, run_id: str, session: RunSession, payload: dict[str, Any]) -> None:
-        launch_request = self._validate_evo_launch_request(run_id, session, payload)
-        launch_id = f"evo_{run_id}_{uuid4().hex[:8]}"
-        queued = {
-            "launch_id": launch_id,
-            "action": "status" if launch_request["workspace_detected"] else "discover_bootstrap",
-            "status": "queued",
-            "requested_at": _timestamp(),
-            "repo_path": launch_request["repo_path"],
-            "target_path": launch_request["target_path"],
-            "benchmark_command": launch_request["benchmark_command"],
-            "metric": launch_request["metric"],
-            "instrumentation_mode": launch_request["instrumentation_mode"],
-            "gate_command": launch_request["gate_command"],
-            "workspace_detected": launch_request["workspace_detected"],
-            "dashboard_url": None,
-            "steps": [],
-            "error": None,
-        }
-        self._upsert_evo_launch(run_id, queued)
-        self.state_store.append_run_event(
-            run_id,
-            stage=session.stage,
-            event_type=INTEGRATION_ARTIFACT_RECORDED,
-            payload=queued,
-            summary={"status": "queued", "action": queued["action"]},
-            artifact_key="evo_launches",
-            integration_name="evo",
-            status="queued",
-        )
-
-        def runner() -> None:
-            running = {**queued, "status": "running", "started_at": _timestamp()}
-            self._upsert_evo_launch(run_id, running)
-            current = self.state_store.get_run_session(run_id)
-            self.state_store.append_run_event(
-                run_id,
-                stage=current.stage if current else session.stage,
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=running,
-                summary={"status": "running", "action": running["action"]},
-                artifact_key="evo_launches",
-                integration_name="evo",
-                status="running",
-            )
-            finished = self.evo_launcher.run_launch(
-                run_id=run_id,
-                repo_path=launch_request["repo_path"],
-                target_path=launch_request["target_path"],
-                benchmark_command=launch_request["benchmark_command"],
-                metric=launch_request["metric"],
-                instrumentation_mode=launch_request["instrumentation_mode"],
-                gate_command=launch_request["gate_command"],
-                note=launch_request["note"],
-            )
-            finished["launch_id"] = launch_id
-            self._upsert_evo_launch(run_id, finished)
-            latest = self.state_store.get_run_session(run_id)
-            self.state_store.append_run_event(
-                run_id,
-                stage=latest.stage if latest else session.stage,
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=finished,
-                summary={"status": finished["status"], "action": finished["action"]},
-                artifact_key="evo_launches",
-                integration_name="evo",
-                status=finished["status"],
-            )
-
-        threading.Thread(target=runner, daemon=True).start()
-
-    def _validate_evo_launch_request(
-        self,
-        run_id: str,
-        session: RunSession,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        readiness = build_readiness(self.config)
-        if not readiness.evo.ready:
-            raise ValueError(f"Evo is not ready: {readiness.evo.detail}")
-        decision_payload = session.artifacts.get("decision") if isinstance(session.artifacts, dict) else None
-        if not isinstance(decision_payload, dict):
-            raise ValueError("run does not have a decision artifact")
-        trigger_payload = session.artifacts.get("trigger") if isinstance(session.artifacts, dict) else None
-        input_payload = session.artifacts.get("input_signal") if isinstance(session.artifacts, dict) else None
-        related_context: dict[str, Any] = {}
-        for candidate in (trigger_payload, input_payload):
-            if isinstance(candidate, dict) and isinstance(candidate.get("related_context"), dict):
-                related_context = candidate["related_context"]
-                break
-        execution_plan = decision_payload.get("execution_plan")
-        if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
-            raise ValueError("Evo launch is only supported for repo_patch_service runs")
-        parameters = execution_plan.get("parameters")
-        if not isinstance(parameters, dict):
-            raise ValueError("run decision is missing execution parameters")
-        repo_path = str(parameters.get("repo_path") or related_context.get("repo_path") or "").strip()
-        if not repo_path:
-            raise ValueError("run does not define a repo_path for Evo")
-        allowed_paths_raw = parameters.get("allowed_paths") if isinstance(parameters.get("allowed_paths"), list) else related_context.get("allowed_paths") or []
-        allowed_paths = [str(path) for path in allowed_paths_raw if str(path).strip()]
-        if not allowed_paths:
-            raise ValueError("run does not define allowed_paths for Evo")
-        test_commands_raw = parameters.get("test_commands") if isinstance(parameters.get("test_commands"), list) else related_context.get("test_commands") or []
-        test_commands = [str(command) for command in test_commands_raw if str(command).strip()]
-        if not test_commands:
-            raise ValueError("run does not define test_commands for Evo")
-        target_path = str(payload.get("target_path") or allowed_paths[0]).strip()
-        if target_path not in allowed_paths:
-            raise ValueError("target_path must be one of the run's allowed_paths")
-        repo = Path(repo_path).resolve()
-        if not repo.exists():
-            raise ValueError("repo_path does not exist")
-        workspace_detected = (repo / ".evo" / "meta.json").is_file()
-        benchmark_command = str(payload.get("benchmark_command") or "").strip() or None
-        if not workspace_detected and not benchmark_command:
-            raise ValueError("benchmark_command is required when the repo does not already contain an Evo workspace")
-        metric = str(payload.get("metric") or "max").strip()
-        if metric not in {"max", "min"}:
-            raise ValueError("metric must be `max` or `min`")
-        instrumentation_mode = str(payload.get("instrumentation_mode") or "inline").strip()
-        if instrumentation_mode not in {"sdk", "inline"}:
-            raise ValueError("instrumentation_mode must be `sdk` or `inline`")
-        gate_command = str(payload.get("gate_command") or test_commands[0]).strip()
-        if not gate_command:
-            raise ValueError("gate_command is required")
-        return {
-            "run_id": run_id,
-            "repo_path": str(repo),
-            "target_path": target_path,
-            "benchmark_command": benchmark_command,
-            "metric": metric,
-            "instrumentation_mode": instrumentation_mode,
-            "gate_command": gate_command,
-            "workspace_detected": workspace_detected,
-            "note": str(payload.get("note") or "mesh: bounded discover bootstrap").strip(),
-        }
-
-    def _upsert_evo_launch(self, run_id: str, launch: dict[str, Any]) -> None:
-        session = self.state_store.get_run_session(run_id)
-        if session is None:
-            return
-        artifact = session.artifacts.get("evo_launches")
-        launches = artifact.get("launches", []) if isinstance(artifact, dict) else []
-        updated: list[dict[str, Any]] = []
-        found = False
-        for existing in launches:
-            if isinstance(existing, dict) and existing.get("launch_id") == launch.get("launch_id"):
-                updated.append(launch)
-                found = True
-            elif isinstance(existing, dict):
-                updated.append(existing)
-        if not found:
-            updated.insert(0, launch)
-        session.artifacts["evo_launches"] = {"launches": updated}
-        session.updated_at = _timestamp()
-        self.state_store.save_run_session(session)
-
     def _set_artifact(self, run_id: str, key: str, value: dict[str, Any]) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -5265,6 +5096,7 @@ class RunCoordinator:
             "investigation_report",
             "scenario_analysis",
             "subdecisions",
+            "lane_routing",
             "agent_tasks",
             "reconciliation",
             "memory_crystallization",
@@ -5281,7 +5113,6 @@ class RunCoordinator:
             f"Executions/{run_id}.md",
             f"Feedback/{run_id}.md",
             f"Agents/{run_id}.md",
-            f"Evo/{run_id}.md",
             f"Merkle/{run_id}.md",
             f"Notes/{run_id}.md",
             f"Insights/{run_id}.md",
@@ -5668,6 +5499,32 @@ def _file_sha256(path: Path) -> str:
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _run_export_approval_records(artifacts: dict[str, Any], events: list[RunEvent]) -> list[dict[str, Any]]:
+    raw_approvals = artifacts.get("approvals")
+    approvals = [copy.deepcopy(item) for item in raw_approvals if isinstance(item, dict)] if isinstance(raw_approvals, list) else []
+    seen = {str(item.get("event_id") or item.get("command_id") or "") for item in approvals}
+    for event in events:
+        record = event.to_dict()
+        if record.get("event_type") != STEERING_COMMAND:
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        command_type = str(payload.get("command_type") or "")
+        if command_type not in {"approve", "resume", "override_decision", "override_execution_parameters"}:
+            continue
+        approval = copy.deepcopy(payload)
+        approval.setdefault("event_id", record.get("event_id"))
+        approval.setdefault("recorded_at", record.get("recorded_at"))
+        dedupe_key = str(approval.get("event_id") or approval.get("command_id") or "")
+        if dedupe_key and dedupe_key in seen:
+            continue
+        if dedupe_key:
+            seen.add(dedupe_key)
+        approvals.append(approval)
+    return _redact_run_export_value(approvals)
 
 
 def _redact_run_export_value(value: Any) -> Any:

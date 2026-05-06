@@ -238,8 +238,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
 | `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
-| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,evo,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
-| `MESH_AGENT_MESH_AGENTS` | unset | Optional comma-separated restriction for agent-task lanes; default includes Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n |
+| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_MESH_AGENTS` | unset | Optional comma-separated restriction for agent-task lanes; default includes Goose, Hermes, Codex, Claude Code, OpenClaw, Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n |
 | `MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR` | `0.86` | Minimum confidence stamped onto an eligible full-auto override |
 | `MESH_AGENT_OPERATOR_AUTONOMY_TIER` | `escalated` | Decision autonomy tier used by the agent operator override |
 | `MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS` | `3600` | Maximum age for existing paused runs that the operator will pick up after startup |

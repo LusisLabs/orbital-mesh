@@ -138,28 +138,6 @@
       "blockers": []
     },
     {
-      "connector_id": "evo",
-      "display_name": "Evo proposal lane",
-      "domain": "agent",
-      "state": "proposal-only",
-      "required_before": "pilot",
-      "authority_posture": "scoped repository proposal lane",
-      "credential_policy": "no repo write token or production actuator credentials",
-      "credential_boundary": {
-        "service_account_ref": null,
-        "credential_mode": "proposal-workspace",
-        "production_actuator_credentials_allowed": false,
-        "repo_write_credentials_allowed": false,
-        "runtime_secret_mount_required": false,
-        "rotation_evidence_ref": null,
-        "break_glass_recording_required": false
-      },
-      "degraded_behavior": "hide operator launch and keep manual review path",
-      "allowed_scopes": ["proposal"],
-      "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
-      "blockers": []
-    },
-    {
       "connector_id": "latentmas",
       "display_name": "LatentMAS",
       "domain": "agent",
@@ -383,7 +361,7 @@
       "connector_id": "feature_flag_adapter",
       "display_name": "Feature flag adapter",
       "domain": "execution",
-      "state": "unfinished",
+      "state": "disabled",
       "required_before": "pilot",
       "authority_posture": "not certified for pilot mutation",
       "credential_policy": "must remain disabled until a real provider adapter is certified",
@@ -396,16 +374,16 @@
         "rotation_evidence_ref": null,
         "break_glass_recording_required": false
       },
-      "degraded_behavior": "pilot readiness blocks if credentials are presented before certification",
+      "degraded_behavior": "remain disabled for staging; pilot readiness blocks only if credentials are presented without provider proof",
       "allowed_scopes": [],
       "evidence_refs": ["docs/reference-architectures.md"],
-      "blockers": ["real_provider_adapter_missing"]
+      "blockers": []
     },
     {
       "connector_id": "incident_adapter",
       "display_name": "Incident adapter",
       "domain": "ingest",
-      "state": "unfinished",
+      "state": "disabled",
       "required_before": "pilot",
       "authority_posture": "not certified for pilot intake",
       "credential_policy": "must remain disabled until a real provider adapter is certified",
@@ -418,18 +396,18 @@
         "rotation_evidence_ref": null,
         "break_glass_recording_required": false
       },
-      "degraded_behavior": "pilot readiness blocks if credentials are presented before certification",
+      "degraded_behavior": "remain disabled for staging; pilot readiness blocks only if credentials are presented without provider proof",
       "allowed_scopes": [],
       "evidence_refs": ["docs/reference-architectures.md"],
-      "blockers": ["real_provider_adapter_missing"]
+      "blockers": []
     },
     {
       "connector_id": "audit_sink",
       "display_name": "External audit sink",
       "domain": "audit",
-      "state": "mock",
-      "required_before": "pilot",
-      "authority_posture": "local audit continuity only",
+      "state": "staging-ready",
+      "required_before": "expansion",
+      "authority_posture": "local audit continuity for staging; external append-only sink proof is required before expansion or compliance reliance",
       "credential_policy": "external sink credentials remain platform secrets",
       "credential_boundary": {
         "service_account_ref": "serviceaccount://mesh/audit-sink-writer",
@@ -440,10 +418,10 @@
         "rotation_evidence_ref": "docs/release-provenance.md#release-assurance-packet",
         "break_glass_recording_required": true
       },
-      "degraded_behavior": "keep local Merkle and run export audit path; expansion readiness blocks external compliance reliance",
+      "degraded_behavior": "keep local Merkle and run export audit path; expansion readiness blocks external compliance reliance until external proof and certification are mounted",
       "allowed_scopes": ["local-audit"],
       "evidence_refs": ["docs/production-hardening-records.md"],
-      "blockers": ["external_audit_sink_not_certified"]
+      "blockers": []
     }
   ]
 }

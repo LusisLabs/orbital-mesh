@@ -27,6 +27,19 @@ from .failure_modes import build_failure_mode_library_packet, failure_mode_libra
 from .infra_graph import GraphEdge, GraphNode, GraphSnapshot, InfraGraph
 from .learning import LearningStore
 from .load_concurrency import load_concurrency_rehearsal_ready, verify_load_concurrency_rehearsal
+from .orchestration_topology import (
+    ORCHESTRATION_TOPOLOGY_PROFILE_VERSION,
+    ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION,
+    build_orchestration_topology_status,
+    load_orchestration_topology_profile,
+    orchestration_topology_profile_ready,
+    resolve_orchestration_topology,
+)
+from .orchestration_drill import (
+    load_orchestration_topology_drill,
+    orchestration_topology_drill_ready,
+    verify_orchestration_topology_drill,
+)
 from .trust_ladder import TRUST_LEVELS, TrustLadder
 from .control_plane_models import (
     AgentAttempt,
@@ -85,7 +98,6 @@ from .integrations import (
     GitNexusSidecarManager,
     IntegrationsConfig,
     bootstrap_integrations,
-    build_evo_status,
     build_readiness,
     load_integrations_config,
     resolve_integrations_config,

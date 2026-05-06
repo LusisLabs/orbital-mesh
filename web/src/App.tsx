@@ -73,7 +73,6 @@ import type {
   RunEventRecord,
   RunSessionRecord,
   AgentTask,
-  EvoLaunchRecord,
   ScenarioAnalysis,
   ScenarioRecord,
   ServiceAgentRecord,
@@ -838,10 +837,7 @@ export default function App() {
       try {
         await api.steerRun(baseUrl, activeRunId, { command, ...payload });
         await loadRun(activeRunId);
-        addToast({
-          variant: "success",
-          title: command === "launch_evo" ? "Evo launch requested" : `Run ${humanize(command).toLowerCase()}d`,
-        });
+        addToast({ variant: "success", title: `Run ${humanize(command).toLowerCase()}d` });
       } catch (error) {
         addToast({ variant: "error", title: `Steer failed`, description: error instanceof Error ? error.message : "Unknown error" });
       } finally {
@@ -1156,13 +1152,12 @@ export default function App() {
         readiness.promptfoo,
         readiness.hermes,
         readiness.goose,
-        readiness.evo,
         readiness.latentmas,
         readiness.deepagents,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 6;
+  const integrationsTotal = readinessItems.length || 5;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -1734,7 +1729,7 @@ export default function App() {
               onOverrideParams={handleOverrideParams}
             />
           ) : rightRailTab === "agents" ? (
-            <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={handleSteer} />
+            <AgentMeshPanel run={activeRun} tasks={agentTasks} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -2200,7 +2195,7 @@ function RunsView({
             onJumpContext={onJumpContext}
           />
         ) : runDetailTab === "agents" ? (
-          <AgentMeshPanel run={activeRun} tasks={agentTasks} active="" onSteer={() => undefined} />
+          <AgentMeshPanel run={activeRun} tasks={agentTasks} />
         ) : (
           <TopologyPanel
             activeRun={activeRun}
@@ -2388,7 +2383,7 @@ function AgentsView({
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Bot size={15} />} title="Active Run Agent Attempts" />
-        <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={onSteer} />
+        <AgentMeshPanel run={activeRun} tasks={agentTasks} />
       </section>
     </div>
   );
@@ -2466,7 +2461,7 @@ function ControlPlaneView({
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
-  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "evo" | "latentmas" | "deepagents">][];
+  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents">][];
   integrationsReady: number;
   integrationsTotal: number;
   systemConnection: ConnectionStatus;
@@ -2497,6 +2492,7 @@ function ControlPlaneView({
           <MetricCard metric={{ label: "Environment", value: health ? humanize(health.environment) : "Unknown", detail: health ? `${health.version} ${health.commit.slice(0, 7)}` : "Health unavailable", tone: health ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Readiness", value: readiness ? humanize(readiness.status) : "Unknown", detail: readiness ? `${humanize(readiness.profile)} profile` : "Profile unavailable", tone: readiness?.status === "ready" ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Required gates", value: `${requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length}/${requiredChecks.length}`, detail: "profile checks", tone: readiness?.blockers.length ? "danger" : "good" }} />
+          <MetricCard metric={{ label: "Topology", value: readiness?.orchestration_topology?.active_topology ? humanize(String(readiness.orchestration_topology.active_topology)) : "Unknown", detail: readiness?.orchestration_topology?.ready ? "profile configured" : "profile unavailable", tone: readiness?.orchestration_topology?.ready ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Integrations", value: `${integrationsReady}/${integrationsTotal}`, detail: "optional connector probes", tone: integrationsReady === integrationsTotal ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Agents", value: `${agentConnectors.filter((a) => a.state === "ready").length}/${agentConnectors.length}`, detail: "worker connectors", tone: "neutral" }} />
           <MetricCard metric={{ label: "Run stream", value: humanize(runConnection), detail: "active run SSE", tone: runConnection === "connected" ? "good" : "warn" }} />
@@ -3183,7 +3179,7 @@ function RoadmapView({
         <SectionTitle icon={<AlertTriangle size={15} />} title="Non-Negotiable Rules" />
         <div className="mesh-stack">
           <ConnectorRow name="Authenticated TLS" detail="No public exposure without identity enforcement" state="config-only" />
-          <ConnectorRow name="Proposal lanes" detail="Deep Agents, Goose, Hermes, Evo, and Mesh Brain do not own actuation" state="ready" />
+          <ConnectorRow name="Proposal lanes" detail="Deep Agents, Goose, Hermes, and Mesh Brain do not own actuation" state="ready" />
           <ConnectorRow name="Autonomy" detail="No action without allowlist, policy, evaluation, approval, rollback, and trust evidence" state="ready" />
           <ConnectorRow name="Adapter claims" detail="Unfinished adapters stay visibly unfinished" state="ready" />
         </div>
@@ -3815,7 +3811,7 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
     <div className="mesh-detail-grid">
       <section className="context-panel">
         <SectionTitle icon={<Play size={14} />} title="Action Surface" />
-        <p className="mesh-muted">Approvals, notes, overrides, Evo launch, and execution context remain behind Mesh steering controls.</p>
+        <p className="mesh-muted">Approvals, notes, overrides, and execution context remain behind Mesh steering controls.</p>
         <div className="context-action-row">
           <button className="action-button compact primary" type="button" disabled={!activeRun} onClick={() => onJumpContext("steering")}>Steering</button>
           <button className="action-button compact" type="button" disabled={!activeRun} onClick={() => onJumpContext("execution")}>Execution</button>
@@ -4494,10 +4490,12 @@ function buildConfidenceMovement(
   return points.slice(0, 8);
 }
 
-function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
+export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "evo" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const certification = readiness?.connector_certification ?? {};
+  const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
     if (!status) return "disconnected";
     if (status.ready) return "ready";
@@ -4505,31 +4503,53 @@ function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: Age
     if (status.command || status.url || status.detail) return "config-only";
     return "disconnected";
   };
-  const specs = [
-    ["hermes", "Hermes", "Default root-cause and blocker interaction", "hermes bridge", readinessFor("hermes"), true],
-    ["goose", "Goose", "Operational coordination and review", "goose bridge", readinessFor("goose"), false],
-    ["codex", "Codex", "Patch proposal lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["claudecode", "Claude Code", "Review and risk lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["openclaw", "OpenClaw", "Staging validation lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["evo", "Evo", "Benchmark and discovery lane", "evo cli", readinessFor("evo"), false],
-    ["latentmas", "LatentMAS", "Advisory full-inference worker", "latentmas sidecar", readinessFor("latentmas"), false],
-    ["deepagents", "Deep Agents", "Sandboxed multi-agent proposal fabric", "deepagents", readinessFor("deepagents"), false],
-    ["custom-http", "Custom HTTP Agent", "Future external worker connector", "http connector", null, false],
-  ] as const;
-  return specs.map(([id, name, role, adapter, status, primary]) => {
+  const specs: Array<{
+    id: string;
+    name: string;
+    role: string;
+    adapter: string;
+    status: IntegrationReadiness["hermes"] | null;
+    primary: boolean;
+    platform?: boolean;
+  }> = [
+    { id: "hermes", name: "Hermes", role: "Default root-cause and blocker interaction", adapter: "hermes bridge", status: readinessFor("hermes"), primary: true },
+    { id: "goose", name: "Goose", role: "Operational coordination and review", adapter: "goose bridge", status: readinessFor("goose"), primary: false },
+    { id: "codex", name: "Codex", role: "Patch proposal lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "claudecode", name: "Claude Code", role: "Review and risk lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
+    { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "temporal", name: "Temporal", role: "Durable workflow history and supervisor lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "dagster", name: "Dagster", role: "Asset lineage and materialization evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "prefect", name: "Prefect", role: "Flow run state and work-pool evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "flyte", name: "Flyte", role: "ML workflow reproducibility evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "luigi", name: "Luigi", role: "Pipeline dependency proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "oozie", name: "Apache Oozie", role: "Hadoop workflow status evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "kubernetes", name: "Kubernetes", role: "Controller reconciliation and bounded actuator lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "n8n", name: "n8n", role: "Low-code workflow trace proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "custom-http", name: "Custom HTTP Agent", role: "Future external worker connector", adapter: "http connector", status: null, primary: false },
+  ];
+  return specs.map(({ id, name, role, adapter, status, primary, platform }) => {
     const attempt = lastAttempt(id);
+    const cert = certFor(id);
+    const certState = String(cert.state ?? "");
     return {
       id,
       name,
       role,
       adapter,
-      state: id === "custom-http" ? "disconnected" : fromReadiness(status),
-      scope: primary ? "Default Mesh run context" : "Domain/service scoped",
-      profile: status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
-      readinessDetail: status?.detail ?? "Connector registry placeholder",
+      state: platform ? toConnectorState(certState, "config-only") : id === "custom-http" ? "disconnected" : fromReadiness(status),
+      scope: platform ? "Topology routed orchestration lane" : primary ? "Default Mesh run context" : "Domain/service scoped",
+      profile: platform
+        ? `${humanize(certState || "mock")} before ${humanize(String(cert.required_before ?? "expansion"))}`
+        : status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
+      readinessDetail: platform ? String(cert.detail ?? cert.authority_posture ?? "Connector certification governs authority") : status?.detail ?? "Connector registry placeholder",
       lastAttempt: attempt ? `${humanize(attempt.status)}: ${attempt.summary}` : undefined,
-      riskFlags: attempt?.risk_flags ?? status?.warnings ?? [],
-      boundary: "Proposal-only. Mesh owns policy, approval, audit, and execution.",
+      riskFlags: attempt?.risk_flags ?? stringList(cert.blockers ?? status?.warnings ?? []),
+      boundary: platform
+        ? String(cert.authority_posture ?? "Mesh governs topology, approval, audit, and execution authority.")
+        : "Proposal-only. Mesh owns policy, approval, audit, and execution.",
       primary,
     };
   });
@@ -4948,39 +4968,17 @@ function SteeringConsolePanel({
   );
 }
 
-function AgentMeshPanel({
+export function AgentMeshPanel({
   run,
   tasks,
-  active,
-  onSteer,
 }: {
   run: RunDetail | null;
   tasks: AgentTask[];
-  active: string;
-  onSteer: (command: string, payload?: Record<string, unknown>) => void;
 }) {
   const fallbackTasks = Array.isArray(run?.artifacts?.agent_tasks)
     ? (run?.artifacts?.agent_tasks as AgentTask[])
     : [];
   const resolvedTasks = tasks.length > 0 ? tasks : fallbackTasks;
-  const evoLaunches = Array.isArray((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] } | undefined)?.launches)
-    ? (((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] }).launches ?? []) as EvoLaunchRecord[])
-    : [];
-  const defaultTargetPath = resolvedTasks.flatMap((task) => task.allowed_paths)[0] ?? "";
-  const defaultGateCommand = resolvedTasks.flatMap((task) => task.test_commands)[0] ?? "";
-  const [targetPath, setTargetPath] = useState(defaultTargetPath);
-  const [benchmarkCommand, setBenchmarkCommand] = useState("");
-  const [metric, setMetric] = useState("max");
-  const [instrumentationMode, setInstrumentationMode] = useState("inline");
-  const [gateCommand, setGateCommand] = useState(defaultGateCommand);
-
-  useEffect(() => {
-    setTargetPath(defaultTargetPath);
-    setGateCommand(defaultGateCommand);
-    setBenchmarkCommand("");
-    setMetric("max");
-    setInstrumentationMode("inline");
-  }, [run?.run_id, defaultTargetPath, defaultGateCommand]);
 
   if (!run) {
     return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
@@ -5013,86 +5011,6 @@ function AgentMeshPanel({
         </p>
       </section>
 
-      <section className="context-panel">
-        <div className="context-panel-header">
-          <div>
-            <p className="eyebrow">Evo Launch</p>
-            <h4>Operator-triggered discovery bootstrap</h4>
-          </div>
-          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#e8a33e" : "#2aacb8"} />
-        </div>
-        <div className="stack">
-          <input
-            value={targetPath}
-            onChange={(e) => setTargetPath(e.target.value)}
-            placeholder="Target path"
-            disabled={!defaultTargetPath || active === "launch_evo"}
-          />
-          <textarea
-            value={benchmarkCommand}
-            onChange={(e) => setBenchmarkCommand(e.target.value)}
-            placeholder="Benchmark command (required unless the repo already contains .evo/meta.json)"
-            className="small-textarea mono-textarea"
-            disabled={active === "launch_evo"}
-          />
-          <div className="steering-grid">
-            <select value={metric} onChange={(e) => setMetric(e.target.value)} disabled={active === "launch_evo"}>
-              <option value="max">Metric: max</option>
-              <option value="min">Metric: min</option>
-            </select>
-            <select
-              value={instrumentationMode}
-              onChange={(e) => setInstrumentationMode(e.target.value)}
-              disabled={active === "launch_evo"}
-            >
-              <option value="inline">Instrumentation: inline</option>
-              <option value="sdk">Instrumentation: sdk</option>
-            </select>
-          </div>
-          <input
-            value={gateCommand}
-            onChange={(e) => setGateCommand(e.target.value)}
-            placeholder="Gate command"
-            disabled={active === "launch_evo"}
-          />
-          <button
-            className="action-button compact"
-            disabled={!targetPath.trim() || !gateCommand.trim() || active === "launch_evo"}
-            onClick={() =>
-              onSteer("launch_evo", {
-                target_path: targetPath.trim(),
-                benchmark_command: benchmarkCommand.trim() || undefined,
-                metric,
-                instrumentation_mode: instrumentationMode,
-                gate_command: gateCommand.trim(),
-              })
-            }
-          >
-            Launch Evo
-          </button>
-          {evoLaunches.length > 0 && (
-            <div className="stack">
-              {evoLaunches.map((launch) => (
-                <article key={launch.launch_id} className="agent-attempt-card">
-                  <div className="agent-attempt-header">
-                    <strong>{humanize(launch.action)}</strong>
-                    <span className={launch.status === "completed" ? "agent-risk-badge good" : launch.status === "failed" ? "agent-risk-badge warn" : "agent-risk-badge"}>
-                      {humanize(launch.status)}
-                    </span>
-                  </div>
-                  <div className="context-link-list compact">
-                    <ContextLink label="Target" value={launch.target_path} mono />
-                    {launch.experiment_id ? <ContextLink label="Experiment" value={launch.experiment_id} mono /> : null}
-                    {launch.dashboard_url ? <ContextLink label="Dashboard" value={launch.dashboard_url} mono /> : null}
-                  </div>
-                  {launch.error ? <div className="readiness-warning">{launch.error}</div> : null}
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
       {resolvedTasks.map((task) => (
         <section key={task.task_id} className="context-panel">
           <div className="context-panel-header">
@@ -5108,6 +5026,7 @@ function AgentMeshPanel({
             <ContextStat label="Paths" value={String(task.allowed_paths.length)} />
             <ContextStat label="Tests" value={String(task.test_commands.length)} />
           </div>
+          <AgentTopologyPanel task={task} />
           {Object.keys(task.kubernetes_scope ?? {}).length > 0 && (
             <div className="context-link-list">
               {Object.entries(task.kubernetes_scope).map(([key, value]) => (
@@ -5167,6 +5086,64 @@ function AgentMeshPanel({
         </section>
       ))}
     </div>
+  );
+}
+
+function AgentTopologyPanel({ task }: { task: AgentTask }) {
+  const topology = asRecord(task.orchestration_topology || task.lane_routing);
+  if (Object.keys(topology).length === 0) return null;
+  const lanes = firstArray(topology.selected_lanes);
+  const blockers = stringList(topology.blockers);
+  const sourceEvidence = asRecord(topology.source_evidence);
+  const ownership = asRecord(sourceEvidence.ownership_boundary);
+  return (
+    <section className="agent-topology-panel" data-testid="agent-topology-panel">
+      <div className="context-panel-header">
+        <div>
+          <p className="eyebrow">Topology</p>
+          <h4>{humanize(String(topology.active_topology ?? "centralized"))}</h4>
+        </div>
+        <StatusChip label={blockers.length ? "Blocked" : "Mesh Governed"} tone={blockers.length ? "#e8a33e" : "#2aacb8"} />
+      </div>
+      <div className="context-stat-grid">
+        <ContextStat label="Rule" value={String(topology.rule_id ?? "default")} />
+        <ContextStat label="Lanes" value={String(lanes.length || task.agents.length)} />
+        <ContextStat label="Reconciliation" value={humanize(String(topology.reconciliation ?? "mesh_reconciles"))} />
+        <ContextStat label="Authority" value="Mesh" />
+      </div>
+      <div className="context-link-list compact">
+        <ContextLink label="Reason" value={String(topology.routing_reason ?? "default profile topology")} />
+        {ownership.record_id ? <ContextLink label="Ownership" value={String(ownership.record_id)} /> : null}
+        {ownership.tenant_id ? <ContextLink label="Tenant" value={String(ownership.tenant_id)} /> : null}
+      </div>
+      {lanes.length > 0 ? (
+        <div className="mesh-table-wrap compact-table">
+          <table className="mesh-table">
+            <thead>
+              <tr><th>Lane</th><th>Role</th><th>Authority</th><th>State</th></tr>
+            </thead>
+            <tbody>
+              {lanes.map((lane, index) => {
+                const record = asRecord(lane);
+                return (
+                  <tr key={`${record.lane_id ?? index}`}>
+                    <td>{humanize(String(record.lane_id ?? "lane"))}</td>
+                    <td>{humanize(String(record.role ?? "worker"))}</td>
+                    <td>{humanize(String(record.authority ?? "proposal_only"))}</td>
+                    <td>{humanize(String(record.certified_state ?? "unknown"))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {blockers.length > 0 && (
+        <div className="readiness-warning">
+          {blockers.map((blocker) => humanize(blocker)).join(", ")}
+        </div>
+      )}
+    </section>
   );
 }
 

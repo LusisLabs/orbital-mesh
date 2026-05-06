@@ -49,6 +49,55 @@ def _write_complete_release_provenance(path: Path) -> None:
     )
 
 
+def _write_on_call_drill(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mesh.on_call_drill.v1",
+                "drill_id": "on_call_drill_darkharness_fixture",
+                "generated_at": "2026-05-06T00:00:00Z",
+                "operator_id": "platform@example.com",
+                "environment": "pilot",
+                "recovery_target_seconds": 900,
+                "measured_recovery_seconds": 420,
+                "kill_switch": {
+                    "live_execution_disabled": True,
+                    "watchers_paused": True,
+                    "approval_gate_forced": True,
+                    "event_ref": "event://kill-switch/darkharness-fixture",
+                },
+                "bad_target_revocation": {
+                    "target_ref": "kubernetes://cluster-a/default/bad-target",
+                    "revoked": True,
+                    "denied_action_ref": "run://denied-action/darkharness-fixture",
+                },
+                "stuck_run_recovery": {
+                    "run_id": "run_stuck_darkharness_fixture",
+                    "recovered": True,
+                    "event_ref": "event://run-recovered/darkharness-fixture",
+                },
+                "failed_dependency": {
+                    "dependency": "prometheus",
+                    "degraded_state_visible": True,
+                    "operator_action_ref": "runbook://failed-dependency/darkharness-fixture",
+                },
+                "provider_key_rotation": {
+                    "verification_ref": "credential-rotation://provider/darkharness-fixture",
+                    "status": "pass",
+                    "break_glass_recorded": True,
+                },
+                "state_restore": {
+                    "verification_ref": "backup-restore://pilot/darkharness-fixture",
+                    "status": "pass",
+                    "restore_ref": "restore://pilot/darkharness-fixture",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class DarkharnessExportPathTests(unittest.TestCase):
     def test_coordinator_builds_schema_valid_packet_for_allowed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -389,7 +438,15 @@ class DarkharnessExportPathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             release_provenance = Path(tmp) / "release-provenance.json"
             _write_complete_release_provenance(release_provenance)
-            coordinator = RunCoordinator(_config(tmp, release_provenance_path=str(release_provenance)))
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            _write_on_call_drill(on_call_drill)
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                )
+            )
             try:
                 allowed_run_id = _seed_run(coordinator, allowed=True, pilot_go_no_go_evidence=True)
                 denied_run_id = _seed_run(coordinator, allowed=False)

@@ -2149,6 +2149,16 @@ code {
   line-height: 1.4;
 }
 
+.agent-topology-panel {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid rgba(232, 226, 211, 0.1);
+  border-radius: 8px;
+  background: rgba(65, 214, 177, 0.035);
+}
+
 .agent-risk-badge {
   padding: 0.16rem 0.36rem;
   border: 1px solid rgba(232, 226, 211, 0.12);

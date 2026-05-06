@@ -116,7 +116,6 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertEqual(adapters["codex"], "native_contract")
         self.assertEqual(adapters["claudecode"], "native_contract")
         self.assertEqual(adapters["openclaw"], "native_contract")
-        self.assertEqual(adapters["evo"], "native_contract")
         self.assertEqual(adapters["temporal"], "native_orchestration_contract")
         self.assertEqual(set(adapters), set(DEFAULT_AGENT_WORKERS))
 
