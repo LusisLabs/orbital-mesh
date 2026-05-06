@@ -29,7 +29,7 @@ Latest imported hydrogen-mesh audit:
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
 | Production-like smoke | `./scripts/prod_smoke.sh` | PASS | Reran on 2026-05-06 against `http://127.0.0.1:8787` with approved localhost HTTP access; health returned `status=ok`, readiness returned `state_path=/app/.mesh-runtime-state`, `goose.ready=true`, and the script printed `prod smoke passed`. |
 | Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED | Reran on 2026-05-06 against the running compose stack. Readiness profile is `pilot`, but status is `blocked`; blockers include authenticated ingress deployment proof, signed policy lifecycle, backup/restore rehearsal, Mesh Brain serving/artifact configuration, run-export retention review, and design-partner packet. `/api/pilot/go-no-go` is generated from observed state but remains `blocked` because release provenance and target-environment evidence are incomplete. |
-| Release provenance | `python3 scripts/generate_release_provenance.py --require-complete --json ...` | BLOCKED | Reran on 2026-05-06 with refreshed `docker build --pull` image `sha256:8fe95ab2a44e0108f6d6d4bfaee7924af4a510da7f09e5e06e7a05d601e0ea50`, pinned base-image digests, signed policy lifecycle hash, migration rehearsal proof, SBOM, vulnerability scan, local CI attestation, and build command metadata. The packet has `image_digest`, `base_image_digests`, `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`, and `build_command` true, but remains incomplete because the Grype scan still has `18` high/critical blockers and the attestation is local, not GitHub Actions metadata. |
+| Release provenance | `python3 scripts/generate_release_provenance.py --require-complete --json` | BLOCKED | Reran on 2026-05-06 at commit `f2aa372`. The verifier exits non-zero with missing `clean_git_tree`, `image_digest`, `base_image_digests`, `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`, `vulnerability_scan_path`, `ci_attestation`, and `build_command`. The current tree is dirty with `docs/post-training/runtime.md` and MeshModel research docs. `dist/` is absent, and exact-name searches found no current `sbom.cdx.json`, `vulnerability-scan.json`, `ci-attestation.json`, or migration rehearsal proof. |
 | Reth/Kurtosis historical smoke | archived only | REMOVED FROM RELEASE GATES | Reth/Kurtosis evidence remains historical research provenance under `docs/history/research/`; the old bootstrap script is no longer a controlled-production-pilot release gate. Current pilot readiness is carried by Docker Compose, Kubernetes bounded-action proof, authenticated ingress, persistence, audit, and go/no-go packets. |
 
 ## Historical Live Evidence
@@ -72,6 +72,11 @@ service container and succeeded.
   `ready: false`, `status: below_threshold`, `capability_axis_pass_rate:
   0.2174`, and `5` passed axes out of `23` known axes. This is useful risk
   evidence, but it is not the compose stack smoke gate.
+- `.mesh-runtime-state/release-provenance.json` is an ignored historical packet
+  generated at `2026-05-06T00:32:43Z` for commit
+  `0056fd18c052c07fe98ac65395a60733e698d621`. It is incomplete and has no
+  SBOM, vulnerability scan, CI attestation, or migration rehearsal artifact
+  path, so it does not clear the current release provenance gate.
 - `.mesh-runtime-state/`, `.venv/`, `web/dist/`, and `web/test-results/` are
   ignored local artifacts and must not be treated as committed release proof.
 
