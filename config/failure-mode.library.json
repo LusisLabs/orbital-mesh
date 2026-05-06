@@ -1,0 +1,165 @@
+{
+  "schema_version": "mesh.failure_mode_library.registry.v1",
+  "generated_from": [
+    "docs/production-deployment-roadmap.md",
+    "docs/pilot-slo-error-budget.md"
+  ],
+  "entries": [
+    {
+      "id": "denied_namespace",
+      "title": "Denied Kubernetes namespace",
+      "category": "policy",
+      "risk_tier": "high",
+      "authority_boundary": "Kubernetes live execution must stay inside configured context and namespace allowlists.",
+      "detection_refs": ["services/control_plane.py:/api/policy/simulate", "config/ownership.registry.json"],
+      "expected_blockers": ["namespace_not_allowlisted", "policy_denied"],
+      "operator_actions": ["keep run in manual review", "update ownership registry only after service-owner approval"],
+      "replay_refs": ["ui://failure-mode/denied_namespace"],
+      "test_refs": ["tests/test_production_cut_list.py::PolicySimulationTests"]
+    },
+    {
+      "id": "stale_kubeconfig",
+      "title": "Stale or wrong kubeconfig",
+      "category": "identity",
+      "risk_tier": "high",
+      "authority_boundary": "Runtime kubeconfig must resolve to an allowed context before actuation.",
+      "detection_refs": ["shared/mesh_runtime/integrations.py:live_execution_allowlisted"],
+      "expected_blockers": ["live_execution_allowlisted"],
+      "operator_actions": ["disable live execution", "rotate kubeconfig through the runtime secret store"],
+      "replay_refs": ["ui://failure-mode/stale_kubeconfig"],
+      "test_refs": ["tests/test_production_cut_list.py::ReadinessProfileTests"]
+    },
+    {
+      "id": "llm_unavailable",
+      "title": "Proposal LLM unavailable",
+      "category": "agent",
+      "risk_tier": "medium",
+      "authority_boundary": "Agent lanes are proposal/review only; Mesh-native evaluation remains authoritative.",
+      "detection_refs": ["shared/mesh_runtime/integrations.py:optional_checks"],
+      "expected_blockers": [],
+      "operator_actions": ["fall back to native explanation and deterministic evaluation"],
+      "replay_refs": ["ui://failure-mode/llm_unavailable"],
+      "test_refs": ["tests/test_integrations.py::IntegrationReadinessTests"]
+    },
+    {
+      "id": "audit_sink_unavailable",
+      "title": "External audit sink unavailable",
+      "category": "audit",
+      "risk_tier": "high",
+      "authority_boundary": "Expansion and compliance reliance require append-only external audit proof.",
+      "detection_refs": ["scripts/verify_audit_sink_contract.py", "shared/mesh_runtime/audit_sink.py"],
+      "expected_blockers": ["external_audit_sink_contract_verified"],
+      "operator_actions": ["block expansion", "keep local Merkle proof and run export evidence"],
+      "replay_refs": ["ui://failure-mode/audit_sink_unavailable"],
+      "test_refs": ["tests/test_audit_sink_contract.py::AuditSinkContractTests"]
+    },
+    {
+      "id": "kubernetes_crashloop",
+      "title": "Kubernetes CrashLoopBackOff",
+      "category": "kubernetes",
+      "risk_tier": "high",
+      "authority_boundary": "Restart or rollback requires evaluation, approval, allowlist, and rollback proof.",
+      "detection_refs": ["tests/e2e/chaos/injector.py", "services/ingest/kubernetes_live_signal.py"],
+      "expected_blockers": ["approval_required_before_execution"],
+      "operator_actions": ["collect pod events", "approve bounded restart only after rollback plan is visible"],
+      "replay_refs": ["ui://failure-mode/kubernetes_crashloop"],
+      "test_refs": ["tests/test_chaos_session.py::ChaosSessionTests"]
+    },
+    {
+      "id": "kubernetes_image_pull_backoff",
+      "title": "Kubernetes ImagePullBackOff",
+      "category": "kubernetes",
+      "risk_tier": "medium",
+      "authority_boundary": "Image changes are deployment authority and must not be mutated by proposal lanes.",
+      "detection_refs": ["tests/e2e/chaos/injector.py", "services/ingest/kubernetes_live_signal.py"],
+      "expected_blockers": ["approval_required_before_execution"],
+      "operator_actions": ["verify image provenance", "route to deployment owner"],
+      "replay_refs": ["ui://failure-mode/kubernetes_image_pull_backoff"],
+      "test_refs": ["tests/test_chaos_session.py::ChaosSessionTests"]
+    },
+    {
+      "id": "kubernetes_oom_killed",
+      "title": "Kubernetes OOMKilled",
+      "category": "kubernetes",
+      "risk_tier": "medium",
+      "authority_boundary": "Resource changes require service-owner review and feedback evidence.",
+      "detection_refs": ["tests/e2e/chaos/injector.py", "services/ingest/kubernetes_live_signal.py"],
+      "expected_blockers": ["approval_required_before_execution"],
+      "operator_actions": ["capture memory evidence", "request owner approval before resource mutation"],
+      "replay_refs": ["ui://failure-mode/kubernetes_oom_killed"],
+      "test_refs": ["tests/test_chaos_session.py::ChaosSessionTests"]
+    },
+    {
+      "id": "kubernetes_readiness_probe_failure",
+      "title": "Kubernetes readiness probe failure",
+      "category": "kubernetes",
+      "risk_tier": "medium",
+      "authority_boundary": "Probe edits are deployment mutations and require rollback plan plus approval.",
+      "detection_refs": ["tests/e2e/chaos/injector.py", "services/ingest/kubernetes_live_signal.py"],
+      "expected_blockers": ["approval_required_before_execution"],
+      "operator_actions": ["collect probe failure evidence", "prefer rollback over speculative probe edits"],
+      "replay_refs": ["ui://failure-mode/kubernetes_readiness_probe_failure"],
+      "test_refs": ["tests/test_chaos_session.py::ChaosSessionTests"]
+    },
+    {
+      "id": "duplicate_signal",
+      "title": "Duplicate live signal",
+      "category": "signal",
+      "risk_tier": "medium",
+      "authority_boundary": "Duplicate signals must not create conflicting live actions for the same target.",
+      "detection_refs": ["services/watchers/kubernetes.py", "shared/mesh_runtime/run_admission.py"],
+      "expected_blockers": ["target_lock_held"],
+      "operator_actions": ["inspect active target lock", "merge duplicate context into the active run"],
+      "replay_refs": ["ui://failure-mode/duplicate_signal"],
+      "test_refs": ["tests/test_watch_daemon.py::WatchDaemonTests"]
+    },
+    {
+      "id": "delayed_feedback",
+      "title": "Delayed feedback after execution",
+      "category": "feedback",
+      "risk_tier": "medium",
+      "authority_boundary": "Promotion requires feedback evidence; missing feedback keeps the run under operator review.",
+      "detection_refs": ["services/feedback/service.py", "docs/pilot-slo-error-budget.md"],
+      "expected_blockers": ["live_feedback_source_configured"],
+      "operator_actions": ["hold promotion", "review metrics and action latency manually"],
+      "replay_refs": ["ui://failure-mode/delayed_feedback"],
+      "test_refs": ["tests/test_production_faults_and_packaging.py::ProductionFaultsAndPackagingTests"]
+    },
+    {
+      "id": "dependency_timeout",
+      "title": "Required dependency timeout",
+      "category": "dependency",
+      "risk_tier": "medium",
+      "authority_boundary": "Dependency failure must degrade the lane without bypassing evaluation or approval.",
+      "detection_refs": ["shared/mesh_runtime/integrations.py", "services/evidence/"],
+      "expected_blockers": [],
+      "operator_actions": ["mark lane degraded", "continue native evidence path if available"],
+      "replay_refs": ["ui://failure-mode/dependency_timeout"],
+      "test_refs": ["tests/test_deepagents_agent_mesh.py::DeepAgentsAgentMeshTests"]
+    },
+    {
+      "id": "queue_backpressure",
+      "title": "Run queue backpressure",
+      "category": "queue",
+      "risk_tier": "high",
+      "authority_boundary": "Queue-full and tenant-quota exhaustion block before worker admission.",
+      "detection_refs": ["shared/mesh_runtime/run_admission.py", "services/control_plane.py"],
+      "expected_blockers": ["run_queue_full", "tenant_active_run_quota_exceeded"],
+      "operator_actions": ["reject new live action", "clear or cancel stale runs through audited controls"],
+      "replay_refs": ["ui://failure-mode/queue_backpressure"],
+      "test_refs": ["tests/test_contracts.py::ContractTests::test_run_admission_blocks_target_lock_and_tenant_quota"]
+    },
+    {
+      "id": "transient_network_failure",
+      "title": "Transient network failure",
+      "category": "network",
+      "risk_tier": "medium",
+      "authority_boundary": "Transient probe failure can retry evidence collection but cannot auto-promote execution.",
+      "detection_refs": ["services/evidence/service.py", "services/investigation/"],
+      "expected_blockers": [],
+      "operator_actions": ["retry bounded probes", "require fresh evaluation before execution"],
+      "replay_refs": ["ui://failure-mode/transient_network_failure"],
+      "test_refs": ["tests/test_evidence_service.py::EvidenceServiceTests"]
+    }
+  ]
+}

@@ -34,6 +34,21 @@ def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
     return RuntimeConfig(**values)
 
 
+def _write_complete_release_provenance(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mesh.release_provenance.v1",
+                "status": "complete",
+                "missing": [],
+                "packet_sha256": "c" * 64,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class DarkharnessExportPathTests(unittest.TestCase):
     def test_coordinator_builds_schema_valid_packet_for_allowed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -372,7 +387,9 @@ class DarkharnessExportPathTests(unittest.TestCase):
 
     def test_checkpoint_packet_combines_allowed_denied_and_rollback_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            coordinator = RunCoordinator(_config(tmp))
+            release_provenance = Path(tmp) / "release-provenance.json"
+            _write_complete_release_provenance(release_provenance)
+            coordinator = RunCoordinator(_config(tmp, release_provenance_path=str(release_provenance)))
             try:
                 allowed_run_id = _seed_run(coordinator, allowed=True, pilot_go_no_go_evidence=True)
                 denied_run_id = _seed_run(coordinator, allowed=False)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +68,7 @@ def _scenario_from_log_line(
     end = min(index + config.context_lines + 1, len(lines))
     context = lines[start:end]
     line = lines[index]
-    observed_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    observed_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     scenario_id = f"loghub_{_slug(config.dataset)}_{scenario_number:04d}"
     return {
         "scenario_id": scenario_id,

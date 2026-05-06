@@ -15,15 +15,33 @@ Every architecture keeps the same authority boundary:
 - authenticated ingress boundary: `docs/authenticated-ingress.md`;
 - state and Merkle proof restore: `scripts/verify_postgres_restart_proof.py`;
 - release packet: `scripts/generate_release_provenance.py`.
+- ownership registry: `config/ownership.registry.json`.
+- policy lifecycle manifest: `config/policy-lifecycle.manifest.json`.
+- release provenance mount: `MESH_RELEASE_PROVENANCE_PATH`.
+- run export audit retrieval: `scripts/verify_run_export_retrieval.py`.
+- run export durable upload proof: `scripts/verify_run_export_upload.py`.
+- external audit-sink proof: `scripts/verify_audit_sink_contract.py` and `MESH_AUDIT_SINK_PROOF_PATH` before expansion or compliance reliance.
+- credential rotation proof: `scripts/verify_credential_rotation.py` for runtime-secret and read-only-secret connectors.
+- data-classification policy: `config/data-classification.policy.json` and `scripts/verify_data_classification_policy.py`.
+- agentic-operator source provenance: `config/agentic-operator-source.provenance.json` and `scripts/verify_agentic_operator_source_provenance.py`.
+- evaluation-kit packet: `scripts/generate_evaluation_kit_packet.py`, `scripts/verify_evaluation_kit_packet.py`, and `shared/mesh_runtime/schemas/evaluation-kit-packet.schema.json`.
+- benchmark output proof: `scripts/verify_benchmark_run_artifacts.py` and `shared/mesh_runtime/schemas/benchmark-run-artifacts-verification.schema.json`.
 
 Required production defaults:
 
 - `MESH_OPERATOR_IDENTITY_REQUIRED=1`;
 - `MESH_DEFAULT_STEERING_MODE=approval_gate`;
 - `MESH_STATE_BACKEND=postgres`;
+- `MESH_OWNERSHIP_REGISTRY_PATH=/app/config/ownership.registry.json` or an equivalent reviewed registry path;
+- `MESH_RELEASE_PROVENANCE_PATH` pointing at the completed release packet for pilot and expansion profiles;
+- `MESH_POLICY_SIGNING_KEY` supplied through the deployment secret store;
 - explicit Kubernetes context and namespace allowlists before live execution;
 - unfinished feature-flag and incident adapters disabled unless replaced by certified real providers;
 - proposal lanes without kubeconfig, repository write, or actuator credentials.
+- external audit sink proof at `MESH_AUDIT_SINK_PROOF_PATH` before expansion or compliance reliance.
+- credential rotation proof matching the connector certification registry for every authority-bearing connector.
+- reviewed data-classification policy at `MESH_DATA_CLASSIFICATION_POLICY_PATH`.
+- reviewed source-input provenance at `MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH` before any agentic-operator fork enters runtime packaging.
 
 Compatibility posture:
 
@@ -88,6 +106,8 @@ Validation:
 MESH_SMOKE_BASE_URL=https://mesh.private.example ./scripts/prod_smoke.sh
 scripts/verify_authenticated_ingress.py --json
 scripts/generate_release_provenance.py --require-complete --json
+scripts/verify_pilot_signoff.py --go-no-go dist/pilot-go-no-go.json --build-output dist/pilot-signoff.json --operator-id "$MESH_SIGNOFF_OPERATOR_ID" --role approver --json
+scripts/verify_pilot_signoff.py --signoff dist/pilot-signoff.json --go-no-go dist/pilot-go-no-go.json --expected-release-provenance-sha "$MESH_RELEASE_PROVENANCE_SHA" --json
 ```
 
 `scripts/verify_authenticated_ingress.py` is a local app-level rehearsal. The deployed proxy still needs its own evidence for TLS, header stripping, and group mapping.
@@ -204,6 +224,7 @@ Active paths:
 - `docs/release-provenance.md`;
 - `docs/design-partner-packet.md`;
 - `scripts/verify_postgres_restart_proof.py`;
+- `scripts/verify_run_export_retrieval.py`;
 - `scripts/generate_release_provenance.py`;
 - `shared/mesh_runtime/schemas/`.
 
@@ -212,8 +233,13 @@ Deployment shape:
 - SSO-backed operator identity with separate viewer, launcher, approver, and admin groups;
 - Postgres-backed state and encrypted artifact storage;
 - external audit sink before compliance reliance;
-- release packet with image digest, base-image digest, SBOM, vulnerability scan, policy hashes, migration hashes, builder identity, and clean git tree;
+- run export packages and archives verified for checksum, redaction, Merkle proof, timeline proof, vault document retrieval, and retention metadata;
+- durable upload proof for run export package and archive, including matching hashes, byte counts, durable URIs, and restore-test evidence;
+- release packet with image digest, base-image digest, SBOM, vulnerability scan, CI attestation, policy hashes, migration hashes, builder identity, and clean git tree;
+- external audit sink proof with append-only receipt, run-export hash, Merkle root, runtime-secret service account boundary, rotation evidence, break-glass recording evidence, and retention window;
+- credential rotation proof for runtime-secret and read-only-secret connectors, including prior secret revocation, operator identity, evidence refs, and no raw secret material;
 - documented retention, redaction, and deletion controls.
+- data-classification verification for signals, logs, traces, model output, audit proof, and run exports.
 
 Current gap:
 

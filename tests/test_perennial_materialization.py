@@ -90,6 +90,33 @@ class PerennialMaterializationTests(unittest.TestCase):
         validate_payload("perennial/proof-envelope.schema.json", proof_envelope)
         validate_payload("perennial/governance-commit.schema.json", governance_commit)
 
+    def test_structured_ownership_boundary_payload_does_not_replace_perennial_boundary_enum(self) -> None:
+        event = _event(
+            "evt_ownership_boundary",
+            "run_ownership_boundary",
+            "ownership_boundary_recorded",
+            {
+                "data_boundary": {
+                    "classification": "operational",
+                    "export_allowed": True,
+                    "reservoir_refs": ["reservoir://tenant_a/search-runtime"],
+                },
+            },
+            status="captured",
+        )
+
+        action_record = materialize_agent_action_record(
+            event,
+            decision=_decision("dec_boundary", autonomy_tier="approval_required"),
+            evaluation=_evaluation("eval_boundary", final_recommendation="execute", blocking_reasons=[]),
+            tenant_id="tenant_a",
+            reservoir_refs=["reservoir://tenant_a/search-runtime"],
+        )
+
+        self.assertEqual(action_record["boundary"]["data_boundary"], "on_prem")
+        self.assertEqual(action_record["boundary"]["reservoir_refs"], ["reservoir://tenant_a/search-runtime"])
+        validate_payload("perennial/agent-action-record.schema.json", action_record)
+
     def test_denied_run_materializes_denial_reason_and_commit(self) -> None:
         run_export = _run_export(
             run_id="run_denied_shadow",

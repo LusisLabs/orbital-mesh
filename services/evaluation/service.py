@@ -15,6 +15,7 @@ from shared.mesh_runtime import (
     log_runtime_event,
     load_policy,
 )
+from shared.mesh_runtime.evidence_sufficiency import evaluate_evidence_sufficiency
 from shared.mesh_runtime.review_blockers import classify_blocking_reasons
 from shared.mesh_runtime.remediation_safety import evaluate_remediation_safety, safety_blocking_reason
 from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
@@ -170,6 +171,9 @@ class EvaluationService:
         if not systemd_ready:
             readiness_notes.extend(systemd_notes)
             blocking_reasons.extend(systemd_notes)
+        evidence_sufficiency = evaluate_evidence_sufficiency(trigger, decision)
+        if not evidence_sufficiency["passed"]:
+            blocking_reasons.append("evidence sufficiency gate did not pass")
 
         policy_passed = decision_allowed and system_allowed and action_allowed and (allow_rereevaluation or not duplicate_trigger)
         readiness_passed = (
@@ -270,6 +274,7 @@ class EvaluationService:
             "verifier": verifier_output,
             "business_rules": business_rules,
             "execution_readiness": execution_readiness,
+            "evidence_sufficiency": evidence_sufficiency,
             "remediation_safety": safety_case.to_dict(),
             "blocker_analysis": blocker_analysis,
         }

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/policy-lifecycle-manifest.schema.json",
+  "title": "PolicyLifecycleManifest",
+  "type": "object",
+  "required": [
+    "version",
+    "policies"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "policies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "owner",
+          "state",
+          "risk_tier",
+          "effective_from",
+          "review_expires_at",
+          "rollback_ref"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "dry-run",
+              "active",
+              "deprecated"
+            ]
+          },
+          "risk_tier": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          },
+          "effective_from": {
+            "type": "string"
+          },
+          "review_expires_at": {
+            "type": "string"
+          },
+          "rollback_ref": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -115,6 +115,7 @@ RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchai
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies
+COPY config ./config
 
 RUN chown -R mesh:mesh /app
 RUN chmod +x /usr/local/bin/compose_mesh_entrypoint.sh

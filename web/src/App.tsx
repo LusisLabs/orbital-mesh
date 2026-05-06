@@ -51,6 +51,7 @@ import {
 } from "./lib/runGraph";
 import type {
   BenchmarkRecord,
+  ConnectorCertificationPacket,
   DarkharnessPilotPacket,
   HealthSnapshot,
   KillSwitchStatus,
@@ -371,6 +372,7 @@ export default function App() {
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
+  const [connectorCertification, setConnectorCertification] = useState<ConnectorCertificationPacket | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
@@ -486,6 +488,7 @@ export default function App() {
         setSystemConnection("connected");
         setRuns(snapshot.runs);
         setReadiness(snapshot.readiness);
+        void api.getConnectorCertification(baseUrl).then(setConnectorCertification).catch(() => setConnectorCertification(null));
         void api.getWatchers(baseUrl).then(setWatchers).catch(() => setWatchers(null));
         if (!activeRunId && snapshot.runs.length > 0) {
           setActiveRunId(snapshot.runs[0].run_id);
@@ -608,6 +611,7 @@ export default function App() {
         serviceAgentsRes,
         trustLadderRes,
         killSwitchRes,
+        connectorCertificationRes,
         pilotPacketRes,
       ] = await Promise.all([
         boot(api.getHealth(baseUrl), null),
@@ -622,6 +626,7 @@ export default function App() {
         boot(api.getServiceAgents(baseUrl), { service_agents: [] }),
         boot(api.getTrustLadder(baseUrl), { entries: [] }),
         boot(api.getKillSwitch(baseUrl), null),
+        boot(api.getConnectorCertification(baseUrl), null),
         boot(api.getPilotGoNoGo(baseUrl), null),
       ]);
       if (!healthRes) {
@@ -639,6 +644,7 @@ export default function App() {
       setServiceAgents(serviceAgentsRes.service_agents);
       setTrustLadder(trustLadderRes.entries);
       setKillSwitchStatus(killSwitchRes);
+      setConnectorCertification(connectorCertificationRes);
       setPilotPacket(pilotPacketRes);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
@@ -1539,7 +1545,12 @@ export default function App() {
               onSteer={handleSteer}
             />
           ) : activeView === "integrations" ? (
-            <IntegrationsView connectors={integrationConnectors} readiness={readiness} watchers={watchers} />
+            <IntegrationsView
+              connectors={integrationConnectors}
+              readiness={readiness}
+              connectorCertification={connectorCertification}
+              watchers={watchers}
+            />
           ) : activeView === "control-plane" ? (
             <ControlPlaneView
               health={health}
@@ -2387,10 +2398,12 @@ function AgentsView({
 function IntegrationsView({
   connectors,
   readiness,
+  connectorCertification,
   watchers,
 }: {
   connectors: IntegrationConnectorSummary[];
   readiness: IntegrationReadiness | null;
+  connectorCertification: ConnectorCertificationPacket | null;
   watchers: WatcherStatus | null;
 }) {
   const groups = ["Web3", "Web2 Production", "Development", "Operations"] as const;
@@ -2418,7 +2431,7 @@ function IntegrationsView({
       ))}
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Connector Certification Matrix" />
-        <ConnectorCertificationMatrix readiness={readiness} />
+        <ConnectorCertificationMatrix readiness={readiness} certification={connectorCertification} />
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Connection Boundary" />
@@ -2680,23 +2693,44 @@ function ReadinessGateList({
   );
 }
 
-function ConnectorCertificationMatrix({ readiness }: { readiness: IntegrationReadiness | null }) {
-  const entries = Object.entries(readiness?.connector_certification ?? {});
+function ConnectorCertificationMatrix({
+  readiness,
+  certification,
+}: {
+  readiness: IntegrationReadiness | null;
+  certification: ConnectorCertificationPacket | null;
+}) {
+  const entries = Object.entries(certification?.connectors ?? readiness?.connector_certification ?? {});
   if (entries.length === 0) return <EmptyState text="No connector certification state returned by readiness." />;
   return (
     <div className="mesh-table-wrap">
       <table className="mesh-table">
-        <thead><tr><th>Connector</th><th>State</th><th>Required Before</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Connector</th><th>State</th><th>Authority</th><th>Credential Boundary</th><th>Scopes / Blockers</th></tr></thead>
         <tbody>
           {entries.map(([name, raw]) => {
             const item = asRecord(raw);
-            const state = toConnectorState(String(item.state ?? ""), "config-only");
+            const state = toConnectorState(String(item.state ?? item.certified_state ?? item.observed_state ?? ""), "config-only");
+            const connectorName = String(item.display_name ?? item.connector_id ?? name);
+            const authority = String(item.authority_posture ?? item.detail ?? "");
+            const credentialBoundary = connectorCredentialBoundarySummary(item.credential_boundary);
+            const scopes = stringList(item.allowed_scopes);
+            const blockers = stringList(item.blockers);
             return (
               <tr key={name}>
-                <td>{humanize(name)}</td>
+                <td>
+                  <strong>{connectorName}</strong>
+                  <small>{humanize(String(item.domain ?? name))}</small>
+                </td>
                 <td><StatusPill state={state} label={humanize(state)} /></td>
-                <td>{humanize(String(item.required_before ?? "unset"))}</td>
-                <td>{String(item.detail ?? "")}</td>
+                <td>
+                  <span>{authority || "Not recorded"}</span>
+                  <small>Before {humanize(String(item.required_before ?? "unset"))}</small>
+                </td>
+                <td>{credentialBoundary}</td>
+                <td>
+                  <span>{scopes.length ? scopes.join(", ") : "No scopes"}</span>
+                  <small>{blockers.length ? `Blocked: ${blockers.join(", ")}` : "No blockers"}</small>
+                </td>
               </tr>
             );
           })}
@@ -2704,6 +2738,22 @@ function ConnectorCertificationMatrix({ readiness }: { readiness: IntegrationRea
       </table>
     </div>
   );
+}
+
+function connectorCredentialBoundarySummary(value: unknown): string {
+  const boundary = asRecord(value);
+  if (Object.keys(boundary).length === 0) return "Not recorded";
+  const flags = [
+    boundary.production_actuator_credentials_allowed === true ? "actuator creds" : "no actuator creds",
+    boundary.repo_write_credentials_allowed === true ? "repo write" : "no repo write",
+    boundary.runtime_secret_mount_required === true ? "runtime mount" : null,
+    boundary.break_glass_recording_required === true ? "break-glass recorded" : null,
+  ].filter(Boolean);
+  return [
+    boundary.credential_mode,
+    boundary.service_account_ref,
+    flags.join(", "),
+  ].filter(Boolean).join(" / ");
 }
 
 function SimulatorView({
@@ -3305,7 +3355,7 @@ function FleetView({
         <SectionTitle icon={<Waves size={15} />} title="Watchers" />
         <div className="mesh-stack">
           {(watchers?.watchers ?? []).map((watcher) => (
-            <ConnectorRow key={watcher.name} name={watcher.name} detail={`${watcher.signal_source} / ${watcher.interval_seconds}s`} state={watcher.running ? "ready" : "degraded"} />
+            <ConnectorRow key={watcher.name} name={watcher.name} detail={watcherOwnerDetail(watcher)} state={watcher.running ? "ready" : "degraded"} />
           ))}
           {(!watchers || watchers.watchers.length === 0) ? <EmptyState text="No typed watchers registered." /> : null}
         </div>
@@ -3324,6 +3374,19 @@ function FleetView({
       </section>
     </div>
   );
+}
+
+function watcherOwnerDetail(watcher: WatcherStatus["watchers"][number]): string {
+  const owner = watcher.ownership?.owner?.display_name ?? watcher.ownership?.owner?.owner_id;
+  const resolved = watcher.ownership?.resolved_target_count ?? 0;
+  const total = watcher.ownership?.target_count ?? 0;
+  const target = watcher.ownership?.targets?.[0];
+  const escalation = typeof target?.escalation_route === "string" && target.escalation_route ? target.escalation_route : null;
+  const blockers = watcher.ownership?.blockers ?? [];
+  if (owner && escalation) return `${owner} / ${resolved}/${total} targets / ${escalation}`;
+  if (owner) return `${owner} / ${resolved}/${total} targets`;
+  if (blockers.length > 0) return `${watcher.signal_source} / ${blockers.join(", ")}`;
+  return `${watcher.signal_source} / ${watcher.interval_seconds}s`;
 }
 
 function AutomationView({
@@ -3776,13 +3839,55 @@ function DarkharnessPacketPanel({
   const governanceCommits = records?.governance_commits ?? [];
   const agentRecords = records?.agent_action_records ?? [];
   const reservoirs = records?.sensitive_reservoirs ?? [];
+  const runExports = evidence?.run_exports ?? [];
+  const proofEnvelopes = records?.proof_envelopes ?? [];
+  const implementedClaims = packet?.claim_boundary.implemented ?? [];
+  const proposedClaims = packet?.claim_boundary.proposed ?? [];
+  const notImplementedClaims = packet?.claim_boundary.not_implemented ?? [];
   const state: ConnectorState = !packet ? "disconnected" : packet.status === "blocked" ? "degraded" : "ready";
   const statusLabel = !packet ? "Unavailable" : packet.status === "blocked" ? "Blocked" : "Packet ready";
+  const boundaryPasses =
+    packet?.boundaries.raw_reservoir_egress === "deny" &&
+    packet.boundaries.external_model_calls === "deny" &&
+    packet.boundaries.production_actions_approval_required === true;
+  const checkedValues = Object.values(packet?.checks ?? {});
+  const capabilityRows: Array<{ name: string; detail: string; state: ConnectorState }> = [
+    {
+      name: "Evidence capture",
+      detail: `${runExports.length} run exports, ${merkleProofs.length} Merkle proofs, ${missingEvidence.length} blockers`,
+      state: !packet ? "disconnected" : runExports.length > 0 && merkleProofs.length > 0 && missingEvidence.length === 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Action gate exercise",
+      detail: `${allowedProofs.length} allowed proofs, ${deniedProofs.length} denied proofs, ${governanceCommits.length} governance commits`,
+      state: !packet ? "disconnected" : allowedProofs.length > 0 && governanceCommits.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Boundary enforcement",
+      detail: `Raw egress ${packet?.boundaries.raw_reservoir_egress ?? "unavailable"}, external models ${packet?.boundaries.external_model_calls ?? "unavailable"}, approval ${packet ? String(packet.boundaries.production_actions_approval_required) : "unavailable"}`,
+      state: !packet ? "disconnected" : boundaryPasses ? "ready" : "degraded",
+    },
+    {
+      name: "Perennial record materialization",
+      detail: `${reservoirs.length} reservoirs, ${agentRecords.length} agent actions, ${proofEnvelopes.length} proof envelopes`,
+      state: !packet ? "disconnected" : reservoirs.length > 0 && agentRecords.length > 0 && proofEnvelopes.length > 0 ? "ready" : "config-only",
+    },
+    {
+      name: "Claim separation",
+      detail: `${implementedClaims.length} implemented, ${proposedClaims.length} proposed, ${notImplementedClaims.length} not implemented`,
+      state: !packet ? "disconnected" : implementedClaims.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Policy checks",
+      detail: `${checkedValues.filter(Boolean).length} observed, ${checkedValues.filter((passed) => !passed).length} missing`,
+      state: !packet ? "disconnected" : checkedValues.length === 0 || checkedValues.every(Boolean) ? "ready" : "degraded",
+    },
+  ];
   return (
     <div className={compact ? "darkharness-panel compact" : "mesh-detail-grid darkharness-panel"} data-testid="darkharness-packet-panel">
       <section className="context-panel">
         <div className="mesh-section-header">
-          <SectionTitle icon={<ShieldCheck size={14} />} title="Darkharness Packet" />
+          <SectionTitle icon={<ShieldCheck size={14} />} title="Dark Harness Packet" />
           <StatusPill state={state} label={statusLabel} />
         </div>
         <div className="context-stat-grid">
@@ -3792,6 +3897,14 @@ function DarkharnessPacketPanel({
           <ContextStat label="Denied proof" value={String(deniedProofs.length)} />
           <ContextStat label="Merkle proofs" value={String(merkleProofs.length)} />
           <ContextStat label="Missing evidence" value={String(missingEvidence.length)} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<SlidersHorizontal size={14} />} title="Harness Capabilities" />
+        <div className="mesh-stack">
+          {capabilityRows.map((row) => (
+            <ConnectorRow key={row.name} name={row.name} detail={row.detail} state={row.state} />
+          ))}
         </div>
       </section>
       <section className="context-panel">
@@ -3827,8 +3940,8 @@ function DarkharnessPacketPanel({
           {missingEvidence.map((item) => (
             <ConnectorRow key={item} name={humanize(item)} detail="Packet eligibility blocker" state="degraded" />
           ))}
-          {packet && missingEvidence.length === 0 ? <EmptyState text="No missing evidence in the Darkharness packet." /> : null}
-          {!packet ? <EmptyState text="No Darkharness packet is available for the selected run." /> : null}
+          {packet && missingEvidence.length === 0 ? <EmptyState text="No missing evidence in the Dark Harness packet." /> : null}
+          {!packet ? <EmptyState text="No Dark Harness packet is available for the selected run." /> : null}
         </div>
       </section>
       <section className="context-panel">
@@ -3844,9 +3957,9 @@ function DarkharnessPacketPanel({
       </section>
       <section className="context-panel">
         <SectionTitle icon={<FolderGit2 size={14} />} title="Claim Boundary" />
-        <ClaimBoundaryList title="Implemented" items={packet?.claim_boundary.implemented ?? []} state="ready" />
-        <ClaimBoundaryList title="Proposed" items={packet?.claim_boundary.proposed ?? []} state="config-only" />
-        <ClaimBoundaryList title="Not implemented" items={packet?.claim_boundary.not_implemented ?? []} state="degraded" />
+        <ClaimBoundaryList title="Implemented" items={implementedClaims} state="ready" />
+        <ClaimBoundaryList title="Proposed" items={proposedClaims} state="config-only" />
+        <ClaimBoundaryList title="Not implemented" items={notImplementedClaims} state="degraded" />
       </section>
       <section className="context-panel">
         <SectionTitle icon={<BookOpen size={14} />} title="Perennial Records" />
@@ -5189,6 +5302,8 @@ function runDetailTabLabel(tab: RunDetailTab) {
       return "Review gates";
     case "actions":
       return "Steering";
+    case "darkharness":
+      return "Dark Harness";
     default:
       return humanize(tab);
   }

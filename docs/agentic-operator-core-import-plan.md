@@ -58,6 +58,10 @@ The durable product claim is narrower and stronger: Orbital Mesh is a governed r
    - Record source commit, license, file list, and imported paths before copying code.
    - Preserve Apache-2.0 notices where code is copied.
    - Mark the current `agentic-operator-core-main/` tree as source input, not active runtime.
+   - Current machine-checkable record: `config/agentic-operator-source.provenance.json`.
+   - Current verifier: `scripts/verify_agentic_operator_source_provenance.py --json`.
+   - Current source commit status: unavailable in the imported snapshot; the verifier binds the source input to a full-tree `source_snapshot_sha256` and fails if the snapshot changes without manifest review.
+   - Staging readiness reports `agentic_operator_source_provenance_recorded`.
 
 2. **Schema fork**
    - Create Orbital Mesh CRD schemas for `MeshAgentWorkload` and tenant/boundary objects.

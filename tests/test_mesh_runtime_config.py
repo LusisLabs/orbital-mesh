@@ -9,9 +9,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.mesh_runtime.config import (
+    DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH,
     DEFAULT_CORPUS_DATABASE_PATH,
+    DEFAULT_DATA_CLASSIFICATION_POLICY_PATH,
+    DEFAULT_FAILURE_MODE_LIBRARY_PATH,
+    DEFAULT_ON_CALL_DRILL_PATH,
     DEFAULT_RESEARCH_DIRECTORY,
     DEFAULT_STATE_DIRECTORY,
+    DEFAULT_THREAT_MODEL_REGISTER_PATH,
     RuntimeConfig,
 )
 from shared.mesh_runtime.state import parse_state_json_file
@@ -94,6 +99,61 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertTrue(Path(cfg.corpus_database_path).is_absolute())
         self.assertEqual(Path(cfg.corpus_database_path), DEFAULT_CORPUS_DATABASE_PATH.resolve())
         self.assertEqual(cfg.corpus_memory_projection_limit, 123)
+
+    def test_on_call_drill_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_ON_CALL_DRILL_PATH": ".mesh-runtime-state/on-call-drill.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.on_call_drill_path)
+        assert cfg.on_call_drill_path is not None
+        self.assertTrue(Path(cfg.on_call_drill_path).is_absolute())
+        self.assertEqual(Path(cfg.on_call_drill_path), DEFAULT_ON_CALL_DRILL_PATH.resolve())
+
+    def test_failure_mode_library_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_FAILURE_MODE_LIBRARY_PATH": "config/failure-mode.library.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.failure_mode_library_path).is_absolute())
+        self.assertEqual(Path(cfg.failure_mode_library_path), DEFAULT_FAILURE_MODE_LIBRARY_PATH.resolve())
+
+    def test_threat_model_register_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_THREAT_MODEL_REGISTER_PATH": "config/threat-model.register.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.threat_model_register_path).is_absolute())
+        self.assertEqual(Path(cfg.threat_model_register_path), DEFAULT_THREAT_MODEL_REGISTER_PATH.resolve())
+
+    def test_data_classification_policy_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DATA_CLASSIFICATION_POLICY_PATH": "config/data-classification.policy.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.data_classification_policy_path).is_absolute())
+        self.assertEqual(Path(cfg.data_classification_policy_path), DEFAULT_DATA_CLASSIFICATION_POLICY_PATH.resolve())
+
+    def test_agentic_operator_source_provenance_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH": "config/agentic-operator-source.provenance.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.agentic_operator_source_provenance_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.agentic_operator_source_provenance_path),
+            DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH.resolve(),
+        )
 
     def test_darkharness_registry_env_is_repo_anchored(self) -> None:
         with patch.dict(

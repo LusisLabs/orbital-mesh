@@ -66,6 +66,11 @@ from shared.mesh_runtime import (
     MEMORY_COMPACTION_RECORDED,
     NORMALIZED_EVENT,
     NO_TRIGGER,
+    OPERATOR_HANDOFF_RECORDED,
+    OVERRIDE_REVIEW_RECORDED,
+    OWNERSHIP_BOUNDARY_RECORDED,
+    POSTMORTEM_REVIEW_RECORDED,
+    RUN_ADMISSION_RECORDED,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -80,6 +85,9 @@ from shared.mesh_runtime import (
     ExecutionRecord,
     EvaluationResult,
     Trigger,
+    build_operator_handoff,
+    build_override_review,
+    build_postmortem_review,
     load_fixture,
 )
 from shared.mesh_runtime.perennial import (
@@ -108,8 +116,16 @@ from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.on_call_drill import verify_on_call_drill
 from shared.mesh_runtime.integrations import resolve_integrations_config
+from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
+from shared.mesh_runtime.failure_modes import build_failure_mode_library_packet
+from shared.mesh_runtime.watcher_ownership import build_watcher_ownership_packet
+from shared.mesh_runtime.timeline_proof import build_timeline_proof
 from shared.mesh_runtime.learning import LearningStore
+from shared.mesh_runtime.ownership import build_ownership_boundary
+from shared.mesh_runtime.policy_lifecycle import build_policy_lifecycle_packet
+from shared.mesh_runtime.run_admission import build_run_admission, build_target_lock_key
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 from shared.mesh_runtime.corpus_store import CorpusQuery, IncidentCorpusDatabase, project_database_to_memory
 from shared.mesh_runtime.reasoning_bank import ReasoningBankService
@@ -136,6 +152,9 @@ ALLOWED_STEERING_COMMANDS = {
     "explain_blockers",
     "chat_with_hermes",
     "attach_note",
+    "handoff",
+    "override_review",
+    "postmortem_review",
     "launch_evo",
 }
 
@@ -266,10 +285,10 @@ def _validate_steering_command(session: RunSession, command_type: str, command_p
     if session.stage in TERMINAL_STAGES:
         if command_type == "launch_evo" and session.stage == "completed":
             return
-        if command_type != "attach_note":
+        if command_type not in {"attach_note", "override_review", "postmortem_review"}:
             raise ValueError(
                 f"steering command {command_type!r} is not allowed after run is {session.stage!r}; "
-                "only attach_note is permitted."
+                "only attach_note, override_review, and postmortem_review are permitted."
             )
         return
     if command_type == "launch_evo":
@@ -422,6 +441,9 @@ class RunCoordinator:
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._active_target_locks: dict[str, str] = {}
+        self._run_target_locks: dict[str, str] = {}
+        self._run_tenants: dict[str, str] = {}
         self._agent_task_threads: dict[str, threading.Thread] = {}
         self._run_worker_stop = threading.Event()
         self._run_queue: queue.Queue[tuple[str, RuntimeConfig, dict[str, Any], str | None]] = queue.Queue(
@@ -542,7 +564,25 @@ class RunCoordinator:
     # ---- new /api/watchers surface ---------------------------------------
 
     def watchers_status(self) -> dict[str, Any]:
-        return self.watcher_registry.status()
+        status = self.watcher_registry.status()
+        ownership = self.build_watcher_ownership(status)
+        ownership_by_name = {
+            str(watcher.get("name")): watcher
+            for watcher in ownership.get("watchers", [])
+            if isinstance(watcher, dict)
+        }
+        for watcher in status.get("watchers", []):
+            if isinstance(watcher, dict):
+                watcher["ownership"] = ownership_by_name.get(str(watcher.get("name")))
+        status["ownership"] = ownership
+        return status
+
+    def build_watcher_ownership(self, watcher_status: dict[str, Any] | None = None) -> dict[str, Any]:
+        return build_watcher_ownership_packet(
+            registry_path=self.config.ownership_registry_path,
+            watcher_status=watcher_status or self.watcher_registry.status(),
+            default_environment=self.config.environment,
+        )
 
     def watcher_start(self, name: str) -> dict[str, Any]:
         self.watcher_registry.start(name)
@@ -606,6 +646,19 @@ class RunCoordinator:
             "signal_source": watcher.signal_source,
             "interval_seconds": watcher.interval_seconds,
             "detail": watcher.status(),
+            "ownership": self.build_watcher_ownership(
+                {
+                    "watchers": [
+                        {
+                            "name": name,
+                            "signal_source": watcher.signal_source,
+                            "interval_seconds": watcher.interval_seconds,
+                            "running": self.watcher_registry.is_running(name),
+                            "detail": watcher.status(),
+                        }
+                    ]
+                }
+            )["watchers"][0],
         }
 
     # --- Infra graph --------------------------------------------------
@@ -714,6 +767,36 @@ class RunCoordinator:
             self._readiness_cache = (now, readiness)
         return readiness
 
+    def build_policy_lifecycle(self) -> dict[str, Any]:
+        return build_policy_lifecycle_packet(
+            manifest_path=self.config.policy_lifecycle_manifest_path,
+            signing_key=self.config.policy_signing_key,
+            signing_key_id=self.config.policy_signing_key_id,
+        )
+
+    def build_connector_certification(self) -> dict[str, Any]:
+        readiness = self.build_readiness()
+        runtime_states = readiness.get("connector_certification")
+        return build_connector_certification_matrix(
+            registry_path=self.config.connector_certification_registry_path,
+            runtime_states=runtime_states if isinstance(runtime_states, dict) else {},
+        )
+
+    def build_failure_mode_library(self) -> dict[str, Any]:
+        return build_failure_mode_library_packet(self.config.failure_mode_library_path)
+
+    def build_timeline_proof(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        events = self.state_store.list_run_events(run_id)
+        return build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=session.latest_event_id,
+        )
+
     def simulate_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
         signal_payload, source = self._resolve_policy_simulation_signal(payload)
         from services.decision.service import DecisionService
@@ -774,6 +857,8 @@ class RunCoordinator:
 
     def generate_pilot_go_no_go(self) -> dict[str, Any]:
         readiness = self.build_readiness()
+        release_provenance = self._release_provenance_record(readiness)
+        on_call_drill = self._on_call_drill_record(readiness)
         runs = self.state_store.list_run_sessions(limit=100)
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
         event_sets = {
@@ -831,6 +916,10 @@ class RunCoordinator:
             "mesh_brain_live_canary_smoke_observed": bool(live_smoke_runs),
             "mesh_brain_single_crops_canary_lane_observed": len(live_smoke_lanes) == 1 and live_smoke_lanes[0][1] == "crops",
             "mesh_brain_rollback_drill_observed": bool(rollback_drill_runs),
+            "release_provenance_complete": release_provenance.get("required") is False
+            or release_provenance.get("status") == "complete",
+            "on_call_drill_verified": on_call_drill.get("required") is False
+            or on_call_drill.get("status") == "pass",
             "rollback_plan_observed": any(
                 isinstance(session.artifacts.get("decision"), dict)
                 and bool(session.artifacts["decision"].get("execution_plan", {}).get("rollback_plan"))
@@ -859,7 +948,87 @@ class RunCoordinator:
                 ],
                 "mesh_brain_rollback_drill_run_ids": [session.run_id for session in rollback_drill_runs],
             },
+            "release_provenance": release_provenance,
+            "on_call_drill": on_call_drill,
         }
+
+    def _release_provenance_record(self, readiness: dict[str, Any]) -> dict[str, Any]:
+        profile = readiness.get("profile") if isinstance(readiness.get("profile"), str) else self.config.readiness_profile
+        required = profile in {"pilot", "expansion"}
+        raw_path = self.config.release_provenance_path
+        path = Path(raw_path)
+        exists = path.exists() and path.is_file()
+        record: dict[str, Any] = {
+            "required": required,
+            "path": raw_path,
+            "exists": exists,
+            "status": "not_required" if not required else "missing",
+            "packet_sha256": None,
+            "missing": [],
+        }
+        if not required:
+            return record
+        if not exists:
+            record["missing"] = ["release_provenance_path"]
+            return record
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            record["status"] = "invalid"
+            record["missing"] = ["release_provenance_json"]
+            return record
+        if not isinstance(payload, dict):
+            record["status"] = "invalid"
+            record["missing"] = ["release_provenance_json"]
+            return record
+        record["schema_version"] = payload.get("schema_version") if isinstance(payload.get("schema_version"), str) else None
+        record["status"] = payload.get("status") if isinstance(payload.get("status"), str) else "invalid"
+        record["packet_sha256"] = payload.get("packet_sha256") if isinstance(payload.get("packet_sha256"), str) else None
+        missing = payload.get("missing")
+        record["missing"] = list(missing) if isinstance(missing, list) else []
+        if record["schema_version"] != "mesh.release_provenance.v1":
+            record["status"] = "invalid"
+            record["missing"] = [*record["missing"], "schema_version:mesh.release_provenance.v1"]
+        elif record["status"] != "complete":
+            record["status"] = "incomplete"
+        return record
+
+    def _on_call_drill_record(self, readiness: dict[str, Any]) -> dict[str, Any]:
+        profile = readiness.get("profile") if isinstance(readiness.get("profile"), str) else self.config.readiness_profile
+        required = profile in {"pilot", "expansion"}
+        raw_path = self.config.on_call_drill_path or ""
+        path = Path(raw_path) if raw_path else None
+        exists = bool(path and path.exists() and path.is_file())
+        record: dict[str, Any] = {
+            "required": required,
+            "path": raw_path or None,
+            "exists": exists,
+            "status": "not_required" if not required else "missing",
+            "drill_id": None,
+            "missing": [],
+        }
+        if not required:
+            return record
+        if not raw_path:
+            record["missing"] = ["on_call_drill_path"]
+            return record
+        verification = verify_on_call_drill(raw_path)
+        record.update(
+            {
+                "status": verification.get("status") if isinstance(verification.get("status"), str) else "fail",
+                "schema_version": verification.get("schema_version"),
+                "drill_id": verification.get("drill_id"),
+                "environment": verification.get("environment"),
+                "checks": verification.get("checks") if isinstance(verification.get("checks"), dict) else {},
+                "error": verification.get("error"),
+            }
+        )
+        record["missing"] = [
+            name
+            for name, passed in cast(dict[str, bool], record.get("checks", {})).items()
+            if not passed
+        ]
+        return record
 
     @staticmethod
     def _mesh_brain_model_kernel_gate_passed(record: Any) -> bool:
@@ -1121,6 +1290,12 @@ class RunCoordinator:
         merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
         proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
         proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        timeline_proof = build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=proof_event_id,
+        )
         artifacts = _redact_run_export_value(session.artifacts)
         event_dicts = [_redact_run_export_value(event.to_dict()) for event in events]
         session_dict = _redact_run_export_value(session.to_dict())
@@ -1140,8 +1315,12 @@ class RunCoordinator:
             "execution_record": copy.deepcopy(artifacts.get("execution")),
             "feedback_record": copy.deepcopy(artifacts.get("feedback")),
             "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
+            "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
+            "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
             "operator_notes": _redact_run_export_value(list(session.operator_notes)),
             "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "timeline_proof": timeline_proof,
             "vault_documents": vault_documents,
             "checks": {
                 "timeline_present": bool(events),
@@ -1206,6 +1385,12 @@ class RunCoordinator:
         merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
         proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
         proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        timeline_proof = build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=proof_event_id,
+        )
         artifacts = _redact_run_export_value(session.artifacts)
         generated_at = _timestamp()
         package: dict[str, Any] = {
@@ -1221,8 +1406,12 @@ class RunCoordinator:
             "execution_record": copy.deepcopy(artifacts.get("execution")),
             "feedback_record": copy.deepcopy(artifacts.get("feedback")),
             "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
+            "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
+            "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
             "operator_notes": _redact_run_export_value(list(session.operator_notes)),
             "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "timeline_proof": timeline_proof,
             "vault_documents": self._run_export_vault_documents(run_id),
             "checks": {
                 "timeline_present": bool(events),
@@ -1717,7 +1906,12 @@ class RunCoordinator:
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
-        artifacts = {"input_signal": signal_payload}
+        ownership_boundary = build_ownership_boundary(
+            registry_path=self.config.ownership_registry_path,
+            signal_payload=signal_payload,
+            default_environment=self.config.environment,
+        )
+        artifacts = {"input_signal": signal_payload, "ownership_boundary": ownership_boundary}
         if operator is not None:
             artifacts["operator"] = operator
         if payload.get("chaos_probe") is True:
@@ -1736,10 +1930,53 @@ class RunCoordinator:
             orchestration_mode=run_config.orchestration_mode,
             artifacts=artifacts,
         )
+        target_lock_enabled = self.config.kubernetes_live_execution_enabled or payload.get("require_target_lock") is True
+        admission = self._build_run_admission(
+            session.run_id,
+            ownership_boundary,
+            enforce_target_lock=target_lock_enabled,
+        )
+        self._set_artifact(session.run_id, "run_admission", admission)
+        if admission["decision"] != "admitted":
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="blocked",
+                event_type=RUN_ADMISSION_RECORDED,
+                payload=admission,
+                summary={"status": "blocked", "blockers": admission["blockers"]},
+                artifact_key="run_admission",
+                status="blocked",
+            )
+            self._update_session(
+                session.run_id,
+                stage="failed",
+                status="failed",
+                pending_pause_stage=None,
+                error="; ".join(admission["blockers"]),
+            )
+            return self.get_run(session.run_id) or session.to_dict()
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
+            self._run_tenants[session.run_id] = admission["tenant_id"]
+            self._run_target_locks[session.run_id] = admission["target_lock_key"]
+            if target_lock_enabled:
+                self._active_target_locks[admission["target_lock_key"]] = session.run_id
         readiness_snapshot = build_readiness(run_config).to_dict()
         self._set_artifact(session.run_id, "integration_readiness", readiness_snapshot)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_ADMISSION_RECORDED,
+            payload=admission,
+            summary={
+                "status": "admitted",
+                "tenant_id": admission["tenant_id"],
+                "target_lock_key": admission["target_lock_key"],
+                "queue_depth": admission["queue"]["current_depth"],
+            },
+            artifact_key="run_admission",
+            status="admitted",
+        )
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
@@ -1757,6 +1994,22 @@ class RunCoordinator:
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
+            event_type=OWNERSHIP_BOUNDARY_RECORDED,
+            payload=ownership_boundary,
+            summary={
+                "resolved": ownership_boundary["resolved"],
+                "service": ownership_boundary["service"],
+                "namespace": ownership_boundary["namespace"],
+                "tenant_id": ownership_boundary["tenant_id"],
+                "customer_boundary": ownership_boundary["customer_boundary"],
+                "owner_id": ownership_boundary["owner"].get("owner_id"),
+            },
+            artifact_key="ownership_boundary",
+            status="captured" if ownership_boundary["resolved"] else "blocked",
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
             event_type=INTEGRATION_READINESS_RECORDED,
             payload=readiness_snapshot,
             summary={
@@ -1770,6 +2023,7 @@ class RunCoordinator:
         try:
             self._run_queue.put_nowait((session.run_id, run_config, signal_payload, scenario_key))
         except queue.Full:
+            self._release_run_admission(session.run_id)
             self.state_store.append_run_event(
                 session.run_id,
                 stage="failed",
@@ -2264,14 +2518,16 @@ class RunCoordinator:
         # case and raises ValueError, which the HTTP handler maps to
         # 400. Order matters here.
         _validate_steering_command(session, command_type, command_payload)
-        control = self._get_control(run_id)
-        if control is None:
-            # Session exists, validation passed (so the run is
-            # non-terminal AND the command is valid for the stage),
-            # but no live control. This is a narrow race during the
-            # reaper window for non-terminal runs; surface as 404 so
-            # the operator retries.
-            raise KeyError(run_id)
+        override_review = (
+            self._build_override_review_record(run_id, session, command_payload, operator, related_event_id=None)
+            if command_type == "override_review"
+            else None
+        )
+        postmortem_review = (
+            self._build_postmortem_review_record(run_id, session, command_payload, operator, related_event_id=None)
+            if command_type == "postmortem_review"
+            else None
+        )
         command = SteeringCommand(
             command_id=f"cmd_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{len(session.operator_notes) + 1}",
             run_id=run_id,
@@ -2288,17 +2544,41 @@ class RunCoordinator:
             artifact_key="operator_command",
             status="received",
         )
-        self.state_store.record_approval(
-            run_id,
-            {
-                "event_id": command_event.event_id,
-                "command_id": command.command_id,
-                "command_type": command.command_type,
-                "issued_at": command.issued_at,
-                "payload": command.payload,
-                "operator": operator,
-            },
-        )
+        if command_type == "override_review":
+            assert override_review is not None
+            override_review["related_event_id"] = command_event.event_id
+            self._save_override_review(run_id, session, override_review)
+            return self.get_run(run_id) or session.to_dict()
+        if command_type == "postmortem_review":
+            assert postmortem_review is not None
+            postmortem_review["related_event_id"] = command_event.event_id
+            self._save_postmortem_review(run_id, session, postmortem_review)
+            return self.get_run(run_id) or session.to_dict()
+        if command_type == "attach_note" and command.payload.get("note"):
+            session.operator_notes.append(command.payload["note"])
+            session.updated_at = _timestamp()
+            self.state_store.save_run_session(session)
+            return self.get_run(run_id) or session.to_dict()
+        control = self._get_control(run_id)
+        if control is None:
+            # Session exists, validation passed (so the run is
+            # non-terminal AND the command is valid for the stage),
+            # but no live control. This is a narrow race during the
+            # reaper window for non-terminal runs; surface as 404 so
+            # the operator retries.
+            raise KeyError(run_id)
+        if command_type in {"approve", "resume", "override_decision", "override_execution_parameters"}:
+            self.state_store.record_approval(
+                run_id,
+                {
+                    "event_id": command_event.event_id,
+                    "command_id": command.command_id,
+                    "command_type": command.command_type,
+                    "issued_at": command.issued_at,
+                    "payload": command.payload,
+                    "operator": operator,
+                },
+            )
         if command_type == "launch_evo":
             self._launch_evo(run_id, session, command_payload)
             return self.get_run(run_id) or session.to_dict()
@@ -2308,14 +2588,202 @@ class RunCoordinator:
         if command_type == "chat_with_hermes":
             self._chat_with_hermes(run_id, session, str(command_payload.get("message", "")).strip())
             return self.get_run(run_id) or session.to_dict()
-        if command_type == "attach_note" and command.payload.get("note"):
-            session.operator_notes.append(command.payload["note"])
-            session.updated_at = _timestamp()
-            self.state_store.save_run_session(session)
+        if command_type == "handoff":
+            self._record_operator_handoff(run_id, session, command_payload, operator, command_event.event_id)
         with control.condition:
             control.commands.append(command)
             control.condition.notify_all()
         return self.get_run(run_id) or session.to_dict()
+
+    def _build_override_review_record(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str | None,
+    ) -> dict[str, Any]:
+        reviews = session.artifacts.get("override_reviews")
+        review_index = len(reviews) + 1 if isinstance(reviews, list) else 1
+        return build_override_review(
+            run_id=run_id,
+            review_id=f"override_review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{review_index}",
+            reviewer=operator,
+            override_command=self._select_override_command_for_review(run_id, payload),
+            verdict=str(payload.get("verdict") or "needs_followup"),
+            reason=str(payload.get("reason") or ""),
+            findings=payload.get("findings") if isinstance(payload.get("findings"), list) else [],
+            action_items=payload.get("action_items") if isinstance(payload.get("action_items"), list) else [],
+            related_event_id=related_event_id,
+        )
+
+    def _select_override_command_for_review(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        override_event_id = str(payload.get("override_event_id") or "").strip()
+        override_command_id = str(payload.get("command_id") or payload.get("override_command_id") or "").strip()
+        matching_events = []
+        for event in self.state_store.list_run_events(run_id):
+            if event.event_type != STEERING_COMMAND:
+                continue
+            event_payload = event.payload if isinstance(event.payload, dict) else {}
+            command_type = str(event_payload.get("command_type") or "").strip()
+            if command_type not in _STEERING_DECISION_COMMANDS:
+                continue
+            command_id = str(event_payload.get("command_id") or "").strip()
+            if override_event_id and event.event_id != override_event_id:
+                continue
+            if override_command_id and command_id != override_command_id:
+                continue
+            operator = event_payload.get("operator") if isinstance(event_payload.get("operator"), dict) else {}
+            matching_events.append(
+                {
+                    "event_id": event.event_id,
+                    "command_id": command_id,
+                    "command_type": command_type,
+                    "issued_at": str(event_payload.get("issued_at") or event.recorded_at),
+                    "operator_id": operator.get("operator_id") if isinstance(operator.get("operator_id"), str) else None,
+                }
+            )
+        if matching_events:
+            return matching_events[-1]
+        if override_event_id or override_command_id:
+            raise ValueError("override review target command was not found")
+        raise ValueError("override review requires a prior override command")
+
+    def _save_override_review(
+        self,
+        run_id: str,
+        session: RunSession,
+        review: dict[str, Any],
+    ) -> None:
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("override_reviews")
+        if isinstance(existing, list):
+            existing.append(review)
+        else:
+            session.artifacts["override_reviews"] = [review]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=OVERRIDE_REVIEW_RECORDED,
+            payload=review,
+            summary={
+                "review_id": review["review_id"],
+                "reviewer_id": review["reviewer"]["operator_id"],
+                "override_event_id": review["override_command"]["event_id"],
+                "verdict": review["verdict"],
+                "independent_reviewer": review["independent_reviewer"],
+            },
+            artifact_key="override_review",
+            status=review["verdict"],
+        )
+
+    def _build_postmortem_review_record(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str | None,
+    ) -> dict[str, Any]:
+        reviews = session.artifacts.get("postmortem_reviews")
+        review_index = len(reviews) + 1 if isinstance(reviews, list) else 1
+        launcher = session.artifacts.get("operator") if isinstance(session.artifacts.get("operator"), dict) else {}
+        run_export = session.artifacts.get("run_export_package") if isinstance(session.artifacts.get("run_export_package"), dict) else {}
+        return build_postmortem_review(
+            run_id=run_id,
+            review_id=f"postmortem_review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{review_index}",
+            reviewer=operator,
+            launcher_operator_id=launcher.get("operator_id") if isinstance(launcher.get("operator_id"), str) else None,
+            verdict=str(payload.get("verdict") or "needs_followup"),
+            findings=payload.get("findings") if isinstance(payload.get("findings"), list) else [],
+            action_items=payload.get("action_items") if isinstance(payload.get("action_items"), list) else [],
+            reviewed_export_id=str(payload.get("reviewed_export_id") or run_export.get("export_id") or "").strip() or None,
+            reviewed_package_sha256=str(
+                payload.get("reviewed_package_sha256") or run_export.get("package_sha256") or ""
+            ).strip() or None,
+            related_event_id=related_event_id,
+        )
+
+    def _save_postmortem_review(
+        self,
+        run_id: str,
+        session: RunSession,
+        review: dict[str, Any],
+    ) -> None:
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("postmortem_reviews")
+        if isinstance(existing, list):
+            existing.append(review)
+        else:
+            session.artifacts["postmortem_reviews"] = [review]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=POSTMORTEM_REVIEW_RECORDED,
+            payload=review,
+            summary={
+                "review_id": review["review_id"],
+                "reviewer_id": review["reviewer"]["operator_id"],
+                "verdict": review["verdict"],
+                "independent_reviewer": review["independent_reviewer"],
+            },
+            artifact_key="postmortem_review",
+            status=review["verdict"],
+        )
+
+    def _record_operator_handoff(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str,
+    ) -> None:
+        handoffs = session.artifacts.get("operator_handoffs")
+        handoff_index = len(handoffs) + 1 if isinstance(handoffs, list) else 1
+        to_operator_id = str(payload.get("to_operator_id") or "").strip()
+        to_roles = payload.get("to_roles") if isinstance(payload.get("to_roles"), list) else []
+        handoff = build_operator_handoff(
+            run_id=run_id,
+            from_operator=operator,
+            to_operator={
+                "operator_id": to_operator_id,
+                "roles": to_roles,
+                "source": str(payload.get("to_operator_source") or "operator_handoff"),
+            },
+            reason=str(payload.get("reason") or ""),
+            next_action=str(payload.get("next_action") or ""),
+            urgency=str(payload.get("urgency") or "normal"),
+            due_at=payload.get("due_at") if isinstance(payload.get("due_at"), str) else None,
+            handoff_id=f"handoff_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{handoff_index}",
+            related_event_id=related_event_id,
+        )
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("operator_handoffs")
+        if isinstance(existing, list):
+            existing.append(handoff)
+        else:
+            session.artifacts["operator_handoffs"] = [handoff]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=OPERATOR_HANDOFF_RECORDED,
+            payload=handoff,
+            summary={
+                "handoff_id": handoff["handoff_id"],
+                "from_operator_id": handoff["from_operator"]["operator_id"],
+                "to_operator_id": handoff["to_operator"]["operator_id"],
+                "urgency": handoff["urgency"],
+            },
+            artifact_key="operator_handoff",
+            status="open",
+        )
 
     def _execute_run(
         self,
@@ -2825,6 +3293,41 @@ class RunCoordinator:
         with self._lock:
             self._threads.pop(run_id, None)
             self.controls.pop(run_id, None)
+            self._run_tenants.pop(run_id, None)
+            target_lock_key = self._run_target_locks.pop(run_id, None)
+            if target_lock_key and self._active_target_locks.get(target_lock_key) == run_id:
+                self._active_target_locks.pop(target_lock_key, None)
+
+    def _build_run_admission(
+        self,
+        run_id: str,
+        ownership_boundary: dict[str, Any],
+        *,
+        enforce_target_lock: bool,
+    ) -> dict[str, Any]:
+        target_lock_key = build_target_lock_key(ownership_boundary)
+        tenant_id = str(ownership_boundary.get("tenant_id") or "unknown")
+        with self._lock:
+            target_lock_holder = self._active_target_locks.get(target_lock_key) if enforce_target_lock else None
+            tenant_active_runs = sum(1 for item in self._run_tenants.values() if item == tenant_id)
+            queue_depth = self._run_queue.qsize()
+        return build_run_admission(
+            run_id=run_id,
+            ownership_boundary=ownership_boundary,
+            queue_depth=queue_depth,
+            queue_size=self.config.run_queue_size,
+            worker_count=self.config.run_worker_count,
+            tenant_active_runs=tenant_active_runs,
+            tenant_active_run_quota=self.config.tenant_active_run_quota,
+            target_lock_holder=target_lock_holder,
+        )
+
+    def _release_run_admission(self, run_id: str) -> None:
+        with self._lock:
+            self._run_tenants.pop(run_id, None)
+            target_lock_key = self._run_target_locks.pop(run_id, None)
+            if target_lock_key and self._active_target_locks.get(target_lock_key) == run_id:
+                self._active_target_locks.pop(target_lock_key, None)
 
     def _get_control(self, run_id: str) -> RunControl | None:
         """Locked read of ``self.controls[run_id]``.
@@ -4634,6 +5137,11 @@ class RunCoordinator:
         evaluation = artifacts.get("evaluation") if isinstance(artifacts.get("evaluation"), dict) else {}
         execution = artifacts.get("execution") if isinstance(artifacts.get("execution"), dict) else {}
         feedback = artifacts.get("feedback") if isinstance(artifacts.get("feedback"), dict) else {}
+        handoffs = artifacts.get("operator_handoffs") if isinstance(artifacts.get("operator_handoffs"), list) else []
+        override_reviews = artifacts.get("override_reviews") if isinstance(artifacts.get("override_reviews"), list) else []
+        postmortem_reviews = (
+            artifacts.get("postmortem_reviews") if isinstance(artifacts.get("postmortem_reviews"), list) else []
+        )
         lines = [
             f"# Mesh Run Export {session.run_id}",
             "",
@@ -4665,9 +5173,58 @@ class RunCoordinator:
             "",
             f"- Outcome: `{feedback.get('outcome') or 'unavailable'}`",
             "",
-            "## Timeline",
+            "## Operator Handoffs",
             "",
         ]
+        if handoffs:
+            for handoff in handoffs:
+                if not isinstance(handoff, dict):
+                    continue
+                to_operator = handoff.get("to_operator") if isinstance(handoff.get("to_operator"), dict) else {}
+                lines.append(
+                    f"- `{handoff.get('handoff_id')}` to `{to_operator.get('operator_id')}` "
+                    f"for `{handoff.get('next_action')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Override Reviews",
+            "",
+        ])
+        if override_reviews:
+            for review in override_reviews:
+                if not isinstance(review, dict):
+                    continue
+                reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+                override_command = review.get("override_command") if isinstance(review.get("override_command"), dict) else {}
+                lines.append(
+                    f"- `{review.get('review_id')}` by `{reviewer.get('operator_id')}` reviewed "
+                    f"`{override_command.get('command_type')}` with verdict `{review.get('verdict')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Postmortem Reviews",
+            "",
+        ])
+        if postmortem_reviews:
+            for review in postmortem_reviews:
+                if not isinstance(review, dict):
+                    continue
+                reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+                lines.append(
+                    f"- `{review.get('review_id')}` by `{reviewer.get('operator_id')}` "
+                    f"with verdict `{review.get('verdict')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Timeline",
+            "",
+        ])
         if events:
             lines.extend(
                 f"- `{event.sequence:02d}` `{event.stage}` `{event.event_type}` `{event.recorded_at}`"
@@ -4736,6 +5293,7 @@ class RunCoordinator:
             "timeline.json": encoded(package["timeline_json"]),
             "postmortem.md": str(package["postmortem_markdown"]).encode("utf-8"),
             "merkle.json": encoded(package["merkle"]),
+            "timeline-proof.json": encoded(package.get("timeline_proof", {})),
             "checks.json": encoded(package["checks"]),
         }
         records = {
@@ -4744,6 +5302,9 @@ class RunCoordinator:
             "execution.json": package.get("execution_record"),
             "feedback.json": package.get("feedback_record"),
             "approvals.json": package.get("approval_records"),
+            "handoffs.json": package.get("handoff_records"),
+            "override-reviews.json": package.get("override_review_records"),
+            "postmortem-reviews.json": package.get("postmortem_review_records"),
             "evidence_artifacts.json": package.get("evidence_artifacts"),
         }
         for name, payload in records.items():
@@ -4758,7 +5319,7 @@ class RunCoordinator:
             safe_path = path.replace("\\", "/").lstrip("/")
             if ".." in safe_path.split("/"):
                 continue
-                files[f"vault/{safe_path}"] = str(document.get("content") or "").encode("utf-8")
+            files[f"vault/{safe_path}"] = str(document.get("content") or "").encode("utf-8")
         return files
 
     def _run_export_retention_policy(self, generated_at: str) -> dict[str, Any]:

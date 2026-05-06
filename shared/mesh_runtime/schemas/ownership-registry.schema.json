@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/ownership-registry.schema.json",
+  "title": "OwnershipRegistry",
+  "type": "object",
+  "required": [
+    "version",
+    "records"
+  ],
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "record_id",
+          "service",
+          "environment",
+          "namespace",
+          "tenant_id",
+          "customer_id",
+          "customer_boundary",
+          "owner",
+          "approver_roles",
+          "rollback_authority",
+          "escalation_route",
+          "allowed_action_classes",
+          "policy_refs",
+          "data_boundary"
+        ],
+        "properties": {
+          "record_id": {
+            "type": "string"
+          },
+          "service": {
+            "type": "string"
+          },
+          "environment": {
+            "type": "string"
+          },
+          "namespace": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "customer_id": {
+            "type": "string"
+          },
+          "customer_boundary": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "object"
+          },
+          "approver_roles": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "rollback_authority": {
+            "type": "object"
+          },
+          "escalation_route": {
+            "type": "string"
+          },
+          "allowed_action_classes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "policy_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "data_boundary": {
+            "type": "object",
+            "required": [
+              "classification",
+              "export_allowed",
+              "retention_days",
+              "reservoir_refs",
+              "export_policy",
+              "legal_action_scope"
+            ],
+            "properties": {
+              "classification": {
+                "type": "string"
+              },
+              "export_allowed": {
+                "type": "boolean"
+              },
+              "retention_days": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "reservoir_refs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "export_policy": {
+                "type": "object",
+                "required": [
+                  "allowed",
+                  "allowed_destinations",
+                  "redaction_required"
+                ],
+                "properties": {
+                  "allowed": {
+                    "type": "boolean"
+                  },
+                  "allowed_destinations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "redaction_required": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "legal_action_scope": {
+                "type": "object",
+                "required": [
+                  "allowed",
+                  "review_required",
+                  "authority_ref"
+                ],
+                "properties": {
+                  "allowed": {
+                    "type": "boolean"
+                  },
+                  "review_required": {
+                    "type": "boolean"
+                  },
+                  "authority_ref": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

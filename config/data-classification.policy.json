@@ -1,0 +1,208 @@
+{
+  "version": "mesh.data_classification_policy.v1",
+  "generated_at": "2026-05-06T00:00:00Z",
+  "classes": [
+    {
+      "class_id": "operational_signal",
+      "examples": [
+        "Kubernetes pod status",
+        "OTel metric point",
+        "vendor alert labels"
+      ],
+      "owner": "platform.observability",
+      "retention_days": 30,
+      "deletion_mode": "purge",
+      "export_allowed": true,
+      "requires_redaction": true,
+      "storage_locations": [
+        "run_artifacts",
+        "run_events",
+        "vault_mirror"
+      ],
+      "deletion_controls": [
+        "run export retention metadata",
+        "scripts/purge_run_exports.py"
+      ],
+      "evidence_refs": [
+        "docs/production-hardening-records.md",
+        "docs/pilot-slo-error-budget.md"
+      ]
+    },
+    {
+      "class_id": "operator_identity",
+      "examples": [
+        "operator id",
+        "roles",
+        "proxy source"
+      ],
+      "owner": "platform.security",
+      "retention_days": 365,
+      "deletion_mode": "retain",
+      "export_allowed": true,
+      "requires_redaction": false,
+      "storage_locations": [
+        "run_events",
+        "audit_events",
+        "run_exports"
+      ],
+      "deletion_controls": [
+        "audit-retention review before deletion"
+      ],
+      "evidence_refs": [
+        "docs/authenticated-ingress.md",
+        "docs/production-hardening-records.md"
+      ]
+    },
+    {
+      "class_id": "secret_material",
+      "examples": [
+        "authorization header",
+        "kubeconfig token",
+        "provider API key"
+      ],
+      "owner": "platform.security",
+      "retention_days": 0,
+      "deletion_mode": "redact",
+      "export_allowed": false,
+      "requires_redaction": true,
+      "storage_locations": [
+        "request_boundary",
+        "redacted_run_exports"
+      ],
+      "deletion_controls": [
+        "secret-shaped field redaction",
+        "credential rotation proof"
+      ],
+      "evidence_refs": [
+        "docs/pilot-slo-error-budget.md",
+        "scripts/verify_credential_rotation.py"
+      ]
+    },
+    {
+      "class_id": "model_output",
+      "examples": [
+        "observer verdict",
+        "proposal-lane artifact",
+        "Mesh Brain smoke result"
+      ],
+      "owner": "platform.ai",
+      "retention_days": 30,
+      "deletion_mode": "purge",
+      "export_allowed": true,
+      "requires_redaction": true,
+      "storage_locations": [
+        "run_artifacts",
+        "vault_mirror",
+        "mesh_brain_artifacts"
+      ],
+      "deletion_controls": [
+        "run export retention metadata",
+        "artifact upload proof review"
+      ],
+      "evidence_refs": [
+        "docs/post-training/runtime.md",
+        "docs/production-hardening-records.md"
+      ]
+    },
+    {
+      "class_id": "audit_proof",
+      "examples": [
+        "Merkle root",
+        "event proof",
+        "release packet hash"
+      ],
+      "owner": "platform.security",
+      "retention_days": 365,
+      "deletion_mode": "retain",
+      "export_allowed": true,
+      "requires_redaction": false,
+      "storage_locations": [
+        "run_events",
+        "merkle_store",
+        "external_audit_sink"
+      ],
+      "deletion_controls": [
+        "append-only audit retention review"
+      ],
+      "evidence_refs": [
+        "docs/release-provenance.md",
+        "scripts/verify_audit_sink_contract.py"
+      ]
+    },
+    {
+      "class_id": "training_candidate",
+      "examples": [
+        "incident corpus row",
+        "observation record",
+        "labeled claim"
+      ],
+      "owner": "platform.ai",
+      "retention_days": 90,
+      "deletion_mode": "purge",
+      "export_allowed": false,
+      "requires_redaction": true,
+      "storage_locations": [
+        "incident_corpus",
+        "memory_projection",
+        "research_artifacts"
+      ],
+      "deletion_controls": [
+        "trainable-label review before corpus projection"
+      ],
+      "evidence_refs": [
+        "docs/post-training/runtime.md",
+        "docs/production-hardening-records.md"
+      ]
+    },
+    {
+      "class_id": "application_log",
+      "examples": [
+        "structured runtime log",
+        "error log",
+        "access log"
+      ],
+      "owner": "platform.runtime",
+      "retention_days": 30,
+      "deletion_mode": "purge",
+      "export_allowed": false,
+      "requires_redaction": true,
+      "storage_locations": [
+        "stdout",
+        "staging_log_system"
+      ],
+      "deletion_controls": [
+        "staging log retention policy"
+      ],
+      "evidence_refs": [
+        "docs/pilot-slo-error-budget.md",
+        "docs/production-hardening-records.md"
+      ]
+    },
+    {
+      "class_id": "distributed_trace",
+      "examples": [
+        "Phoenix span",
+        "request trace",
+        "workflow span"
+      ],
+      "owner": "platform.observability",
+      "retention_days": 30,
+      "deletion_mode": "purge",
+      "export_allowed": false,
+      "requires_redaction": true,
+      "storage_locations": [
+        "phoenix_spans",
+        "otel_collector",
+        "staging_trace_system"
+      ],
+      "deletion_controls": [
+        "trace retention policy",
+        "private-ingress-only trace export"
+      ],
+      "evidence_refs": [
+        "docs/pilot-slo-error-budget.md",
+        "docs/production-hardening-records.md"
+      ]
+    }
+  ]
+}

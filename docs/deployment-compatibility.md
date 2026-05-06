@@ -1,6 +1,6 @@
 # Deployment Compatibility
 
-Orbital Mesh claims open deployment compatibility by contract, not first-class support for every runtime or orchestrator name. Compatibility must stay tied to observed evidence, release packets, and documented deployment boundaries.
+Orbital Mesh claims open deployment compatibility by contract, not first-class support for every runtime or orchestrator name. Compatibility must stay tied to observed evidence, release packets, documented deployment boundaries, and failure modes.
 
 ## Compatibility Levels
 
@@ -53,10 +53,18 @@ All deployment targets must preserve the same authority contract:
 - standard OCI image;
 - explicit environment variables and secret injection;
 - persistent state through Postgres or reviewed volume storage;
+- machine-readable ownership registry with owner, tenant, customer, approver, rollback, policy, and data-boundary fields;
+- registry-backed connector certification with authority posture, credential policy, degraded behavior, allowed scopes, and release-packet visibility;
+- signed policy lifecycle hashes covering every active policy file;
+- reviewed threat-model register with owner, decision, expiry, compensating control, and evidence refs for every authority boundary;
+- reviewed data-classification policy with retention, redaction, deletion controls, storage locations, and evidence refs for signals, logs, traces, prompts, model output, audit proof, and exports;
+- action/risk-tier evidence sufficiency gate before mutating execution;
 - authenticated ingress that strips and stamps operator identity headers;
 - no production kubeconfig or actuator credential inside proposal lanes;
-- `/api/health`, `/api/readiness`, `/api/pilot/go-no-go`, `/metrics`, run export, and release packet visibility;
+- `/api/health`, `/api/readiness`, `/api/pilot/go-no-go`, `/api/failure-modes`, `/api/watchers/ownership`, `/metrics`, run export, and release packet visibility;
 - signed or hash-addressed release evidence for image, policy, migration, and connector state;
+- agentic-operator source provenance with Apache-2.0 license verification, source snapshot hash, source-input-only posture, and authority-gate adaptation requirements before any CRD, controller, Helm, MCP, LiteLLM, Argo, or CLI fork enters runtime;
+- external audit-sink append-only proof before expansion or compliance reliance;
 - operator-visible degraded state when a target cannot provide required identity, persistence, feedback, or audit guarantees.
 
 Compatibility work must not add orchestrator-specific authority bypasses. A target adapter can only translate deployment mechanics; it cannot weaken policy, evidence, evaluation, approval, or rollback requirements.

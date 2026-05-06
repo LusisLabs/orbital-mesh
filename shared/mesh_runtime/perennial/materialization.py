@@ -94,11 +94,18 @@ def materialize_agent_action_record(
         },
         "boundary": {
             "tenant_id": tenant_id,
-            "data_boundary": payload.get("data_boundary", "on_prem"),
+            "data_boundary": _data_boundary(payload),
             "reservoir_refs": list(reservoir_refs or payload.get("reservoir_refs") or []),
         },
     }
     return validate("perennial/agent-action-record.schema.json", record)
+
+
+def _data_boundary(payload: dict[str, Any]) -> str:
+    raw_boundary = payload.get("data_boundary")
+    if isinstance(raw_boundary, str):
+        return raw_boundary
+    return "on_prem"
 
 
 def materialize_epistemic_state(

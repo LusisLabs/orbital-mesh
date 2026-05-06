@@ -79,11 +79,19 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: [python-test]
+    needs: [python-test, web]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Build Docker image
         run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .
+      - name: Collect release image metadata
+        run: |
+          mkdir -p dist
+          python scripts/collect_release_image_metadata.py \
+            --image-tag orbital-mesh:ci \
+            --output dist/release-image-metadata.json \
+            --github-env "$GITHUB_ENV" \
+            --base-image-args dist/base-image-digest.args
       - name: Healthcheck smoke test
         run: |
           set -euo pipefail
@@ -113,3 +121,54 @@ jobs:
       - name: Stop container
         if: always()
         run: docker stop mesh-ci || true
+      - name: Rehearse release assurance artifacts
+        run: |
+          python scripts/generate_release_assurance_rehearsal_inputs.py \
+            --output-dir dist/release-assurance-raw \
+            --component-version '${{ github.sha }}'
+          python scripts/normalize_release_assurance_artifacts.py \
+            --sbom-input dist/release-assurance-raw/raw-sbom.cdx.json \
+            --scan-input dist/release-assurance-raw/raw-vulnerability-scan.json \
+            --scanner release-assurance-rehearsal \
+            --output-dir dist/release-assurance \
+            --require-scan \
+            --fail-on-blocking
+      - name: Generate CI attestation
+        run: |
+          mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          python scripts/generate_ci_attestation.py \
+            --output dist/ci-attestation.json \
+            --require-github-actions \
+            --check python-test \
+            --check web \
+            --check docker-build \
+            --image-tag orbital-mesh:ci \
+            --image-digest "$MESH_IMAGE_DIGEST" \
+            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
+            "${BASE_IMAGE_ARGS[@]}"
+      - name: Generate release provenance draft
+        run: |
+          python scripts/generate_release_provenance.py \
+            --output dist/release-provenance-draft.json \
+            --ci-attestation dist/ci-attestation.json \
+            --sbom dist/release-assurance/sbom.cdx.json \
+            --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
+            --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
+            --json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-attestation
+          path: dist/ci-attestation.json
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-assurance-contract-rehearsal
+          path: dist/release-assurance/
+          retention-days: 30
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-provenance-draft
+          path: |
+            dist/release-image-metadata.json
+            dist/release-provenance-draft.json
+          retention-days: 30

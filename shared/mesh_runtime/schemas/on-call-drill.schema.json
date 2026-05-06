@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/on-call-drill.schema.json",
+  "title": "OnCallDrill",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "drill_id",
+    "generated_at",
+    "operator_id",
+    "environment",
+    "recovery_target_seconds",
+    "measured_recovery_seconds",
+    "kill_switch",
+    "bad_target_revocation",
+    "stuck_run_recovery",
+    "failed_dependency",
+    "provider_key_rotation",
+    "state_restore"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.on_call_drill.v1"]
+    },
+    "drill_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "operator_id": { "type": "string" },
+    "environment": { "type": "string" },
+    "recovery_target_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "measured_recovery_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "kill_switch": {
+      "type": "object",
+      "required": [
+        "live_execution_disabled",
+        "watchers_paused",
+        "approval_gate_forced",
+        "event_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "live_execution_disabled": { "type": "boolean" },
+        "watchers_paused": { "type": "boolean" },
+        "approval_gate_forced": { "type": "boolean" },
+        "event_ref": { "type": "string" }
+      }
+    },
+    "bad_target_revocation": {
+      "type": "object",
+      "required": ["target_ref", "revoked", "denied_action_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "target_ref": { "type": "string" },
+        "revoked": { "type": "boolean" },
+        "denied_action_ref": { "type": "string" }
+      }
+    },
+    "stuck_run_recovery": {
+      "type": "object",
+      "required": ["run_id", "recovered", "event_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string" },
+        "recovered": { "type": "boolean" },
+        "event_ref": { "type": "string" }
+      }
+    },
+    "failed_dependency": {
+      "type": "object",
+      "required": ["dependency", "degraded_state_visible", "operator_action_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "dependency": { "type": "string" },
+        "degraded_state_visible": { "type": "boolean" },
+        "operator_action_ref": { "type": "string" }
+      }
+    },
+    "provider_key_rotation": {
+      "type": "object",
+      "required": ["verification_ref", "status", "break_glass_recorded"],
+      "additionalProperties": false,
+      "properties": {
+        "verification_ref": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail"]
+        },
+        "break_glass_recorded": { "type": "boolean" }
+      }
+    },
+    "state_restore": {
+      "type": "object",
+      "required": ["verification_ref", "status", "restore_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "verification_ref": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail"]
+        },
+        "restore_ref": { "type": "string" }
+      }
+    }
+  }
+}

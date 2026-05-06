@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/run-export-retrieval.schema.json",
+  "title": "RunExportRetrieval",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "package_path",
+    "archive_path",
+    "run_id",
+    "package_sha256",
+    "checks",
+    "errors"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.run_export_retrieval.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "package_path": { "type": ["string", "null"] },
+    "archive_path": { "type": ["string", "null"] },
+    "run_id": { "type": ["string", "null"] },
+    "package_sha256": { "type": ["string", "null"] },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,0 +1,273 @@
+{
+  "schema_version": "connector.certification.registry.v1",
+  "generated_from": [
+    "docs/agentic-operator-core-import-plan.md",
+    "docs/production-deployment-roadmap.md"
+  ],
+  "connectors": [
+    {
+      "connector_id": "kubernetes",
+      "display_name": "Kubernetes actuator",
+      "domain": "execution",
+      "state": "pilot-ready",
+      "required_before": "pilot",
+      "authority_posture": "live execution requires explicit context and namespace allowlists",
+      "credential_policy": "runtime secret mount only; no kubeconfig or bearer token may be written to run artifacts",
+      "credential_boundary": {
+        "service_account_ref": "serviceaccount://mesh/pilot-kubernetes-actuator",
+        "credential_mode": "runtime-secret",
+        "production_actuator_credentials_allowed": true,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": true,
+        "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+        "break_glass_recording_required": true
+      },
+      "degraded_behavior": "fall back to read-only evidence collection and operator approval without live mutation",
+      "allowed_scopes": ["read-only", "rollout-restart", "rollback"],
+      "evidence_refs": ["docs/authenticated-ingress.md", "docs/postgres-restart-proof.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "webhooks",
+      "display_name": "Signed webhooks",
+      "domain": "ingest",
+      "state": "read-only",
+      "required_before": "staging",
+      "authority_posture": "signal intake only",
+      "credential_policy": "source HMAC secrets remain outside run artifacts",
+      "credential_boundary": {
+        "service_account_ref": "serviceaccount://mesh/webhook-intake",
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": true,
+        "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "reject unsigned sources and keep fixture/local ingest available",
+      "allowed_scopes": ["alert-intake"],
+      "evidence_refs": ["docs/deployment-compatibility.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "otel",
+      "display_name": "OpenTelemetry and Prometheus",
+      "domain": "evidence",
+      "state": "staging-ready",
+      "required_before": "staging",
+      "authority_posture": "read-only telemetry evidence",
+      "credential_policy": "OTLP receiver requires bearer token when enabled",
+      "credential_boundary": {
+        "service_account_ref": "serviceaccount://mesh/telemetry-reader",
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": true,
+        "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "block live feedback readiness and keep deterministic fixture evaluation",
+      "allowed_scopes": ["metrics-read", "feedback-proof"],
+      "evidence_refs": ["docs/pilot-slo-error-budget.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "promptfoo",
+      "display_name": "Promptfoo bridge",
+      "domain": "evaluation",
+      "state": "staging-ready",
+      "required_before": "staging",
+      "authority_posture": "evaluation adapter only; Mesh policy remains authoritative",
+      "credential_policy": "no production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "none",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "use Mesh-native evaluator",
+      "allowed_scopes": ["eval-read", "contract-check"],
+      "evidence_refs": ["docs/evaluation-kits.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "hermes",
+      "display_name": "Hermes proposal lane",
+      "domain": "agent",
+      "state": "read-only",
+      "required_before": "staging",
+      "authority_posture": "advisory explanations and proposals only",
+      "credential_policy": "no production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "use native explanation path",
+      "allowed_scopes": ["explain", "proposal"],
+      "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "goose",
+      "display_name": "Goose review lane",
+      "domain": "agent",
+      "state": "read-only",
+      "required_before": "staging",
+      "authority_posture": "review and proposal only",
+      "credential_policy": "no production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "continue deterministic RCA and evaluation",
+      "allowed_scopes": ["review", "proposal"],
+      "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "evo",
+      "display_name": "Evo proposal lane",
+      "domain": "agent",
+      "state": "proposal-only",
+      "required_before": "pilot",
+      "authority_posture": "scoped repository proposal lane",
+      "credential_policy": "no repo write token or production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "hide operator launch and keep manual review path",
+      "allowed_scopes": ["proposal"],
+      "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "latentmas",
+      "display_name": "LatentMAS",
+      "domain": "agent",
+      "state": "proposal-only",
+      "required_before": "pilot",
+      "authority_posture": "model lifecycle advisory lane",
+      "credential_policy": "no production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "disable advisory lane without blocking core runtime",
+      "allowed_scopes": ["proposal"],
+      "evidence_refs": ["docs/reference-architectures.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "deepagents",
+      "display_name": "Deep Agents fabric",
+      "domain": "agent",
+      "state": "proposal-only",
+      "required_before": "pilot",
+      "authority_posture": "sandboxed proposal fabric",
+      "credential_policy": "workspace-scoped credentials only; no production actuator credentials",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "disable sandbox lane without blocking core runtime",
+      "allowed_scopes": ["proposal"],
+      "evidence_refs": ["docs/agentic-operator-core-import-plan.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "feature_flag_adapter",
+      "display_name": "Feature flag adapter",
+      "domain": "execution",
+      "state": "unfinished",
+      "required_before": "pilot",
+      "authority_posture": "not certified for pilot mutation",
+      "credential_policy": "must remain disabled until a real provider adapter is certified",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "none",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "pilot readiness blocks if credentials are presented before certification",
+      "allowed_scopes": [],
+      "evidence_refs": ["docs/reference-architectures.md"],
+      "blockers": ["real_provider_adapter_missing"]
+    },
+    {
+      "connector_id": "incident_adapter",
+      "display_name": "Incident adapter",
+      "domain": "ingest",
+      "state": "unfinished",
+      "required_before": "pilot",
+      "authority_posture": "not certified for pilot intake",
+      "credential_policy": "must remain disabled until a real provider adapter is certified",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "none",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "pilot readiness blocks if credentials are presented before certification",
+      "allowed_scopes": [],
+      "evidence_refs": ["docs/reference-architectures.md"],
+      "blockers": ["real_provider_adapter_missing"]
+    },
+    {
+      "connector_id": "audit_sink",
+      "display_name": "External audit sink",
+      "domain": "audit",
+      "state": "mock",
+      "required_before": "pilot",
+      "authority_posture": "local audit continuity only",
+      "credential_policy": "external sink credentials remain platform secrets",
+      "credential_boundary": {
+        "service_account_ref": "serviceaccount://mesh/audit-sink-writer",
+        "credential_mode": "runtime-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": true,
+        "rotation_evidence_ref": "docs/release-provenance.md#release-assurance-packet",
+        "break_glass_recording_required": true
+      },
+      "degraded_behavior": "keep local Merkle and run export audit path; expansion readiness blocks external compliance reliance",
+      "allowed_scopes": ["local-audit"],
+      "evidence_refs": ["docs/production-hardening-records.md"],
+      "blockers": ["external_audit_sink_not_certified"]
+    }
+  ]
+}

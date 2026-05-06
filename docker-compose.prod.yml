@@ -21,12 +21,27 @@ services:
       MESH_DATABASE_URL: "${MESH_DATABASE_URL:?set Postgres database URL for production state}"
       MESH_OPERATOR_IDENTITY_REQUIRED: "${MESH_OPERATOR_IDENTITY_REQUIRED:-1}"
       MESH_FORCE_APPROVAL_GATE: "${MESH_FORCE_APPROVAL_GATE:-1}"
+      MESH_TENANT_ACTIVE_RUN_QUOTA: "${MESH_TENANT_ACTIVE_RUN_QUOTA:-4}"
       MESH_WEB_ASSET_PATH: /app/web/dist
       MESH_STATE_DIRECTORY: /app/.mesh-runtime-state
       HERMES_HOME: /workspace/orbital-mesh/.hermes-local
       MESH_RESEARCH_DIRECTORY: /app/.mesh-runtime-state/research
       MESH_VAULT_PATH: /app/.mesh-runtime-state/vault
       MESH_INTEGRATIONS_CONFIG_PATH: /app/.mesh-runtime-state/integrations.json
+      MESH_OWNERSHIP_REGISTRY_PATH: "${MESH_OWNERSHIP_REGISTRY_PATH:-/app/config/ownership.registry.json}"
+      MESH_CONNECTOR_CERTIFICATION_REGISTRY_PATH: "${MESH_CONNECTOR_CERTIFICATION_REGISTRY_PATH:-/app/config/connector-certification.registry.json}"
+      MESH_POLICY_LIFECYCLE_MANIFEST_PATH: "${MESH_POLICY_LIFECYCLE_MANIFEST_PATH:-/app/config/policy-lifecycle.manifest.json}"
+      MESH_FAILURE_MODE_LIBRARY_PATH: "${MESH_FAILURE_MODE_LIBRARY_PATH:-/app/config/failure-mode.library.json}"
+      MESH_THREAT_MODEL_REGISTER_PATH: "${MESH_THREAT_MODEL_REGISTER_PATH:-/app/config/threat-model.register.json}"
+      MESH_DATA_CLASSIFICATION_POLICY_PATH: "${MESH_DATA_CLASSIFICATION_POLICY_PATH:-/app/config/data-classification.policy.json}"
+      MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH: "${MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH:-/app/config/agentic-operator-source.provenance.json}"
+      MESH_RELEASE_PROVENANCE_PATH: "${MESH_RELEASE_PROVENANCE_PATH:?set complete release provenance packet path}"
+      MESH_AUDIT_SINK_PROOF_PATH: "${MESH_AUDIT_SINK_PROOF_PATH:-}"
+      MESH_BACKUP_RESTORE_REHEARSAL_PATH: "${MESH_BACKUP_RESTORE_REHEARSAL_PATH:?set backup and restore rehearsal proof path}"
+      MESH_MIGRATION_REHEARSAL_PATH: "${MESH_MIGRATION_REHEARSAL_PATH:?set Postgres migration rehearsal proof path}"
+      MESH_ON_CALL_DRILL_PATH: "${MESH_ON_CALL_DRILL_PATH:?set production on-call drill proof path}"
+      MESH_POLICY_SIGNING_KEY: "${MESH_POLICY_SIGNING_KEY:?inject policy lifecycle signing key through your platform secret store}"
+      MESH_POLICY_SIGNING_KEY_ID: "${MESH_POLICY_SIGNING_KEY_ID:-policy-lifecycle-hmac}"
       MESH_PROMPTFOO_COMMAND: "${MESH_PROMPTFOO_COMMAND:-promptfoo}"
       MESH_GOOSE_COMMAND: "${MESH_GOOSE_COMMAND:-goose}"
       MESH_GOOSE_COMMAND_TIMEOUT_SECONDS: "${MESH_GOOSE_COMMAND_TIMEOUT_SECONDS:-180}"

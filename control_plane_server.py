@@ -20,6 +20,7 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
+TIMELINE_PROOF_ROUTE_TEMPLATE = "/api/runs/{run_id}/timeline-proof"
 
 
 class AuthorizationError(PermissionError):
@@ -44,6 +45,8 @@ def _safe_int(value: str, default: int = 0) -> int:
 def _roles_for_steering(command: object) -> set[str]:
     if command in {"approve", "override_decision", "override_execution_parameters"}:
         return {"approver", "admin"}
+    if command in {"override_review", "postmortem_review"}:
+        return {"viewer", "launcher", "approver", "admin"}
     return {"launcher", "approver", "admin"}
 
 
@@ -136,6 +139,15 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
+            return
+        if path == "/api/policy/lifecycle":
+            self._send_json(self.server.coordinator.build_policy_lifecycle())
+            return
+        if path == "/api/connectors/certification":
+            self._send_json(self.server.coordinator.build_connector_certification())
+            return
+        if path == "/api/failure-modes":
+            self._send_json(self.server.coordinator.build_failure_mode_library())
             return
         if path == "/api/kill-switch":
             self._send_json(self.server.coordinator.kill_switch_status())
@@ -277,6 +289,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
             return
+        if path.startswith("/api/runs/") and path.endswith("/timeline-proof"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.build_timeline_proof(run_id)
+            if payload is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
             run_id = path.split("/")[3]
             try:
@@ -360,6 +383,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/watchers":
             self._send_json(self.server.coordinator.watchers_status())
+            return
+        if path == "/api/watchers/ownership":
+            self._send_json(self.server.coordinator.build_watcher_ownership())
             return
         if path.startswith("/api/watchers/") and path.count("/") == 3:
             # GET /api/watchers/{name}

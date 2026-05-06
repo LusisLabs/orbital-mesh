@@ -1,5 +1,6 @@
 import type {
   GoalRecord,
+  ConnectorCertificationPacket,
   DarkharnessPilotPacket,
   HealthSnapshot,
   IntegrationReadiness,
@@ -121,6 +122,10 @@ export const api = {
 
   getReadiness(baseUrl: string) {
     return request<IntegrationReadiness>(baseUrl, "/api/readiness");
+  },
+
+  getConnectorCertification(baseUrl: string) {
+    return request<ConnectorCertificationPacket>(baseUrl, "/api/connectors/certification");
   },
 
   getKillSwitch(baseUrl: string) {

@@ -12,6 +12,17 @@ DEFAULT_RESEARCH_DIRECTORY = DEFAULT_STATE_DIRECTORY / "research"
 DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
+DEFAULT_OWNERSHIP_REGISTRY_PATH = _REPO_ROOT / "config" / "ownership.registry.json"
+DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH = _REPO_ROOT / "config" / "connector-certification.registry.json"
+DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH = _REPO_ROOT / "config" / "policy-lifecycle.manifest.json"
+DEFAULT_FAILURE_MODE_LIBRARY_PATH = _REPO_ROOT / "config" / "failure-mode.library.json"
+DEFAULT_THREAT_MODEL_REGISTER_PATH = _REPO_ROOT / "config" / "threat-model.register.json"
+DEFAULT_DATA_CLASSIFICATION_POLICY_PATH = _REPO_ROOT / "config" / "data-classification.policy.json"
+DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH = _REPO_ROOT / "config" / "agentic-operator-source.provenance.json"
+DEFAULT_RELEASE_PROVENANCE_PATH = DEFAULT_STATE_DIRECTORY / "release-provenance.json"
+DEFAULT_AUDIT_SINK_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-proof.json"
+DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "backup-restore-rehearsal.json"
+DEFAULT_ON_CALL_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "on-call-drill.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
 DEFAULT_CORPUS_DATABASE_PATH = DEFAULT_STATE_DIRECTORY / "corpus" / "incident_corpus.sqlite"
@@ -81,6 +92,19 @@ class RuntimeConfig:
     web_asset_path: str = str(DEFAULT_WEB_ASSET_PATH)
     vault_path: str = str(DEFAULT_VAULT_PATH)
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
+    ownership_registry_path: str = str(DEFAULT_OWNERSHIP_REGISTRY_PATH)
+    connector_certification_registry_path: str = str(DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH)
+    policy_lifecycle_manifest_path: str = str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH)
+    failure_mode_library_path: str = str(DEFAULT_FAILURE_MODE_LIBRARY_PATH)
+    threat_model_register_path: str = str(DEFAULT_THREAT_MODEL_REGISTER_PATH)
+    data_classification_policy_path: str = str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH)
+    agentic_operator_source_provenance_path: str = str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH)
+    release_provenance_path: str = str(DEFAULT_RELEASE_PROVENANCE_PATH)
+    audit_sink_proof_path: str | None = None
+    backup_restore_rehearsal_path: str | None = None
+    on_call_drill_path: str | None = None
+    policy_signing_key: str | None = None
+    policy_signing_key_id: str = "policy-lifecycle-hmac"
     darkharness_registry_path: str | None = None
     darkharness_packet_persistence_mode: str = "ephemeral"
     darkharness_signing_key: str | None = None
@@ -99,6 +123,7 @@ class RuntimeConfig:
     force_approval_gate: bool = False
     run_worker_count: int = 4
     run_queue_size: int = 100
+    tenant_active_run_quota: int = 4
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     hermes_command_timeout_seconds: int = 180
@@ -279,6 +304,8 @@ class RuntimeConfig:
             raise ValueError(f"run_worker_count must be > 0, got {self.run_worker_count}")
         if self.run_queue_size <= 0:
             raise ValueError(f"run_queue_size must be > 0, got {self.run_queue_size}")
+        if self.tenant_active_run_quota <= 0:
+            raise ValueError(f"tenant_active_run_quota must be > 0, got {self.tenant_active_run_quota}")
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.reasoning_bank_max_strategies < 1:
@@ -348,6 +375,67 @@ class RuntimeConfig:
                 "MESH_INTEGRATIONS_CONFIG_PATH",
                 str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
             ),
+            ownership_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_OWNERSHIP_REGISTRY_PATH"),
+                default=str(DEFAULT_OWNERSHIP_REGISTRY_PATH),
+            ),
+            connector_certification_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_CONNECTOR_CERTIFICATION_REGISTRY_PATH"),
+                default=str(DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH),
+            ),
+            policy_lifecycle_manifest_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_POLICY_LIFECYCLE_MANIFEST_PATH"),
+                default=str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH),
+            ),
+            failure_mode_library_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_FAILURE_MODE_LIBRARY_PATH"),
+                default=str(DEFAULT_FAILURE_MODE_LIBRARY_PATH),
+            ),
+            threat_model_register_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_THREAT_MODEL_REGISTER_PATH"),
+                default=str(DEFAULT_THREAT_MODEL_REGISTER_PATH),
+            ),
+            data_classification_policy_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_DATA_CLASSIFICATION_POLICY_PATH"),
+                default=str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH),
+            ),
+            agentic_operator_source_provenance_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH"),
+                default=str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH),
+            ),
+            release_provenance_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_RELEASE_PROVENANCE_PATH"),
+                default=str(DEFAULT_RELEASE_PROVENANCE_PATH),
+            ),
+            audit_sink_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUDIT_SINK_PROOF_PATH"),
+                    default=str(DEFAULT_AUDIT_SINK_PROOF_PATH),
+                )
+                if os.getenv("MESH_AUDIT_SINK_PROOF_PATH")
+                else None
+            ),
+            backup_restore_rehearsal_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH"),
+                    default=str(DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH),
+                )
+                if os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH")
+                else None
+            ),
+            on_call_drill_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_ON_CALL_DRILL_PATH"),
+                    default=str(DEFAULT_ON_CALL_DRILL_PATH),
+                )
+                if os.getenv("MESH_ON_CALL_DRILL_PATH")
+                else None
+            ),
+            policy_signing_key=_read_env_or_file(
+                os.getenv("MESH_POLICY_SIGNING_KEY"),
+                os.getenv("MESH_POLICY_SIGNING_KEY_PATH"),
+            ),
+            policy_signing_key_id=os.getenv("MESH_POLICY_SIGNING_KEY_ID", "policy-lifecycle-hmac"),
             darkharness_registry_path=(
                 _env_path_anchored_to_repo(os.getenv("MESH_DARKHARNESS_REGISTRY_PATH"), default="")
                 if os.getenv("MESH_DARKHARNESS_REGISTRY_PATH")
@@ -382,6 +470,7 @@ class RuntimeConfig:
             force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),
             run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
             run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
+            tenant_active_run_quota=int(os.getenv("MESH_TENANT_ACTIVE_RUN_QUOTA", "4")),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             hermes_command=os.getenv("MESH_HERMES_COMMAND") or None,
             hermes_command_timeout_seconds=int(os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS", "180")),

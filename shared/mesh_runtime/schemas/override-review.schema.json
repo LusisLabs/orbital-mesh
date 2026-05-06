@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/override-review.schema.json",
+  "title": "OverrideReview",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_id",
+    "run_id",
+    "created_at",
+    "reviewer",
+    "override_command",
+    "independent_reviewer",
+    "verdict",
+    "reason",
+    "findings",
+    "action_items",
+    "related_event_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.override_review.v1"]
+    },
+    "review_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "reviewer": {
+      "type": "object",
+      "required": ["operator_id", "roles", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "override_command": {
+      "type": "object",
+      "required": ["event_id", "command_id", "command_type", "issued_at", "operator_id"],
+      "additionalProperties": false,
+      "properties": {
+        "event_id": { "type": "string" },
+        "command_id": { "type": "string" },
+        "command_type": {
+          "type": "string",
+          "enum": ["override_decision", "override_execution_parameters"]
+        },
+        "issued_at": { "type": "string" },
+        "operator_id": { "type": ["string", "null"] }
+      }
+    },
+    "independent_reviewer": { "type": "boolean" },
+    "verdict": {
+      "type": "string",
+      "enum": ["accepted", "needs_followup", "rejected"]
+    },
+    "reason": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "action_items": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "related_event_id": { "type": ["string", "null"] }
+  }
+}

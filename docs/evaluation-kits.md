@@ -14,6 +14,13 @@ Required artifacts:
 - agentic operator fork-in brief: `docs/agentic-operator-core-import-plan.md`;
 - one-command whole-system environment: `docker-compose.stack.yml`;
 - production-like deployment template: `docker-compose.prod.yml`;
+- ownership registry: `config/ownership.registry.json`;
+- policy lifecycle manifest: `config/policy-lifecycle.manifest.json`;
+- data-classification policy: `config/data-classification.policy.json`;
+- agentic-operator source provenance: `config/agentic-operator-source.provenance.json`;
+- sample export and benchmark packet generator: `scripts/generate_evaluation_kit_packet.py`;
+- evaluation-kit packet verifier: `scripts/verify_evaluation_kit_packet.py`;
+- benchmark output verifier: `scripts/verify_benchmark_run_artifacts.py`;
 - whole-system smoke command: `scripts/compose_stack_smoke.sh`;
 - production endpoint smoke command: `scripts/prod_smoke.sh`;
 - Postgres restart proof harness: `scripts/verify_postgres_restart_proof.py`;
@@ -29,7 +36,10 @@ Evaluation sequence:
 4. Deploy `docker-compose.prod.yml` in a private environment with authenticated ingress, required operator identity headers, Kubernetes allowlists, and platform secret injection.
 5. Run `scripts/prod_smoke.sh` against the private endpoint.
 6. Run `scripts/verify_postgres_restart_proof.py --database-url "$MESH_DATABASE_URL" --json` against the pilot database.
-7. Export the observed `/api/pilot/go-no-go` packet only after the above gates produce evidence.
+7. Run `scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json` to create a deterministic sample run export package, zip archive, retrieval proof, and formal benchmark command packet.
+8. Run `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json`.
+9. Run the packet's benchmark command, then run `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --expected-suite golden --expected-scenario-id feature_flag_latency_disable --expected-scenario-id kubernetes_crashloop_patch --json`.
+10. Export the observed `/api/pilot/go-no-go` packet only after the above gates produce evidence.
 
 Reference architectures:
 
@@ -51,6 +61,16 @@ Compatibility review:
 Enterprise pass criteria:
 
 - readiness profile is `pilot` or `expansion` and `GET /api/readiness` returns `status: ready`;
+- normal run creation produces an `ownership_boundary` artifact with a resolved owner, tenant, customer, approver roles, rollback authority, and policy refs;
+- `GET /api/connectors/certification` returns `mesh.connector_certification.v1` with registry hash, connector states, authority posture, credential policy, degraded behavior, allowed scopes, and no runtime upgrade beyond the registry state;
+- `GET /api/policy/lifecycle` returns signed policy hashes with no missing manifest coverage;
+- every mutating decision's evaluation includes `stage_results.evidence_sufficiency` and no `evidence sufficiency gate did not pass` blocker before execution;
+- `scripts/verify_data_classification_policy.py --json` passes with signal, log, trace, model-output, audit-proof, training-candidate, operator-identity, and secret-material coverage;
+- `scripts/verify_agentic_operator_source_provenance.py --json` passes and shows the source input is Apache-2.0, snapshot-bound, source-input-only, and not active runtime;
+- `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json` passes and proves the sample export package, zip archive, retrieval proof, benchmark harness entrypoint, golden scenarios, command, and expected benchmark artifacts are present;
+- `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --expected-suite golden --expected-scenario-id feature_flag_latency_disable --expected-scenario-id kubernetes_crashloop_patch --json` passes after the formal benchmark command runs;
+- `GET /api/runs/{run_id}/timeline-proof` returns gapless monotonic sequence checks, parseable `time_unix_nano` values, payload hashes, Merkle root, and a valid latest-event proof;
+- run creation records `mesh.run_admission.v1` with queue depth, worker count, tenant active-run quota, target lock key, lock holder, decision, and blockers before worker admission;
 - proposal lanes remain advisory and have no production kubeconfig or repository write authority;
 - kill switch can force approval gates and disable live execution;
 - Postgres restart proof passes for run events, memory, and Merkle roots;
@@ -80,10 +100,12 @@ Thirty-minute staging guide:
 
 Sample exported run:
 
-- launch `search_latency_regression`;
-- approve only after evaluation passes;
-- inspect `/api/runs/<run_id>`, `/api/runs/<run_id>/events`, `/api/runs/<run_id>/evidence-graph`, and `/api/runs/<run_id>/merkle`;
-- include the Merkle root, decision artifact, evaluation artifact, feedback artifact, and operator command event in the sample packet.
+- run `scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json`;
+- verify `mesh.evaluation_kit_packet.v1` with `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json`;
+- inspect `<evaluation-kit-dir>/evaluation-kit-packet.json`, the generated `run_exports/<run_id>.json` package, and the generated `run_exports/<run_id>.zip` archive;
+- use the packet's benchmark command as the formal golden-suite handoff;
+- verify the resulting benchmark directory with `scripts/verify_benchmark_run_artifacts.py`;
+- treat target-environment sample exports and durable benchmark publication as deployment-specific evidence.
 
 Developer pass criteria:
 

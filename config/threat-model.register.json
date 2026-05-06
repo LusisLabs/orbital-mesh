@@ -1,0 +1,140 @@
+{
+  "version": "mesh.threat_model_register.v1",
+  "generated_at": "2026-05-06T00:00:00Z",
+  "findings": [
+    {
+      "finding_id": "tm_http_api_proxy_boundary",
+      "boundary": "http_api",
+      "risk": "client-supplied identity headers could bypass app roles without trusted proxy stripping",
+      "status": "accepted",
+      "owner": "platform.security",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "require authenticated TLS reverse proxy, strip Mesh identity headers before upstream forwarding, and run scripts/verify_authenticated_ingress.py before staging exposure",
+      "evidence_refs": [
+        "docs/authenticated-ingress.md",
+        "scripts/verify_authenticated_ingress.py",
+        "control_plane_server.py"
+      ]
+    },
+    {
+      "finding_id": "tm_sse_viewer_boundary",
+      "boundary": "sse_streams",
+      "risk": "run streams can disclose operational state if exposed outside authenticated ingress",
+      "status": "accepted",
+      "owner": "platform.security",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "serve streams only behind the authenticated reverse proxy and require viewer-or-higher identity at the ingress boundary",
+      "evidence_refs": [
+        "docs/authenticated-ingress.md",
+        "control_plane_server.py"
+      ]
+    },
+    {
+      "finding_id": "tm_webhook_hmac_boundary",
+      "boundary": "webhooks",
+      "risk": "untrusted vendor payloads can create noisy or forged alerts if source registration and signatures are bypassed",
+      "status": "accepted",
+      "owner": "platform.integrations",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "use registered webhook sources with HMAC verification and vendor-specific template validation before enabling external webhook ingress",
+      "evidence_refs": [
+        "services/ingest/webhook_service.py",
+        "shared/mesh_runtime/webhook_templates.py",
+        "tests/test_webhook_ingest.py"
+      ]
+    },
+    {
+      "finding_id": "tm_otel_receiver_boundary",
+      "boundary": "otel_ingest",
+      "risk": "OTLP push receiver can accept untrusted metrics if enabled without bearer token or private ingress",
+      "status": "accepted",
+      "owner": "platform.observability",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "keep the receiver disabled by default and require MESH_OTEL_RECEIVER_TOKEN or private ingress before staging readiness passes",
+      "evidence_refs": [
+        "control_plane_server.py",
+        "shared/mesh_runtime/integrations.py",
+        "docs/pilot-slo-error-budget.md"
+      ]
+    },
+    {
+      "finding_id": "tm_kubeconfig_authority_boundary",
+      "boundary": "kubeconfig",
+      "risk": "live Kubernetes credentials can mutate unintended namespaces without explicit allowlists",
+      "status": "accepted",
+      "owner": "platform.runtime",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "live execution remains disabled unless context and namespace allowlists are configured and policy, evaluation, approval, and rollback gates pass",
+      "evidence_refs": [
+        "services/actuators/service.py",
+        "shared/mesh_runtime/integrations.py",
+        "config/ownership.registry.json"
+      ]
+    },
+    {
+      "finding_id": "tm_proposal_lane_credential_boundary",
+      "boundary": "proposal_lanes",
+      "risk": "proposal agents could gain production actuator, kubeconfig, or repository-write authority",
+      "status": "accepted",
+      "owner": "platform.runtime",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "connector certification blocks proposal-only lanes when runtime evidence indicates production actuator or repository-write credentials are present",
+      "evidence_refs": [
+        "config/connector-certification.registry.json",
+        "shared/mesh_runtime/connector_certification.py",
+        "docs/agentic-operator-core-import-plan.md"
+      ]
+    },
+    {
+      "finding_id": "tm_state_store_restore_boundary",
+      "boundary": "state_store",
+      "risk": "state, memory, and Merkle proof loss would make operator audit incomplete",
+      "status": "accepted",
+      "owner": "platform.runtime",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "staging readiness requires backup/restore rehearsal proof and pilot readiness requires Postgres-backed state",
+      "evidence_refs": [
+        "scripts/verify_backup_restore_rehearsal.py",
+        "scripts/verify_postgres_restart_proof.py",
+        "shared/mesh_runtime/integrations.py"
+      ]
+    },
+    {
+      "finding_id": "tm_run_export_boundary",
+      "boundary": "run_exports",
+      "risk": "run export bundles can disclose secrets or outlive approved retention windows",
+      "status": "accepted",
+      "owner": "platform.security",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "run export generation redacts secret-shaped fields, records retention metadata, requires retention review for pilot readiness, and has retrieval/upload verifiers",
+      "evidence_refs": [
+        "scripts/verify_run_export_retrieval.py",
+        "scripts/verify_run_export_upload.py",
+        "scripts/purge_run_exports.py"
+      ]
+    },
+    {
+      "finding_id": "tm_mesh_brain_artifact_boundary",
+      "boundary": "mesh_brain_artifacts",
+      "risk": "model lifecycle artifacts can be referenced locally without durable upload proof",
+      "status": "accepted",
+      "owner": "platform.ai",
+      "decision": "accepted_for_private_staging_only",
+      "expires_at": "2026-08-31",
+      "compensating_control": "production readiness requires durable object-storage URI prefixes and upload proof for Mesh Brain artifacts before relying on model-lifecycle evidence",
+      "evidence_refs": [
+        "docs/post-training/runtime.md",
+        "mesh_brain/artifact_registry.py",
+        "scripts/verify_mesh_brain_artifact_registry.py"
+      ]
+    }
+  ]
+}

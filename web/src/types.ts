@@ -172,6 +172,44 @@ export interface SystemSnapshot {
 }
 // </generated-control-plane-contracts>
 
+export interface ConnectorCredentialBoundary {
+  service_account_ref?: string | null;
+  credential_mode?: string | null;
+  production_actuator_credentials_allowed?: boolean | null;
+  repo_write_credentials_allowed?: boolean | null;
+  runtime_secret_mount_required?: boolean | null;
+  rotation_evidence_ref?: string | null;
+  break_glass_recording_required?: boolean | null;
+}
+
+export interface ConnectorCertificationRecord {
+  connector_id: string;
+  display_name?: string | null;
+  domain?: string | null;
+  state?: string | null;
+  certified_state?: string | null;
+  observed_state?: string | null;
+  required_before?: string | null;
+  authority_posture?: string | null;
+  credential_policy?: string | null;
+  credential_boundary?: ConnectorCredentialBoundary | null;
+  degraded_behavior?: string | null;
+  allowed_scopes?: string[] | null;
+  evidence_refs?: string[] | null;
+  blockers?: string[] | null;
+  detail?: string | null;
+}
+
+export interface ConnectorCertificationPacket {
+  schema_version: string;
+  generated_at: string;
+  status: string;
+  registry_path?: string | null;
+  registry_sha256?: string | null;
+  blockers: string[];
+  connectors: Record<string, ConnectorCertificationRecord>;
+}
+
 export interface HealthSnapshot {
   status: string;
   timestamp: string;
@@ -561,7 +599,19 @@ export interface WatcherStatus {
     interval_seconds: number;
     running: boolean;
     detail?: Record<string, any>;
+    ownership?: {
+      owner?: {
+        owner_id?: string;
+        display_name?: string;
+        source_refs?: string[];
+      };
+      blockers?: string[];
+      resolved_target_count?: number;
+      target_count?: number;
+      targets?: Array<Record<string, any>>;
+    } | null;
   }>;
+  ownership?: Record<string, any>;
 }
 
 export interface VaultTreeEntry {

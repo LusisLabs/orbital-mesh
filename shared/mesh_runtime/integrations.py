@@ -19,6 +19,15 @@ from urllib.request import urlopen
 
 from .config import RuntimeConfig
 from .control_plane_models import IntegrationReadiness, IntegrationStatus
+from .agentic_operator_provenance import agentic_operator_source_provenance_ready
+from .audit_sink import audit_sink_proof_ready, verify_audit_sink_proof
+from .backup_restore import backup_restore_rehearsal_ready
+from .connector_certification import build_connector_certification_matrix, connector_certification_registry_ready
+from .data_classification import data_classification_policy_ready
+from .failure_modes import failure_mode_library_ready
+from .ownership import ownership_registry_ready
+from .policy_lifecycle import policy_lifecycle_ready
+from .threat_model import threat_model_register_ready
 
 
 DEFAULT_GITNEXUS_PORT = 4747
@@ -108,6 +117,17 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
     cache_key = (
         runtime_config.state_directory,
         runtime_config.integrations_config_path,
+        runtime_config.ownership_registry_path,
+        runtime_config.connector_certification_registry_path,
+        runtime_config.policy_lifecycle_manifest_path,
+        runtime_config.failure_mode_library_path,
+        runtime_config.threat_model_register_path,
+        runtime_config.data_classification_policy_path,
+        runtime_config.agentic_operator_source_provenance_path,
+        runtime_config.audit_sink_proof_path,
+        runtime_config.backup_restore_rehearsal_path,
+        bool(runtime_config.policy_signing_key),
+        runtime_config.policy_signing_key_id,
         runtime_config.promptfoo_command,
         runtime_config.hermes_command,
         runtime_config.goose_command,
@@ -194,7 +214,22 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         required_before="pilot",
         posture="sandboxed proposal fabric",
     )
-    connector_certification = _connector_certification(runtime_config, resolved)
+    runtime_connector_states = _connector_certification(runtime_config, resolved)
+    runtime_connector_states.update(
+        {
+            "promptfoo": _status_connector_state(promptfoo_status),
+            "hermes": _status_connector_state(hermes_status),
+            "goose": _status_connector_state(goose_status),
+            "evo": _status_connector_state(evo_status),
+            "latentmas": _status_connector_state(latentmas_status),
+            "deepagents": _status_connector_state(deepagents_status),
+        }
+    )
+    connector_certification_packet = build_connector_certification_matrix(
+        registry_path=runtime_config.connector_certification_registry_path,
+        runtime_states=runtime_connector_states,
+    )
+    connector_certification = connector_certification_packet["connectors"]
     profile, required_checks, optional_checks, blockers = _profile_checks(
         runtime_config,
         {
@@ -245,6 +280,14 @@ def _with_certification(
     )
 
 
+def _status_connector_state(status: IntegrationStatus) -> dict[str, Any]:
+    blockers = [] if status.ready else [f"{status.name}_connector_probe_not_ready"]
+    return {
+        "state": status.certification,
+        "blockers": blockers,
+    }
+
+
 def _connector_certification(
     runtime_config: RuntimeConfig,
     resolved: IntegrationsConfig,
@@ -291,11 +334,7 @@ def _connector_certification(
             "required_before": "pilot",
             "detail": "Local deterministic seam. Disable for pilot until a real incident provider is certified.",
         },
-        "audit_sink": {
-            "state": "mock" if runtime_config.audit_logging_available else "disabled",
-            "required_before": "pilot",
-            "detail": "Local audit seam. Mirror to durable external storage before compliance reliance.",
-        },
+        "audit_sink": _audit_sink_connector_state(runtime_config),
         "deepagents": {
             "state": "proposal-only" if runtime_config.agent_fabric_mode == "deepagents" else "disabled",
             "required_before": "pilot",
@@ -332,6 +371,30 @@ def _profile_checks(
         required_checks.update(
             {
                 "operator_identity_required": runtime_config.operator_identity_required,
+                "ownership_registry_configured": ownership_registry_ready(runtime_config.ownership_registry_path),
+                "connector_certification_registry_configured": connector_certification_registry_ready(
+                    runtime_config.connector_certification_registry_path
+                ),
+                "policy_lifecycle_signed": policy_lifecycle_ready(
+                    manifest_path=runtime_config.policy_lifecycle_manifest_path,
+                    signing_key=runtime_config.policy_signing_key,
+                    signing_key_id=runtime_config.policy_signing_key_id,
+                ),
+                "failure_mode_library_configured": failure_mode_library_ready(
+                    runtime_config.failure_mode_library_path
+                ),
+                "threat_model_register_reviewed": threat_model_register_ready(
+                    runtime_config.threat_model_register_path
+                ),
+                "data_classification_policy_reviewed": data_classification_policy_ready(
+                    runtime_config.data_classification_policy_path
+                ),
+                "agentic_operator_source_provenance_recorded": agentic_operator_source_provenance_ready(
+                    runtime_config.agentic_operator_source_provenance_path
+                ),
+                "backup_restore_rehearsal_verified": backup_restore_rehearsal_ready(
+                    runtime_config.backup_restore_rehearsal_path
+                ),
                 "otel_ingest_protected": (
                     not runtime_config.otel_receiver_enabled
                     or bool(runtime_config.otel_receiver_token)
@@ -378,6 +441,9 @@ def _profile_checks(
                 "postgres_required_for_multi_operator": runtime_config.state_backend == "postgres",
                 "external_audit_sink_certified": connector_certification.get("audit_sink", {}).get("state")
                 in {"pilot-ready", "production-ready"},
+                "external_audit_sink_contract_verified": audit_sink_proof_ready(
+                    runtime_config.audit_sink_proof_path
+                ),
             }
         )
     blockers = [
@@ -395,6 +461,35 @@ def _profile_at_least(profile: str, minimum: str) -> bool:
 def _durable_artifact_uri_prefix_configured(uri_prefix: str | None) -> bool:
     parsed = urlparse((uri_prefix or "").strip())
     return parsed.scheme in _DURABLE_ARTIFACT_URI_SCHEMES and bool(parsed.netloc)
+
+
+def _audit_sink_connector_state(runtime_config: RuntimeConfig) -> dict[str, Any]:
+    if not runtime_config.audit_logging_available:
+        return {
+            "state": "disabled",
+            "required_before": "pilot",
+            "detail": "Audit logging is disabled.",
+            "blockers": ["audit_logging_disabled"],
+        }
+    verification = verify_audit_sink_proof(runtime_config.audit_sink_proof_path)
+    if verification["status"] == "pass":
+        return {
+            "state": "production-ready",
+            "required_before": "expansion",
+            "detail": "External audit sink append-only contract proof is present.",
+        }
+    blockers = ["external_audit_sink_contract_not_verified"]
+    blockers.extend(
+        f"audit_sink_contract:{name}"
+        for name, passed in verification["checks"].items()
+        if not passed
+    )
+    return {
+        "state": "mock",
+        "required_before": "pilot",
+        "detail": "Local audit seam. Mirror to durable external storage before compliance reliance.",
+        "blockers": blockers,
+    }
 
 
 def invalidate_readiness_cache() -> None:

@@ -1,0 +1,180 @@
+{
+  "version": "ownership.registry.v1",
+  "records": [
+    {
+      "record_id": "own_api_gateway_pilot",
+      "service": "api-gateway",
+      "environment": "production",
+      "namespace": "edge",
+      "tenant_id": "tenant_a",
+      "customer_id": "design_partner_a",
+      "customer_boundary": "single_customer",
+      "owner": {
+        "owner_id": "platform.gateway",
+        "display_name": "Gateway Platform",
+        "source_refs": [
+          "registry://owners/platform.gateway"
+        ]
+      },
+      "approver_roles": [
+        "approver",
+        "admin"
+      ],
+      "rollback_authority": {
+        "role": "approver",
+        "source_refs": [
+          "policy://rollback/feature-flag"
+        ]
+      },
+      "escalation_route": "pager://platform/gateway",
+      "allowed_action_classes": [
+        "reduce_rollout",
+        "disable_flag",
+        "rollback_deployment",
+        "escalate"
+      ],
+      "policy_refs": [
+        "policies/metric-actions.policy.json",
+        "policies/rollback.policy.json"
+      ],
+      "data_boundary": {
+        "classification": "operational",
+        "export_allowed": true,
+        "retention_days": 30,
+        "reservoir_refs": [
+          "reservoir://tenant_a/ops-signals"
+        ],
+        "export_policy": {
+          "allowed": true,
+          "allowed_destinations": [
+            "audit_archive",
+            "operator_download"
+          ],
+          "redaction_required": true
+        },
+        "legal_action_scope": {
+          "allowed": false,
+          "review_required": true,
+          "authority_ref": "policy://legal/no-production-action-without-counsel-review"
+        }
+      }
+    },
+    {
+      "record_id": "own_search_api_pilot",
+      "service": "search-api",
+      "environment": "production",
+      "namespace": "search",
+      "tenant_id": "tenant_a",
+      "customer_id": "design_partner_a",
+      "customer_boundary": "single_customer",
+      "owner": {
+        "owner_id": "platform.search",
+        "display_name": "Search Platform",
+        "source_refs": [
+          "registry://owners/platform.search"
+        ]
+      },
+      "approver_roles": [
+        "approver",
+        "admin"
+      ],
+      "rollback_authority": {
+        "role": "approver",
+        "source_refs": [
+          "policy://rollback/deployment"
+        ]
+      },
+      "escalation_route": "pager://platform/search",
+      "allowed_action_classes": [
+        "rollback_deployment",
+        "restart_deployment",
+        "scale_deployment",
+        "patch_resources"
+      ],
+      "policy_refs": [
+        "policies/metric-actions.policy.json",
+        "policies/rollback.policy.json"
+      ],
+      "data_boundary": {
+        "classification": "operational",
+        "export_allowed": true,
+        "retention_days": 30,
+        "reservoir_refs": [
+          "reservoir://tenant_a/search-runtime"
+        ],
+        "export_policy": {
+          "allowed": true,
+          "allowed_destinations": [
+            "audit_archive",
+            "operator_download"
+          ],
+          "redaction_required": true
+        },
+        "legal_action_scope": {
+          "allowed": false,
+          "review_required": true,
+          "authority_ref": "policy://legal/no-production-action-without-counsel-review"
+        }
+      }
+    },
+    {
+      "record_id": "own_semantic_search_pilot",
+      "service": "semantic-search",
+      "environment": "production",
+      "namespace": "search",
+      "tenant_id": "tenant_a",
+      "customer_id": "design_partner_a",
+      "customer_boundary": "single_customer",
+      "owner": {
+        "owner_id": "platform.search",
+        "display_name": "Search Platform",
+        "source_refs": [
+          "registry://owners/platform.search"
+        ]
+      },
+      "approver_roles": [
+        "approver",
+        "admin"
+      ],
+      "rollback_authority": {
+        "role": "approver",
+        "source_refs": [
+          "policy://rollback/deployment"
+        ]
+      },
+      "escalation_route": "pager://platform/search",
+      "allowed_action_classes": [
+        "rollback_deployment",
+        "restart_deployment",
+        "scale_deployment",
+        "patch_resources"
+      ],
+      "policy_refs": [
+        "policies/metric-actions.policy.json",
+        "policies/rollback.policy.json"
+      ],
+      "data_boundary": {
+        "classification": "operational",
+        "export_allowed": true,
+        "retention_days": 30,
+        "reservoir_refs": [
+          "reservoir://tenant_a/search-runtime",
+          "reservoir://tenant_a/model-evidence"
+        ],
+        "export_policy": {
+          "allowed": true,
+          "allowed_destinations": [
+            "audit_archive",
+            "operator_download"
+          ],
+          "redaction_required": true
+        },
+        "legal_action_scope": {
+          "allowed": false,
+          "review_required": true,
+          "authority_ref": "policy://legal/no-production-action-without-counsel-review"
+        }
+      }
+    }
+  ]
+}

@@ -66,6 +66,9 @@
         "execution_readiness": {
           "type": "object"
         },
+        "evidence_sufficiency": {
+          "type": "object"
+        },
         "remediation_safety": {
           "type": "object"
         },

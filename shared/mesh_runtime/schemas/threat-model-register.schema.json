@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/threat-model-register.schema.json",
+  "title": "ThreatModelRegister",
+  "type": "object",
+  "required": [
+    "version",
+    "generated_at",
+    "findings"
+  ],
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["mesh.threat_model_register.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "findings": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "boundary",
+          "risk",
+          "status",
+          "owner",
+          "decision",
+          "expires_at",
+          "compensating_control",
+          "evidence_refs"
+        ],
+        "properties": {
+          "finding_id": { "type": "string" },
+          "boundary": { "type": "string" },
+          "risk": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["fixed", "accepted", "open"]
+          },
+          "owner": { "type": "string" },
+          "decision": { "type": "string" },
+          "expires_at": { "type": "string" },
+          "compensating_control": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/run-admission.schema.json",
+  "title": "RunAdmission",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "decision",
+    "run_id",
+    "tenant_id",
+    "target_lock_key",
+    "queue",
+    "quotas",
+    "lock",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mesh.run_admission.v1",
+      "type": "string"
+    },
+    "generated_at": { "type": "string" },
+    "decision": {
+      "type": "string",
+      "enum": ["admitted", "blocked"]
+    },
+    "run_id": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "target_lock_key": { "type": "string" },
+    "queue": {
+      "type": "object",
+      "required": ["current_depth", "max_size", "worker_count"],
+      "properties": {
+        "current_depth": { "type": "integer" },
+        "max_size": { "type": "integer" },
+        "worker_count": { "type": "integer" }
+      }
+    },
+    "quotas": {
+      "type": "object",
+      "required": ["tenant_active_runs", "tenant_active_run_quota"],
+      "properties": {
+        "tenant_active_runs": { "type": "integer" },
+        "tenant_active_run_quota": { "type": "integer" }
+      }
+    },
+    "lock": {
+      "type": "object",
+      "required": ["granted", "holder_run_id"],
+      "properties": {
+        "granted": { "type": "boolean" },
+        "holder_run_id": { "type": ["string", "null"] }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
