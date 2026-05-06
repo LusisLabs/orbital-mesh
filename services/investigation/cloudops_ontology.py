@@ -47,10 +47,42 @@ _RULES: tuple[_Rule, ...] = (
     # Service routing
     _Rule("service_selector_mismatch", ("no endpoints available for service", "endpoints not found", "selector doesn't match", "0 endpoints", "endpoints: <none>")),
     _Rule("service_port_mismatch", ("no port matching", "service port", "targetport", "target port", "does not have a port named")),
+    # Two newer canonical labels that CloudOpsBench scores under more
+    # specific names — emitted by ``analyze_service_routing`` when the
+    # numeric Service.spec.ports[i].targetPort disagrees with the
+    # backing pod's containerPort, or when a deployment env var like
+    # ``EMAIL_SERVICE_ADDR=emailservice:5050`` references a port the
+    # service doesn't expose. Patterns intentionally include the verbose
+    # phrasing the analyzer emits so we don't false-fire on raw
+    # describe text that contains "port mapping" incidentally.
+    _Rule(
+        "service_port_mapping_mismatch",
+        ("port mapping mismatch", "service port mapping mismatch"),
+        weight=1.5,
+    ),
+    _Rule(
+        "service_env_var_address_mismatch",
+        ("env var", "service address mismatch", "references service address mismatch"),
+        weight=1.5,
+    ),
     # Secrets / config
     _Rule("missing_secret_binding", ("secret \"", "secret not found", "couldn't find key", "createcontainerconfigerror"), weight=1.1),
     _Rule("missing_configmap", ("configmap \"", "configmap not found", "couldn't find configmap")),
-    _Rule("missing_service_account", ("serviceaccount not found", "service account not found", "no such service account")),
+    _Rule(
+        "missing_service_account",
+        (
+            "serviceaccount not found",
+            "service account not found",
+            "no such service account",
+            # CloudOpsBench events emit the kube-apiserver canonical
+            # form: ``error looking up service account NS/NAME:
+            # serviceaccount "NAME" not found``. Both the verbose
+            # phrase and the quoted form land here so substring
+            # matching fires regardless of which slice surfaces.
+            "looking up service account",
+            'serviceaccount "',
+        ),
+    ),
     # Auth / DB
     _Rule("mysql_invalid_credentials", ("access denied for user", "authentication failed", "1045", "er_access_denied")),
     _Rule("postgres_invalid_credentials", ("password authentication failed", "fatal:  password", "28p01")),
@@ -93,6 +125,31 @@ _RULES: tuple[_Rule, ...] = (
     _Rule("persistent_volume_claim_pending", ("pod has unbound immediate persistentvolumeclaims", "unbound persistentvolumeclaims", "persistentvolumeclaim is not bound")),
     # Cluster / node
     _Rule("node_not_ready", ("node not ready", "kubelet stopped posting", "kubelet is not ready")),
+    # Node-daemon failure family — fired by ``analyze_node_dataplane``
+    # when systemd reports ``Active: inactive`` (or ``failed``) for a
+    # specific daemon. Each rule pins the daemon name so different
+    # daemons land on the right canonical label rather than colliding
+    # on a shared "node down" bucket.
+    _Rule(
+        "containerd_unavailable",
+        ("containerd.service on", "containerd.service is inactive", "containerd.service is failed"),
+        weight=1.6,
+    ),
+    _Rule(
+        "kube_proxy_unavailable",
+        ("kube-proxy.service on", "kube-proxy.service is inactive", "kube-proxy.service is failed"),
+        weight=1.6,
+    ),
+    _Rule(
+        "kubelet_unavailable",
+        ("kubelet.service on", "kubelet.service is inactive", "kubelet.service is failed"),
+        weight=1.6,
+    ),
+    _Rule(
+        "kube_scheduler_unavailable",
+        ("kube-scheduler.service on", "kube-scheduler.service is inactive"),
+        weight=1.4,
+    ),
 )
 
 
