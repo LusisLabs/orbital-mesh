@@ -198,6 +198,46 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
 
         self.assertEqual(ranked, [])
 
+    def test_ontology_does_not_false_fire_env_var_on_incidental_mentions(self) -> None:
+        # Regression for the bug Cursor's review caught: a bare
+        # ``"env var"`` substring used to fire the
+        # ``service_env_var_address_mismatch`` rule. Tool descriptions,
+        # error logs, and unrelated diagnostic text routinely contain
+        # the phrase, so any of these would have produced a confident
+        # fake root-cause candidate. Only the analyzer's specific
+        # ``"references service address mismatch"`` / ``"service
+        # address mismatch"`` phrases should drive the rule.
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes([
+            # Tool description that mentioned env vars in passing.
+            "analyze_service_routing harvests env var references across deployments",
+            # An unrelated error log fragment.
+            "container env var PORT=8080 set successfully",
+            # A pod describe noting an env var was injected.
+            "Environment from: PORT (env var)",
+        ])
+
+        labels = {r.root_cause for r in ranked}
+        self.assertNotIn("service_env_var_address_mismatch", labels)
+
+    def test_ontology_still_fires_on_analyzer_emitted_phrase(self) -> None:
+        # Companion to the false-fire regression: the rule MUST still
+        # fire on the analyzer's actual emitted text. If we tightened
+        # the patterns too aggressively the analyzer would stop driving
+        # candidates entirely, which would silently re-introduce the
+        # 0% accuracy on the service domain.
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        ranked = rank_root_causes([
+            "Deployment frontend: env var EMAIL_SERVICE_ADDR=emailservice:5050 "
+            "references service address mismatch: emailservice:5050 but service "
+            "emailservice exposes [5000]"
+        ])
+
+        labels = {r.root_cause for r in ranked}
+        self.assertIn("service_env_var_address_mismatch", labels)
+
 
 class _StubToolProvider:
     """Test-only stub used to record per-tool invocations.

@@ -496,17 +496,24 @@ def _analyze_service_routing_invoker(snapshot_tools: Any):
                         }
                     )
 
-        # Build a service-port lookup for env-var validation:
-        # {"emailservice": {5000, 5050}, "frontend": {80}, ...}.
+        # Build a service-port lookup for env-var validation: which
+        # ports a *client* can reach via the Service DNS name.
+        #
+        # Only the Service ``Port:`` values count — those are the
+        # cluster-IP/DNS ports kube-proxy listens on. ``TargetPort:``
+        # is the *backing pod's* containerPort that kube-proxy forwards
+        # to internally; clients addressing ``svc:targetPort`` never
+        # connect. Including TargetPort in this lookup defeats the
+        # detection on the canonical port-mismatch case
+        # (Service.Port=5000, TargetPort=5050, env var emailservice:5050)
+        # — the env var would silently pass validation despite being
+        # exactly the misconfiguration this analyzer targets.
         service_port_lookup: dict[str, set[int]] = {}
         for rec in service_records:
             name = rec.get("raw_name")
             if not name:
                 continue
             ports = {p for (_n, p, _proto) in (rec.get("ports") or [])}
-            ports.update(
-                int(t) for (t, _proto) in (rec.get("target_ports") or []) if str(t).isdigit()
-            )
             if ports:
                 service_port_lookup.setdefault(name, set()).update(ports)
 

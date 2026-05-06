@@ -418,6 +418,31 @@ spec:
           value: "emailservice:5050"
 """
 
+# Same env var pointing at the TargetPort of a port-mismatched service
+# (emailservice has Port=5000, TargetPort=5050; the env var references
+# 5050). Pre-fix this would silently pass validation because the
+# service-port lookup conflated Port and TargetPort. The bug Cursor's
+# review caught: clients can only DNS-reach Service Port=5000, never
+# 5050. This fixture exercises the canonical port-mismatch failure
+# (Service.Port vs Pod.containerPort) compounded by an env var pinned
+# to the wrong side.
+FRONTEND_YAML_REFS_TARGETPORT = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  template:
+    spec:
+      containers:
+      - name: server
+        env:
+        - name: PORT
+          value: "8080"
+        - name: EMAIL_SERVICE_ADDR
+          value: "emailservice:5050"
+"""
+
 EMAILSERVICE_YAML_OK = """\
 apiVersion: apps/v1
 kind: Deployment
@@ -467,6 +492,37 @@ class AnalyzeServiceRoutingTests(unittest.TestCase):
         out = _analyze_service_routing_invoker(snap)({"namespace": "boutique"})
         self.assertTrue(out.valid)
         self.assertEqual(len(out.output["env_mismatches"]), 1)
+        ranked = rank_root_causes([out.output_summary])
+        labels = [r.root_cause for r in ranked]
+        self.assertIn("service_env_var_address_mismatch", labels)
+
+    def test_env_var_referencing_target_port_is_flagged(self) -> None:
+        # Regression for the bug Cursor's review caught: when a service
+        # has Port != TargetPort and a deployment env var points at the
+        # TargetPort, pre-fix the env-var validation silently accepted
+        # the value because it scanned both Port and TargetPort into
+        # ``service_port_lookup``. Only ``Port:`` is DNS-reachable; the
+        # bug masked exactly the failure this analyzer is meant to find.
+        snap = FakeSnapshotTools(
+            {
+                ("GetResources", _stable_args({"resource_type": "services", "namespace": "boutique"})): SVC_LIST,
+                ("DescribeResource", _stable_args({"resource_type": "services", "name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_DESCRIBE_MISMATCH,
+                ("DescribeResource", _stable_args({"resource_type": "services", "name": "frontend", "namespace": "boutique"})): FRONTEND_DESCRIBE_OK,
+                ("GetAppYAML", _stable_args({"app_name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_YAML_OK,
+                ("GetAppYAML", _stable_args({"app_name": "frontend", "namespace": "boutique"})): FRONTEND_YAML_REFS_TARGETPORT,
+            }
+        )
+        out = _analyze_service_routing_invoker(snap)({"namespace": "boutique"})
+        self.assertTrue(out.valid)
+        # Both failures land — the service-side mismatch AND the
+        # client-side env-var mismatch.
+        self.assertEqual(len(out.output["port_target_mismatches"]), 1)
+        self.assertEqual(len(out.output["env_mismatches"]), 1)
+        env_issue = out.output["env_mismatches"][0]
+        self.assertEqual(env_issue["env_var"], "EMAIL_SERVICE_ADDR")
+        self.assertEqual(env_issue["ref_port"], 5050)
+        # Service port lookup must NOT include 5050 (the TargetPort).
+        self.assertEqual(env_issue["exposed_ports"], [5000])
         ranked = rank_root_causes([out.output_summary])
         labels = [r.root_cause for r in ranked]
         self.assertIn("service_env_var_address_mismatch", labels)

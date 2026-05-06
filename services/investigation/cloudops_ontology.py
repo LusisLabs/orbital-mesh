@@ -62,7 +62,13 @@ _RULES: tuple[_Rule, ...] = (
     ),
     _Rule(
         "service_env_var_address_mismatch",
-        ("env var", "service address mismatch", "references service address mismatch"),
+        # Only patterns specific enough to identify the
+        # ``analyze_service_routing`` analyzer's emitted text. A bare
+        # ``"env var"`` substring would false-fire on any tool
+        # description, error log, or unrelated diagnostic that mentions
+        # environment variables — the ontology fires on ANY pattern
+        # match (not all), so even one weak pattern poisons the rule.
+        ("references service address mismatch", "service address mismatch"),
         weight=1.5,
     ),
     # Secrets / config
