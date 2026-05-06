@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -181,7 +183,27 @@ class VaultManager:
     def _write_markdown(self, relative_path: str, lines: list[str]) -> None:
         destination = self.root_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("\n".join(lines).rstrip() + "\n")
+        content = "\n".join(lines).rstrip() + "\n"
+        mode = destination.stat().st_mode & 0o777 if destination.exists() else 0o644
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                delete=False,
+                dir=destination.parent,
+                encoding="utf-8",
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+            ) as handle:
+                temp_path = Path(handle.name)
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp_path.chmod(mode)
+            temp_path.replace(destination)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
 
     def write_memory_observation(self, observation: dict[str, Any]) -> str:
         relative_path = f"MemoryObservations/{observation['observation_id']}.md"
