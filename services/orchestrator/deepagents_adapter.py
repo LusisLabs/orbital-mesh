@@ -293,13 +293,25 @@ def _final_ai_text(messages: list[Any]) -> str:
     return ""
 
 
-def _model_env_warnings(model: str) -> list[str]:
+def _model_env_warnings(model: str, config: RuntimeConfig | None = None) -> list[str]:
+    """Return warnings only when no credential source is reachable.
+
+    The observer LLM credentials (``MESH_OBSERVER_API_KEY`` /
+    ``MESH_OBSERVER_BASE_URL`` / ``MESH_OBSERVER_MODEL``) are a valid
+    fallback — Mesh deployments that already configure the observer
+    shouldn't need to set ``OPENAI_API_KEY`` / ``ANTHROPIC_API_KEY``
+    again just for deepagents. We only warn when neither the
+    provider-specific env var nor the observer fallback is set.
+    """
     warnings: list[str] = []
     lower = model.lower()
-    if lower.startswith("openai:") and not _openai_api_key_for_model(model):
-        warnings.append("OPENAI_API_KEY is not set")
-    if lower.startswith("anthropic:") and not (os.getenv("ANTHROPIC_API_KEY") or "").strip():
-        warnings.append("ANTHROPIC_API_KEY is not set")
+    if lower.startswith("openai:"):
+        if not _openai_api_key_for_model(model) and not _observer_can_back("openai", config):
+            warnings.append("OPENAI_API_KEY is not set (and no observer fallback)")
+    if lower.startswith("anthropic:"):
+        anthropic_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not anthropic_key and not _observer_can_back("anthropic", config):
+            warnings.append("ANTHROPIC_API_KEY is not set (and no observer fallback)")
     return warnings
 
 
@@ -310,6 +322,78 @@ def _openai_api_key_for_model(model: str) -> str:
     if "minimax" in model.lower():
         return (os.getenv("MINIMAX_API_KEY") or "").strip()
     return ""
+
+
+def _observer_can_back(provider: str, config: RuntimeConfig | None) -> bool:
+    """True iff the configured observer credentials can authenticate ``provider``.
+
+    The observer's provider must match (we don't proxy OpenAI calls
+    through an Anthropic key). When this returns True the deepagents
+    adapter will pass ``config.observer_api_key`` and
+    ``config.observer_base_url`` into the LangChain client.
+    """
+    if config is None:
+        return False
+    observer_provider = str(getattr(config, "observer_provider", "") or "").lower()
+    if observer_provider != provider.lower():
+        return False
+    return bool(getattr(config, "observer_api_key", "")) and bool(getattr(config, "observer_enabled", False) or getattr(config, "observer_api_key", ""))
+
+
+def _resolve_deepagents_credentials(
+    model: str,
+    config: RuntimeConfig | None,
+) -> tuple[str, str]:
+    """Return ``(api_key, base_url)`` for ``model`` given env + config.
+
+    Resolution order:
+      1. Provider-specific env var (OPENAI_API_KEY / ANTHROPIC_API_KEY).
+      2. MiniMax variant (MINIMAX_API_KEY) for OpenAI-compatible
+         MiniMax routes.
+      3. Observer fallback (config.observer_api_key) iff the observer's
+         provider matches the model's provider. Same for base_url.
+
+    Empty strings mean "let LangChain look it up itself" — we never
+    pass an empty key downstream.
+    """
+    lower = model.lower()
+    api_key = ""
+    base_url = ""
+    if lower.startswith("anthropic:"):
+        api_key = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        if not api_key and _observer_can_back("anthropic", config) and config is not None:
+            api_key = (config.observer_api_key or "").strip()
+            base_url = (config.observer_base_url or "").strip()
+    elif lower.startswith("openai:"):
+        api_key = _openai_api_key_for_model(model)
+        if not api_key and _observer_can_back("openai", config) and config is not None:
+            api_key = (config.observer_api_key or "").strip()
+            base_url = (config.observer_base_url or "").strip()
+        env_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()
+        if env_base_url:
+            base_url = env_base_url
+    return api_key, base_url
+
+
+def _resolve_deepagents_model_string(config: RuntimeConfig) -> str:
+    """Return the effective model string for deepagents.
+
+    When the user hasn't explicitly set ``MESH_DEEPAGENTS_MODEL`` AND
+    the observer is configured with both an api_key and a model, prefer
+    the observer-derived ``{provider}:{model}`` so deepagents inherits
+    the same LLM the observer already speaks to. This is the
+    "use one key, get one model everywhere" path that lets a deployment
+    configure the observer once and pick up deepagents for free.
+    """
+    explicit_env = (os.getenv("MESH_DEEPAGENTS_MODEL") or "").strip()
+    if explicit_env:
+        return config.mesh_deepagents_model
+    observer_provider = str(getattr(config, "observer_provider", "") or "").lower()
+    observer_model = (getattr(config, "observer_model", "") or "").strip()
+    observer_key = (getattr(config, "observer_api_key", "") or "").strip()
+    if observer_provider in ("openai", "anthropic") and observer_model and observer_key:
+        return f"{observer_provider}:{observer_model}"
+    return config.mesh_deepagents_model
 
 
 def _import_deepagents() -> tuple[Any, Any]:
@@ -342,17 +426,57 @@ def _uses_minimax_openai_compatible_route(model: str) -> bool:
     return False
 
 
-def _resolve_deepagents_model(model: str, *, max_output_tokens: int = 1024) -> Any:
-    if model.lower().startswith("anthropic:"):
-        return init_chat_model(model, max_tokens=max_output_tokens)
-    if model.lower().startswith("openai:") and _uses_minimax_openai_compatible_route(model):
-        kwargs: dict[str, Any] = {"use_responses_api": False}
-        openai_base_url = (os.getenv("OPENAI_BASE_URL") or os.getenv("OPENAI_HOST") or "").strip()
-        if openai_base_url:
-            kwargs["base_url"] = openai_base_url
-        openai_api_key = _openai_api_key_for_model(model)
-        if openai_api_key:
-            kwargs["api_key"] = openai_api_key
+def _resolve_deepagents_model(
+    model: str,
+    *,
+    max_output_tokens: int = 1024,
+    config: RuntimeConfig | None = None,
+) -> Any:
+    """Build the LangChain chat model that deepagents will run.
+
+    When ``config`` is provided we let observer credentials back-stop
+    missing provider env vars: a deployment that already configured
+    the LLM observer doesn't need to set ``OPENAI_API_KEY`` or
+    ``ANTHROPIC_API_KEY`` again for deepagents. Provider must match
+    (observer_provider == model provider) — we never proxy OpenAI
+    calls through an Anthropic key, or vice versa.
+    """
+    api_key, base_url = _resolve_deepagents_credentials(model, config)
+    lower = model.lower()
+    if lower.startswith("anthropic:"):
+        kwargs: dict[str, Any] = {"max_tokens": max_output_tokens}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+        return init_chat_model(model, **kwargs)
+    if lower.startswith("openai:") and _uses_minimax_openai_compatible_route(model):
+        kwargs = {"use_responses_api": False}
+        if base_url:
+            kwargs["base_url"] = base_url
+        if api_key:
+            kwargs["api_key"] = api_key
+        return init_chat_model(model, **kwargs)
+    if lower.startswith("openai:") and (api_key or base_url):
+        # Generic OpenAI-compatible route (non-MiniMax) where we have
+        # observer-fallback credentials. Without this branch the bare
+        # ``return model`` path drops the observer key on the floor.
+        #
+        # ``use_responses_api=True`` is load-bearing here. When this
+        # function returns a bare string, ``create_deep_agent``
+        # internally applies the OpenAI harness profile and that
+        # profile sets ``use_responses_api=True``. When we
+        # pre-initialize via ``init_chat_model`` the BaseChatModel
+        # instance is passed through unchanged, so any default we
+        # don't set is permanently lost. Without this flag, every
+        # generic-OpenAI deepagents call silently switched from the
+        # Responses API to Chat Completions the moment OPENAI_API_KEY
+        # was set — a regression Cursor's review caught.
+        kwargs = {"use_responses_api": True}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
         return init_chat_model(model, **kwargs)
     return model
 
@@ -417,7 +541,11 @@ class DeepAgentsAdapter:
             evaluation=evaluation,
             max_chars=int(self.config.mesh_deepagents_max_artifact_chars),
         )
-        env_warnings = _model_env_warnings(self.config.mesh_deepagents_model)
+        # Resolve the effective model string (observer fallback when
+        # MESH_DEEPAGENTS_MODEL wasn't explicitly set), then check
+        # credentials against the resolved model's provider.
+        effective_model = _resolve_deepagents_model_string(self.config)
+        env_warnings = _model_env_warnings(effective_model, self.config)
         if env_warnings:
             risk_flags.append("deepagents_model_credentials_missing")
 
@@ -445,8 +573,9 @@ class DeepAgentsAdapter:
         try:
             graph = create_deep_agent(
                 model=_resolve_deepagents_model(
-                    self.config.mesh_deepagents_model,
+                    effective_model,
                     max_output_tokens=int(self.config.mesh_deepagents_max_output_tokens),
+                    config=self.config,
                 ),
                 backend=backend,
                 subagents=subagents,
