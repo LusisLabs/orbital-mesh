@@ -1274,10 +1274,8 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
             "scripts/prod_smoke.sh",
         ),
         "docs/agentic-operator-core-import-plan.md": (
-            "agentic-operator-core-main/api/v1alpha1/agentworkload_types.go",
-            "agentic-operator-core-main/api/v1alpha1/tenant_types.go",
-            "agentic-operator-core-main/pkg/argo/",
-            "agentic-operator-core-main/charts/",
+            "config/agentic-operator-source.provenance.json",
+            "scripts/verify_agentic_operator_source_provenance.py",
         ),
         "docs/pilot-slo-error-budget.md": (
             "docs/design-partner-packet.md",

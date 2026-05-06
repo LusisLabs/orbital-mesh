@@ -99,6 +99,35 @@ class IntegrationsTests(unittest.TestCase):
 
         self.assertNotIn("evo_command", resolved.to_dict())
 
+    def test_staging_profile_brings_all_non_evo_connectors_online(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("shared.mesh_runtime.integrations.shutil.which", return_value=None):
+                readiness = build_readiness(
+                    RuntimeConfig(
+                        state_directory=temp_dir,
+                        vault_path=str(Path(temp_dir) / "vault"),
+                        integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                        readiness_profile="staging",
+                        feature_flag_credentials_available=False,
+                        incident_credentials_available=False,
+                    ),
+                    force=True,
+                ).to_dict()
+
+        connectors = readiness["connector_certification"]
+        self.assertNotIn("evo", connectors)
+        for connector_id, connector in connectors.items():
+            if connector_id == "kubernetes":
+                self.assertIn(connector["state"], {"staging-ready", "pilot-ready"})
+            else:
+                self.assertEqual(connector["state"], "staging-ready", connector_id)
+            self.assertEqual(connector["blockers"], [], connector_id)
+        self.assertTrue(readiness["promptfoo"]["ready"])
+        self.assertTrue(readiness["hermes"]["ready"])
+        self.assertTrue(readiness["goose"]["ready"])
+        self.assertTrue(readiness["latentmas"]["ready"])
+        self.assertTrue(readiness["deepagents"]["ready"])
+
     def test_promptfoo_output_parser_extracts_real_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_path = Path(temp_dir) / "results.json"

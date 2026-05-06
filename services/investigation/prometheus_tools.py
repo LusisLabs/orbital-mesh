@@ -32,7 +32,6 @@ from shared.mesh_runtime.otel import PrometheusClient
 from .harness import (
     InvestigationLoopState,
     LoopDecision,
-    LoopPlanner,
     RawToolOutput,
     ToolCall,
     ToolDefinition,

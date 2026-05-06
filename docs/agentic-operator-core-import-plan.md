@@ -61,6 +61,7 @@ The durable product claim is narrower and stronger: Orbital Mesh is a governed r
    - Current machine-checkable record: `config/agentic-operator-source.provenance.json`.
    - Current verifier: `scripts/verify_agentic_operator_source_provenance.py --json`.
    - Current source commit status: unavailable in the imported snapshot; the verifier binds the source input to a full-tree `source_snapshot_sha256` and fails if the snapshot changes without manifest review.
+   - Clean release verification treats the ignored local source tree as absent unless it is mounted, and gates on the tracked provenance manifest plus verifier instead.
    - Staging readiness reports `agentic_operator_source_provenance_recorded`.
 
 2. **Schema fork**

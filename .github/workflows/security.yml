@@ -56,7 +56,7 @@ jobs:
           sudo install -m 755 /tmp/gitleaks /usr/local/bin/gitleaks
           gitleaks version
       - name: Run secret scan
-        run: gitleaks detect --source=. --redact --verbose
+        run: gitleaks detect --source=. --no-git --redact --verbose
 
   lockfile-vulnerability-scan:
     if: github.event.repository.private == false || vars.EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE == 'true'

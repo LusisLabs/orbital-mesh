@@ -35,7 +35,6 @@ EKS, or a CI cluster — kubectl resolves the context.
 from __future__ import annotations
 
 import os
-import shlex
 import shutil
 import subprocess
 from typing import Any

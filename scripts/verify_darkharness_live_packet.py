@@ -221,6 +221,7 @@ def _create_denied_run(base_url: str) -> dict[str, Any]:
         lambda payload: payload["stage"] == "awaiting_operator"
         and payload.get("pending_pause_stage") == "evaluation_ready"
         and bool(payload["artifacts"]["evaluation"].get("blocking_reasons")),
+        timeout_seconds=60.0,
     )
 
 

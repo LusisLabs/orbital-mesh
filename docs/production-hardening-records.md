@@ -157,7 +157,7 @@ Staging and pilot readiness include `ownership_registry_configured`. A missing o
 
 The browser Connectors page calls `/api/connectors/certification` and renders authority posture, required tier, credential boundary, allowed scopes, and blockers from the full packet. It falls back to abbreviated `/api/readiness` certification state only when the full packet is unavailable.
 
-Staging and pilot readiness include `connector_certification_registry_configured`. Missing or invalid certification data blocks readiness; proposal-only lanes remain advisory and do not receive production actuator or repo-write credentials from certification.
+Staging and pilot readiness include `connector_certification_registry_configured`. Missing or invalid certification data blocks readiness. The staging profile brings every non-Evo connector contract online at `staging-ready` or higher, but authority remains bounded by each connector's posture and credential boundary. External orchestrators, agent fabrics, feature-flag dry runs, and incident fixture intake still cannot approve production actions, mutate targets, or receive repository-write credentials from certification.
 
 ## Mesh Orchestration Topology
 
@@ -397,7 +397,7 @@ Certification states currently used:
 - `unfinished`;
 - `disabled`.
 
-Feature-flag and incident adapters remain disabled for staging unless provider proof is mounted. Deep Agents remains `proposal-only`. Kubernetes becomes `pilot-ready` only when live execution is enabled with context and namespace allowlists.
+All non-Evo connectors are online for staging in the registry. Feature-flag and incident adapters are staging dry-run or fixture-intake lanes only; pilot readiness still blocks if provider credentials are present without provider proof. Deep Agents, LatentMAS, Hermes, Goose, and external orchestration lanes remain advisory or proposal paths even while reported as `staging-ready`. Kubernetes becomes `pilot-ready` only when live execution is enabled with context and namespace allowlists; otherwise staging reports the read-only/operator-proposal contract.
 
 ## Provider Adapter Proof
 

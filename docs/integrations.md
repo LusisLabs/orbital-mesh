@@ -165,8 +165,11 @@ Goose no longer probes installed Ollama models during integration resolution. If
 | Native evaluation/orchestration modes | Intentional deterministic local modes | Used for CI and local smoke paths; live action still depends on the relevant actuator allowlists and execution flags. |
 
 Paths classified as unfinished production adapters must not be presented as
-production integrations in release notes or readiness output. Paths classified
-as intentional safety defaults are acceptable only when their operational docs
+production integrations in release notes or readiness output. In the staging
+readiness profile, their connector contracts are online as deterministic dry-run
+or fixture-intake paths only. Pilot readiness still blocks when provider
+credentials are present without a passing provider proof. Paths classified as
+intentional safety defaults are acceptable only when their operational docs
 state the enablement flags, allowlists, and failure behavior.
 
 `GET /api/readiness` exposes a machine-readable `connector_certification` map.
@@ -174,6 +177,12 @@ Certification states are documented in
 [`production-hardening-records.md`](production-hardening-records.md) and are
 separate from live probe readiness: a connector can be reachable while still
 classified as `proposal-only`, `unfinished`, or `mock`.
+
+For staging, readiness synthesizes Mesh-native fallback status for optional
+Promptfoo, Hermes, Goose, LatentMAS, and Deep Agents lanes when their external
+CLI or sidecar is absent. That makes the contract online for staging without
+granting approval, repository-write, Kubernetes, feature-flag, incident-provider,
+or production actuator authority.
 
 ## Deep Agents agent fabric
 

@@ -1,0 +1,17 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Vendored DeepAgents eval fixtures contain deliberate fake secret strings."
+paths = [
+  '''^deepagents/libs/evals/''',
+]
+
+[[allowlists]]
+description = "Ignored local runtime and generated artifacts are not part of release source scans."
+paths = [
+  '''^\.hermes-local/''',
+  '''^\.mesh-runtime-state/''',
+  '''^agentic-operator-core-main/''',
+  '''(^|/)__pycache__/''',
+]

@@ -532,8 +532,12 @@ class ReadinessProfileTests(unittest.TestCase):
             ).to_dict()
 
         self.assertEqual(readiness["status"], "ready")
-        self.assertFalse(readiness["promptfoo"]["ready"])
-        self.assertEqual(readiness["promptfoo"]["certification"], "mock")
+        self.assertTrue(readiness["promptfoo"]["ready"])
+        self.assertEqual(readiness["promptfoo"]["certification"], "staging-ready")
+        self.assertEqual(readiness["hermes"]["certification"], "staging-ready")
+        self.assertEqual(readiness["goose"]["certification"], "staging-ready")
+        self.assertEqual(readiness["latentmas"]["certification"], "staging-ready")
+        self.assertEqual(readiness["deepagents"]["certification"], "staging-ready")
 
     def test_pilot_profile_requires_postgres_live_feedback_and_disabled_unfinished_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -562,8 +566,8 @@ class ReadinessProfileTests(unittest.TestCase):
         self.assertTrue(readiness["required_checks"]["mesh_brain_artifact_uri_prefix_configured"])
         self.assertTrue(readiness["required_checks"]["mesh_brain_serving_backend_configured"])
         self.assertTrue(readiness["required_checks"]["run_export_retention_reviewed"])
-        self.assertEqual(readiness["connector_certification"]["feature_flag_adapter"]["state"], "disabled")
-        self.assertEqual(readiness["connector_certification"]["incident_adapter"]["state"], "disabled")
+        self.assertEqual(readiness["connector_certification"]["feature_flag_adapter"]["state"], "staging-ready")
+        self.assertEqual(readiness["connector_certification"]["incident_adapter"]["state"], "staging-ready")
 
     def test_pilot_profile_blocks_unreviewed_run_export_retention(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

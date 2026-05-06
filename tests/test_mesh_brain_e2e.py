@@ -26,7 +26,7 @@ class MeshBrainDataPlaneTests(unittest.TestCase):
             source_records=[
                 {
                     "source": "incident",
-                    "text": "Investigate latency. api_key=abcdefghi123456789 must not leak.",
+                    "text": "Investigate latency. api_key=abcdefghi123456789 must not leak.",  # gitleaks:allow
                     "provenance_pointer": "incident://1",
                 }
             ],

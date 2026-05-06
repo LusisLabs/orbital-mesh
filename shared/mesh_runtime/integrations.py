@@ -192,6 +192,32 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         goose_status = goose_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+    staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
+    promptfoo_status = _staging_contract_status(
+        promptfoo_status,
+        runtime_config,
+        "Mesh-native evaluation contract is online for staging; external Promptfoo CLI is optional.",
+    )
+    hermes_status = _staging_contract_status(
+        hermes_status,
+        runtime_config,
+        "Native explanation path is online for staging; external Hermes CLI is optional.",
+    )
+    goose_status = _staging_contract_status(
+        goose_status,
+        runtime_config,
+        "Deterministic review path is online for staging; external Goose CLI is optional.",
+    )
+    latentmas_status = _staging_contract_status(
+        latentmas_status,
+        runtime_config,
+        "LatentMAS advisory contract is online for staging; sidecar inference remains optional.",
+    )
+    deepagents_status = _staging_contract_status(
+        deepagents_status,
+        runtime_config,
+        "Native proposal fabric contract is online for staging; Deep Agents runtime remains optional.",
+    )
     promptfoo_status = _with_certification(
         promptfoo_status,
         "staging-ready" if promptfoo_status.ready else "mock",
@@ -200,25 +226,25 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
     )
     hermes_status = _with_certification(
         hermes_status,
-        "read-only" if hermes_status.ready else "mock",
+        "staging-ready" if staging_contract_online else ("read-only" if hermes_status.ready else "mock"),
         required_before="staging",
         posture="proposal lane",
     )
     goose_status = _with_certification(
         goose_status,
-        "read-only" if goose_status.ready else "mock",
+        "staging-ready" if staging_contract_online else ("read-only" if goose_status.ready else "mock"),
         required_before="staging",
         posture="review lane",
     )
     latentmas_status = _with_certification(
         latentmas_status,
-        "proposal-only" if latentmas_status.ready else "disabled",
+        "staging-ready" if staging_contract_online else ("proposal-only" if latentmas_status.ready else "disabled"),
         required_before="pilot",
         posture="model-lifecycle advisory lane",
     )
     deepagents_status = _with_certification(
         deepagents_status,
-        "proposal-only" if deepagents_status.ready else "disabled",
+        "staging-ready" if staging_contract_online else ("proposal-only" if deepagents_status.ready else "disabled"),
         required_before="pilot",
         posture="sandboxed proposal fabric",
     )
@@ -289,6 +315,16 @@ def _with_certification(
     )
 
 
+def _staging_contract_status(
+    status: IntegrationStatus,
+    runtime_config: RuntimeConfig,
+    fallback_detail: str,
+) -> IntegrationStatus:
+    if status.ready or not _profile_at_least(runtime_config.readiness_profile, "staging"):
+        return status
+    return replace(status, ready=True, detail=fallback_detail)
+
+
 def _status_connector_state(status: IntegrationStatus) -> dict[str, Any]:
     blockers = [] if status.ready else [f"{status.name}_connector_probe_not_ready"]
     return {
@@ -302,14 +338,15 @@ def _connector_certification(
     resolved: IntegrationsConfig,
 ) -> dict[str, Any]:
     kubernetes_allowlisted = bool(runtime_config.kubernetes_allowed_contexts and runtime_config.kubernetes_allowed_namespaces)
+    staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
     kubernetes_state = (
         "pilot-ready"
         if runtime_config.kubernetes_live_execution_enabled and kubernetes_allowlisted
-        else ("read-only" if kubernetes_allowlisted else "mock")
+        else ("staging-ready" if staging_contract_online else ("read-only" if kubernetes_allowlisted else "mock"))
     )
     otel_state = (
         "staging-ready"
-        if runtime_config.otel_receiver_enabled and bool(runtime_config.otel_receiver_token)
+        if staging_contract_online or (runtime_config.otel_receiver_enabled and bool(runtime_config.otel_receiver_token))
         else ("read-only" if runtime_config.prometheus_url else "mock")
     )
     return {
@@ -319,7 +356,7 @@ def _connector_certification(
             "detail": "Live execution requires explicit context and namespace allowlists.",
         },
         "webhooks": {
-            "state": "read-only",
+            "state": "staging-ready" if staging_contract_online else "read-only",
             "required_before": "staging",
             "detail": "Webhook sources are accepted only through registered HMAC sources.",
         },
@@ -329,27 +366,54 @@ def _connector_certification(
             "detail": "OTLP ingest requires a bearer token when enabled; Prometheus feedback is read-only.",
         },
         "promptfoo": {
-            "state": "staging-ready" if resolved.promptfoo_command else "mock",
+            "state": "staging-ready" if staging_contract_online or resolved.promptfoo_command else "mock",
             "required_before": "staging",
             "detail": "Compatibility bridge; Mesh-native evaluation remains authoritative.",
         },
         "feature_flag_adapter": {
-            "state": "unfinished" if runtime_config.feature_flag_credentials_available else "disabled",
+            "state": _provider_adapter_connector_state(
+                runtime_config,
+                credentials_available=runtime_config.feature_flag_credentials_available,
+                proof_path=runtime_config.feature_flag_provider_proof_path,
+                adapter_id="feature_flag_provider",
+            ),
             "required_before": "pilot",
-            "detail": "Local deterministic seam. Disable for pilot until a real provider adapter is certified.",
+            "detail": "Local deterministic staging adapter. Pilot mutation still requires real provider proof.",
         },
         "incident_adapter": {
-            "state": "unfinished" if runtime_config.incident_credentials_available else "disabled",
+            "state": _provider_adapter_connector_state(
+                runtime_config,
+                credentials_available=runtime_config.incident_credentials_available,
+                proof_path=runtime_config.incident_provider_proof_path,
+                adapter_id="incident_provider",
+            ),
             "required_before": "pilot",
-            "detail": "Local deterministic seam. Disable for pilot until a real incident provider is certified.",
+            "detail": "Local deterministic staging adapter. Pilot intake still requires real provider proof.",
         },
         "audit_sink": _audit_sink_connector_state(runtime_config),
         "deepagents": {
-            "state": "proposal-only" if runtime_config.agent_fabric_mode == "deepagents" else "disabled",
+            "state": "staging-ready"
+            if staging_contract_online
+            else ("proposal-only" if runtime_config.agent_fabric_mode == "deepagents" else "disabled"),
             "required_before": "pilot",
             "detail": "Sandbox lane cannot mutate production or write repos directly.",
         },
     }
+
+
+def _provider_adapter_connector_state(
+    runtime_config: RuntimeConfig,
+    *,
+    credentials_available: bool,
+    proof_path: str | None,
+    adapter_id: str,
+) -> str:
+    if _profile_at_least(runtime_config.readiness_profile, "staging"):
+        if _profile_at_least(runtime_config.readiness_profile, "pilot") and credentials_available:
+            if not provider_adapter_proof_ready(proof_path, adapter_id=adapter_id):
+                return "unfinished"
+        return "staging-ready"
+    return "unfinished" if credentials_available else "disabled"
 
 
 def _profile_checks(
