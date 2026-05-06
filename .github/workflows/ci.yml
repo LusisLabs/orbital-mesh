@@ -33,6 +33,9 @@ jobs:
 
   python-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONFAULTHANDLER: "1"
     strategy:
       fail-fast: false
       matrix:

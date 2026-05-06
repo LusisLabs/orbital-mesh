@@ -71,6 +71,8 @@ class ReleaseImageMetadataTests(unittest.TestCase):
         self.assertIn("release-provenance-draft", workflow)
         self.assertIn("MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}", workflow)
         self.assertIn("--policy-signing-key \"$MESH_POLICY_SIGNING_KEY\"", workflow)
+        self.assertIn("timeout-minutes: 20", workflow)
+        self.assertIn('PYTHONFAULTHANDLER: "1"', workflow)
 
 
 if __name__ == "__main__":
