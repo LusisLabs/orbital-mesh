@@ -40,7 +40,7 @@ current audit by themselves.
 | Gate | Historical result | Notes |
 | --- | --- | --- |
 | Compose stack smoke | PASS | Prior smoke run `run_20260427T025924_056a8fdf` reached `awaiting_operator` with decision `rollback_deployment`; this was accepted by the stack smoke gate at that time. |
-| Reth/Kurtosis smoke | PASS | Prior note recorded an existing enclave `mesh-reth` and service `el-1-reth-lighthouse`. The bootstrap script named by that note is not present now. |
+| Reth/Kurtosis smoke | PASS | Prior note recorded an existing enclave `mesh-reth` and service `el-1-reth-lighthouse`. The bootstrap helper is retained for historical research loops, not as a current release gate. |
 | Reth/Kurtosis full loop | PASS | Prior session `.mesh-runtime-state/reth-kurtosis-loop/session_20260427T030606Z` recorded `2` cycles, `1` restart decision, `1` successful execution, and `0` failed cycles. The artifact is not present in the current local state. |
 
 ## Reth/Kurtosis Historical Post-Action Observation
@@ -101,8 +101,10 @@ service container and succeeded.
 - Pilot readiness remains blocked until the target environment supplies
   authenticated ingress, backup/restore, signed policy, Mesh Brain, retention,
   design-partner, and related deployment-specific evidence packets.
-- Compose, UI, and Reth/Kurtosis gates depend on local Docker/Kurtosis/browser
-  availability and must be recorded with exact command output before merge.
+- Compose and UI gates depend on local Docker/browser availability and must be
+  recorded with exact command output before merge. Reth/Kurtosis remains
+  historical research provenance, not a controlled-production-pilot release
+  gate.
 - Compose stack smoke now rejects container-local Kubernetes loopback endpoints
   and requires the Compose-local RPC gateway and indexer targets to answer HTTP
   probes before the run launches.
