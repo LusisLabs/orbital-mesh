@@ -414,6 +414,11 @@ class ControlPlaneApiTests(unittest.TestCase):
                 "steering_mode": "approval_gate",
             },
         )
+        first_paused = self._poll_run(
+            first["run_id"],
+            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
+        )
+
         second = self._request(
             "POST",
             "/api/runs",
@@ -423,10 +428,6 @@ class ControlPlaneApiTests(unittest.TestCase):
                 "orchestration_mode": "native",
                 "steering_mode": "approval_gate",
             },
-        )
-        first_paused = self._poll_run(
-            first["run_id"],
-            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
         )
         second_paused = self._poll_run(
             second["run_id"],
