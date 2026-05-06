@@ -102,8 +102,13 @@ def _wait_for_run(coordinator: RunCoordinator, run_id: str, timeout_seconds: flo
     while time.monotonic() < deadline:
         run = coordinator.get_run(run_id)
         artifacts = run.get("artifacts", {}) if isinstance(run, dict) and isinstance(run.get("artifacts"), dict) else {}
-        if run and run.get("stage") in TERMINAL_STAGES | {"awaiting_operator"} and "benchmark_score" in artifacts:
-            return run
+        if run and run.get("stage") in TERMINAL_STAGES | {"awaiting_operator"}:
+            if "benchmark_score" not in artifacts:
+                coordinator._record_benchmark_if_simulation(run_id)
+                run = coordinator.get_run(run_id)
+                artifacts = run.get("artifacts", {}) if isinstance(run, dict) and isinstance(run.get("artifacts"), dict) else {}
+            if "benchmark_score" in artifacts:
+                return run
         time.sleep(0.05)
     run = coordinator.get_run(run_id)
     raise TimeoutError(

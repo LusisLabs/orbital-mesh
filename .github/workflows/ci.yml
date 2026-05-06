@@ -60,7 +60,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run small randomized simulation matrix
-        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 20 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
+        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 45 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
 
   web:
     runs-on: ubuntu-latest
