@@ -31,7 +31,8 @@ class FailingInvestigationService(InvestigationService):
         service_context: dict[str, Any] | None = None,
         topology: dict[str, Any] | None = None,
         recent_runs: list[dict[str, Any]] | None = None,
-        tool_provider: Any = None,
+        registry: Any = None,
+        planner: Any = None,
     ) -> InvestigationReport:
         raise RuntimeError("forced investigation failure")
 
@@ -199,6 +200,15 @@ class CloudOpsRcaOntologyTests(unittest.TestCase):
 
 
 class _StubToolProvider:
+    """Test-only stub used to record per-tool invocations.
+
+    Holds canned text per tool name and exposes ``call_records`` so
+    tests can assert what the harness actually called. We keep the
+    legacy ``invoke`` shape (``{output, valid, status}``) so the same
+    fixtures work; ``_harness_from_stub`` adapts that shape to the
+    ``RawToolOutput`` the harness registry expects.
+    """
+
     name = "stub"
 
     def __init__(self, outputs: dict[str, Any], available_tools: tuple[str, ...] | None = None) -> None:
@@ -215,7 +225,7 @@ class _StubToolProvider:
             "args": dict(args or {}),
             "output_summary": self._outputs.get(tool_name, ""),
             "valid": tool_name in self._outputs,
-            "status": "completed" if tool_name in self._outputs else "completed",
+            "status": "completed",
             "citation_ids": [f"stub:{tool_name}"],
         }
         self._calls.append(record)
@@ -231,25 +241,93 @@ class _StubToolProvider:
         return list(self._calls)
 
 
-class InvestigationToolLoopTests(unittest.TestCase):
-    def test_tool_provider_drives_probe_loop_and_emits_ranked_findings(self) -> None:
+def _harness_from_stub(stub: _StubToolProvider, trigger: Trigger):
+    """Adapt a ``_StubToolProvider`` into a ``(registry, planner)`` pair.
+
+    Replaces the deleted ``_registry_for_tool_provider`` /
+    ``_make_provider_invoker`` helpers from ``service.py``. Tests that
+    used the legacy ``tool_provider=`` parameter now build the same
+    registry+planner shape the production harness uses (CloudOps rule
+    pack + native probe selector), so behavior under test matches the
+    real path that runs under ``run_sync``.
+    """
+    from services.investigation.cloudops_tools import (
+        CLOUDOPS_DOMAIN,
+        CLOUDOPS_TOOL_DEFINITIONS,
+        CloudOpsRulePack,
+    )
+    from services.investigation.harness import (
+        NativeProbeSelector,
+        RawToolOutput,
+        ToolRegistry,
+    )
+
+    registry = ToolRegistry()
+    definitions = {definition.name: definition for definition in CLOUDOPS_TOOL_DEFINITIONS}
+
+    def _stub_invoker(tool_name: str):
+        # Closure binds tool_name; shapes the stub's dict response into
+        # the RawToolOutput the harness registry expects. The stub's
+        # text output goes verbatim into output_summary so the cloudops
+        # ontology can match against it.
+        def invoke(args: dict[str, Any]) -> "RawToolOutput":
+            response = stub.invoke(tool_name, args)
+            output = response.get("output")
+            valid = bool(response.get("valid", True))
+            arg_summary = ",".join(f"{k}={v}" for k, v in (args or {}).items() if v) or tool_name
+            return RawToolOutput(
+                output=output,
+                output_summary=str(output) if output is not None else "",
+                citations=[{"source_type": f"stub:{tool_name}", "source_ref": arg_summary}],
+                valid=valid,
+                redaction_status="clean",
+                status="completed",
+            )
+
+        return invoke
+
+    for tool_name in stub.available_tools():
+        definition = definitions.get(tool_name)
+        if definition is None:
+            continue
+        registry.register(definition, _stub_invoker(tool_name))
+
+    planner = NativeProbeSelector(
+        CloudOpsRulePack(trigger),
+        tool_definitions=registry.list_definitions(domain=CLOUDOPS_DOMAIN, mutation_class="read_only"),
+    )
+    return registry, planner
+
+
+class InvestigationHarnessLoopTests(unittest.TestCase):
+    """Harness-driven loop behavior, exercised through the canonical
+    ``registry + planner`` interface that ``run_sync`` uses in
+    production. Pre-refactor these tests went through the legacy
+    ``tool_provider`` parameter; the migration to ``registry + planner``
+    keeps the same fixtures and assertions. Stop reasons gain a
+    ``harness_`` prefix because the harness path produces them
+    (previously the legacy bridge translated them away)."""
+
+    def test_harness_drives_probe_loop_and_emits_ranked_findings(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
         provider = _StubToolProvider({
             "GetResources": "frontend 0/1 ImagePullBackOff",
             "DescribeResource": "Reason: ErrImagePull manifest unknown",
         })
+        registry, planner = _harness_from_stub(provider, trigger)
 
         report = InvestigationService().investigate(
             trigger=trigger,
             evidence_pack=evidence_pack.to_dict(),
-            tool_provider=provider,
+            registry=registry,
+            planner=planner,
         )
 
         names = [probe["name"] for probe in report.probe_results]
         self.assertIn("GetResources", names)
         self.assertIn("DescribeResource", names)
-        self.assertEqual(report.stop_reason, "root_cause_candidate_found")
+        self.assertEqual(report.stop_reason, "harness_root_cause_candidate_found")
         ranked = [finding for finding in report.findings if finding.get("kind") == "ranked_root_causes"]
         self.assertEqual(len(ranked), 1)
         self.assertEqual(ranked[0]["summary"], "incorrect_image_reference")
@@ -263,11 +341,11 @@ class InvestigationToolLoopTests(unittest.TestCase):
         self.assertIn("GetResources", telemetry_details["tool_latency_ms_by_family"])
         self.assertTrue(telemetry_details["rca_confidence_trace"])
         self.assertTrue(telemetry_details["planner_decisions"])
-        # Calls were recorded on the provider so the runner can surface
+        # Calls were recorded on the stub so the runner can surface
         # them as tool_trajectory.
         self.assertGreaterEqual(len(provider.call_records()), 2)
 
-    def test_tool_loop_uses_get_resources_output_to_pick_describe_target(self) -> None:
+    def test_harness_uses_get_resources_output_to_pick_describe_target(self) -> None:
         # Simulates a hidden-mode CloudOps run: the trigger redacts the
         # service name to "unknown-service", but GetResources output
         # reveals the unhealthy pod. The loop should describe that pod
@@ -287,17 +365,19 @@ class InvestigationToolLoopTests(unittest.TestCase):
             "DescribeResource": "Reason: ErrImagePull",
             "GetErrorLogs": "manifest unknown",
         })
+        registry, planner = _harness_from_stub(provider, trigger)
 
         InvestigationService().investigate(
             trigger=trigger,
             evidence_pack=evidence_pack.to_dict(),
-            tool_provider=provider,
+            registry=registry,
+            planner=planner,
         )
 
         self.assertTrue(seen_describe_args)
         self.assertEqual(seen_describe_args[0]["name"], "productcatalogservice")
 
-    def test_tool_loop_selects_follow_up_from_observed_signal_and_records_reason(self) -> None:
+    def test_harness_selects_follow_up_from_observed_signal_and_records_reason(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
         provider = _StubToolProvider(
@@ -309,11 +389,13 @@ class InvestigationToolLoopTests(unittest.TestCase):
             },
             available_tools=("GetResources", "DescribeResource", "GetAppYAML", "GetErrorLogs"),
         )
+        registry, planner = _harness_from_stub(provider, trigger)
 
         report = InvestigationService().investigate(
             trigger=trigger,
             evidence_pack=evidence_pack.to_dict(),
-            tool_provider=provider,
+            registry=registry,
+            planner=planner,
         )
 
         tool_names = [record["tool_name"] for record in provider.call_records()]
@@ -328,7 +410,7 @@ class InvestigationToolLoopTests(unittest.TestCase):
         self.assertIn("resource_status_signal", reasons["DescribeResource"])
         self.assertIn("runtime_failure_signal", reasons["GetErrorLogs"])
 
-    def test_tool_loop_stops_when_evidence_value_is_exhausted(self) -> None:
+    def test_harness_stops_when_evidence_value_is_exhausted(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
         provider = _StubToolProvider(
@@ -339,20 +421,22 @@ class InvestigationToolLoopTests(unittest.TestCase):
             },
             available_tools=("GetResources", "DescribeResource", "GetAppYAML", "GetErrorLogs"),
         )
+        registry, planner = _harness_from_stub(provider, trigger)
 
         report = InvestigationService().investigate(
             trigger=trigger,
             evidence_pack=evidence_pack.to_dict(),
-            tool_provider=provider,
+            registry=registry,
+            planner=planner,
         )
 
         self.assertEqual([record["tool_name"] for record in provider.call_records()], ["GetResources"])
-        self.assertEqual(report.stop_reason, "evidence_value_exhausted")
+        self.assertEqual(report.stop_reason, "harness_evidence_value_exhausted")
         self.assertEqual(report.root_cause_candidates, [])
         telemetry = [finding for finding in report.findings if finding.get("kind") == "planner_telemetry"]
         self.assertEqual(telemetry[0]["details"]["evidence_value_exhaustion_rate"], 1.0)
 
-    def test_tool_provider_absent_keeps_deterministic_path(self) -> None:
+    def test_harness_absent_keeps_deterministic_path(self) -> None:
         trigger, signal = _trigger_and_signal()
         evidence_pack = EvidenceService().assemble(trigger=trigger, signal_payload=signal)
 
