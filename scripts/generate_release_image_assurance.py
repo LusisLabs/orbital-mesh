@@ -64,7 +64,8 @@ def main() -> int:
         text=True,
     )
     if normalized.returncode != 0:
-        raise SystemExit(normalized.stderr + normalized.stdout)
+        summary = _blocking_findings_summary(Path(args.output_dir) / "vulnerability-scan.json")
+        raise SystemExit(normalized.stderr + normalized.stdout + summary)
 
     normalized_payload = json.loads(normalized.stdout)
     print(
@@ -113,6 +114,40 @@ def _validate_digest(value: str) -> None:
     tail = value[len("sha256:") :]
     if len(tail) != 64 or any(char not in "0123456789abcdefABCDEF" for char in tail):
         raise SystemExit("--image-digest must be sha256:<64 hex>")
+
+
+def _blocking_findings_summary(scan_path: Path) -> str:
+    if not scan_path.exists():
+        return ""
+    try:
+        payload = json.loads(scan_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    findings = payload.get("findings")
+    if not isinstance(findings, list):
+        return ""
+    blocking: list[tuple[str, str, str, str]] = []
+    for item in findings:
+        if not isinstance(item, dict):
+            continue
+        severity = str(item.get("severity") or "").lower()
+        if severity not in {"high", "critical"}:
+            continue
+        blocking.append(
+            (
+                severity,
+                str(item.get("id") or "unknown"),
+                str(item.get("package") or "unknown"),
+                str(item.get("version") or "unknown"),
+            )
+        )
+    if not blocking:
+        return ""
+
+    lines = ["\nblocking vulnerability findings:\n"]
+    for severity, vuln_id, package, version in sorted(blocking):
+        lines.append(f"- {severity}\t{vuln_id}\t{package}\t{version}\n")
+    return "".join(lines)
 
 
 def _timestamp() -> str:

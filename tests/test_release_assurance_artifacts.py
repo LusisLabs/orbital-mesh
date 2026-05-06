@@ -143,6 +143,7 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
         self.assertIn("release-assurance-artifacts", workflow)
         self.assertIn("dist/release-assurance/", workflow)
         self.assertIn("dist/release-assurance-raw/", workflow)
+        self.assertIn("if: always()", workflow)
         self.assertNotIn("release-assurance-contract-rehearsal", workflow)
 
     def test_release_image_assurance_script_uses_real_scanner_outputs(self) -> None:
@@ -221,6 +222,54 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             packet = json.loads(provenance.stdout)
             self.assertTrue(packet["checks"]["sbom_path"])
             self.assertTrue(packet["checks"]["vulnerability_scan_path"])
+
+    def test_release_image_assurance_reports_blocking_finding_details(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            syft_bin = tmp_path / "syft"
+            grype_bin = tmp_path / "grype"
+            image_digest = f"sha256:{'c' * 64}"
+            syft_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('{\"bomFormat\":\"CycloneDX\",\"components\":[]}')\n",
+                encoding="utf-8",
+            )
+            grype_bin.write_text(
+                "#!/usr/bin/env python3\n"
+                "print('{\"matches\":[{\"vulnerability\":{\"id\":\"CVE-HIGH\",\"severity\":\"High\"},\"artifact\":{\"name\":\"openssl\",\"version\":\"3.0\"}}]}')\n",
+                encoding="utf-8",
+            )
+            os.chmod(syft_bin, 0o755)
+            os.chmod(grype_bin, 0o755)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    IMAGE_ASSURANCE,
+                    "--image-tag",
+                    "orbital-mesh:ci",
+                    "--image-digest",
+                    image_digest,
+                    "--raw-output-dir",
+                    str(tmp_path / "raw"),
+                    "--output-dir",
+                    str(tmp_path / "dist"),
+                    "--syft-bin",
+                    str(syft_bin),
+                    "--grype-bin",
+                    str(grype_bin),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            output = result.stderr + result.stdout
+            self.assertIn("blocking vulnerability findings present: 1", output)
+            self.assertIn("blocking vulnerability findings:", output)
+            self.assertIn("high\tCVE-HIGH\topenssl\t3.0", output)
 
     def test_normalizer_writes_release_provenance_compatible_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -167,11 +167,13 @@ jobs:
             --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
             --json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: ci-attestation
           path: dist/ci-attestation.json
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: release-assurance-artifacts
           path: |
@@ -179,6 +181,7 @@ jobs:
             dist/release-assurance-raw/
           retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
         with:
           name: release-provenance-draft
           path: |
