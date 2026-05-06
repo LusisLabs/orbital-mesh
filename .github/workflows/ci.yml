@@ -86,6 +86,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     needs: [python-test, web]
+    env:
+      MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
       - name: Build Docker image
