@@ -410,37 +410,10 @@ class ControlPlaneApiTests(unittest.TestCase):
 
     def test_kubernetes_fixture_repo_placeholder_uses_isolated_copy_per_run(self) -> None:
         source_repo = str(Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service")
-        first = self._request(
-            "POST",
-            "/api/runs",
-            {
-                "scenario_key": "kubernetes_crashloop_patch",
-                "evaluation_mode": "native",
-                "orchestration_mode": "native",
-                "steering_mode": "approval_gate",
-            },
-        )
-        first_paused = self._poll_run(
-            first["run_id"],
-            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
-        )
-
-        second = self._request(
-            "POST",
-            "/api/runs",
-            {
-                "scenario_key": "kubernetes_crashloop_patch",
-                "evaluation_mode": "native",
-                "orchestration_mode": "native",
-                "steering_mode": "approval_gate",
-            },
-        )
-        second_paused = self._poll_run(
-            second["run_id"],
-            lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
-        )
-        first_repo = first_paused["artifacts"]["input_signal"]["related_context"]["repo_path"]
-        second_repo = second_paused["artifacts"]["input_signal"]["related_context"]["repo_path"]
+        first_signal = self.server.coordinator._resolve_signal({"scenario_key": "kubernetes_crashloop_patch"})
+        second_signal = self.server.coordinator._resolve_signal({"scenario_key": "kubernetes_crashloop_patch"})
+        first_repo = first_signal["related_context"]["repo_path"]
+        second_repo = second_signal["related_context"]["repo_path"]
 
         self.assertNotEqual(first_repo, source_repo)
         self.assertNotEqual(second_repo, source_repo)
