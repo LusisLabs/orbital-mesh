@@ -177,13 +177,21 @@ jobs:
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
         run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
           python scripts/generate_release_provenance.py \
             --output dist/release-provenance-draft.json \
+            --image-tag orbital-mesh:ci \
             --ci-attestation dist/ci-attestation.json \
             --sbom dist/release-assurance/sbom.cdx.json \
             --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
+            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
             --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
-            --json
+            --json \
+            "${BASE_IMAGE_ARGS[@]}"
       - name: Fail on release image assurance errors
         if: steps.release_assurance.outcome != 'success'
         run: exit 1
