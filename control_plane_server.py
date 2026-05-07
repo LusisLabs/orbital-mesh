@@ -731,6 +731,18 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
+        if parsed.path == "/api/mesh-brain/meshmodel-probe":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_meshmodel_probe(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
         if parsed.path == "/api/mesh-brain/live-serving-smoke":
             try:
                 payload["_operator"] = self._authorize({"launcher", "admin"})
