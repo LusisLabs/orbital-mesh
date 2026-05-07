@@ -9,7 +9,6 @@ permissions:
   contents: read
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SYFT_VERSION: "1.44.0"
   SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
   GRYPE_VERSION: "0.112.0"
@@ -198,13 +197,13 @@ jobs:
       - name: Fail on release image assurance errors
         if: steps.release_assurance.outcome != 'success'
         run: exit 1
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: ci-attestation
           path: dist/ci-attestation.json
           retention-days: 30
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: release-assurance-artifacts
@@ -212,7 +211,7 @@ jobs:
             dist/release-assurance/
             dist/release-assurance-raw/
           retention-days: 30
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: release-provenance-draft
