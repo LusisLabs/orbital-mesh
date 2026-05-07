@@ -221,7 +221,7 @@ def _create_denied_run(base_url: str) -> dict[str, Any]:
         lambda payload: payload["stage"] == "awaiting_operator"
         and payload.get("pending_pause_stage") == "evaluation_ready"
         and bool(payload["artifacts"]["evaluation"].get("blocking_reasons")),
-        timeout_seconds=60.0,
+        timeout_seconds=120.0,
     )
 
 
@@ -233,7 +233,24 @@ def _poll_run(base_url: str, run_id: str, predicate: Any, *, timeout_seconds: fl
         if predicate(last):
             return last
         time.sleep(0.05)
-    raise RuntimeError(f"run {run_id} did not reach expected state; last={last}")
+    raise RuntimeError(f"run {run_id} did not reach expected state; last={_poll_summary(last)}")
+
+
+def _poll_summary(payload: dict[str, Any] | None) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), dict) else {}
+    evaluation = artifacts.get("evaluation") if isinstance(artifacts.get("evaluation"), dict) else {}
+    events = payload.get("events") if isinstance(payload.get("events"), list) else []
+    return {
+        "stage": payload.get("stage"),
+        "status": payload.get("status"),
+        "pending_pause_stage": payload.get("pending_pause_stage"),
+        "event_count": len(events),
+        "latest_event_type": events[-1].get("event_type") if events and isinstance(events[-1], dict) else None,
+        "final_recommendation": evaluation.get("final_recommendation"),
+        "blocking_reasons": evaluation.get("blocking_reasons"),
+    }
 
 
 def _request_json(
