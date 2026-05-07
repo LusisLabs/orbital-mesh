@@ -437,6 +437,7 @@ services:
       MESH_LATENTMAS_MAX_ARTIFACT_CHARS: "${MESH_LATENTMAS_MAX_ARTIFACT_CHARS:-20000}"
       MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
       MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:-unknown}"
+      MESH_BUILD_IMAGE_DIGEST: "${MESH_BUILD_IMAGE_DIGEST:-}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

@@ -134,6 +134,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     "environment": self.server.config.environment,
                     "version": self.server.config.build_version,
                     "commit": self.server.config.build_commit,
+                    "image_digest": self.server.config.build_image_digest or None,
                 }
             )
             return

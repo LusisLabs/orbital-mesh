@@ -33,6 +33,8 @@ class ControlPlaneApiTests(unittest.TestCase):
             hermes_command="/missing/hermes",
             goose_command="/missing/goose",
             evo_command="/missing/evo",
+            build_commit="a" * 40,
+            build_image_digest=f"sha256:{'b' * 64}",
         )
         self.server, self.thread = start_server_in_thread(self.config, start_sidecar=False)
         self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -56,6 +58,12 @@ class ControlPlaneApiTests(unittest.TestCase):
 
         self.assertIn("reth_peer_starvation", scenario_keys)
         self.assertIn("reth_sync_stalled_disk_pressure", scenario_keys)
+
+    def test_health_api_reports_runtime_release_metadata(self) -> None:
+        payload = self._request("GET", "/api/health")
+
+        self.assertEqual(payload["commit"], "a" * 40)
+        self.assertEqual(payload["image_digest"], f"sha256:{'b' * 64}")
 
     def test_send_json_ignores_client_disconnect(self) -> None:
         class BrokenPipeWriter:

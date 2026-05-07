@@ -42,6 +42,8 @@ MESH_RELEASE_PROVENANCE_PATH=dist/release-provenance.json
 
 `GET /api/pilot/go-no-go` blocks with `release_provenance_complete` until `MESH_RELEASE_PROVENANCE_PATH` points to a readable `mesh.release_provenance.v1` packet with `status: "complete"`, an empty `missing` list, passing embedded release checks, and CI attestation metadata that confirms `sha_matches_git_commit`.
 
+For pilot and expansion profiles, the running control plane also binds the packet to the deployed runtime. `MESH_BUILD_COMMIT` must be the exact git commit in the packet, and `MESH_BUILD_IMAGE_DIGEST` must be the exact release image digest in the packet. Missing packet or runtime metadata, or mismatched runtime metadata, keeps `release_provenance_complete` blocked with `release_git_commit`, `release_image_digest`, `runtime_build_commit`, `runtime_build_commit_match`, `runtime_image_digest`, or `runtime_image_digest_match`.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:

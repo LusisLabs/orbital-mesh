@@ -17,6 +17,10 @@ from shared.mesh_runtime import RuntimeConfig, load_fixture, validate_payload
 from tests.test_perennial_materialization import _decision, _evaluation, _scenario_analysis
 
 
+RELEASE_GIT_COMMIT = "a" * 40
+RELEASE_IMAGE_DIGEST = f"sha256:{'c' * 64}"
+
+
 def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
     values = {
         "state_directory": tmp,
@@ -67,12 +71,14 @@ def _write_complete_release_provenance(path: Path) -> None:
                     "attestation": {
                         "provider": "github-actions",
                         "run_id": "ci-run-1",
-                        "sha": "a" * 40,
-                        "expected_sha": "a" * 40,
+                        "sha": RELEASE_GIT_COMMIT,
+                        "expected_sha": RELEASE_GIT_COMMIT,
                         "sha_matches_git_commit": True,
                         "valid": True,
                     }
                 },
+                "git": {"commit": RELEASE_GIT_COMMIT},
+                "image": {"digest": RELEASE_IMAGE_DIGEST},
             }
         )
         + "\n",
@@ -476,6 +482,8 @@ class DarkharnessExportPathTests(unittest.TestCase):
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
                 )
             )
             try:

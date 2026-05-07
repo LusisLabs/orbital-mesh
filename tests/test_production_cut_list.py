@@ -7,6 +7,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
+from typing import Any, Callable, cast
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -21,7 +22,11 @@ from shared.mesh_runtime.integrations import build_readiness
 from shared.mesh_runtime.orchestration_topology import ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION
 
 
-def _config(tmp: str, **overrides) -> RuntimeConfig:
+RELEASE_GIT_COMMIT = "a" * 40
+RELEASE_IMAGE_DIGEST = f"sha256:{'c' * 64}"
+
+
+def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
     backup_restore_rehearsal_path = Path(tmp) / "backup-restore-rehearsal.json"
     if not backup_restore_rehearsal_path.exists():
         backup_restore_rehearsal_path.write_text(
@@ -40,7 +45,7 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
             json.dumps(_design_partner_packet(), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    values = {
+    values: dict[str, Any] = {
         "state_directory": tmp,
         "vault_path": str(Path(tmp) / "vault"),
         "integrations_config_path": str(Path(tmp) / "integrations.json"),
@@ -157,7 +162,7 @@ def _record_mesh_brain_gate_evidence(coordinator: RunCoordinator) -> None:
     )
 
 
-def _record_completed_probe(coordinator: RunCoordinator, scenario_key: str, artifacts: dict) -> None:
+def _record_completed_probe(coordinator: RunCoordinator, scenario_key: str, artifacts: dict[str, Any]) -> None:
     session = coordinator.state_store.create_run_session(
         goal_id=coordinator.state_store.ensure_default_goal().goal_id,
         scenario_key=scenario_key,
@@ -193,7 +198,7 @@ def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
     }
 
 
-def _backup_restore_rehearsal() -> dict:
+def _backup_restore_rehearsal() -> dict[str, Any]:
     digest = "a" * 64
     return {
         "schema_version": "mesh.backup_restore_rehearsal.v1",
@@ -227,7 +232,7 @@ def _backup_restore_rehearsal() -> dict:
     }
 
 
-def _authenticated_ingress_deployment_proof() -> dict:
+def _authenticated_ingress_deployment_proof() -> dict[str, Any]:
     return {
         "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
         "proof_id": "authenticated_ingress_deployment_test",
@@ -284,7 +289,7 @@ def _authenticated_ingress_deployment_proof() -> dict:
     }
 
 
-def _design_partner_packet() -> dict:
+def _design_partner_packet() -> dict[str, Any]:
     return {
         "schema_version": "mesh.design_partner_packet.v1",
         "packet_id": "design_partner_test",
@@ -359,7 +364,7 @@ def _design_partner_packet() -> dict:
     }
 
 
-def _on_call_drill() -> dict:
+def _on_call_drill() -> dict[str, Any]:
     return {
         "schema_version": "mesh.on_call_drill.v1",
         "drill_id": "on_call_drill_test",
@@ -402,7 +407,12 @@ def _on_call_drill() -> dict:
     }
 
 
-def _complete_release_provenance(packet_sha256: str) -> dict:
+def _complete_release_provenance(
+    packet_sha256: str,
+    *,
+    git_commit: str = RELEASE_GIT_COMMIT,
+    image_digest: str = RELEASE_IMAGE_DIGEST,
+) -> dict[str, Any]:
     return {
         "schema_version": "mesh.release_provenance.v1",
         "status": "complete",
@@ -433,12 +443,14 @@ def _complete_release_provenance(packet_sha256: str) -> dict:
             "attestation": {
                 "provider": "github-actions",
                 "run_id": "ci-run-1",
-                "sha": "a" * 40,
-                "expected_sha": "a" * 40,
+                "sha": git_commit,
+                "expected_sha": git_commit,
                 "sha_matches_git_commit": True,
                 "valid": True,
             }
         },
+        "git": {"commit": git_commit},
+        "image": {"digest": image_digest},
     }
 
 
@@ -701,6 +713,8 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
                 )
             )
             coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
@@ -758,6 +772,8 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
                 )
             )
             coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
@@ -781,6 +797,117 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertIn("release_provenance_complete", packet["missing_evidence"])
                 self.assertEqual(packet["release_provenance"]["status"], "incomplete")
                 self.assertIn("ci_attestation_sha_matches_git_commit", packet["release_provenance"]["missing"])
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_release_provenance_for_different_runtime_build(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit="d" * 40,
+                    build_image_digest=f"sha256:{'e' * 64}",
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64)) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("release_provenance_complete", packet["missing_evidence"])
+                self.assertEqual(packet["release_provenance"]["status"], "incomplete")
+                self.assertIn("runtime_build_commit_match", packet["release_provenance"]["missing"])
+                self.assertIn("runtime_image_digest_match", packet["release_provenance"]["missing"])
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_release_provenance_without_runtime_build_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit="unknown",
+                    build_image_digest="",
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64)) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("release_provenance_complete", packet["missing_evidence"])
+                self.assertEqual(packet["release_provenance"]["status"], "incomplete")
+                self.assertIn("runtime_build_commit", packet["release_provenance"]["missing"])
+                self.assertIn("runtime_image_digest", packet["release_provenance"]["missing"])
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_release_provenance_without_packet_build_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                packet_without_build_metadata = _complete_release_provenance("b" * 64)
+                del packet_without_build_metadata["git"]
+                del packet_without_build_metadata["image"]
+                release_provenance.write_text(
+                    json.dumps(packet_without_build_metadata) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("release_provenance_complete", packet["missing_evidence"])
+                self.assertEqual(packet["release_provenance"]["status"], "incomplete")
+                self.assertIn("release_git_commit", packet["release_provenance"]["missing"])
+                self.assertIn("release_image_digest", packet["release_provenance"]["missing"])
             finally:
                 coordinator.stop_background_workers()
 
@@ -969,7 +1096,12 @@ class OperatorRoleApiTests(unittest.TestCase):
         self.assertEqual(watcher_ownership["status"], "complete")
         self.assertEqual(watcher_ownership["watchers"][0]["targets"][0]["record_id"], "own_semantic_search_pilot")
 
-    def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 10.0) -> dict:
+    def _poll_run(
+        self,
+        run_id: str,
+        predicate: Callable[[dict[str, Any]], bool],
+        timeout_seconds: float = 10.0,
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             payload = self._request("GET", f"/api/runs/{run_id}")
@@ -982,10 +1114,10 @@ class OperatorRoleApiTests(unittest.TestCase):
         self,
         method: str,
         path: str,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
         *,
         headers: dict[str, str] | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         data = None
         request_headers = dict(headers or {})
         if payload is not None:
@@ -993,13 +1125,13 @@ class OperatorRoleApiTests(unittest.TestCase):
             request_headers["Content-Type"] = "application/json"
         request = Request(f"{self.base_url}{path}", data=data, headers=request_headers, method=method)
         with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+            return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
 
     def _request_bytes(
         self,
         method: str,
         path: str,
-        payload: dict | None = None,
+        payload: dict[str, Any] | None = None,
         *,
         headers: dict[str, str] | None = None,
     ) -> tuple[dict[str, str], bytes]:

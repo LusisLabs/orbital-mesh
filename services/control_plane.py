@@ -983,6 +983,14 @@ class RunCoordinator:
         ci = cast(dict[str, Any], raw_ci) if isinstance(raw_ci, dict) else {}
         raw_attestation = ci.get("attestation")
         attestation = cast(dict[str, Any], raw_attestation) if isinstance(raw_attestation, dict) else {}
+        raw_git = payload.get("git")
+        git = cast(dict[str, Any], raw_git) if isinstance(raw_git, dict) else {}
+        raw_image = payload.get("image")
+        image = cast(dict[str, Any], raw_image) if isinstance(raw_image, dict) else {}
+        release_commit = _normalized_git_commit(git.get("commit"))
+        release_image_digest = _normalized_digest(image.get("digest"))
+        runtime_commit = _normalized_git_commit(self.config.build_commit)
+        runtime_image_digest = _normalized_digest(self.config.build_image_digest)
         derived_missing: list[str] = []
         if not isinstance(missing, list):
             derived_missing.append("release_provenance_missing_list")
@@ -992,8 +1000,26 @@ class RunCoordinator:
             derived_missing.extend(name for name, passed in checks.items() if passed is not True)
         if attestation.get("sha_matches_git_commit") is not True:
             derived_missing.append("ci_attestation_sha_matches_git_commit")
+        if not release_commit:
+            derived_missing.append("release_git_commit")
+        if not release_image_digest:
+            derived_missing.append("release_image_digest")
+        if not runtime_commit:
+            derived_missing.append("runtime_build_commit")
+        elif release_commit and release_commit != runtime_commit:
+            derived_missing.append("runtime_build_commit_match")
+        if not runtime_image_digest:
+            derived_missing.append("runtime_image_digest")
+        elif release_image_digest and release_image_digest != runtime_image_digest:
+            derived_missing.append("runtime_image_digest_match")
         record["missing"] = _dedupe([*packet_missing, *derived_missing])
         record["checks"] = checks
+        record["git"] = {"commit": release_commit}
+        record["image"] = {"digest": release_image_digest}
+        record["runtime"] = {
+            "build_commit": runtime_commit,
+            "image_digest": runtime_image_digest,
+        }
         record["ci_attestation"] = {
             "provider": attestation.get("provider") if isinstance(attestation.get("provider"), str) else None,
             "run_id": attestation.get("run_id") if isinstance(attestation.get("run_id"), str) else None,
@@ -5934,6 +5960,27 @@ def _dedupe(items: list[str]) -> list[str]:
         seen.add(item)
         result.append(item)
     return result
+
+
+def _normalized_git_commit(value: Any) -> str | None:
+    candidate = value.strip() if isinstance(value, str) else ""
+    if candidate in {"", "unknown"}:
+        return None
+    if len(candidate) not in {40, 64}:
+        return None
+    if any(char not in "0123456789abcdefABCDEF" for char in candidate):
+        return None
+    return candidate.lower()
+
+
+def _normalized_digest(value: Any) -> str | None:
+    candidate = value.strip() if isinstance(value, str) else ""
+    if not candidate.startswith("sha256:"):
+        return None
+    tail = candidate[len("sha256:") :]
+    if len(tail) != 64 or any(char not in "0123456789abcdefABCDEF" for char in tail):
+        return None
+    return "sha256:" + tail.lower()
 
 
 def _run_export_approval_records(artifacts: dict[str, Any], events: list[RunEvent]) -> list[dict[str, Any]]:
