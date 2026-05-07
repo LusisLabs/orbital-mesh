@@ -130,6 +130,46 @@ python3 scripts/collect_release_image_metadata.py \
 
 The collector writes `MESH_IMAGE_DIGEST` and base-image digest args for the attestation generator. It prefers pushed repo digests when present and falls back to the local Docker image id for unpushed CI builds; signed pilot releases should still use the published image digest.
 
+## Release Image Handoff
+
+The current CI workflow builds and attests the image, but it does not upload a runnable private image artifact. That is intentional: uploading the built image exports private repo contents into GitHub Actions artifact storage.
+
+Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web, release-cut, and security gates, builds the image, records release image metadata, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`.
+
+The uploaded artifact includes:
+
+- `release-image-handoff/orbital-mesh-handoff-image.tar.gz`;
+- `release-image-handoff/release-image-handoff.json`;
+- `release-image-metadata.json`;
+- `ci-attestation.json`;
+- `release-provenance-draft.json`;
+- normalized and raw release assurance artifacts.
+
+After downloading the handoff artifact, load and verify the image before deployment:
+
+```bash
+docker load -i release-image-handoff/orbital-mesh-handoff-image.tar.gz
+
+scripts/verify_release_runtime_binding.py \
+  --release-provenance dist/release-provenance-complete.json \
+  --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
+  --image-ref "$HANDOFF_IMAGE_TAG" \
+  --env-output dist/release-runtime.env \
+  --json
+```
+
+Generate the final `mesh.release_provenance.v1` packet from the handoff workflow's CI attestation, SBOM, vulnerability scan, release image digest, and the operator-controlled migration rehearsal proof. Then deploy the loaded image with the generated runtime env and rerun:
+
+```bash
+scripts/verify_release_runtime_binding.py \
+  --release-provenance dist/release-provenance-complete.json \
+  --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
+  --health-url https://<mesh-host>/api/health \
+  --json
+```
+
+Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
+
 Generate the CI attestation artifact inside the CI job that owns the release image:
 
 ```bash

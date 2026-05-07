@@ -102,10 +102,11 @@ service container and succeeded.
   exact release packet and report matching `MESH_BUILD_COMMIT` and
   `MESH_BUILD_IMAGE_DIGEST` from the deployed image. Independent local images
   are not valid substitutes unless their digest matches the CI packet digest.
-  The current workflow does not publish a pullable release image; enabling
-  registry publication or uploading a runnable image artifact would export a
-  built private-repo image to GitHub storage and needs explicit operator
-  approval before it becomes an active release path.
+  The normal CI workflow does not publish a pullable release image. A manual
+  `.github/workflows/release-image-handoff.yml` path now exists for explicit
+  operator-approved exports only; it requires `confirm_export=EXPORT_RELEASE_IMAGE`
+  and uploads a runnable image artifact plus `mesh.release_image_handoff.v1`.
+  This path has not been run for pilot clearance in the current audit.
 - Pilot readiness is currently green in the running compose stack. Pilot
   go/no-go remains blocked only by `release_provenance_complete`, caused by
   missing runtime commit and image-digest binding.
