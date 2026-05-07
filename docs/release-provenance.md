@@ -44,6 +44,19 @@ MESH_RELEASE_PROVENANCE_PATH=dist/release-provenance.json
 
 For pilot and expansion profiles, the running control plane also binds the packet to the deployed runtime. `MESH_BUILD_COMMIT` must be the exact git commit in the packet, and `MESH_BUILD_IMAGE_DIGEST` must be the exact release image digest in the packet. Missing packet or runtime metadata, or mismatched runtime metadata, keeps `release_provenance_complete` blocked with `release_git_commit`, `release_image_digest`, `runtime_build_commit`, `runtime_build_commit_match`, `runtime_image_digest`, or `runtime_image_digest_match`.
 
+Generate the runtime env file from the completed packet instead of copying values manually:
+
+```bash
+scripts/verify_release_runtime_binding.py \
+  --release-provenance dist/release-provenance.json \
+  --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
+  --image-ref "$MESH_IMAGE" \
+  --env-output dist/release-runtime.env \
+  --json
+```
+
+The command writes `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` only after the packet is complete and the optional local image ref matches the packet digest. After deployment, run the same verifier with `--health-url https://<mesh-host>/api/health` to confirm the live control plane reports the bound commit and image digest before capturing `/api/pilot/go-no-go`.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:

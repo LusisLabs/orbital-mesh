@@ -110,6 +110,8 @@ jobs:
             -e MESH_SERVER_HOST=0.0.0.0 \
             -e MESH_SERVER_PORT=8787 \
             -e MESH_ENVIRONMENT=ci \
+            -e MESH_BUILD_COMMIT="${GITHUB_SHA}" \
+            -e MESH_BUILD_IMAGE_DIGEST="${MESH_IMAGE_DIGEST}" \
             -e MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
             -p 8787:8787 \
             orbital-mesh:ci
@@ -125,7 +127,7 @@ jobs:
             fi
             sleep 1
           done
-          curl -sf http://localhost:8787/api/health | tee /dev/stderr | python3 -c "import sys, json; assert json.load(sys.stdin)['status'] == 'ok'"
+          curl -sf http://localhost:8787/api/health | tee /dev/stderr | python3 -c "import os, sys, json; payload=json.load(sys.stdin); assert payload['status'] == 'ok'; assert payload['commit'] == os.environ['GITHUB_SHA']; assert payload['image_digest'] == os.environ['MESH_IMAGE_DIGEST']"
       - name: Capture container logs on failure
         if: failure()
         run: docker logs mesh-ci || true
