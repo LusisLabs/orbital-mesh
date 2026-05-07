@@ -7,7 +7,7 @@ import time
 import unittest
 from http import HTTPStatus
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 from urllib.parse import urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -359,7 +359,15 @@ class ControlPlaneApiTests(unittest.TestCase):
 
         release_lanes = threading.Event()
 
-        def slow_lane(_self, *, agent, task, trigger, decision, evaluation):
+        def slow_lane(
+            _self: Any,
+            *,
+            agent: str,
+            task: Any,
+            trigger: Any,
+            decision: Any,
+            evaluation: Any,
+        ) -> Any:
             release_lanes.wait(timeout=5)
             return build_agent_attempt(
                 task_id=task.task_id,
@@ -803,9 +811,14 @@ class ControlPlaneApiTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
-    def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 30.0) -> dict:
+    def _poll_run(
+        self,
+        run_id: str,
+        predicate: Callable[[dict[str, Any]], bool],
+        timeout_seconds: float = 30.0,
+    ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
-        last_payload: dict | None = None
+        last_payload: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             payload = self._request("GET", f"/api/runs/{run_id}")
             last_payload = payload
@@ -821,7 +834,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             )
         raise AssertionError(f"run {run_id} did not satisfy predicate before timeout.{detail}")
 
-    def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
+    def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         data = None
         headers = {}
         if payload is not None:
@@ -829,14 +842,15 @@ class ControlPlaneApiTests(unittest.TestCase):
             headers["Content-Type"] = "application/json"
         request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
         with urlopen(request, timeout=10) as response:
-            return json.loads(response.read().decode("utf-8"))
+            return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
 
-    def _flatten_tree(self, nodes: list[dict]) -> list[str]:
+    def _flatten_tree(self, nodes: list[dict[str, Any]]) -> list[str]:
         paths: list[str] = []
         for node in nodes:
             paths.append(node["path"])
-            if node.get("children"):
-                paths.extend(self._flatten_tree(node["children"]))
+            children = node.get("children")
+            if isinstance(children, list):
+                paths.extend(self._flatten_tree(cast(list[dict[str, Any]], children)))
         return paths
 
 
