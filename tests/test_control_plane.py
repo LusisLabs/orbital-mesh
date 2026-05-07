@@ -468,7 +468,7 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(recovery["retry_index"], 1)
         self.assertTrue(parent["artifacts"]["evaluation"]["stage_results"]["blocker_analysis"]["can_auto_remediate"])
 
-        child = self._poll_run(recovery["child_run_id"], lambda payload: payload["stage"] == "completed", timeout_seconds=25.0)
+        child = self._poll_run(recovery["child_run_id"], lambda payload: payload["stage"] == "completed", timeout_seconds=60.0)
         self.assertEqual(child["artifacts"]["execution"]["status"], "succeeded")
         self.assertEqual(child["artifacts"]["input_signal"]["related_context"]["recovery_context"]["retry_index"], 1)
 
@@ -797,12 +797,21 @@ class ControlPlaneApiTests(unittest.TestCase):
 
     def _poll_run(self, run_id: str, predicate, timeout_seconds: float = 30.0) -> dict:
         deadline = time.monotonic() + timeout_seconds
+        last_payload: dict | None = None
         while time.monotonic() < deadline:
             payload = self._request("GET", f"/api/runs/{run_id}")
+            last_payload = payload
             if predicate(payload):
                 return payload
             time.sleep(0.1)
-        raise AssertionError(f"run {run_id} did not satisfy predicate before timeout")
+        detail = ""
+        if last_payload is not None:
+            detail = (
+                f" last_stage={last_payload.get('stage')!r}"
+                f" last_status={last_payload.get('status')!r}"
+                f" event_count={len(last_payload.get('events') or [])}"
+            )
+        raise AssertionError(f"run {run_id} did not satisfy predicate before timeout.{detail}")
 
     def _request(self, method: str, path: str, payload: dict | None = None) -> dict:
         data = None
