@@ -1,4 +1,4 @@
-"""Execute approved plans through a Goose integration boundary."""
+"""Execute approved plans through Mesh orchestration adapters."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class OrchestratorService:
                 timeout_seconds=self.config.hermes_command_timeout_seconds,
             )
         if mode == "native":
-            # Explicit ``native`` keeps the legacy in-process Goose adapter.
+            # Explicit ``native`` keeps execution local and in-process.
             return NativeGooseAdapter(config=self.config)
         # auto: prefer Hermes, then Goose, then fall back to the modern native
         # Hermes adapter so offline/dev setups still work.

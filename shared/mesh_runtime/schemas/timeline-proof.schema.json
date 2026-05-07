@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/timeline-proof.schema.json",
+  "title": "TimelineProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "run_id",
+    "event_count",
+    "timeline",
+    "merkle",
+    "checks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mesh.timeline_proof.v1",
+      "type": "string"
+    },
+    "generated_at": { "type": "string" },
+    "run_id": { "type": "string" },
+    "event_count": { "type": "integer" },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "event_id",
+          "stage",
+          "event_type",
+          "recorded_at",
+          "time_unix_nano",
+          "payload_sha256",
+          "merkle_leaf_hash"
+        ],
+        "properties": {
+          "sequence": { "type": "integer" },
+          "event_id": { "type": "string" },
+          "stage": { "type": "string" },
+          "event_type": { "type": "string" },
+          "recorded_at": { "type": "string" },
+          "time_unix_nano": { "type": ["integer", "null"] },
+          "payload_sha256": { "type": "string" },
+          "merkle_leaf_hash": { "type": ["string", "null"] },
+          "artifact_key": { "type": ["string", "null"] },
+          "integration_name": { "type": ["string", "null"] },
+          "status": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "merkle": {
+      "type": "object"
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "sequence_monotonic",
+        "sequence_gapless",
+        "timestamp_parseable",
+        "timestamp_non_decreasing",
+        "merkle_root_present",
+        "latest_event_proof_valid"
+      ],
+      "properties": {
+        "sequence_monotonic": { "type": "boolean" },
+        "sequence_gapless": { "type": "boolean" },
+        "timestamp_parseable": { "type": "boolean" },
+        "timestamp_non_decreasing": { "type": "boolean" },
+        "merkle_root_present": { "type": "boolean" },
+        "latest_event_proof_valid": { "type": "boolean" }
+      }
+    }
+  }
+}

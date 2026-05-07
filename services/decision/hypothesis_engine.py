@@ -540,7 +540,7 @@ class HypothesisEngine:
                     prior_confidence=max(0.35, min(confidence, 0.85)),
                     predicates=[
                         FalsificationPredicate(
-                            kind="investigation_root_cause_candidate",
+                            kind=_RCA_PREDICATE_KIND,
                             arguments={"root_cause": root_cause, "rank": candidate["rank"]},
                             result="supported",
                             evidence_ref=_candidate_evidence_ref(candidate),
@@ -558,7 +558,7 @@ class HypothesisEngine:
             if matched:
                 best = next(candidate for candidate in candidates[:3] if _candidate_supports_hypothesis(candidate, hypothesis))
                 predicate = FalsificationPredicate(
-                    kind="investigation_root_cause_candidate",
+                    kind=_RCA_PREDICATE_KIND,
                     arguments={"root_cause": best["root_cause"], "rank": best["rank"]},
                     result="supported",
                     evidence_ref=_candidate_evidence_ref(best),
@@ -570,7 +570,7 @@ class HypothesisEngine:
                     hypothesis.supporting_evidence.append(evidence)
             elif float(top["confidence"]) >= 0.7 and hypothesis.candidate_cause not in {"unknown", "transient"}:
                 predicate = FalsificationPredicate(
-                    kind="investigation_root_cause_candidate",
+                    kind=_RCA_PREDICATE_KIND,
                     arguments={"root_cause": top["root_cause"], "rank": top["rank"]},
                     result="disconfirmed",
                     evidence_ref=_candidate_evidence_ref(top),
@@ -800,11 +800,26 @@ class HypothesisEngine:
 
     @staticmethod
     def _posterior(hypothesis: Hypothesis) -> float:
+        # RCA-derived predicates (``investigation_root_cause_candidate``)
+        # carry LLM-assigned confidence, not probe-evaluated falsification.
+        # They must NOT enter the deterministic posterior — otherwise an
+        # LLM-confident root cause can inflate any matching hypothesis past
+        # the promotion threshold without any evidence-grounded predicate
+        # supporting it. RCA influence is preserved through:
+        #   1) the synthetic ``h_rca_*`` hypotheses created with prior =
+        #      RCA confidence (visible to ranking + UI), and
+        #   2) the ``supporting_evidence`` / ``disconfirming_evidence``
+        #      lists (visible to observer prompt + UI), but unweighted in
+        #      ``_posterior``.
         support_weight = sum(
-            p.weight for p in hypothesis.predicates if p.result == "supported"
+            p.weight
+            for p in hypothesis.predicates
+            if p.result == "supported" and p.kind != _RCA_PREDICATE_KIND
         )
         disconfirm_weight = sum(
-            p.weight for p in hypothesis.predicates if p.result == "disconfirmed"
+            p.weight
+            for p in hypothesis.predicates
+            if p.result == "disconfirmed" and p.kind != _RCA_PREDICATE_KIND
         )
         adjusted = hypothesis.prior_confidence * (
             1 + 0.2 * support_weight - 0.3 * disconfirm_weight
@@ -873,7 +888,19 @@ def _candidate_supports_hypothesis(candidate: dict[str, Any], hypothesis: Hypoth
     return hypothesis.candidate_cause in aliases
 
 
+_RCA_PREDICATE_KIND = "investigation_root_cause_candidate"
+
+
 def _candidate_weight(candidate: dict[str, Any]) -> float:
+    """Weight assigned to RCA predicates *for evidence-display purposes only*.
+
+    RCA predicates are excluded from posterior weight summation in
+    ``HypothesisEngine._posterior`` — see the comment there. The weight
+    here is retained on the predicate so the observer prompt and operator
+    UI can show the relative confidence of each RCA candidate, but it
+    does not enter deterministic-posterior math.
+    """
+
     rank = int(candidate["rank"])
     rank_bonus = {1: 0.4, 2: 0.2, 3: 0.1}.get(rank, 0.0)
     return 1.0 + float(candidate["confidence"]) + rank_bonus

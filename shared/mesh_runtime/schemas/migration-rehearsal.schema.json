@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/migration-rehearsal.schema.json",
+  "title": "MigrationRehearsal",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rehearsal_id",
+    "generated_at",
+    "operator_id",
+    "environment",
+    "database_engine",
+    "migration_directory",
+    "migration_version",
+    "migration_combined_sha256",
+    "applied_migration_count",
+    "rolled_back",
+    "rollback_ref",
+    "pre_migration_snapshot_ref",
+    "post_migration_validation_ref",
+    "destructive_changes_reviewed",
+    "measured_apply_seconds",
+    "measured_rollback_seconds"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.migration_rehearsal.v1"]
+    },
+    "rehearsal_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "operator_id": { "type": "string" },
+    "environment": { "type": "string" },
+    "database_engine": {
+      "type": "string",
+      "enum": ["postgres"]
+    },
+    "migration_directory": { "type": "string" },
+    "migration_version": { "type": "string" },
+    "migration_combined_sha256": { "type": "string" },
+    "applied_migration_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "rolled_back": { "type": "boolean" },
+    "rollback_ref": { "type": "string" },
+    "pre_migration_snapshot_ref": { "type": "string" },
+    "post_migration_validation_ref": { "type": "string" },
+    "destructive_changes_reviewed": { "type": "boolean" },
+    "measured_apply_seconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "measured_rollback_seconds": {
+      "type": "number",
+      "minimum": 0
+    }
+  }
+}

@@ -43,27 +43,34 @@ COPY latent-mesh/LatentMAS/Cargo.toml latent-mesh/LatentMAS/Cargo.lock ./
 COPY latent-mesh/LatentMAS/src ./src
 RUN cargo build --release --bin latentmas
 
-FROM python:3.12-slim-bookworm
+FROM python:3.13-slim-trixie
 WORKDIR /app
 
 ARG MESH_BUILD_VERSION=dev
 ARG MESH_BUILD_COMMIT=unknown
 ARG HERMES_AGENT_REF=1525624904159e7c2d6ac3feef951e27ad0d23bb
 ARG UV_VERSION=0.11.6
+ARG DOCKER_CLI_VERSION=29.4.2
+ARG KUBECTL_VERSION=v1.36.0
 
 RUN apt-get update \
   && apt-get upgrade -y \
-  && apt-get install -y --no-install-recommends ca-certificates curl docker.io git gosu libgomp1 \
+  && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
   && arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
-    amd64) kubectl_arch="amd64" ;; \
-    arm64) kubectl_arch="arm64" ;; \
+    amd64) kubectl_arch="amd64"; kubectl_sha="123d8c8844f46b1244c547fffb3c17180c0c26dac9890589fe7e67763298748e"; docker_arch="x86_64"; docker_sha="e985c6dc5008b8d62d6bdf9b5894427d075b335a1391cacf24ee01a7a29a3728" ;; \
+    arm64) kubectl_arch="arm64"; kubectl_sha="9f9d9c44a7b5264515ac9da5991584e2395bd50662e651132337e7b4d0c56f8f"; docker_arch="aarch64"; docker_sha="ce2cea8c740707d736ab356239f858d2272470d0734b5d14f20b950d1d6b952e" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
-  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.5/bin/linux/${kubectl_arch}/kubectl" \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl" \
+  && echo "${kubectl_sha}  /usr/local/bin/kubectl" | sha256sum -c - \
   && chmod +x /usr/local/bin/kubectl \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
+  && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
+  && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
+  && install -m 755 /tmp/docker/docker /usr/local/bin/docker \
   && python3 -m pip install --no-cache-dir --upgrade pip \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /tmp/docker /tmp/docker.tgz /var/lib/apt/lists/*
 
 COPY --from=promptfoo /usr/local/bin/node /usr/local/bin/node
 COPY --from=promptfoo /usr/local/lib/node_modules/promptfoo /usr/local/lib/node_modules/promptfoo
@@ -77,21 +84,24 @@ RUN groupadd -r mesh && useradd -r -g mesh -d /app mesh
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HERMES_HOME=/workspace/orbital-mesh/.hermes-local \
-    PATH=/root/.local/bin:/opt/hermes-agent/venv/bin:$PATH
+    PATH=/opt/hermes-agent/venv/bin:$PATH
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
   && install -m 755 /root/.local/bin/uv /usr/local/bin/uv \
   && if [ -f /root/.local/bin/uvx ]; then install -m 755 /root/.local/bin/uvx /usr/local/bin/uvx; fi \
+  && rm -f /root/.local/bin/uv /root/.local/bin/uvx \
   && git init /opt/hermes-agent \
   && cd /opt/hermes-agent \
   && git remote add origin https://github.com/NousResearch/hermes-agent.git \
   && git fetch --depth 1 origin "${HERMES_AGENT_REF}" \
   && git checkout --detach FETCH_HEAD \
-  && uv venv venv --python 3.11 \
+  && uv venv venv --python /usr/local/bin/python3 \
   && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
   && mkdir -p /opt/venv/bin /workspace/orbital-mesh/.hermes-local \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /usr/local/bin/hermes \
+  && rm -f /usr/local/bin/uv /usr/local/bin/uvx \
+  && apt-get purge -y --auto-remove curl git git-man \
   && rm -rf /var/lib/apt/lists/* /root/.cache
 
 ENV MESH_SERVER_HOST=0.0.0.0 \
@@ -111,10 +121,11 @@ COPY services ./services
 COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchain-openai>=1.0.0,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies
+COPY config ./config
 
 RUN chown -R mesh:mesh /app
 RUN chmod +x /usr/local/bin/compose_mesh_entrypoint.sh

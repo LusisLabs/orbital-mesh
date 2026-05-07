@@ -246,7 +246,7 @@ def build_data_plane_e2e(
             SourceRecord(
                 tenant_id=tenant_id,
                 source="incident_report",
-                content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",
+                content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",  # gitleaks:allow
                 provenance_pointer="incident://search-latency-1",
                 timestamp="2026-04-30T00:00:00+00:00",
                 tool_calls=[{"name": "kubernetes.get_deployment", "arguments": {"deployment": "search", "namespace": "prod"}}],
@@ -255,7 +255,7 @@ def build_data_plane_e2e(
             SourceRecord(
                 tenant_id=tenant_id,
                 source="incident_report",
-                content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",
+                content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",  # gitleaks:allow
                 provenance_pointer="incident://search-latency-1",
                 timestamp="2026-04-30T00:00:00+00:00",
             ),
@@ -506,7 +506,7 @@ def _reference_source_records(tenant_id: str) -> list[SourceRecord]:
         SourceRecord(
             tenant_id=tenant_id,
             source="incident_report",
-            content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",
+            content="Search p95 latency doubled. api_key=abcdefghi123456789. Inspect deployment before restart.",  # gitleaks:allow
             provenance_pointer="incident://search-latency-1",
             timestamp="2026-04-30T00:00:00+00:00",
             tool_calls=[{"name": "kubernetes.get_deployment", "arguments": {"deployment": "search", "namespace": "prod"}}],

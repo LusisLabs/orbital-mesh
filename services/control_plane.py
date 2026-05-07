@@ -15,7 +15,7 @@ from collections import deque
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 from services.runtime import MeshRuntimeEngine
@@ -43,7 +43,6 @@ from services.ingest.webhook_service import (
     build_signal_from_alert,
 )
 from services.orchestrator.agent_mesh import AgentMeshService
-from services.orchestrator.evo_launcher import EvoLaunchService
 from services.orchestrator.reconciliation import reconcile_agent_tasks
 from services.orchestrator.service_agents import ServiceAgentRegistry
 from services.simulation import SimulationService
@@ -66,6 +65,11 @@ from shared.mesh_runtime import (
     MEMORY_COMPACTION_RECORDED,
     NORMALIZED_EVENT,
     NO_TRIGGER,
+    OPERATOR_HANDOFF_RECORDED,
+    OVERRIDE_REVIEW_RECORDED,
+    OWNERSHIP_BOUNDARY_RECORDED,
+    POSTMORTEM_REVIEW_RECORDED,
+    RUN_ADMISSION_RECORDED,
     RUN_CANCELLED,
     RUN_COMPLETED,
     RUN_FAILED,
@@ -80,8 +84,24 @@ from shared.mesh_runtime import (
     ExecutionRecord,
     EvaluationResult,
     Trigger,
+    build_operator_handoff,
+    build_override_review,
+    build_postmortem_review,
     load_fixture,
 )
+from shared.mesh_runtime.perennial import (
+    build_darkharness_pilot_packet,
+    evaluate_darkharness_packet_policy,
+    load_darkharness_registry,
+    materialize_agent_action_records,
+    materialize_epistemic_state,
+    materialize_governance_commit,
+    materialize_mesh_brain_action_records,
+    materialize_ontological_state,
+    materialize_proof_envelope,
+    materialize_runtime_evidence_action_records,
+)
+from shared.mesh_runtime.schema_validation import SchemaValidationError
 from shared.mesh_runtime.alert_store import AlertStore
 from shared.mesh_runtime.control_plane_models import GoalRecord, RunEvent, RunSession, SteeringCommand
 from services.signal_correlator import SignalCorrelator
@@ -95,8 +115,18 @@ from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
 from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.on_call_drill import verify_on_call_drill
 from shared.mesh_runtime.integrations import resolve_integrations_config
+from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
+from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
+from shared.mesh_runtime.failure_modes import build_failure_mode_library_packet
+from shared.mesh_runtime.approval_queue import build_approval_queue_packet
+from shared.mesh_runtime.watcher_ownership import build_watcher_ownership_packet
+from shared.mesh_runtime.timeline_proof import build_timeline_proof
 from shared.mesh_runtime.learning import LearningStore
+from shared.mesh_runtime.ownership import build_ownership_boundary
+from shared.mesh_runtime.policy_lifecycle import build_policy_lifecycle_packet
+from shared.mesh_runtime.run_admission import build_run_admission, build_target_lock_key
 from shared.mesh_runtime.active_memory import ActiveMemoryStore
 from shared.mesh_runtime.corpus_store import CorpusQuery, IncidentCorpusDatabase, project_database_to_memory
 from shared.mesh_runtime.reasoning_bank import ReasoningBankService
@@ -123,7 +153,9 @@ ALLOWED_STEERING_COMMANDS = {
     "explain_blockers",
     "chat_with_hermes",
     "attach_note",
-    "launch_evo",
+    "handoff",
+    "override_review",
+    "postmortem_review",
 }
 
 # Operator steering is analogous to activation steering: early / late interventions have different
@@ -251,22 +283,11 @@ def _validate_steering_command(session: RunSession, command_type: str, command_p
             "(cap from MESH_MAX_STEERING_PAYLOAD_BYTES)"
         )
     if session.stage in TERMINAL_STAGES:
-        if command_type == "launch_evo" and session.stage == "completed":
-            return
-        if command_type != "attach_note":
+        if command_type not in {"attach_note", "override_review", "postmortem_review"}:
             raise ValueError(
                 f"steering command {command_type!r} is not allowed after run is {session.stage!r}; "
-                "only attach_note is permitted."
+                "only attach_note, override_review, and postmortem_review are permitted."
             )
-        return
-    if command_type == "launch_evo":
-        effective = session.pending_pause_stage or session.stage
-        if effective != "evaluation_ready":
-            raise ValueError(
-                f"steering command {command_type!r} is not allowed at stage {effective!r} "
-                f"(run stage {session.stage!r}). "
-                "Evo launch is accepted only when the run is paused at evaluation_ready or after completion."
-        )
         return
     if command_type == "explain_blockers":
         effective = session.pending_pause_stage or session.stage
@@ -404,11 +425,13 @@ class RunCoordinator:
         self._deferred_thread.start()
         self._lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
-        self.evo_launcher = EvoLaunchService(self.config)
         self.simulation_service = SimulationService(self.config)
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
         self.controls: dict[str, RunControl] = {}
         self._threads: dict[str, threading.Thread] = {}
+        self._active_target_locks: dict[str, str] = {}
+        self._run_target_locks: dict[str, str] = {}
+        self._run_tenants: dict[str, str] = {}
         self._agent_task_threads: dict[str, threading.Thread] = {}
         self._run_worker_stop = threading.Event()
         self._run_queue: queue.Queue[tuple[str, RuntimeConfig, dict[str, Any], str | None]] = queue.Queue(
@@ -529,7 +552,25 @@ class RunCoordinator:
     # ---- new /api/watchers surface ---------------------------------------
 
     def watchers_status(self) -> dict[str, Any]:
-        return self.watcher_registry.status()
+        status = self.watcher_registry.status()
+        ownership = self.build_watcher_ownership(status)
+        ownership_by_name = {
+            str(watcher.get("name")): watcher
+            for watcher in ownership.get("watchers", [])
+            if isinstance(watcher, dict)
+        }
+        for watcher in status.get("watchers", []):
+            if isinstance(watcher, dict):
+                watcher["ownership"] = ownership_by_name.get(str(watcher.get("name")))
+        status["ownership"] = ownership
+        return status
+
+    def build_watcher_ownership(self, watcher_status: dict[str, Any] | None = None) -> dict[str, Any]:
+        return build_watcher_ownership_packet(
+            registry_path=self.config.ownership_registry_path,
+            watcher_status=watcher_status or self.watcher_registry.status(),
+            default_environment=self.config.environment,
+        )
 
     def watcher_start(self, name: str) -> dict[str, Any]:
         self.watcher_registry.start(name)
@@ -593,6 +634,19 @@ class RunCoordinator:
             "signal_source": watcher.signal_source,
             "interval_seconds": watcher.interval_seconds,
             "detail": watcher.status(),
+            "ownership": self.build_watcher_ownership(
+                {
+                    "watchers": [
+                        {
+                            "name": name,
+                            "signal_source": watcher.signal_source,
+                            "interval_seconds": watcher.interval_seconds,
+                            "running": self.watcher_registry.is_running(name),
+                            "detail": watcher.status(),
+                        }
+                    ]
+                }
+            )["watchers"][0],
         }
 
     # --- Infra graph --------------------------------------------------
@@ -701,6 +755,39 @@ class RunCoordinator:
             self._readiness_cache = (now, readiness)
         return readiness
 
+    def build_policy_lifecycle(self) -> dict[str, Any]:
+        return build_policy_lifecycle_packet(
+            manifest_path=self.config.policy_lifecycle_manifest_path,
+            signing_key=self.config.policy_signing_key,
+            signing_key_id=self.config.policy_signing_key_id,
+        )
+
+    def build_connector_certification(self) -> dict[str, Any]:
+        readiness = self.build_readiness()
+        runtime_states = readiness.get("connector_certification")
+        return build_connector_certification_matrix(
+            registry_path=self.config.connector_certification_registry_path,
+            runtime_states=runtime_states if isinstance(runtime_states, dict) else {},
+        )
+
+    def build_deployment_compatibility(self) -> dict[str, Any]:
+        return build_deployment_compatibility_matrix(self.config.deployment_compatibility_registry_path)
+
+    def build_failure_mode_library(self) -> dict[str, Any]:
+        return build_failure_mode_library_packet(self.config.failure_mode_library_path)
+
+    def build_timeline_proof(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        events = self.state_store.list_run_events(run_id)
+        return build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=session.latest_event_id,
+        )
+
     def simulate_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
         signal_payload, source = self._resolve_policy_simulation_signal(payload)
         from services.decision.service import DecisionService
@@ -761,6 +848,8 @@ class RunCoordinator:
 
     def generate_pilot_go_no_go(self) -> dict[str, Any]:
         readiness = self.build_readiness()
+        release_provenance = self._release_provenance_record(readiness)
+        on_call_drill = self._on_call_drill_record(readiness)
         runs = self.state_store.list_run_sessions(limit=100)
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
         event_sets = {
@@ -818,6 +907,10 @@ class RunCoordinator:
             "mesh_brain_live_canary_smoke_observed": bool(live_smoke_runs),
             "mesh_brain_single_crops_canary_lane_observed": len(live_smoke_lanes) == 1 and live_smoke_lanes[0][1] == "crops",
             "mesh_brain_rollback_drill_observed": bool(rollback_drill_runs),
+            "release_provenance_complete": release_provenance.get("required") is False
+            or release_provenance.get("status") == "complete",
+            "on_call_drill_verified": on_call_drill.get("required") is False
+            or on_call_drill.get("status") == "pass",
             "rollback_plan_observed": any(
                 isinstance(session.artifacts.get("decision"), dict)
                 and bool(session.artifacts["decision"].get("execution_plan", {}).get("rollback_plan"))
@@ -846,7 +939,87 @@ class RunCoordinator:
                 ],
                 "mesh_brain_rollback_drill_run_ids": [session.run_id for session in rollback_drill_runs],
             },
+            "release_provenance": release_provenance,
+            "on_call_drill": on_call_drill,
         }
+
+    def _release_provenance_record(self, readiness: dict[str, Any]) -> dict[str, Any]:
+        profile = readiness.get("profile") if isinstance(readiness.get("profile"), str) else self.config.readiness_profile
+        required = profile in {"pilot", "expansion"}
+        raw_path = self.config.release_provenance_path
+        path = Path(raw_path)
+        exists = path.exists() and path.is_file()
+        record: dict[str, Any] = {
+            "required": required,
+            "path": raw_path,
+            "exists": exists,
+            "status": "not_required" if not required else "missing",
+            "packet_sha256": None,
+            "missing": [],
+        }
+        if not required:
+            return record
+        if not exists:
+            record["missing"] = ["release_provenance_path"]
+            return record
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            record["status"] = "invalid"
+            record["missing"] = ["release_provenance_json"]
+            return record
+        if not isinstance(payload, dict):
+            record["status"] = "invalid"
+            record["missing"] = ["release_provenance_json"]
+            return record
+        record["schema_version"] = payload.get("schema_version") if isinstance(payload.get("schema_version"), str) else None
+        record["status"] = payload.get("status") if isinstance(payload.get("status"), str) else "invalid"
+        record["packet_sha256"] = payload.get("packet_sha256") if isinstance(payload.get("packet_sha256"), str) else None
+        missing = payload.get("missing")
+        record["missing"] = list(missing) if isinstance(missing, list) else []
+        if record["schema_version"] != "mesh.release_provenance.v1":
+            record["status"] = "invalid"
+            record["missing"] = [*record["missing"], "schema_version:mesh.release_provenance.v1"]
+        elif record["status"] != "complete":
+            record["status"] = "incomplete"
+        return record
+
+    def _on_call_drill_record(self, readiness: dict[str, Any]) -> dict[str, Any]:
+        profile = readiness.get("profile") if isinstance(readiness.get("profile"), str) else self.config.readiness_profile
+        required = profile in {"pilot", "expansion"}
+        raw_path = self.config.on_call_drill_path or ""
+        path = Path(raw_path) if raw_path else None
+        exists = bool(path and path.exists() and path.is_file())
+        record: dict[str, Any] = {
+            "required": required,
+            "path": raw_path or None,
+            "exists": exists,
+            "status": "not_required" if not required else "missing",
+            "drill_id": None,
+            "missing": [],
+        }
+        if not required:
+            return record
+        if not raw_path:
+            record["missing"] = ["on_call_drill_path"]
+            return record
+        verification = verify_on_call_drill(raw_path)
+        record.update(
+            {
+                "status": verification.get("status") if isinstance(verification.get("status"), str) else "fail",
+                "schema_version": verification.get("schema_version"),
+                "drill_id": verification.get("drill_id"),
+                "environment": verification.get("environment"),
+                "checks": verification.get("checks") if isinstance(verification.get("checks"), dict) else {},
+                "error": verification.get("error"),
+            }
+        )
+        record["missing"] = [
+            name
+            for name, passed in cast(dict[str, bool], record.get("checks", {})).items()
+            if not passed
+        ]
+        return record
 
     @staticmethod
     def _mesh_brain_model_kernel_gate_passed(record: Any) -> bool:
@@ -1069,6 +1242,23 @@ class RunCoordinator:
     def list_run_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
         return [_run_session_summary(session) for session in self.state_store.list_run_sessions(limit=limit)]
 
+    def build_approval_queue(self, limit: int = 100) -> dict[str, Any]:
+        sessions = self.state_store.list_run_sessions(limit=limit)
+        pending_sessions = [
+            session
+            for session in sessions
+            if session.stage == "awaiting_operator" or session.status == "awaiting_operator"
+        ]
+        events_by_run = {
+            session.run_id: self.state_store.list_run_events(session.run_id)
+            for session in pending_sessions
+        }
+        return build_approval_queue_packet(
+            pending_sessions,
+            events_by_run,
+            environment=self.config.environment,
+        )
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -1108,7 +1298,14 @@ class RunCoordinator:
         merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
         proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
         proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        timeline_proof = build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=proof_event_id,
+        )
         artifacts = _redact_run_export_value(session.artifacts)
+        approval_records = _run_export_approval_records(artifacts, events)
         event_dicts = [_redact_run_export_value(event.to_dict()) for event in events]
         session_dict = _redact_run_export_value(session.to_dict())
         vault_documents = self._run_export_vault_documents(run_id)
@@ -1126,9 +1323,13 @@ class RunCoordinator:
             "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
             "execution_record": copy.deepcopy(artifacts.get("execution")),
             "feedback_record": copy.deepcopy(artifacts.get("feedback")),
-            "approval_records": copy.deepcopy(artifacts.get("approvals", [])),
+            "approval_records": approval_records,
+            "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
+            "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
+            "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
             "operator_notes": _redact_run_export_value(list(session.operator_notes)),
             "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "timeline_proof": timeline_proof,
             "vault_documents": vault_documents,
             "checks": {
                 "timeline_present": bool(events),
@@ -1184,6 +1385,356 @@ class RunCoordinator:
             status="recorded",
         )
         return package
+
+    def build_run_export_package_snapshot(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        events = self.state_store.list_run_events(run_id)
+        merkle = self.state_store.get_merkle_snapshot(run_id).to_dict()
+        proof_event_id = session.latest_event_id or (events[-1].event_id if events else None)
+        proof = self.state_store.get_merkle_proof(run_id, proof_event_id).to_dict() if proof_event_id else None
+        timeline_proof = build_timeline_proof(
+            run_id=run_id,
+            events=events,
+            merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
+            proof_event_id=proof_event_id,
+        )
+        artifacts = _redact_run_export_value(session.artifacts)
+        generated_at = _timestamp()
+        approval_records = _run_export_approval_records(artifacts, events)
+        package: dict[str, Any] = {
+            "package_version": "mesh.run_export.v1",
+            "generated_at": generated_at,
+            "run_id": run_id,
+            "session": _redact_run_export_value(session.to_dict()),
+            "timeline_json": [_redact_run_export_value(event.to_dict()) for event in events],
+            "postmortem_markdown": self._build_run_export_markdown(session, events, merkle),
+            "evidence_artifacts": self._run_export_evidence_artifacts(artifacts),
+            "decision_record": copy.deepcopy(artifacts.get("decision")),
+            "evaluation_record": copy.deepcopy(artifacts.get("evaluation")),
+            "execution_record": copy.deepcopy(artifacts.get("execution")),
+            "feedback_record": copy.deepcopy(artifacts.get("feedback")),
+            "approval_records": approval_records,
+            "handoff_records": copy.deepcopy(artifacts.get("operator_handoffs", [])),
+            "override_review_records": copy.deepcopy(artifacts.get("override_reviews", [])),
+            "postmortem_review_records": copy.deepcopy(artifacts.get("postmortem_reviews", [])),
+            "operator_notes": _redact_run_export_value(list(session.operator_notes)),
+            "merkle": {"snapshot": merkle, "latest_event_proof": proof},
+            "timeline_proof": timeline_proof,
+            "vault_documents": self._run_export_vault_documents(run_id),
+            "checks": {
+                "timeline_present": bool(events),
+                "markdown_summary_present": True,
+                "merkle_root_present": bool(merkle.get("root_hash")),
+                "merkle_proof_valid": bool(proof and proof.get("valid")),
+                "decision_record_present": isinstance(artifacts.get("decision"), dict),
+                "evaluation_record_present": isinstance(artifacts.get("evaluation"), dict),
+                "execution_record_present": isinstance(artifacts.get("execution"), dict),
+                "feedback_record_present": isinstance(artifacts.get("feedback"), dict),
+            },
+            "redaction": {
+                "enabled": True,
+                "secret_markers": ("token", "secret", "api_key", "apikey", "authorization", "password", "jwt"),
+                "replacement": "<redacted>",
+            },
+            "retention": self._run_export_retention_policy(generated_at),
+            "read_only": True,
+        }
+        package = self._enforce_run_export_size(package)
+        package_sha = _canonical_sha256(package)
+        package["export_id"] = f"run_export_shadow_{generated_at.replace(':', '').replace('+', 'Z')}_{package_sha[:12]}"
+        package["package_sha256"] = _canonical_sha256(package)
+        package["path"] = None
+        return package
+
+    def build_darkharness_packet(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        run_export = self.build_run_export_package_snapshot(run_id)
+        if run_export is None:
+            return None
+        try:
+            pilot_metadata = self._darkharness_shadow_metadata(session)
+        except SchemaValidationError as exc:
+            return self._darkharness_blocked_response(run_id, [f"registry_invalid:{exc}"], run_export)
+        missing = self._darkharness_missing_evidence(run_export, session, pilot_metadata)
+        if missing:
+            return self._darkharness_blocked_response(run_id, missing, run_export)
+
+        try:
+            readiness = self.build_readiness()
+            go_no_go = self.generate_pilot_go_no_go()
+            decision = run_export["decision_record"]
+            evaluation = run_export["evaluation_record"]
+            proof_refs: list[str] = []
+            action_records = materialize_agent_action_records(
+                run_export["timeline_json"],
+                run=run_export["session"],
+                decision=decision,
+                evaluation=evaluation,
+                tenant_id=pilot_metadata["tenant_id"],
+                reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                proof_refs=proof_refs,
+                operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+            )
+            action_records.extend(
+                materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                    proof_refs=proof_refs,
+                )
+            )
+            action_records.extend(
+                materialize_runtime_evidence_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[pilot_metadata["sensitive_reservoir"]["reservoir_id"]],
+                    proof_refs=proof_refs,
+                    operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+                )
+            )
+            policy = evaluate_darkharness_packet_policy(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                run_export=run_export,
+                action_records=action_records,
+            )
+            if not policy.allowed:
+                return self._darkharness_blocked_response(
+                    run_id,
+                    [f"policy_violation:{violation}" for violation in policy.violations],
+                    run_export,
+                    policy_checks=policy.checks,
+                )
+            primary_action = self._darkharness_primary_action_record(action_records)
+            scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
+            epistemic_state = materialize_epistemic_state(scenario_analysis, run_id=run_id)
+            ontological_state = materialize_ontological_state(pilot_metadata["ontology_metadata"])
+            proof_envelope = materialize_proof_envelope(
+                run_export,
+                subject_refs=[run_id, primary_action["action_record_id"]],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
+            )
+            governance_commit = materialize_governance_commit(
+                run_export=run_export,
+                epistemic_state=epistemic_state,
+                ontological_state=ontological_state,
+                proof_envelope=proof_envelope,
+                action_record=primary_action,
+                readiness=readiness,
+                trust_ladder_ref=pilot_metadata["trust_ladder_ref"],
+            )
+            return build_darkharness_pilot_packet(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                readiness=readiness,
+                go_no_go=go_no_go,
+                run_exports=[run_export],
+                sensitive_reservoirs=[pilot_metadata["sensitive_reservoir"]],
+                agent_action_records=action_records,
+                epistemic_states=[epistemic_state],
+                ontological_states=[ontological_state],
+                governance_commits=[governance_commit],
+                proof_envelopes=[proof_envelope],
+                generated_at=run_export["generated_at"],
+            )
+        except (KeyError, TypeError, ValueError, SchemaValidationError) as exc:
+            return self._darkharness_blocked_response(run_id, [f"materialization_failed:{exc}"], run_export)
+
+    def build_darkharness_pilot_checkpoint_packet(self) -> dict[str, Any]:
+        go_no_go = self.generate_pilot_go_no_go()
+        if go_no_go.get("status") != "go":
+            return self._darkharness_checkpoint_blocked_response(
+                list(go_no_go.get("missing_evidence", [])),
+                go_no_go=go_no_go,
+            )
+        observed = cast(dict[str, Any], go_no_go.get("observed")) if isinstance(go_no_go.get("observed"), dict) else {}
+        candidate_ids = self._darkharness_unique_ids(
+            observed.get("approved_run_ids"),
+            observed.get("live_action_run_ids"),
+            observed.get("denied_action_run_ids"),
+            observed.get("mesh_brain_rollback_drill_run_ids"),
+        )
+        if not candidate_ids:
+            return self._darkharness_checkpoint_blocked_response(["checkpoint_run_evidence_present"], go_no_go=go_no_go)
+        first_session = self.state_store.get_run_session(candidate_ids[0])
+        if first_session is None:
+            return self._darkharness_checkpoint_blocked_response(["checkpoint_run_evidence_present"], go_no_go=go_no_go)
+        try:
+            pilot_metadata = self._darkharness_shadow_metadata(first_session)
+        except SchemaValidationError as exc:
+            return self._darkharness_checkpoint_blocked_response([f"registry_invalid:{exc}"], go_no_go=go_no_go)
+
+        allowed = self._darkharness_select_checkpoint_run(
+            self._darkharness_unique_ids(observed.get("approved_run_ids"), observed.get("live_action_run_ids")),
+            pilot_metadata,
+            allowed=True,
+        )
+        denied = self._darkharness_select_checkpoint_run(
+            self._darkharness_unique_ids(observed.get("denied_action_run_ids")),
+            pilot_metadata,
+            allowed=False,
+        )
+        missing: list[str] = []
+        if allowed is None:
+            missing.append("allowed_remediation_run_present")
+        if denied is None:
+            missing.append("denied_action_run_present")
+        mesh_brain_gate_exports = [
+            export
+            for run_id in self._darkharness_unique_ids(
+                observed.get("mesh_brain_model_kernel_run_ids"),
+                observed.get("mesh_brain_live_canary_smoke_run_ids"),
+                observed.get("mesh_brain_rollback_drill_run_ids"),
+            )
+            for export in [self.build_run_export_package_snapshot(run_id)]
+            if export is not None
+        ]
+        rollback_run_ids = set(self._darkharness_unique_ids(observed.get("mesh_brain_rollback_drill_run_ids")))
+        rollback_exports = [
+            export
+            for export in mesh_brain_gate_exports
+            if str(export.get("run_id")) in rollback_run_ids
+        ]
+        if not rollback_exports:
+            missing.append("rollback_drill_run_export_present")
+        if missing:
+            return self._darkharness_checkpoint_blocked_response(missing, go_no_go=go_no_go)
+
+        assert allowed is not None
+        assert denied is not None
+        readiness = go_no_go.get("readiness") if isinstance(go_no_go.get("readiness"), dict) else self.build_readiness()
+        run_exports = self._darkharness_unique_exports([allowed["run_export"], denied["run_export"], *mesh_brain_gate_exports])
+        action_records: list[dict[str, Any]] = []
+        governance_commits: list[dict[str, Any]] = []
+        proof_envelopes: list[dict[str, Any]] = []
+        epistemic_states: list[dict[str, Any]] = []
+        ontological_state = materialize_ontological_state(pilot_metadata["ontology_metadata"])
+        reservoir_id = pilot_metadata["sensitive_reservoir"]["reservoir_id"]
+        for selected in (allowed, denied):
+            run_export = selected["run_export"]
+            session = selected["session"]
+            decision = run_export["decision_record"]
+            evaluation = run_export["evaluation_record"]
+            run_action_records = materialize_agent_action_records(
+                run_export["timeline_json"],
+                run=run_export["session"],
+                decision=decision,
+                evaluation=evaluation,
+                tenant_id=pilot_metadata["tenant_id"],
+                reservoir_refs=[reservoir_id],
+                proof_refs=[],
+                operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+            )
+            run_action_records.extend(
+                materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                )
+            )
+            run_action_records.extend(
+                materialize_runtime_evidence_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                    operator_authority_refs=self._darkharness_operator_authority_refs(run_export),
+                )
+            )
+            policy = evaluate_darkharness_packet_policy(
+                pilot_scope=pilot_metadata["pilot_scope"],
+                run_export=run_export,
+                action_records=run_action_records,
+            )
+            if not policy.allowed:
+                return self._darkharness_checkpoint_blocked_response(
+                    [f"policy_violation:{violation}" for violation in policy.violations],
+                    go_no_go=go_no_go,
+                    policy_checks=policy.checks,
+                )
+            primary_action = self._darkharness_primary_action_record(run_action_records)
+            scenario_analysis = copy.deepcopy(session.artifacts["scenario_analysis"])
+            epistemic_state = materialize_epistemic_state(scenario_analysis, run_id=session.run_id)
+            proof_envelope = materialize_proof_envelope(
+                run_export,
+                subject_refs=[session.run_id, primary_action["action_record_id"]],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
+            )
+            governance_commit = materialize_governance_commit(
+                run_export=run_export,
+                epistemic_state=epistemic_state,
+                ontological_state=ontological_state,
+                proof_envelope=proof_envelope,
+                action_record=primary_action,
+                readiness=readiness,
+                trust_ladder_ref=pilot_metadata["trust_ladder_ref"],
+            )
+            action_records.extend(run_action_records)
+            epistemic_states.append(epistemic_state)
+            proof_envelopes.append(proof_envelope)
+            governance_commits.append(governance_commit)
+
+        action_records.extend(
+            [
+                record
+                for run_export in mesh_brain_gate_exports
+                for record in materialize_mesh_brain_action_records(
+                    run_export,
+                    tenant_id=pilot_metadata["tenant_id"],
+                    reservoir_refs=[reservoir_id],
+                    proof_refs=[],
+                )
+            ]
+        )
+        proof_envelopes.extend(
+            materialize_proof_envelope(
+                run_export,
+                subject_refs=[str(run_export.get("run_id"))],
+                signing_key=self.config.darkharness_signing_key,
+                signing_key_id=self.config.darkharness_signing_key_id,
+                classical_signing_key_pem=self.config.darkharness_classical_signing_key_pem,
+                classical_signing_key_id=self.config.darkharness_classical_signing_key_id,
+            )
+            for run_export in mesh_brain_gate_exports
+            if run_export.get("run_id") not in {allowed["session"].run_id, denied["session"].run_id}
+        )
+        return build_darkharness_pilot_packet(
+            pilot_scope=pilot_metadata["pilot_scope"],
+            readiness=readiness,
+            go_no_go=go_no_go,
+            run_exports=run_exports,
+            sensitive_reservoirs=[pilot_metadata["sensitive_reservoir"]],
+            agent_action_records=action_records,
+            epistemic_states=epistemic_states,
+            ontological_states=[ontological_state],
+            governance_commits=governance_commits,
+            proof_envelopes=proof_envelopes,
+            generated_at=str(go_no_go.get("generated_at") or _timestamp()),
+            claim_boundary={
+                "implemented": [
+                    "readiness",
+                    "go_no_go",
+                    "multi_run_checkpoint_export",
+                    "allowed_action_proof",
+                    "denied_action_proof",
+                    "rollback_drill_proof",
+                    "reservoir_boundary_proof",
+                    "merkle_proof",
+                    "mesh_brain_artifact_attestation",
+                ],
+                "proposed": ["public_key_signature", "pqc_signature", "pqc_kem", "selective_disclosure_zk"],
+                "not_implemented": ["raw_reservoir_egress", "packet_persistence"],
+            },
+        )
 
     def export_run_archive(self, run_id: str) -> dict[str, Any] | None:
         package = self.export_run_package(run_id)
@@ -1365,7 +1916,12 @@ class RunCoordinator:
             evaluation_mode=payload.get("evaluation_mode", self.config.evaluation_mode),
             orchestration_mode=payload.get("orchestration_mode", self.config.orchestration_mode),
         )
-        artifacts = {"input_signal": signal_payload}
+        ownership_boundary = build_ownership_boundary(
+            registry_path=self.config.ownership_registry_path,
+            signal_payload=signal_payload,
+            default_environment=self.config.environment,
+        )
+        artifacts = {"input_signal": signal_payload, "ownership_boundary": ownership_boundary}
         if operator is not None:
             artifacts["operator"] = operator
         if payload.get("chaos_probe") is True:
@@ -1384,10 +1940,53 @@ class RunCoordinator:
             orchestration_mode=run_config.orchestration_mode,
             artifacts=artifacts,
         )
+        target_lock_enabled = self.config.kubernetes_live_execution_enabled or payload.get("require_target_lock") is True
+        admission = self._build_run_admission(
+            session.run_id,
+            ownership_boundary,
+            enforce_target_lock=target_lock_enabled,
+        )
+        self._set_artifact(session.run_id, "run_admission", admission)
+        if admission["decision"] != "admitted":
+            self.state_store.append_run_event(
+                session.run_id,
+                stage="blocked",
+                event_type=RUN_ADMISSION_RECORDED,
+                payload=admission,
+                summary={"status": "blocked", "blockers": admission["blockers"]},
+                artifact_key="run_admission",
+                status="blocked",
+            )
+            self._update_session(
+                session.run_id,
+                stage="failed",
+                status="failed",
+                pending_pause_stage=None,
+                error="; ".join(admission["blockers"]),
+            )
+            return self.get_run(session.run_id) or session.to_dict()
         with self._lock:
             self.controls[session.run_id] = RunControl(auto_mode=auto_mode, pause_points=pause_points)
+            self._run_tenants[session.run_id] = admission["tenant_id"]
+            self._run_target_locks[session.run_id] = admission["target_lock_key"]
+            if target_lock_enabled:
+                self._active_target_locks[admission["target_lock_key"]] = session.run_id
         readiness_snapshot = build_readiness(run_config).to_dict()
         self._set_artifact(session.run_id, "integration_readiness", readiness_snapshot)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_ADMISSION_RECORDED,
+            payload=admission,
+            summary={
+                "status": "admitted",
+                "tenant_id": admission["tenant_id"],
+                "target_lock_key": admission["target_lock_key"],
+                "queue_depth": admission["queue"]["current_depth"],
+            },
+            artifact_key="run_admission",
+            status="admitted",
+        )
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
@@ -1405,12 +2004,27 @@ class RunCoordinator:
         self.state_store.append_run_event(
             session.run_id,
             stage="queued",
+            event_type=OWNERSHIP_BOUNDARY_RECORDED,
+            payload=ownership_boundary,
+            summary={
+                "resolved": ownership_boundary["resolved"],
+                "service": ownership_boundary["service"],
+                "namespace": ownership_boundary["namespace"],
+                "tenant_id": ownership_boundary["tenant_id"],
+                "customer_boundary": ownership_boundary["customer_boundary"],
+                "owner_id": ownership_boundary["owner"].get("owner_id"),
+            },
+            artifact_key="ownership_boundary",
+            status="captured" if ownership_boundary["resolved"] else "blocked",
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
             event_type=INTEGRATION_READINESS_RECORDED,
             payload=readiness_snapshot,
             summary={
                 "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
                 "goose_ready": readiness_snapshot["goose"]["ready"],
-                "evo_ready": readiness_snapshot["evo"]["ready"],
             },
             artifact_key="integration_readiness",
             status="captured",
@@ -1418,6 +2032,7 @@ class RunCoordinator:
         try:
             self._run_queue.put_nowait((session.run_id, run_config, signal_payload, scenario_key))
         except queue.Full:
+            self._release_run_admission(session.run_id)
             self.state_store.append_run_event(
                 session.run_id,
                 stage="failed",
@@ -1912,14 +2527,16 @@ class RunCoordinator:
         # case and raises ValueError, which the HTTP handler maps to
         # 400. Order matters here.
         _validate_steering_command(session, command_type, command_payload)
-        control = self._get_control(run_id)
-        if control is None:
-            # Session exists, validation passed (so the run is
-            # non-terminal AND the command is valid for the stage),
-            # but no live control. This is a narrow race during the
-            # reaper window for non-terminal runs; surface as 404 so
-            # the operator retries.
-            raise KeyError(run_id)
+        override_review = (
+            self._build_override_review_record(run_id, session, command_payload, operator, related_event_id=None)
+            if command_type == "override_review"
+            else None
+        )
+        postmortem_review = (
+            self._build_postmortem_review_record(run_id, session, command_payload, operator, related_event_id=None)
+            if command_type == "postmortem_review"
+            else None
+        )
         command = SteeringCommand(
             command_id=f"cmd_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{len(session.operator_notes) + 1}",
             run_id=run_id,
@@ -1936,34 +2553,243 @@ class RunCoordinator:
             artifact_key="operator_command",
             status="received",
         )
-        self.state_store.record_approval(
-            run_id,
-            {
-                "event_id": command_event.event_id,
-                "command_id": command.command_id,
-                "command_type": command.command_type,
-                "issued_at": command.issued_at,
-                "payload": command.payload,
-                "operator": operator,
-            },
-        )
-        if command_type == "launch_evo":
-            self._launch_evo(run_id, session, command_payload)
+        if command_type == "override_review":
+            assert override_review is not None
+            override_review["related_event_id"] = command_event.event_id
+            self._save_override_review(run_id, session, override_review)
             return self.get_run(run_id) or session.to_dict()
+        if command_type == "postmortem_review":
+            assert postmortem_review is not None
+            postmortem_review["related_event_id"] = command_event.event_id
+            self._save_postmortem_review(run_id, session, postmortem_review)
+            return self.get_run(run_id) or session.to_dict()
+        if command_type == "attach_note" and command.payload.get("note"):
+            session.operator_notes.append(command.payload["note"])
+            session.updated_at = _timestamp()
+            self.state_store.save_run_session(session)
+            return self.get_run(run_id) or session.to_dict()
+        control = self._get_control(run_id)
+        if control is None:
+            # Session exists, validation passed (so the run is
+            # non-terminal AND the command is valid for the stage),
+            # but no live control. This is a narrow race during the
+            # reaper window for non-terminal runs; surface as 404 so
+            # the operator retries.
+            raise KeyError(run_id)
+        if command_type in {"approve", "resume", "override_decision", "override_execution_parameters"}:
+            self.state_store.record_approval(
+                run_id,
+                {
+                    "event_id": command_event.event_id,
+                    "command_id": command.command_id,
+                    "command_type": command.command_type,
+                    "issued_at": command.issued_at,
+                    "payload": command.payload,
+                    "operator": operator,
+                },
+            )
         if command_type == "explain_blockers":
             self._explain_blockers(run_id, session)
             return self.get_run(run_id) or session.to_dict()
         if command_type == "chat_with_hermes":
             self._chat_with_hermes(run_id, session, str(command_payload.get("message", "")).strip())
             return self.get_run(run_id) or session.to_dict()
-        if command_type == "attach_note" and command.payload.get("note"):
-            session.operator_notes.append(command.payload["note"])
-            session.updated_at = _timestamp()
-            self.state_store.save_run_session(session)
+        if command_type == "handoff":
+            self._record_operator_handoff(run_id, session, command_payload, operator, command_event.event_id)
         with control.condition:
             control.commands.append(command)
             control.condition.notify_all()
         return self.get_run(run_id) or session.to_dict()
+
+    def _build_override_review_record(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str | None,
+    ) -> dict[str, Any]:
+        reviews = session.artifacts.get("override_reviews")
+        review_index = len(reviews) + 1 if isinstance(reviews, list) else 1
+        return build_override_review(
+            run_id=run_id,
+            review_id=f"override_review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{review_index}",
+            reviewer=operator,
+            override_command=self._select_override_command_for_review(run_id, payload),
+            verdict=str(payload.get("verdict") or "needs_followup"),
+            reason=str(payload.get("reason") or ""),
+            findings=payload.get("findings") if isinstance(payload.get("findings"), list) else [],
+            action_items=payload.get("action_items") if isinstance(payload.get("action_items"), list) else [],
+            related_event_id=related_event_id,
+        )
+
+    def _select_override_command_for_review(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        override_event_id = str(payload.get("override_event_id") or "").strip()
+        override_command_id = str(payload.get("command_id") or payload.get("override_command_id") or "").strip()
+        matching_events = []
+        for event in self.state_store.list_run_events(run_id):
+            if event.event_type != STEERING_COMMAND:
+                continue
+            event_payload = event.payload if isinstance(event.payload, dict) else {}
+            command_type = str(event_payload.get("command_type") or "").strip()
+            if command_type not in _STEERING_DECISION_COMMANDS:
+                continue
+            command_id = str(event_payload.get("command_id") or "").strip()
+            if override_event_id and event.event_id != override_event_id:
+                continue
+            if override_command_id and command_id != override_command_id:
+                continue
+            operator = event_payload.get("operator") if isinstance(event_payload.get("operator"), dict) else {}
+            matching_events.append(
+                {
+                    "event_id": event.event_id,
+                    "command_id": command_id,
+                    "command_type": command_type,
+                    "issued_at": str(event_payload.get("issued_at") or event.recorded_at),
+                    "operator_id": operator.get("operator_id") if isinstance(operator.get("operator_id"), str) else None,
+                }
+            )
+        if matching_events:
+            return matching_events[-1]
+        if override_event_id or override_command_id:
+            raise ValueError("override review target command was not found")
+        raise ValueError("override review requires a prior override command")
+
+    def _save_override_review(
+        self,
+        run_id: str,
+        session: RunSession,
+        review: dict[str, Any],
+    ) -> None:
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("override_reviews")
+        if isinstance(existing, list):
+            existing.append(review)
+        else:
+            session.artifacts["override_reviews"] = [review]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=OVERRIDE_REVIEW_RECORDED,
+            payload=review,
+            summary={
+                "review_id": review["review_id"],
+                "reviewer_id": review["reviewer"]["operator_id"],
+                "override_event_id": review["override_command"]["event_id"],
+                "verdict": review["verdict"],
+                "independent_reviewer": review["independent_reviewer"],
+            },
+            artifact_key="override_review",
+            status=review["verdict"],
+        )
+
+    def _build_postmortem_review_record(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str | None,
+    ) -> dict[str, Any]:
+        reviews = session.artifacts.get("postmortem_reviews")
+        review_index = len(reviews) + 1 if isinstance(reviews, list) else 1
+        launcher = session.artifacts.get("operator") if isinstance(session.artifacts.get("operator"), dict) else {}
+        run_export = session.artifacts.get("run_export_package") if isinstance(session.artifacts.get("run_export_package"), dict) else {}
+        return build_postmortem_review(
+            run_id=run_id,
+            review_id=f"postmortem_review_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{review_index}",
+            reviewer=operator,
+            launcher_operator_id=launcher.get("operator_id") if isinstance(launcher.get("operator_id"), str) else None,
+            verdict=str(payload.get("verdict") or "needs_followup"),
+            findings=payload.get("findings") if isinstance(payload.get("findings"), list) else [],
+            action_items=payload.get("action_items") if isinstance(payload.get("action_items"), list) else [],
+            reviewed_export_id=str(payload.get("reviewed_export_id") or run_export.get("export_id") or "").strip() or None,
+            reviewed_package_sha256=str(
+                payload.get("reviewed_package_sha256") or run_export.get("package_sha256") or ""
+            ).strip() or None,
+            related_event_id=related_event_id,
+        )
+
+    def _save_postmortem_review(
+        self,
+        run_id: str,
+        session: RunSession,
+        review: dict[str, Any],
+    ) -> None:
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("postmortem_reviews")
+        if isinstance(existing, list):
+            existing.append(review)
+        else:
+            session.artifacts["postmortem_reviews"] = [review]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=POSTMORTEM_REVIEW_RECORDED,
+            payload=review,
+            summary={
+                "review_id": review["review_id"],
+                "reviewer_id": review["reviewer"]["operator_id"],
+                "verdict": review["verdict"],
+                "independent_reviewer": review["independent_reviewer"],
+            },
+            artifact_key="postmortem_review",
+            status=review["verdict"],
+        )
+
+    def _record_operator_handoff(
+        self,
+        run_id: str,
+        session: RunSession,
+        payload: dict[str, Any],
+        operator: dict[str, Any],
+        related_event_id: str,
+    ) -> None:
+        handoffs = session.artifacts.get("operator_handoffs")
+        handoff_index = len(handoffs) + 1 if isinstance(handoffs, list) else 1
+        to_operator_id = str(payload.get("to_operator_id") or "").strip()
+        to_roles = payload.get("to_roles") if isinstance(payload.get("to_roles"), list) else []
+        handoff = build_operator_handoff(
+            run_id=run_id,
+            from_operator=operator,
+            to_operator={
+                "operator_id": to_operator_id,
+                "roles": to_roles,
+                "source": str(payload.get("to_operator_source") or "operator_handoff"),
+            },
+            reason=str(payload.get("reason") or ""),
+            next_action=str(payload.get("next_action") or ""),
+            urgency=str(payload.get("urgency") or "normal"),
+            due_at=payload.get("due_at") if isinstance(payload.get("due_at"), str) else None,
+            handoff_id=f"handoff_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{handoff_index}",
+            related_event_id=related_event_id,
+        )
+        session = self.state_store.get_run_session(run_id) or session
+        existing = session.artifacts.get("operator_handoffs")
+        if isinstance(existing, list):
+            existing.append(handoff)
+        else:
+            session.artifacts["operator_handoffs"] = [handoff]
+        session.updated_at = _timestamp()
+        self.state_store.save_run_session(session)
+        self.state_store.append_run_event(
+            run_id,
+            stage=session.stage,
+            event_type=OPERATOR_HANDOFF_RECORDED,
+            payload=handoff,
+            summary={
+                "handoff_id": handoff["handoff_id"],
+                "from_operator_id": handoff["from_operator"]["operator_id"],
+                "to_operator_id": handoff["to_operator"]["operator_id"],
+                "urgency": handoff["urgency"],
+            },
+            artifact_key="operator_handoff",
+            status="open",
+        )
 
     def _execute_run(
         self,
@@ -2007,7 +2833,6 @@ class RunCoordinator:
                 summary={
                     "promptfoo_ready": readiness_snapshot["promptfoo"]["ready"],
                     "goose_ready": readiness_snapshot["goose"]["ready"],
-                    "evo_ready": readiness_snapshot["evo"]["ready"],
                 },
                 artifact_key="integration_readiness",
                 status="captured",
@@ -2473,6 +3298,41 @@ class RunCoordinator:
         with self._lock:
             self._threads.pop(run_id, None)
             self.controls.pop(run_id, None)
+            self._run_tenants.pop(run_id, None)
+            target_lock_key = self._run_target_locks.pop(run_id, None)
+            if target_lock_key and self._active_target_locks.get(target_lock_key) == run_id:
+                self._active_target_locks.pop(target_lock_key, None)
+
+    def _build_run_admission(
+        self,
+        run_id: str,
+        ownership_boundary: dict[str, Any],
+        *,
+        enforce_target_lock: bool,
+    ) -> dict[str, Any]:
+        target_lock_key = build_target_lock_key(ownership_boundary)
+        tenant_id = str(ownership_boundary.get("tenant_id") or "unknown")
+        with self._lock:
+            target_lock_holder = self._active_target_locks.get(target_lock_key) if enforce_target_lock else None
+            tenant_active_runs = sum(1 for item in self._run_tenants.values() if item == tenant_id)
+            queue_depth = self._run_queue.qsize()
+        return build_run_admission(
+            run_id=run_id,
+            ownership_boundary=ownership_boundary,
+            queue_depth=queue_depth,
+            queue_size=self.config.run_queue_size,
+            worker_count=self.config.run_worker_count,
+            tenant_active_runs=tenant_active_runs,
+            tenant_active_run_quota=self.config.tenant_active_run_quota,
+            target_lock_holder=target_lock_holder,
+        )
+
+    def _release_run_admission(self, run_id: str) -> None:
+        with self._lock:
+            self._run_tenants.pop(run_id, None)
+            target_lock_key = self._run_target_locks.pop(run_id, None)
+            if target_lock_key and self._active_target_locks.get(target_lock_key) == run_id:
+                self._active_target_locks.pop(target_lock_key, None)
 
     def _get_control(self, run_id: str) -> RunControl | None:
         """Locked read of ``self.controls[run_id]``.
@@ -3257,20 +4117,26 @@ class RunCoordinator:
         try:
             session = self.state_store.get_run_session(run_id)
             service_agent = session.artifacts.get("service_agent") if session is not None else None
+            integration_readiness = session.artifacts.get("integration_readiness") if session is not None else None
             tasks = self.agent_mesh.build_tasks(
                 run_id=run_id,
                 trigger=trigger,
                 decision=decision,
                 evaluation=evaluation,
                 service_agent=service_agent if isinstance(service_agent, dict) else None,
+                integration_readiness=integration_readiness if isinstance(integration_readiness, dict) else None,
             )
             task_payload = [task.to_dict() for task in tasks]
-            lane_routing = {
-                "signal_source": _signal_source_for_routing(trigger),
-                "decision_type": decision.decision_type,
-                "service_agent": service_agent,
-                "agents": task_payload[0].get("agents", []) if task_payload else [],
-            }
+            lane_routing = (
+                task_payload[0].get("lane_routing", {})
+                if task_payload and isinstance(task_payload[0].get("lane_routing"), dict)
+                else {
+                    "signal_source": _signal_source_for_routing(trigger),
+                    "decision_type": decision.decision_type,
+                    "service_agent": service_agent,
+                    "agents": task_payload[0].get("agents", []) if task_payload else [],
+                }
+            )
             self._set_artifact(run_id, "lane_routing", lane_routing)
             status = "recorded"
             summary = {
@@ -3775,164 +4641,6 @@ class RunCoordinator:
                 data["execution_plan"]["rollback_plan"] = payload["rollback_plan"]
         return Decision.from_dict(data)
 
-    def _launch_evo(self, run_id: str, session: RunSession, payload: dict[str, Any]) -> None:
-        launch_request = self._validate_evo_launch_request(run_id, session, payload)
-        launch_id = f"evo_{run_id}_{uuid4().hex[:8]}"
-        queued = {
-            "launch_id": launch_id,
-            "action": "status" if launch_request["workspace_detected"] else "discover_bootstrap",
-            "status": "queued",
-            "requested_at": _timestamp(),
-            "repo_path": launch_request["repo_path"],
-            "target_path": launch_request["target_path"],
-            "benchmark_command": launch_request["benchmark_command"],
-            "metric": launch_request["metric"],
-            "instrumentation_mode": launch_request["instrumentation_mode"],
-            "gate_command": launch_request["gate_command"],
-            "workspace_detected": launch_request["workspace_detected"],
-            "dashboard_url": None,
-            "steps": [],
-            "error": None,
-        }
-        self._upsert_evo_launch(run_id, queued)
-        self.state_store.append_run_event(
-            run_id,
-            stage=session.stage,
-            event_type=INTEGRATION_ARTIFACT_RECORDED,
-            payload=queued,
-            summary={"status": "queued", "action": queued["action"]},
-            artifact_key="evo_launches",
-            integration_name="evo",
-            status="queued",
-        )
-
-        def runner() -> None:
-            running = {**queued, "status": "running", "started_at": _timestamp()}
-            self._upsert_evo_launch(run_id, running)
-            current = self.state_store.get_run_session(run_id)
-            self.state_store.append_run_event(
-                run_id,
-                stage=current.stage if current else session.stage,
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=running,
-                summary={"status": "running", "action": running["action"]},
-                artifact_key="evo_launches",
-                integration_name="evo",
-                status="running",
-            )
-            finished = self.evo_launcher.run_launch(
-                run_id=run_id,
-                repo_path=launch_request["repo_path"],
-                target_path=launch_request["target_path"],
-                benchmark_command=launch_request["benchmark_command"],
-                metric=launch_request["metric"],
-                instrumentation_mode=launch_request["instrumentation_mode"],
-                gate_command=launch_request["gate_command"],
-                note=launch_request["note"],
-            )
-            finished["launch_id"] = launch_id
-            self._upsert_evo_launch(run_id, finished)
-            latest = self.state_store.get_run_session(run_id)
-            self.state_store.append_run_event(
-                run_id,
-                stage=latest.stage if latest else session.stage,
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=finished,
-                summary={"status": finished["status"], "action": finished["action"]},
-                artifact_key="evo_launches",
-                integration_name="evo",
-                status=finished["status"],
-            )
-
-        threading.Thread(target=runner, daemon=True).start()
-
-    def _validate_evo_launch_request(
-        self,
-        run_id: str,
-        session: RunSession,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        readiness = build_readiness(self.config)
-        if not readiness.evo.ready:
-            raise ValueError(f"Evo is not ready: {readiness.evo.detail}")
-        decision_payload = session.artifacts.get("decision") if isinstance(session.artifacts, dict) else None
-        if not isinstance(decision_payload, dict):
-            raise ValueError("run does not have a decision artifact")
-        trigger_payload = session.artifacts.get("trigger") if isinstance(session.artifacts, dict) else None
-        input_payload = session.artifacts.get("input_signal") if isinstance(session.artifacts, dict) else None
-        related_context: dict[str, Any] = {}
-        for candidate in (trigger_payload, input_payload):
-            if isinstance(candidate, dict) and isinstance(candidate.get("related_context"), dict):
-                related_context = candidate["related_context"]
-                break
-        execution_plan = decision_payload.get("execution_plan")
-        if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
-            raise ValueError("Evo launch is only supported for repo_patch_service runs")
-        parameters = execution_plan.get("parameters")
-        if not isinstance(parameters, dict):
-            raise ValueError("run decision is missing execution parameters")
-        repo_path = str(parameters.get("repo_path") or related_context.get("repo_path") or "").strip()
-        if not repo_path:
-            raise ValueError("run does not define a repo_path for Evo")
-        allowed_paths_raw = parameters.get("allowed_paths") if isinstance(parameters.get("allowed_paths"), list) else related_context.get("allowed_paths") or []
-        allowed_paths = [str(path) for path in allowed_paths_raw if str(path).strip()]
-        if not allowed_paths:
-            raise ValueError("run does not define allowed_paths for Evo")
-        test_commands_raw = parameters.get("test_commands") if isinstance(parameters.get("test_commands"), list) else related_context.get("test_commands") or []
-        test_commands = [str(command) for command in test_commands_raw if str(command).strip()]
-        if not test_commands:
-            raise ValueError("run does not define test_commands for Evo")
-        target_path = str(payload.get("target_path") or allowed_paths[0]).strip()
-        if target_path not in allowed_paths:
-            raise ValueError("target_path must be one of the run's allowed_paths")
-        repo = Path(repo_path).resolve()
-        if not repo.exists():
-            raise ValueError("repo_path does not exist")
-        workspace_detected = (repo / ".evo" / "meta.json").is_file()
-        benchmark_command = str(payload.get("benchmark_command") or "").strip() or None
-        if not workspace_detected and not benchmark_command:
-            raise ValueError("benchmark_command is required when the repo does not already contain an Evo workspace")
-        metric = str(payload.get("metric") or "max").strip()
-        if metric not in {"max", "min"}:
-            raise ValueError("metric must be `max` or `min`")
-        instrumentation_mode = str(payload.get("instrumentation_mode") or "inline").strip()
-        if instrumentation_mode not in {"sdk", "inline"}:
-            raise ValueError("instrumentation_mode must be `sdk` or `inline`")
-        gate_command = str(payload.get("gate_command") or test_commands[0]).strip()
-        if not gate_command:
-            raise ValueError("gate_command is required")
-        return {
-            "run_id": run_id,
-            "repo_path": str(repo),
-            "target_path": target_path,
-            "benchmark_command": benchmark_command,
-            "metric": metric,
-            "instrumentation_mode": instrumentation_mode,
-            "gate_command": gate_command,
-            "workspace_detected": workspace_detected,
-            "note": str(payload.get("note") or "mesh: bounded discover bootstrap").strip(),
-        }
-
-    def _upsert_evo_launch(self, run_id: str, launch: dict[str, Any]) -> None:
-        session = self.state_store.get_run_session(run_id)
-        if session is None:
-            return
-        artifact = session.artifacts.get("evo_launches")
-        launches = artifact.get("launches", []) if isinstance(artifact, dict) else []
-        updated: list[dict[str, Any]] = []
-        found = False
-        for existing in launches:
-            if isinstance(existing, dict) and existing.get("launch_id") == launch.get("launch_id"):
-                updated.append(launch)
-                found = True
-            elif isinstance(existing, dict):
-                updated.append(existing)
-        if not found:
-            updated.insert(0, launch)
-        session.artifacts["evo_launches"] = {"launches": updated}
-        session.updated_at = _timestamp()
-        self.state_store.save_run_session(session)
-
     def _set_artifact(self, run_id: str, key: str, value: dict[str, Any]) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -4282,6 +4990,11 @@ class RunCoordinator:
         evaluation = artifacts.get("evaluation") if isinstance(artifacts.get("evaluation"), dict) else {}
         execution = artifacts.get("execution") if isinstance(artifacts.get("execution"), dict) else {}
         feedback = artifacts.get("feedback") if isinstance(artifacts.get("feedback"), dict) else {}
+        handoffs = artifacts.get("operator_handoffs") if isinstance(artifacts.get("operator_handoffs"), list) else []
+        override_reviews = artifacts.get("override_reviews") if isinstance(artifacts.get("override_reviews"), list) else []
+        postmortem_reviews = (
+            artifacts.get("postmortem_reviews") if isinstance(artifacts.get("postmortem_reviews"), list) else []
+        )
         lines = [
             f"# Mesh Run Export {session.run_id}",
             "",
@@ -4313,9 +5026,58 @@ class RunCoordinator:
             "",
             f"- Outcome: `{feedback.get('outcome') or 'unavailable'}`",
             "",
-            "## Timeline",
+            "## Operator Handoffs",
             "",
         ]
+        if handoffs:
+            for handoff in handoffs:
+                if not isinstance(handoff, dict):
+                    continue
+                to_operator = handoff.get("to_operator") if isinstance(handoff.get("to_operator"), dict) else {}
+                lines.append(
+                    f"- `{handoff.get('handoff_id')}` to `{to_operator.get('operator_id')}` "
+                    f"for `{handoff.get('next_action')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Override Reviews",
+            "",
+        ])
+        if override_reviews:
+            for review in override_reviews:
+                if not isinstance(review, dict):
+                    continue
+                reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+                override_command = review.get("override_command") if isinstance(review.get("override_command"), dict) else {}
+                lines.append(
+                    f"- `{review.get('review_id')}` by `{reviewer.get('operator_id')}` reviewed "
+                    f"`{override_command.get('command_type')}` with verdict `{review.get('verdict')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Postmortem Reviews",
+            "",
+        ])
+        if postmortem_reviews:
+            for review in postmortem_reviews:
+                if not isinstance(review, dict):
+                    continue
+                reviewer = review.get("reviewer") if isinstance(review.get("reviewer"), dict) else {}
+                lines.append(
+                    f"- `{review.get('review_id')}` by `{reviewer.get('operator_id')}` "
+                    f"with verdict `{review.get('verdict')}`"
+                )
+        else:
+            lines.append("- none recorded")
+        lines.extend([
+            "",
+            "## Timeline",
+            "",
+        ])
         if events:
             lines.extend(
                 f"- `{event.sequence:02d}` `{event.stage}` `{event.event_type}` `{event.recorded_at}`"
@@ -4334,6 +5096,7 @@ class RunCoordinator:
             "investigation_report",
             "scenario_analysis",
             "subdecisions",
+            "lane_routing",
             "agent_tasks",
             "reconciliation",
             "memory_crystallization",
@@ -4350,7 +5113,6 @@ class RunCoordinator:
             f"Executions/{run_id}.md",
             f"Feedback/{run_id}.md",
             f"Agents/{run_id}.md",
-            f"Evo/{run_id}.md",
             f"Merkle/{run_id}.md",
             f"Notes/{run_id}.md",
             f"Insights/{run_id}.md",
@@ -4384,6 +5146,7 @@ class RunCoordinator:
             "timeline.json": encoded(package["timeline_json"]),
             "postmortem.md": str(package["postmortem_markdown"]).encode("utf-8"),
             "merkle.json": encoded(package["merkle"]),
+            "timeline-proof.json": encoded(package.get("timeline_proof", {})),
             "checks.json": encoded(package["checks"]),
         }
         records = {
@@ -4392,6 +5155,9 @@ class RunCoordinator:
             "execution.json": package.get("execution_record"),
             "feedback.json": package.get("feedback_record"),
             "approvals.json": package.get("approval_records"),
+            "handoffs.json": package.get("handoff_records"),
+            "override-reviews.json": package.get("override_review_records"),
+            "postmortem-reviews.json": package.get("postmortem_review_records"),
             "evidence_artifacts.json": package.get("evidence_artifacts"),
         }
         for name, payload in records.items():
@@ -4406,7 +5172,7 @@ class RunCoordinator:
             safe_path = path.replace("\\", "/").lstrip("/")
             if ".." in safe_path.split("/"):
                 continue
-                files[f"vault/{safe_path}"] = str(document.get("content") or "").encode("utf-8")
+            files[f"vault/{safe_path}"] = str(document.get("content") or "").encode("utf-8")
         return files
 
     def _run_export_retention_policy(self, generated_at: str) -> dict[str, Any]:
@@ -4504,6 +5270,215 @@ class RunCoordinator:
             raise ValueError(f"run export package exceeds {max_bytes} bytes after compaction")
         return package
 
+    def _darkharness_shadow_metadata(self, session: RunSession) -> dict[str, Any]:
+        registry = load_darkharness_registry(self.config.darkharness_registry_path)
+        raw_decision = session.artifacts.get("decision")
+        decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
+        raw_execution_plan = decision.get("execution_plan")
+        execution_plan = cast(dict[str, Any], raw_execution_plan) if isinstance(raw_execution_plan, dict) else {}
+        raw_parameters = execution_plan.get("parameters")
+        parameters = cast(dict[str, Any], raw_parameters) if isinstance(raw_parameters, dict) else {}
+        service = str(parameters.get("service") or session.scenario_key or "orbital-mesh-run")
+        namespace = str(parameters.get("namespace") or "pilot")
+        reservoir = cast(dict[str, Any], copy.deepcopy(registry.sensitive_reservoirs[0]))
+        pilot_scope = cast(dict[str, Any], copy.deepcopy(registry.pilot_scope))
+        pilot_scope["pilot_scope_id"] = f"pilot_scope_{session.run_id}"
+        action_limits = cast(dict[str, Any], pilot_scope["action_limits"])
+        action_limits["allowed_namespaces"] = [namespace]
+        action_limits["allowed_services"] = [service]
+        reservoir_id = str(reservoir["reservoir_id"])
+        policy_refs = registry.policy_refs or ["policy://darkharness/pilot/approval-required"]
+        return {
+            "tenant_id": registry.tenant_id,
+            "pilot_scope": pilot_scope,
+            "sensitive_reservoir": reservoir,
+            "trust_ladder_ref": registry.trust_ladder_ref or f"trust://{service}/pilot",
+            "ontology_metadata": {
+                "namespace": namespace,
+                "service": service,
+                "owner": {
+                    "owner_id": f"owner.{service}",
+                    "team": "platform-reliability",
+                    "source_refs": [registry.owner_registry_ref or f"registry://owners/{service}"],
+                },
+                "reservoir_ids": [reservoir_id],
+                "policy_refs": policy_refs,
+            },
+        }
+
+    def _darkharness_missing_evidence(
+        self,
+        run_export: dict[str, Any],
+        session: RunSession,
+        pilot_metadata: dict[str, Any],
+    ) -> list[str]:
+        raw_checks = run_export.get("checks")
+        checks = cast(dict[str, Any], raw_checks) if isinstance(raw_checks, dict) else {}
+        missing = [
+            name
+            for name in (
+                "timeline_present",
+                "merkle_root_present",
+                "merkle_proof_valid",
+                "decision_record_present",
+                "evaluation_record_present",
+            )
+            if checks.get(name) is not True
+        ]
+        if not isinstance(session.artifacts.get("scenario_analysis"), dict):
+            missing.append("scenario_analysis_present")
+        if not isinstance(pilot_metadata.get("pilot_scope"), dict):
+            missing.append("pilot_scope_present")
+        if not isinstance(pilot_metadata.get("sensitive_reservoir"), dict):
+            missing.append("sensitive_reservoir_present")
+        raw_decision = run_export.get("decision_record")
+        decision = cast(dict[str, Any], raw_decision) if isinstance(raw_decision, dict) else {}
+        production_impact = self._darkharness_decision_production_impact(decision)
+        if production_impact in {"possible", "direct"} and not isinstance(run_export.get("approval_records"), list):
+            missing.append("approval_records_present")
+        return missing
+
+    def _darkharness_select_checkpoint_run(
+        self,
+        run_ids: list[str],
+        pilot_metadata: dict[str, Any],
+        *,
+        allowed: bool,
+    ) -> dict[str, Any] | None:
+        for run_id in run_ids:
+            session = self.state_store.get_run_session(run_id)
+            if session is None:
+                continue
+            run_export = self.build_run_export_package_snapshot(run_id)
+            if run_export is None:
+                continue
+            if self._darkharness_missing_evidence(run_export, session, pilot_metadata):
+                continue
+            raw_evaluation = run_export.get("evaluation_record")
+            evaluation = cast(dict[str, Any], raw_evaluation) if isinstance(raw_evaluation, dict) else {}
+            blocking_reasons = evaluation.get("blocking_reasons")
+            is_allowed = evaluation.get("final_recommendation") == "execute" and not blocking_reasons
+            if is_allowed is allowed:
+                return {"session": session, "run_export": run_export}
+        return None
+
+    @staticmethod
+    def _darkharness_unique_ids(*groups: Any) -> list[str]:
+        ids: list[str] = []
+        for group in groups:
+            values = group if isinstance(group, list) else []
+            for value in values:
+                if value is not None:
+                    ids.append(str(value))
+        return list(dict.fromkeys(ids))
+
+    @staticmethod
+    def _darkharness_unique_exports(run_exports: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        selected: dict[str, dict[str, Any]] = {}
+        for run_export in run_exports:
+            run_id = str(run_export.get("run_id") or run_export.get("export_id") or "")
+            if run_id and run_id not in selected:
+                selected[run_id] = run_export
+        return list(selected.values())
+
+    def _darkharness_checkpoint_blocked_response(
+        self,
+        missing: list[str],
+        *,
+        go_no_go: dict[str, Any] | None = None,
+        policy_checks: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        checks: dict[str, bool] = {}
+        if isinstance(go_no_go, dict) and isinstance(go_no_go.get("checks"), dict):
+            checks.update(cast(dict[str, bool], go_no_go["checks"]))
+        checks.update(policy_checks or {})
+        return {
+            "packet": "darkharness.pilot_packet.v1",
+            "status": "blocked",
+            "missing_evidence": sorted(set(missing)),
+            "checks": checks,
+            "implemented_evidence": {
+                "go_no_go": go_no_go or {},
+            },
+            "boundaries": {
+                "raw_reservoir_egress": "deny",
+                "external_model_calls": "deny",
+                "production_actions_approval_required": True,
+            },
+            "claim_boundary": {
+                "implemented": [],
+                "proposed": ["multi_run_checkpoint_packet"],
+                "not_implemented": ["blocked_until_required_evidence_exists"],
+            },
+        }
+
+    def _darkharness_blocked_response(
+        self,
+        run_id: str,
+        missing: list[str],
+        run_export: dict[str, Any],
+        policy_checks: dict[str, bool] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "packet": "darkharness.pilot_packet.v1",
+            "status": "blocked",
+            "run_id": run_id,
+            "missing_evidence": sorted(set(missing)),
+            "checks": {
+                **copy.deepcopy(run_export.get("checks", {})),
+                **(policy_checks or {}),
+            },
+            "boundaries": {
+                "raw_reservoir_egress": "deny",
+                "external_model_calls": "deny",
+                "production_actions_approval_required": True,
+            },
+            "claim_boundary": {
+                "implemented": [],
+                "proposed": ["perennial_shadow_records"],
+                "not_implemented": ["blocked_until_required_evidence_exists"],
+            },
+        }
+
+    @staticmethod
+    def _darkharness_primary_action_record(action_records: list[dict[str, Any]]) -> dict[str, Any]:
+        priority = {"denied": 0, "executed": 1, "approved": 2, "proposed": 3, "observed": 4}
+        def sort_key(record: dict[str, Any]) -> int:
+            raw_outcome = record.get("outcome")
+            outcome = cast(dict[str, Any], raw_outcome) if isinstance(raw_outcome, dict) else {}
+            return priority.get(str(outcome.get("status")), 99)
+
+        return sorted(action_records, key=sort_key)[0]
+
+    @staticmethod
+    def _darkharness_operator_authority_refs(run_export: dict[str, Any]) -> list[str]:
+        refs: list[str] = []
+        for approval in run_export.get("approval_records", []):
+            if not isinstance(approval, dict):
+                continue
+            raw_ref = approval.get("authority_ref") or approval.get("ref")
+            if raw_ref:
+                refs.append(str(raw_ref))
+                continue
+            approval_id = approval.get("event_id") or approval.get("approval_id")
+            if approval_id:
+                refs.append(f"operator-approval://{approval_id}")
+        return list(dict.fromkeys(refs))
+
+    @staticmethod
+    def _darkharness_decision_production_impact(decision: dict[str, Any]) -> str:
+        raw_plan = decision.get("execution_plan")
+        plan = cast(dict[str, Any], raw_plan) if isinstance(raw_plan, dict) else {}
+        raw_parameters = plan.get("parameters")
+        parameters = cast(dict[str, Any], raw_parameters) if isinstance(raw_parameters, dict) else {}
+        impact = parameters.get("production_impact") or plan.get("production_impact")
+        if impact in {"none", "possible", "direct"}:
+            return str(impact)
+        action = str(plan.get("action") or "").lower()
+        if any(marker in action for marker in ("scale", "patch", "rollback", "restart", "execute", "write")):
+            return "possible"
+        return "none"
+
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -4524,6 +5499,32 @@ def _file_sha256(path: Path) -> str:
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _run_export_approval_records(artifacts: dict[str, Any], events: list[RunEvent]) -> list[dict[str, Any]]:
+    raw_approvals = artifacts.get("approvals")
+    approvals = [copy.deepcopy(item) for item in raw_approvals if isinstance(item, dict)] if isinstance(raw_approvals, list) else []
+    seen = {str(item.get("event_id") or item.get("command_id") or "") for item in approvals}
+    for event in events:
+        record = event.to_dict()
+        if record.get("event_type") != STEERING_COMMAND:
+            continue
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        command_type = str(payload.get("command_type") or "")
+        if command_type not in {"approve", "resume", "override_decision", "override_execution_parameters"}:
+            continue
+        approval = copy.deepcopy(payload)
+        approval.setdefault("event_id", record.get("event_id"))
+        approval.setdefault("recorded_at", record.get("recorded_at"))
+        dedupe_key = str(approval.get("event_id") or approval.get("command_id") or "")
+        if dedupe_key and dedupe_key in seen:
+            continue
+        if dedupe_key:
+            seen.add(dedupe_key)
+        approvals.append(approval)
+    return _redact_run_export_value(approvals)
 
 
 def _redact_run_export_value(value: Any) -> Any:

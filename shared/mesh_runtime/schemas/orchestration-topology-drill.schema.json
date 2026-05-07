@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/orchestration-topology-drill.schema.json",
+  "title": "OrchestrationTopologyDrill",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "drill_id",
+    "generated_at",
+    "environment",
+    "operator_id",
+    "state_backend",
+    "run_id",
+    "run_export_ref",
+    "readiness_ref",
+    "profile_ref",
+    "topology_resolution",
+    "operator_approval_recorded",
+    "evidence_refs",
+    "raw_secret_material_present"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.orchestration_topology_drill.v1"]
+    },
+    "drill_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "operator_id": { "type": "string" },
+    "state_backend": {
+      "type": "string",
+      "enum": ["postgres", "file"]
+    },
+    "run_id": { "type": "string" },
+    "run_export_ref": { "type": "string" },
+    "readiness_ref": { "type": "string" },
+    "profile_ref": { "type": "string" },
+    "operator_approval_recorded": { "type": "boolean" },
+    "bounded_action_execution_ref": {
+      "type": ["string", "null"]
+    },
+    "topology_resolution": {
+      "type": "object"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "raw_secret_material_present": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

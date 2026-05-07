@@ -5,7 +5,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +80,7 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
     config = config or BenchmarkRunConfig()
     if config.repeat <= 0:
         raise ValueError("repeat must be >= 1")
-    run_id = datetime.now(UTC).strftime("bench_%Y%m%dT%H%M%S%fZ")
+    run_id = datetime.now(timezone.utc).strftime("bench_%Y%m%dT%H%M%S%fZ")
     output_dir = config.output_root / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -171,7 +171,10 @@ def _build_backend(config: BenchmarkRunConfig, *, output_dir: Path, iteration: i
     if provider == "mesh":
         state_directory = _state_directory(config, output_dir=output_dir, iteration=iteration)
         runtime_config = _runtime_config(config, state_directory=state_directory)
-        return MeshBackend(runtime_config=runtime_config)
+        return MeshBackend(
+            runtime_config=runtime_config,
+            cloudopsbench_root=config.cloudopsbench_root,
+        )
     if provider in {"mesh-control-plane", "mesh-agentic"}:
         state_directory = _state_directory(config, output_dir=output_dir, iteration=iteration)
         runtime_config = _runtime_config(config, state_directory=state_directory)

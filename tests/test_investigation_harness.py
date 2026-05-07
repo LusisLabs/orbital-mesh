@@ -357,6 +357,140 @@ class RethPeerStarvationPortTests(unittest.TestCase):
         self.assertIn("engine_api_reachable=false", joined)
 
 
+class LlmProbeSelectorCrossDomainTests(unittest.TestCase):
+    """LlmProbeSelector now sees every read-only tool the registry
+    holds — its domain isn't a fence, it's a default. The LLM can pick
+    a CloudOps snapshot tool, a Prometheus query, or a GitHub diff in
+    the same loop. The critic + per-tool runtime checks remain the
+    safety floor.
+    """
+
+    def _cloudops_pack_with_extras(self) -> tuple[Any, list[ToolDefinition]]:
+        from services.investigation.cloudops_tools import CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
+
+        rule_pack = CloudOpsRulePack(_cloudops_trigger())
+        prometheus_def = ToolDefinition(
+            name="query_metrics_instant",
+            domain="prometheus",
+            description="Prometheus instant query",
+            args_schema={"query": {"type": "str", "required": True}},
+            mutation_class="read_only",
+        )
+        github_def = ToolDefinition(
+            name="github_pr_diff",
+            domain="github",
+            description="GitHub PR diff",
+            args_schema={"repo": {"type": "str", "required": True}, "pr_number": {"type": "int", "required": True}},
+            mutation_class="read_only",
+        )
+        cross_domain_defs = list(CLOUDOPS_TOOL_DEFINITIONS) + [prometheus_def, github_def]
+        return rule_pack, cross_domain_defs
+
+    def test_llm_can_pick_cross_domain_tool_via_qualified_name(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "prometheus:query_metrics_instant",
+                "args": {"query": 'up{service="frontend"}'},
+                "reason": "check_freshness",
+                "confidence": 0.75,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.action, "continue")
+        self.assertEqual(decision.next_calls[0].domain, "prometheus")
+        self.assertEqual(decision.next_calls[0].tool_name, "query_metrics_instant")
+
+    def test_llm_can_pick_cross_domain_via_separate_domain_field(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "domain": "github",
+                "tool_name": "github_pr_diff",
+                "args": {"repo": "owner/repo", "pr_number": 42},
+                "reason": "investigate_recent_change",
+                "confidence": 0.8,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.next_calls[0].domain, "github")
+        self.assertEqual(decision.next_calls[0].tool_name, "github_pr_diff")
+
+    def test_llm_unqualified_tool_falls_back_to_rule_pack_domain(self) -> None:
+        # Backward compat: a model that emits a bare ``tool_name``
+        # (no domain, no colon) still lands on the planner's own
+        # domain. This is the legacy single-domain prompt shape.
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "DescribeResource",
+                "args": {"resource_type": "pods", "name": "frontend", "namespace": "default"},
+                "reason": "legacy_single_domain",
+                "confidence": 0.6,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.next_calls[0].domain, "cloudops")
+        self.assertEqual(decision.next_calls[0].tool_name, "DescribeResource")
+
+    def test_llm_unknown_tool_stops_with_invalid_tool_reason(self) -> None:
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=definitions,
+            decision_provider=lambda _ctx: {
+                "action": "continue",
+                "tool_name": "imaginary:nonexistent_tool",
+                "args": {},
+                "reason": "hallucinated",
+                "confidence": 0.5,
+            },
+            enabled=True,
+        )
+        decision = selector.plan(state=InvestigationLoopState(trigger_id="t"), trigger_context={})
+
+        self.assertEqual(decision.action, "stop")
+        self.assertEqual(decision.reason, "llm_selector_invalid_tool")
+        self.assertEqual(decision.debug["resolved_qualified"], "imaginary:nonexistent_tool")
+
+    def test_llm_only_sees_read_only_tools(self) -> None:
+        # Critical safety property: even if a domain pack accidentally
+        # registered a mutating tool, the LLM selector's view of
+        # ``available_tools`` excludes it. The critic is the second
+        # defense; this is the first.
+        rule_pack, definitions = self._cloudops_pack_with_extras()
+        mutating_def = ToolDefinition(
+            name="dangerous",
+            domain="cloudops",
+            description="should never appear in LLM context",
+            args_schema={},
+            mutation_class="hard_mutation",
+        )
+        selector = LlmProbeSelector(
+            rule_pack,
+            tool_definitions=list(definitions) + [mutating_def],
+            decision_provider=lambda _ctx: {"action": "stop", "reason": "no", "confidence": 0.0},
+            enabled=True,
+        )
+        # The LLM never sees the mutating tool.
+        self.assertNotIn("cloudops:dangerous", selector._tool_definitions)
+
+
 class _CloudOpsSnapshotCall:
     def __init__(self, *, valid: bool) -> None:
         self.valid = valid
@@ -388,6 +522,685 @@ def _cloudops_trigger() -> Trigger:
         metrics={},
         related_context={"namespace": "default"},
     )
+
+
+def _shlex_quote(s: str) -> str:
+    """Quote helper used by the subprocess-driven pack tests below."""
+    import shlex as _shlex
+    return _shlex.quote(s)
+
+
+class PrometheusToolPackTests(unittest.TestCase):
+    """Prometheus pack — first domain that talks to a live external API.
+    The harness contract should not change vs in-process domains: same
+    registry, same critic, same loop. These tests pin that with a stub.
+    """
+
+    def test_instant_query_produces_valid_tool_result(self) -> None:
+        from services.investigation.prometheus_tools import (
+            PrometheusInstantPlanner,
+            register_prometheus_tools,
+        )
+
+        class StubClient:
+            def instant_query(self, _query: str) -> float | None:
+                return 0.42
+
+            def range_query(self, *_args: Any, **_kwargs: Any) -> list[tuple[float, float]]:
+                return []
+
+        registry = ToolRegistry()
+        register_prometheus_tools(registry, StubClient())
+        critic = LoopCritic(registry)
+        state = InvestigationLoopState(trigger_id="trg_p", budget_remaining=2.0)
+
+        run_investigation_loop(
+            state=state,
+            planner=PrometheusInstantPlanner(query='up{service="frontend"}'),
+            registry=registry,
+            critic=critic,
+            max_iterations=3,
+        )
+
+        self.assertEqual([c.tool_name for c in state.tool_calls], ["query_metrics_instant"])
+        self.assertTrue(state.tool_results[0].valid)
+        self.assertIn("0.42", state.tool_results[0].output_summary)
+
+    def test_instant_query_with_no_data_marks_result_invalid(self) -> None:
+        from services.investigation.prometheus_tools import (
+            PrometheusInstantPlanner,
+            register_prometheus_tools,
+        )
+
+        class EmptyClient:
+            def instant_query(self, _query: str) -> float | None:
+                return None
+
+            def range_query(self, *_args: Any, **_kwargs: Any) -> list[tuple[float, float]]:
+                return []
+
+        registry = ToolRegistry()
+        register_prometheus_tools(registry, EmptyClient())
+        critic = LoopCritic(registry)
+        state = InvestigationLoopState(trigger_id="trg_p", budget_remaining=2.0)
+        run_investigation_loop(
+            state=state,
+            planner=PrometheusInstantPlanner(query="up"),
+            registry=registry,
+            critic=critic,
+        )
+        self.assertFalse(state.tool_results[0].valid)
+        self.assertIn("no_data", state.tool_results[0].output_summary)
+
+
+class AwsToolPackTests(unittest.TestCase):
+    """AWS pack is read-only by enforcement, not just classification.
+    Mutation verbs must be blocked at the implementation layer too —
+    critic is the first defense, this is the second.
+    """
+
+    def test_read_only_verb_check_accepts_snake_and_camel(self) -> None:
+        from services.investigation.aws_tools import _is_read_only_operation
+
+        for ok in ("describe_instances", "get_role", "list_buckets", "ListBuckets", "DescribeInstances", "GetRole", "search_resources"):
+            self.assertTrue(_is_read_only_operation(ok), ok)
+        for not_ok in ("delete_instance", "put_object", "create_role", "DeleteBucket", "TerminateInstances"):
+            self.assertFalse(_is_read_only_operation(not_ok), not_ok)
+
+    def test_redaction_drops_secret_keys_recursively(self) -> None:
+        # Policy: any key whose name contains secret/password/token/
+        # credential/private gets its value blanket-redacted, even if
+        # the value is a dict. Conservative-by-default — over-redaction
+        # is a safer error than leaking a single nested secret.
+        from services.investigation.aws_tools import _redact_aws_response
+
+        payload = {
+            "Region": "us-east-1",
+            "Credentials": {"AccessKeyId": "AKIA", "Other": "fine"},
+            "Items": [{"PrivateKey": "rsa", "Name": "ok"}],
+            "Token": "abc",
+        }
+        redacted = _redact_aws_response(payload)
+        self.assertEqual(redacted["Region"], "us-east-1")
+        self.assertEqual(redacted["Credentials"], "[redacted]")
+        self.assertEqual(redacted["Token"], "[redacted]")
+        self.assertEqual(redacted["Items"][0]["PrivateKey"], "[redacted]")
+        self.assertEqual(redacted["Items"][0]["Name"], "ok")
+
+    def test_invocation_with_mutating_verb_is_rejected(self) -> None:
+        from services.investigation.aws_tools import AWS_TOOL_DEFINITIONS, register_aws_tools
+
+        registry = ToolRegistry()
+        register_aws_tools(registry)
+        defn = AWS_TOOL_DEFINITIONS[0]
+        call = make_call(tool=defn, args={"service": "s3", "operation": "delete_bucket"})
+        result = registry.invoke(call)
+
+        self.assertEqual(result.status, "failed")
+        self.assertFalse(result.valid)
+        self.assertIn("not classified read-only", result.error or "")
+
+
+class KubectlToolPackTests(unittest.TestCase):
+    """Live kubectl pack runs subprocess. Tests use a fake kubectl
+    script so we can pin argv construction + read-only enforcement +
+    failure handling without a real cluster.
+    """
+
+    def _make_fake_kubectl(self, tmp_path: str, *, exit_code: int = 0, stdout: str = "") -> str:
+        import os
+        import stat
+
+        path = os.path.join(tmp_path, "fake-kubectl")
+        argv_log = os.path.join(tmp_path, "argv.log")
+        script = (
+            "#!/bin/bash\n"
+            f"echo \"$@\" >> {_shlex_quote(argv_log)}\n"
+            f"echo {_shlex_quote(stdout)}\n"
+            f"exit {exit_code}\n"
+        )
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        return path
+
+    def _read_argv_log(self, tmp_path: str) -> list[list[str]]:
+        import os
+
+        argv_log = os.path.join(tmp_path, "argv.log")
+        if not os.path.exists(argv_log):
+            return []
+        with open(argv_log, encoding="utf-8") as fh:
+            return [line.strip().split() for line in fh if line.strip()]
+
+    def test_kubectl_get_builds_correct_argv(self) -> None:
+        import tempfile
+
+        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_kubectl(tmp, stdout="frontend 1/1 Running")
+            registry = ToolRegistry()
+            register_kubectl_tools(registry, kubectl_path=fake, default_context="ctx-prod")
+            defn = next(d for d in KUBECTL_TOOL_DEFINITIONS if d.name == "kubectl_get")
+            call = make_call(
+                tool=defn,
+                args={"resource_type": "pods", "namespace": "boutique", "label_selector": "app=frontend"},
+            )
+            result = registry.invoke(call)
+
+            self.assertEqual(result.status, "completed")
+            argvs = self._read_argv_log(tmp)
+            self.assertEqual(
+                argvs[0],
+                ["--context", "ctx-prod", "get", "pods", "-n", "boutique", "-l", "app=frontend"],
+            )
+
+    def test_kubectl_describe_requires_name(self) -> None:
+        import tempfile
+
+        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_kubectl(tmp, stdout="ok")
+            registry = ToolRegistry()
+            register_kubectl_tools(registry, kubectl_path=fake)
+            defn = next(d for d in KUBECTL_TOOL_DEFINITIONS if d.name == "kubectl_describe")
+            call = make_call(tool=defn, args={"resource_type": "pods"})
+            result = registry.invoke(call)
+            self.assertEqual(result.status, "failed")
+            self.assertEqual(self._read_argv_log(tmp), [])
+
+    def test_kubectl_logs_uses_default_tail_when_unspecified(self) -> None:
+        import tempfile
+
+        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_kubectl(tmp, stdout="log line")
+            registry = ToolRegistry()
+            register_kubectl_tools(registry, kubectl_path=fake)
+            defn = next(d for d in KUBECTL_TOOL_DEFINITIONS if d.name == "kubectl_logs")
+            call = make_call(tool=defn, args={"name": "pod-x", "namespace": "boutique"})
+            registry.invoke(call)
+            argvs = self._read_argv_log(tmp)
+            self.assertIn("--tail", argvs[0])
+            tail_idx = argvs[0].index("--tail")
+            self.assertEqual(argvs[0][tail_idx + 1], "200")
+
+    def test_kubectl_missing_binary_returns_clean_failure(self) -> None:
+        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+
+        registry = ToolRegistry()
+        register_kubectl_tools(registry, kubectl_path="")
+        defn = next(d for d in KUBECTL_TOOL_DEFINITIONS if d.name == "kubectl_get")
+        call = make_call(tool=defn, args={"resource_type": "pods"})
+        result = registry.invoke(call)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("kubectl binary not found", result.error or "")
+
+
+class GithubToolPackTests(unittest.TestCase):
+    """GitHub pack proxies through ``gh api -X GET``. Tests use a fake
+    gh script to verify argv shape + read-only verb + URL building.
+    """
+
+    def _make_fake_gh(self, tmp_path: str, *, exit_code: int = 0, stdout: str = "[]") -> str:
+        import os
+        import stat
+
+        path = os.path.join(tmp_path, "fake-gh")
+        argv_log = os.path.join(tmp_path, "argv.log")
+        script = (
+            "#!/bin/bash\n"
+            f"echo \"$@\" >> {_shlex_quote(argv_log)}\n"
+            f"echo {_shlex_quote(stdout)}\n"
+            f"exit {exit_code}\n"
+        )
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        return path
+
+    def _read_argv_log(self, tmp_path: str) -> list[list[str]]:
+        import os
+
+        argv_log = os.path.join(tmp_path, "argv.log")
+        if not os.path.exists(argv_log):
+            return []
+        with open(argv_log, encoding="utf-8") as fh:
+            return [line.strip().split() for line in fh if line.strip()]
+
+    def test_recent_commits_builds_get_argv(self) -> None:
+        import tempfile
+
+        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_gh(tmp, stdout='[{"sha":"abc"}]')
+            registry = ToolRegistry()
+            register_github_tools(registry, gh_path=fake)
+            defn = next(d for d in GITHUB_TOOL_DEFINITIONS if d.name == "github_recent_commits")
+            call = make_call(
+                tool=defn,
+                args={"repo": "hydrogenbond007/mesh", "branch": "master", "limit": 5},
+            )
+            result = registry.invoke(call)
+
+            self.assertEqual(result.status, "completed")
+            argvs = self._read_argv_log(tmp)
+            self.assertIn("api", argvs[0])
+            self.assertIn("GET", argvs[0])
+            full_url = argvs[0][-1]
+            self.assertIn("repos/hydrogenbond007/mesh/commits", full_url)
+            self.assertIn("per_page=5", full_url)
+            self.assertIn("sha=master", full_url)
+
+    def test_pr_diff_uses_diff_accept_header(self) -> None:
+        import tempfile
+
+        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_gh(tmp, stdout="diff --git a/x b/x\n")
+            registry = ToolRegistry()
+            register_github_tools(registry, gh_path=fake)
+            defn = next(d for d in GITHUB_TOOL_DEFINITIONS if d.name == "github_pr_diff")
+            call = make_call(tool=defn, args={"repo": "owner/repo", "pr_number": 42})
+            registry.invoke(call)
+            argvs = self._read_argv_log(tmp)
+            joined = " ".join(argvs[0])
+            self.assertIn("Accept:", joined)
+            self.assertIn("application/vnd.github.diff", joined)
+            self.assertIn("repos/owner/repo/pulls/42", joined)
+
+    def test_search_code_repo_qualifier_added_to_query(self) -> None:
+        import tempfile
+
+        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_gh(tmp, stdout='{"total_count":0,"items":[]}')
+            registry = ToolRegistry()
+            register_github_tools(registry, gh_path=fake)
+            defn = next(d for d in GITHUB_TOOL_DEFINITIONS if d.name == "github_search_code")
+            call = make_call(tool=defn, args={"repo": "owner/repo", "query": "TODO investigate"})
+            registry.invoke(call)
+            argvs = self._read_argv_log(tmp)
+            url = argvs[0][-1]
+            self.assertIn("repo%3Aowner%2Frepo", url)
+            self.assertIn("TODO", url)
+
+    def test_invalid_repo_returns_failure(self) -> None:
+        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+
+        registry = ToolRegistry()
+        register_github_tools(registry, gh_path="/no/such/binary")
+        defn = next(d for d in GITHUB_TOOL_DEFINITIONS if d.name == "github_recent_commits")
+        call = make_call(tool=defn, args={"repo": "owneronly"})
+        result = registry.invoke(call)
+        self.assertEqual(result.status, "failed")
+
+
+class LokiJaegerToolPackTests(unittest.TestCase):
+    """Loki + Jaeger packs talk pure HTTP. We spin up a stub HTTP
+    server on localhost so the tests verify URL building + parsing
+    without external dependencies.
+    """
+
+    def setUp(self) -> None:
+        import http.server
+        import threading
+
+        self._captured_paths: list[str] = []
+        self._response_body = b'{"data":[]}'
+
+        captured = self._captured_paths
+        outer = self
+
+        class StubHandler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self_inner: Any) -> None:  # noqa: N802
+                captured.append(self_inner.path)
+                self_inner.send_response(200)
+                self_inner.send_header("Content-Type", "application/json")
+                self_inner.end_headers()
+                self_inner.wfile.write(outer._response_body)  # type: ignore[attr-defined]
+
+            def log_message(self, *args: Any, **kwargs: Any) -> None:
+                return
+
+        self._server = http.server.HTTPServer(("127.0.0.1", 0), StubHandler)
+        self._port = self._server.server_address[1]
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+        self.base_url = f"http://127.0.0.1:{self._port}"
+
+    def tearDown(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=1.0)
+
+    def test_loki_query_range_uses_nanosecond_timestamps(self) -> None:
+        from services.investigation.loki_jaeger_tools import LOKI_TOOL_DEFINITIONS, register_loki_tools
+
+        registry = ToolRegistry()
+        register_loki_tools(registry, base_url=self.base_url)
+        defn = next(d for d in LOKI_TOOL_DEFINITIONS if d.name == "query_range")
+        call = make_call(tool=defn, args={"query": '{app="frontend"} |= "ERROR"', "limit": 50})
+        result = registry.invoke(call)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(len(self._captured_paths), 1)
+        path = self._captured_paths[0]
+        self.assertIn("/loki/api/v1/query_range", path)
+        import urllib.parse as _up
+        query = _up.parse_qs(path.split("?", 1)[1])
+        self.assertGreater(int(query["start"][0]), 10**15)
+        self.assertGreater(int(query["end"][0]), 10**15)
+
+    def test_jaeger_get_traces_passes_microsecond_window(self) -> None:
+        from services.investigation.loki_jaeger_tools import JAEGER_TOOL_DEFINITIONS, register_jaeger_tools
+
+        registry = ToolRegistry()
+        register_jaeger_tools(registry, base_url=self.base_url)
+        defn = next(d for d in JAEGER_TOOL_DEFINITIONS if d.name == "get_traces")
+        call = make_call(tool=defn, args={"service": "frontend", "lookback_seconds": 600, "limit": 5})
+        registry.invoke(call)
+
+        path = self._captured_paths[0]
+        self.assertIn("/api/traces", path)
+        import urllib.parse as _up
+        query = _up.parse_qs(path.split("?", 1)[1])
+        self.assertEqual(query["service"], ["frontend"])
+        self.assertEqual(query["limit"], ["5"])
+        self.assertGreater(int(query["start"][0]), 10**12)
+
+    def test_loki_invalid_query_short_circuits(self) -> None:
+        from services.investigation.loki_jaeger_tools import LOKI_TOOL_DEFINITIONS, register_loki_tools
+
+        registry = ToolRegistry()
+        register_loki_tools(registry, base_url=self.base_url)
+        defn = next(d for d in LOKI_TOOL_DEFINITIONS if d.name == "query_range")
+        call = make_call(tool=defn, args={"query": ""})
+        result = registry.invoke(call)
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(self._captured_paths, [])
+
+
+class PostgresToolPackTests(unittest.TestCase):
+    """PG pack uses subprocess psql with hard-coded read-only verbs.
+    Tests verify identifier validation + DML rejection without a real DB.
+    """
+
+    def _make_fake_psql(self, tmp_path: str, *, exit_code: int = 0, stdout: str = "ok") -> str:
+        import os
+        import stat
+
+        path = os.path.join(tmp_path, "fake-psql")
+        argv_log = os.path.join(tmp_path, "argv.log")
+        script = (
+            "#!/bin/bash\n"
+            f"echo \"$@\" >> {_shlex_quote(argv_log)}\n"
+            f"echo {_shlex_quote(stdout)}\n"
+            f"exit {exit_code}\n"
+        )
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(script)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+        return path
+
+    def _read_argv_log(self, tmp_path: str) -> list[list[str]]:
+        import os
+
+        argv_log = os.path.join(tmp_path, "argv.log")
+        if not os.path.exists(argv_log):
+            return []
+        with open(argv_log, encoding="utf-8") as fh:
+            return [line.strip().split() for line in fh if line.strip()]
+
+    def test_describe_table_passes_backslash_d_to_psql(self) -> None:
+        import tempfile
+
+        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_psql(tmp, stdout="Column | Type")
+            registry = ToolRegistry()
+            register_pg_tools(registry, dsn="postgres://x@y/z", psql_path=fake)
+            defn = next(d for d in PG_TOOL_DEFINITIONS if d.name == "pg_describe_table")
+            call = make_call(tool=defn, args={"table_name": "public.users"})
+            result = registry.invoke(call)
+
+            self.assertEqual(result.status, "completed")
+            argvs = self._read_argv_log(tmp)
+            joined = " ".join(argvs[0])
+            self.assertIn("public.users", joined)
+
+    def test_describe_table_rejects_injection_attempt(self) -> None:
+        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+
+        registry = ToolRegistry()
+        register_pg_tools(registry, dsn="postgres://x@y/z", psql_path="/no/binary")
+        defn = next(d for d in PG_TOOL_DEFINITIONS if d.name == "pg_describe_table")
+
+        for malicious in ("users; DROP TABLE foo", "x' OR '1'='1", "users--", "users\nSELECT 1"):
+            call = make_call(tool=defn, args={"table_name": malicious})
+            result = registry.invoke(call)
+            self.assertEqual(result.status, "failed", malicious)
+
+    def test_explain_rejects_dml_verbs(self) -> None:
+        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+
+        registry = ToolRegistry()
+        register_pg_tools(registry, dsn="postgres://x@y/z", psql_path="/no/binary")
+        defn = next(d for d in PG_TOOL_DEFINITIONS if d.name == "pg_explain_query")
+
+        for write in ("INSERT INTO foo VALUES (1)", "UPDATE foo SET x=1", "DELETE FROM foo", "DROP TABLE foo", "TRUNCATE foo"):
+            call = make_call(tool=defn, args={"query": write})
+            result = registry.invoke(call)
+            self.assertEqual(result.status, "failed", write)
+
+    def test_explain_accepts_select(self) -> None:
+        import tempfile
+
+        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = self._make_fake_psql(tmp, stdout="Seq Scan on foo")
+            registry = ToolRegistry()
+            register_pg_tools(registry, dsn="postgres://x@y/z", psql_path=fake)
+            defn = next(d for d in PG_TOOL_DEFINITIONS if d.name == "pg_explain_query")
+            call = make_call(tool=defn, args={"query": "SELECT * FROM foo WHERE id = 1"})
+            result = registry.invoke(call)
+
+            self.assertEqual(result.status, "completed")
+            argvs = self._read_argv_log(tmp)
+            self.assertIn("EXPLAIN", " ".join(argvs[0]))
+
+
+class MCPBridgeTests(unittest.TestCase):
+    """The MCP bridge turns an opaque MCP client into registered
+    ToolDefinitions. Tests use a stub client (no transport) — that
+    same shape any real MCP lib (official SDK, FastMCP, stdio) gets
+    adapted into.
+    """
+
+    def _make_stub_client(
+        self,
+        tools: list[Any],
+        responses: dict[str, Any] | None = None,
+        raise_on_list: bool = False,
+        raise_on_call: bool = False,
+    ) -> Any:
+        from services.investigation.mcp_tools import MCPToolMeta
+
+        class StubMCPClient:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any]]] = []
+
+            def list_tools(self) -> list[MCPToolMeta]:
+                if raise_on_list:
+                    raise RuntimeError("stub list_tools failure")
+                return list(tools)
+
+            def call_tool(self, name: str, args: dict[str, Any]) -> Any:
+                self.calls.append((name, args))
+                if raise_on_call:
+                    raise RuntimeError("stub call_tool failure")
+                return (responses or {}).get(name, {"ok": True, "tool": name})
+
+        return StubMCPClient()
+
+    def test_advertised_tools_become_registered_tool_definitions(self) -> None:
+        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+
+        tools = [
+            MCPToolMeta(
+                name="get_metrics",
+                description="Prometheus query",
+                input_schema={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            ),
+            MCPToolMeta(
+                name="get_traces",
+                description="Jaeger traces",
+                input_schema={"type": "object", "properties": {"service": {"type": "string"}}, "required": ["service"]},
+            ),
+        ]
+        client = self._make_stub_client(tools, responses={"get_metrics": [1, 2, 3]})
+        registry = ToolRegistry()
+
+        registered = register_mcp_tools(registry, client=client, server_id="sregym")
+
+        self.assertEqual(set(registered), {"mcp:sregym__get_metrics", "mcp:sregym__get_traces"})
+        defn, _ = registry.get("mcp", "sregym__get_metrics")
+        self.assertEqual(defn.args_schema["query"], {"type": "str", "required": True})
+
+    def test_invocation_routes_through_client_and_records_result(self) -> None:
+        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+
+        tools = [
+            MCPToolMeta(
+                name="get_logs",
+                description="Loki query",
+                input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
+            ),
+        ]
+        client = self._make_stub_client(tools, responses={"get_logs": ["log line 1", "log line 2"]})
+        registry = ToolRegistry()
+        register_mcp_tools(registry, client=client, server_id="loki")
+
+        defn, _ = registry.get("mcp", "loki__get_logs")
+        call = make_call(tool=defn, args={"query": '{app="frontend"}'})
+        result = registry.invoke(call)
+
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.valid)
+        self.assertEqual(client.calls, [("get_logs", {"query": '{app="frontend"}'})])
+        self.assertIn("log line 1", result.output_summary)
+
+    def test_allowlist_filters_advertised_tools(self) -> None:
+        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+
+        tools = [
+            MCPToolMeta(name=f"tool_{i}", description="x", input_schema={"type": "object", "properties": {}})
+            for i in range(5)
+        ]
+        client = self._make_stub_client(tools)
+        registry = ToolRegistry()
+
+        registered = register_mcp_tools(registry, client=client, server_id="x", allow_tools=["tool_0", "tool_2"])
+
+        self.assertEqual(set(registered), {"mcp:x__tool_0", "mcp:x__tool_2"})
+
+    def test_mutating_advertised_tools_blocked_by_default(self) -> None:
+        # Critical safety property: an MCP server can advertise anything,
+        # but the bridge must default to read-only. Operators must
+        # explicitly opt in mutating tools.
+        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+
+        tools = [
+            MCPToolMeta(name="read_thing", description="x", input_schema={"type": "object", "properties": {}}),
+            MCPToolMeta(name="delete_thing", description="x", input_schema={"type": "object", "properties": {}}),
+        ]
+        client = self._make_stub_client(tools)
+        registry = ToolRegistry()
+        registered = register_mcp_tools(
+            registry,
+            client=client,
+            server_id="x",
+            mutation_class_map={"delete_thing": "hard_mutation"},
+        )
+
+        self.assertEqual(registered, ["mcp:x__read_thing"])
+
+    def test_list_tools_failure_returns_empty_not_exception(self) -> None:
+        from services.investigation.mcp_tools import register_mcp_tools
+
+        client = self._make_stub_client([], raise_on_list=True)
+        registry = ToolRegistry()
+        registered = register_mcp_tools(registry, client=client, server_id="x")
+        self.assertEqual(registered, [])
+
+    def test_call_failure_produces_failed_result_not_exception(self) -> None:
+        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+
+        tools = [MCPToolMeta(name="t", description="x", input_schema={"type": "object", "properties": {}})]
+        client = self._make_stub_client(tools, raise_on_call=True)
+        registry = ToolRegistry()
+        register_mcp_tools(registry, client=client, server_id="x")
+        defn, _ = registry.get("mcp", "x__t")
+        result = registry.invoke(make_call(tool=defn))
+        self.assertEqual(result.status, "failed")
+        self.assertIn("stub call_tool failure", result.error or "")
+
+
+class RootRegistryAutoWireTests(unittest.TestCase):
+    """The engine root_registry auto-registers diagnostic packs gated
+    on config/env. ``_overlay_root_registry`` then merges the root
+    onto each per-run registry so the LLM planner can mix CloudOps
+    snapshot tools with always-on Prometheus/AWS/etc. in one loop.
+    """
+
+    def test_overlay_does_not_override_per_run_tool_with_same_name(self) -> None:
+        from services.runtime import _overlay_root_registry
+
+        per_run = ToolRegistry()
+        per_run.register(
+            ToolDefinition(
+                name="GetResources", domain="cloudops",
+                description="per-run", args_schema={}, mutation_class="read_only",
+            ),
+            lambda _a: RawToolOutput(output_summary="per_run"),
+        )
+        root = ToolRegistry()
+        root.register(
+            ToolDefinition(
+                name="GetResources", domain="cloudops",
+                description="root", args_schema={}, mutation_class="read_only",
+            ),
+            lambda _a: RawToolOutput(output_summary="root"),
+        )
+        _overlay_root_registry(per_run, root)
+
+        # Per-run wins; root's invoker is shadowed.
+        defn, _ = per_run.get("cloudops", "GetResources")
+        result = per_run.invoke(make_call(tool=defn))
+        self.assertEqual(result.output_summary, "per_run")
+
+    def test_overlay_adds_root_only_tools_to_per_run(self) -> None:
+        from services.runtime import _overlay_root_registry
+
+        per_run = ToolRegistry()
+        root = ToolRegistry()
+        root.register(
+            ToolDefinition(
+                name="instant", domain="prometheus",
+                description="root", args_schema={}, mutation_class="read_only",
+            ),
+            lambda _a: RawToolOutput(output_summary="ok"),
+        )
+        _overlay_root_registry(per_run, root)
+        self.assertIsNotNone(per_run.get("prometheus", "instant"))
 
 
 def _ro_def(name: str, domain: str, *, args_schema: dict[str, Any] | None = None, budget_cost: float = 1.0) -> ToolDefinition:

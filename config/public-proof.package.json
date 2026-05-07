@@ -1,0 +1,95 @@
+{
+  "schema_version": "mesh.public_proof_package.v1",
+  "package_id": "orbital_mesh_public_proof_package",
+  "status": "ready",
+  "owner": "purna-platform",
+  "review_cadence": "release-candidate-and-public-claim",
+  "components": [
+    {
+      "component_id": "benchmark_report",
+      "status": "ready",
+      "owner": "platform-evaluation",
+      "summary": "Benchmark claims must point at verified benchmark output artifacts and the public benchmark methodology instead of screenshots or manual summaries.",
+      "artifact_refs": [
+        "docs/evaluation-kits.md",
+        "docs/benchmark-results/benchmark-gates.md",
+        "scripts/verify_benchmark_run_artifacts.py",
+        "shared/mesh_runtime/benchmark_artifacts.py"
+      ],
+      "verification_commands": [
+        "scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --expected-suite golden --min-pass-rate 1 --max-unsafe-action-rate 0 --json"
+      ],
+      "limitations_ref": "docs/production-hardening-records.md",
+      "public_claim_allowed": true
+    },
+    {
+      "component_id": "architecture_paper",
+      "status": "ready",
+      "owner": "platform-architecture",
+      "summary": "Architecture claims must stay bound to active runtime paths, reference architectures, and the production deployment roadmap.",
+      "artifact_refs": [
+        "docs/reference-architectures.md",
+        "docs/production-deployment-roadmap.md",
+        "docs/production-hardening-records.md"
+      ],
+      "verification_commands": [
+        "scripts/verify_release_cut_list.py --json"
+      ],
+      "limitations_ref": "docs/reference-architectures.md",
+      "public_claim_allowed": true
+    },
+    {
+      "component_id": "demo_dataset",
+      "status": "ready",
+      "owner": "platform-evaluation",
+      "summary": "Demo datasets must come from repository fixtures and public-source indexes that avoid customer payloads and raw secrets.",
+      "artifact_refs": [
+        "fixtures/signals/search_latency_regression.json",
+        "fixtures/signals/kubernetes_crashloop_patch.json",
+        "fixtures/monitoring_corpus/public_sources.json",
+        "docs/evaluation-kits.md"
+      ],
+      "verification_commands": [
+        "scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json"
+      ],
+      "limitations_ref": "docs/evaluation-kits.md",
+      "public_claim_allowed": true
+    },
+    {
+      "component_id": "run_export",
+      "status": "ready",
+      "owner": "platform-operations",
+      "summary": "Published run examples must be generated run export packages or archives with retrieval proof, hashes, redaction, retention metadata, and no raw secret material.",
+      "artifact_refs": [
+        "scripts/generate_evaluation_kit_packet.py",
+        "scripts/verify_evaluation_kit_packet.py",
+        "scripts/verify_run_export_retrieval.py",
+        "shared/mesh_runtime/run_export_retrieval.py"
+      ],
+      "verification_commands": [
+        "scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json",
+        "scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json",
+        "scripts/verify_run_export_retrieval.py --package <path> --archive <path> --json"
+      ],
+      "limitations_ref": "docs/evaluation-kits.md",
+      "public_claim_allowed": true
+    },
+    {
+      "component_id": "limitations_statement",
+      "status": "ready",
+      "owner": "platform-security",
+      "summary": "Public proof packages must carry explicit limitations for deployment-specific ingress, audit sinks, signed release provenance, live CI artifacts, scanner blockers, and customer-specific evidence.",
+      "artifact_refs": [
+        "docs/production-hardening-records.md",
+        "docs/production-deployment-roadmap.md",
+        "docs/release-provenance.md"
+      ],
+      "verification_commands": [
+        "scripts/verify_release_cut_list.py --json"
+      ],
+      "limitations_ref": "docs/production-hardening-records.md",
+      "public_claim_allowed": true
+    }
+  ],
+  "raw_secret_material_present": false
+}

@@ -1,5 +1,8 @@
 import type {
+  ApprovalQueuePacket,
   GoalRecord,
+  ConnectorCertificationPacket,
+  DarkharnessPilotPacket,
   HealthSnapshot,
   IntegrationReadiness,
   EvidenceGraph,
@@ -57,6 +60,34 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   return (await response.json()) as T;
 }
 
+async function requestAllowingStatus<T>(
+  baseUrl: string,
+  path: string,
+  allowedStatuses: number[],
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  if (!response.ok && !allowedStatuses.includes(response.status)) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+      else if (body?.error) detail = body.error;
+      else if (body?.message) detail = body.message;
+    } catch {
+      /* body not JSON */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
 async function requestBlob(baseUrl: string, path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string }> {
   const response = await fetch(`${baseUrl}${path}`, {
     headers: {
@@ -92,6 +123,14 @@ export const api = {
 
   getReadiness(baseUrl: string) {
     return request<IntegrationReadiness>(baseUrl, "/api/readiness");
+  },
+
+  getConnectorCertification(baseUrl: string) {
+    return request<ConnectorCertificationPacket>(baseUrl, "/api/connectors/certification");
+  },
+
+  getApprovals(baseUrl: string) {
+    return request<ApprovalQueuePacket>(baseUrl, "/api/approvals");
   },
 
   getKillSwitch(baseUrl: string) {
@@ -265,6 +304,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     });
+  },
+
+  getRunDarkharnessPacket(baseUrl: string, runId: string) {
+    return requestAllowingStatus<DarkharnessPilotPacket>(
+      baseUrl,
+      `/api/runs/${runId}/darkharness-packet`,
+      [409],
+    );
   },
 
   getRunExportArchive(baseUrl: string, runId: string) {

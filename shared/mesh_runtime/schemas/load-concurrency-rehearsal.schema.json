@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/load-concurrency-rehearsal.schema.json",
+  "title": "LoadConcurrencyRehearsal",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "rehearsal_id",
+    "generated_at",
+    "environment",
+    "operator_id",
+    "state_backend",
+    "run_count",
+    "concurrent_operators",
+    "worker_count",
+    "queue_size",
+    "max_queue_depth",
+    "rejected_runs",
+    "tenant_quota_enforced",
+    "target_lock_conflicts_observed",
+    "cancellation_exercised",
+    "stuck_run_recovery_exercised",
+    "backpressure_observed",
+    "p95_admission_latency_ms",
+    "p95_event_persistence_latency_ms",
+    "evidence_refs",
+    "raw_secret_material_present"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.load_concurrency_rehearsal.v1"]
+    },
+    "rehearsal_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "operator_id": { "type": "string" },
+    "state_backend": {
+      "type": "string",
+      "enum": ["postgres", "file"]
+    },
+    "run_count": { "type": "integer" },
+    "concurrent_operators": { "type": "integer" },
+    "worker_count": { "type": "integer" },
+    "queue_size": { "type": "integer" },
+    "max_queue_depth": { "type": "integer" },
+    "rejected_runs": { "type": "integer" },
+    "tenant_quota_enforced": { "type": "boolean" },
+    "target_lock_conflicts_observed": { "type": "boolean" },
+    "cancellation_exercised": { "type": "boolean" },
+    "stuck_run_recovery_exercised": { "type": "boolean" },
+    "backpressure_observed": { "type": "boolean" },
+    "p95_admission_latency_ms": { "type": "number" },
+    "p95_event_persistence_latency_ms": { "type": "number" },
+    "evidence_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "raw_secret_material_present": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

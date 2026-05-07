@@ -335,7 +335,7 @@ def build_halo_patch_task(
             "Which proposed harness change has a bounded path and verification command?",
             "Does the change preserve Mesh policy ownership over production side effects?",
         ],
-        agents=agents or ["codex", "goose", "hermes", "claudecode", "openclaw", "evo"],
+        agents=agents or ["codex", "goose", "hermes", "claudecode", "openclaw"],
     )
     task.status = "queued"
     return task

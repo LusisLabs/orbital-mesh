@@ -30,7 +30,7 @@ claims, procedures, citations, and contradiction flags for Mesh review.
 
 Each run that reaches evaluation records an `agent_tasks` artifact.
 
-- `MESH_AGENT_FABRIC_MODE=native` keeps the default `native_contract` attempts for Goose, Hermes, Codex, Claude Code, OpenClaw, and Evo. Those attempts are read-only proposals, not real CLI invocations.
+- `MESH_AGENT_FABRIC_MODE=native` keeps default read-only attempts for Goose, Hermes, Codex, Claude Code, OpenClaw, and native orchestration platform lanes: Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n. These attempts are proposal and evaluator-contract artifacts, not real CLI/API invocations.
 - `MESH_AGENT_FABRIC_MODE=deepagents` routes those lanes through `services/orchestrator/deepagents_adapter.py`. Mesh creates a per-run sandbox workspace under `MESH_DEEPAGENTS_WORKSPACE_ROOT`, copies only allowed files into that workspace for patch-shaped tasks, and records Deep Agents output as proposal artifacts. Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
 
 LatentMAS can be enabled as a first-class full-inference worker lane. It runs through a separate PyTorch/Hugging Face sidecar and records an additional `latentmas_http` attempt ahead of the native lanes. LatentMAS output is advisory only: Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
@@ -144,61 +144,29 @@ If Deep Agents is enabled but the dependency or provider credentials are unavail
 Agent-task collection is best-effort and bounded by `MESH_AGENT_TASK_TIMEOUT_SECONDS` so proposal lanes cannot block control-plane execution. Slow lanes degrade into recorded failed attempts with `agent_mesh_timeout`.
 For `openai:MiniMax-*` Deep Agents models, Mesh resolves credentials from `OPENAI_API_KEY` and falls back to `MINIMAX_API_KEY` for the OpenAI-compatible MiniMax route.
 
-## Evo Proposal Lane
+## Native Orchestration Platform Lanes
 
-Evo is integrated as a bounded proposal lane. Mesh checks whether `evo-hq-cli` is configured and records whether the current task has enough code-remediation boundaries for Evo discovery:
+Native platform lanes let Mesh ingest orchestration evidence from any external platform without letting that platform override Mesh policy. Each lane records:
 
-- explicit repo path
-- allowed paths
-- test commands or benchmark gates
-- code-remediation task kind
+- the platform category and best-fit workload
+- whether the platform has an agentic execution surface
+- the native evaluator signal Mesh expects from that platform
+- the adapter contract fields a real integration must supply
+- the authority boundary: external platforms provide evidence and proposals; Mesh remains authoritative for evaluation, audit, actuation, and promotion
 
-The Evo attempt remains `adapter="native_contract"`. It returns `evo_discover_candidate` for bounded patch tasks with allowed paths and tests, `prepare_benchmark` when benchmark/test gates are missing, and `human_review` when Evo is unavailable or the task is not code-remediation-shaped.
+Current native platform lanes:
 
-Evo readiness is configured with:
-
-```bash
-MESH_EVO_COMMAND=evo
-# or
-MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"
-```
-
-Normal run processing does not invoke Evo. Evo commands are only reachable through an explicit steering command.
-
-## Evo Launch Steering
-
-Mesh exposes a bounded operator-triggered launch path:
-
-```json
-{
-  "command": "launch_evo",
-  "target_path": "app/search.py",
-  "benchmark_command": "python3 benchmark.py --target {target}",
-  "instrumentation_mode": "inline",
-  "metric": "max",
-  "gate_command": "python3 -m unittest discover -s tests"
-}
-```
-
-Execution rules:
-
-- accepted only when a run is paused at `evaluation_ready` or after the run has already completed
-- requires `evo.ready == true`
-- requires a `repo_patch_service` decision with `repo_path`, `allowed_paths`, and `test_commands`
-- requires `target_path` to be one of the run's `allowed_paths`
-- requires `benchmark_command` when the repo does not already contain `.evo/meta.json`
-
-Artifact shape:
-
-- run artifact key: `evo_launches`
-- vault note: `Evo/<run_id>.md`
-- event stream: `integration_name="evo"` with queued, running, and completed or failed records
-
-Boundaries:
-
-- Mesh may run `evo status` for an existing workspace or `evo init`, `evo new`, and `evo run` for an operator-approved bounded bootstrap.
-- Mesh does not run `evo optimize`, create PRs, merge changes, or promote anything to production.
-- Mesh requires a clean git worktree before Evo bootstrap.
+| Lane | Best fit | Agentic surface | Native evaluator signal |
+| --- | --- | --- | --- |
+| `airflow` | Data/ML pipelines | No; DAGs only | DAG dependency coverage |
+| `temporal` | Durable execution | Yes; workflows and activities | Durability, retries, and idempotency |
+| `dagster` | Asset-centric pipelines | No | Asset lineage and materialization checks |
+| `prefect` | Python workflows | No | Flow state and observability |
+| `flyte` | Reproducible ML | No | Cache, version, and reproducibility checks |
+| `luigi` | Simple DAGs | No | Task dependency completion |
+| `oozie` | Big data jobs | No | Hadoop workflow and action state |
+| `kubernetes` | Microservices | Yes; operators and controllers | Controller reconciliation health |
+| `n8n` | Automation | Yes; nodes plus AI workflows | Node execution trace |
 
 ## LatentMAS Sidecar
 
@@ -313,4 +281,4 @@ The helper defaults to `http://127.0.0.1:8787` and honors `MESH_BASE_URL`. It do
 
 ## Production Rule
 
-Treat LatentMAS, Deep Agents, Goose, Hermes, Codex, Claude Code, OpenClaw, and Evo as bounded workers. They can propose. Mesh decides. Production execution remains behind Mesh policy, smoke checks, and approval gates.
+Treat LatentMAS, Deep Agents, Goose, Hermes, Codex, Claude Code, OpenClaw, and native orchestration platform lanes as bounded workers. They can propose and provide evidence. Mesh decides. Production execution remains behind Mesh policy, smoke checks, and approval gates.

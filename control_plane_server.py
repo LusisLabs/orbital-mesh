@@ -20,6 +20,7 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
+TIMELINE_PROOF_ROUTE_TEMPLATE = "/api/runs/{run_id}/timeline-proof"
 
 
 class AuthorizationError(PermissionError):
@@ -44,6 +45,8 @@ def _safe_int(value: str, default: int = 0) -> int:
 def _roles_for_steering(command: object) -> set[str]:
     if command in {"approve", "override_decision", "override_execution_parameters"}:
         return {"approver", "admin"}
+    if command in {"override_review", "postmortem_review"}:
+        return {"viewer", "launcher", "approver", "admin"}
     return {"launcher", "approver", "admin"}
 
 
@@ -66,6 +69,20 @@ def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "steering_mode": run.get("steering_mode"),
         "updated_at": run.get("updated_at"),
     }
+
+
+def darkharness_packet_response(coordinator: RunCoordinator, run_id: str) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_packet(run_id)
+    if payload is None:
+        return {"error": "run not found"}, HTTPStatus.NOT_FOUND
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
+
+
+def darkharness_checkpoint_packet_response(coordinator: RunCoordinator) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_pilot_checkpoint_packet()
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
 
 
 class MeshControlPlaneServer(ThreadingHTTPServer):
@@ -123,11 +140,35 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
             return
+        if path == "/api/policy/lifecycle":
+            self._send_json(self.server.coordinator.build_policy_lifecycle())
+            return
+        if path == "/api/connectors/certification":
+            self._send_json(self.server.coordinator.build_connector_certification())
+            return
+        if path == "/api/deployment/compatibility":
+            self._send_json(self.server.coordinator.build_deployment_compatibility())
+            return
+        if path == "/api/failure-modes":
+            self._send_json(self.server.coordinator.build_failure_mode_library())
+            return
+        if path == "/api/approvals":
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            self._send_json(self.server.coordinator.build_approval_queue())
+            return
         if path == "/api/kill-switch":
             self._send_json(self.server.coordinator.kill_switch_status())
             return
         if path == "/api/pilot/go-no-go":
             self._send_json(self.server.coordinator.generate_pilot_go_no_go())
+            return
+        if path == "/api/darkharness/pilot-packet":
+            payload, status = darkharness_checkpoint_packet_response(self.server.coordinator)
+            self._send_json(payload, status=status)
             return
         if path == "/api/rules/suggestions":
             # Layer 4 admin surface. Returns [] when rule_learning_enabled is
@@ -259,6 +300,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
             return
+        if path.startswith("/api/runs/") and path.endswith("/timeline-proof"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.build_timeline_proof(run_id)
+            if payload is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
             run_id = path.split("/")[3]
             try:
@@ -287,6 +339,14 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/darkharness-packet"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload, status = darkharness_packet_response(self.server.coordinator, run_id)
+            self._send_json(payload, status=status)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
@@ -334,6 +394,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/watchers":
             self._send_json(self.server.coordinator.watchers_status())
+            return
+        if path == "/api/watchers/ownership":
+            self._send_json(self.server.coordinator.build_watcher_ownership())
             return
         if path.startswith("/api/watchers/") and path.count("/") == 3:
             # GET /api/watchers/{name}

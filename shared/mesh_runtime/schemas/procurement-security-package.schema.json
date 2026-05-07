@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/procurement-security-package.schema.json",
+  "title": "ProcurementSecurityPackage",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "package_id",
+    "status",
+    "owner",
+    "review_cadence",
+    "sections",
+    "raw_secret_material_present"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.procurement_security_package.v1"]
+    },
+    "package_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "blocked"]
+    },
+    "owner": { "type": "string" },
+    "review_cadence": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "section_id",
+          "status",
+          "required_before",
+          "owner",
+          "summary",
+          "artifact_refs",
+          "verification_commands",
+          "external_evidence_required"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "enum": [
+              "sso_identity",
+              "audit_export",
+              "retention_controls",
+              "data_boundaries",
+              "deployment_modes",
+              "security_answers",
+              "support_escalation",
+              "known_limits"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ready", "blocked"]
+          },
+          "required_before": {
+            "type": "string",
+            "enum": ["pilot", "expansion"]
+          },
+          "owner": { "type": "string" },
+          "summary": { "type": "string" },
+          "artifact_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "verification_commands": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "external_evidence_required": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "raw_secret_material_present": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

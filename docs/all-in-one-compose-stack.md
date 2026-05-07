@@ -128,11 +128,13 @@ scripts/run_breakthrough_proof.sh
 
 The script checks every configured chaos target before and after the run, executes `mesh-chaos` with `--no-deps`, requires full-axis, substrate, and multi-fault coverage, generates the replay-protected proof bundle, and prints the proof path plus SHA. Use `scripts/run_breakthrough_proof.sh --replay-only` to validate the latest existing proof artifacts without mutating the stack.
 
-For an overnight evidence sweep that combines stack smoke, Mesh Brain control-plane lanes, HTTP autoresearch, production-node probes, simulation benchmarks, replay proof generation, and HALO trace optimization:
+For an overnight evidence sweep that combines stack smoke, HTTP autoresearch, production-node probes, simulation benchmarks, replay proof generation, and HALO trace optimization:
 
 ```bash
 python3 scripts/run_overnight_mesh_breakthrough_cron.py --duration-seconds 28800 --http-full-matrix
 ```
+
+Mesh Brain control-plane and local package lanes live in the extracted post-training repository. This Mesh repo does not call `/api/mesh-brain/*` during overnight runs.
 
 If a `mesh-chaos` or `scripts/run_breakthrough_proof.sh` session is already running against the same stack, run the overnight sweep without starting a duplicate chaos injector:
 
@@ -236,7 +238,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
 | `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
-| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,evo,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_MESH_AGENTS` | unset | Optional comma-separated restriction for agent-task lanes; default includes Goose, Hermes, Codex, Claude Code, OpenClaw, Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n |
 | `MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR` | `0.86` | Minimum confidence stamped onto an eligible full-auto override |
 | `MESH_AGENT_OPERATOR_AUTONOMY_TIER` | `escalated` | Decision autonomy tier used by the agent operator override |
 | `MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS` | `3600` | Maximum age for existing paused runs that the operator will pick up after startup |

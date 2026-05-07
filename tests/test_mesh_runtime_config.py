@@ -8,7 +8,27 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shared.mesh_runtime.config import DEFAULT_CORPUS_DATABASE_PATH, DEFAULT_RESEARCH_DIRECTORY, DEFAULT_STATE_DIRECTORY, RuntimeConfig
+from shared.mesh_runtime.config import (
+    DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH,
+    DEFAULT_AUDIT_SINK_CERTIFICATION_PATH,
+    DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH,
+    DEFAULT_CORPUS_DATABASE_PATH,
+    DEFAULT_DATA_CLASSIFICATION_POLICY_PATH,
+    DEFAULT_DESIGN_PARTNER_PACKET_PATH,
+    DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH,
+    DEFAULT_FAILURE_MODE_LIBRARY_PATH,
+    DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH,
+    DEFAULT_INCIDENT_PROVIDER_PROOF_PATH,
+    DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH,
+    DEFAULT_ON_CALL_DRILL_PATH,
+    DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH,
+    DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH,
+    DEFAULT_PUBLIC_PROOF_PACKAGE_PATH,
+    DEFAULT_RESEARCH_DIRECTORY,
+    DEFAULT_STATE_DIRECTORY,
+    DEFAULT_THREAT_MODEL_REGISTER_PATH,
+    RuntimeConfig,
+)
 from shared.mesh_runtime.state import parse_state_json_file
 
 
@@ -89,6 +109,271 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertTrue(Path(cfg.corpus_database_path).is_absolute())
         self.assertEqual(Path(cfg.corpus_database_path), DEFAULT_CORPUS_DATABASE_PATH.resolve())
         self.assertEqual(cfg.corpus_memory_projection_limit, 123)
+
+    def test_on_call_drill_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_ON_CALL_DRILL_PATH": ".mesh-runtime-state/on-call-drill.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.on_call_drill_path)
+        assert cfg.on_call_drill_path is not None
+        self.assertTrue(Path(cfg.on_call_drill_path).is_absolute())
+        self.assertEqual(Path(cfg.on_call_drill_path), DEFAULT_ON_CALL_DRILL_PATH.resolve())
+
+    def test_failure_mode_library_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_FAILURE_MODE_LIBRARY_PATH": "config/failure-mode.library.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.failure_mode_library_path).is_absolute())
+        self.assertEqual(Path(cfg.failure_mode_library_path), DEFAULT_FAILURE_MODE_LIBRARY_PATH.resolve())
+
+    def test_threat_model_register_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_THREAT_MODEL_REGISTER_PATH": "config/threat-model.register.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.threat_model_register_path).is_absolute())
+        self.assertEqual(Path(cfg.threat_model_register_path), DEFAULT_THREAT_MODEL_REGISTER_PATH.resolve())
+
+    def test_data_classification_policy_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DATA_CLASSIFICATION_POLICY_PATH": "config/data-classification.policy.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.data_classification_policy_path).is_absolute())
+        self.assertEqual(Path(cfg.data_classification_policy_path), DEFAULT_DATA_CLASSIFICATION_POLICY_PATH.resolve())
+
+    def test_agentic_operator_source_provenance_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH": "config/agentic-operator-source.provenance.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.agentic_operator_source_provenance_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.agentic_operator_source_provenance_path),
+            DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH.resolve(),
+        )
+
+    def test_deployment_compatibility_registry_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH": "config/deployment-compatibility.registry.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.deployment_compatibility_registry_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.deployment_compatibility_registry_path),
+            DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH.resolve(),
+        )
+
+    def test_procurement_security_package_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_PROCUREMENT_SECURITY_PACKAGE_PATH": "config/procurement-security.package.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.procurement_security_package_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.procurement_security_package_path),
+            DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH.resolve(),
+        )
+
+    def test_public_proof_package_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_PUBLIC_PROOF_PACKAGE_PATH": "config/public-proof.package.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertTrue(Path(cfg.public_proof_package_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.public_proof_package_path),
+            DEFAULT_PUBLIC_PROOF_PACKAGE_PATH.resolve(),
+        )
+
+    def test_authenticated_ingress_proof_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_AUTHENTICATED_INGRESS_PROOF_PATH": ".mesh-runtime-state/authenticated-ingress-deployment-proof.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.authenticated_ingress_proof_path)
+        assert cfg.authenticated_ingress_proof_path is not None
+        self.assertTrue(Path(cfg.authenticated_ingress_proof_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.authenticated_ingress_proof_path),
+            DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH.resolve(),
+        )
+
+    def test_design_partner_packet_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DESIGN_PARTNER_PACKET_PATH": ".mesh-runtime-state/design-partner-packet.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.design_partner_packet_path)
+        assert cfg.design_partner_packet_path is not None
+        self.assertTrue(Path(cfg.design_partner_packet_path).is_absolute())
+        self.assertEqual(Path(cfg.design_partner_packet_path), DEFAULT_DESIGN_PARTNER_PACKET_PATH.resolve())
+
+    def test_load_concurrency_rehearsal_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_LOAD_CONCURRENCY_REHEARSAL_PATH": ".mesh-runtime-state/load-concurrency-rehearsal.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.load_concurrency_rehearsal_path)
+        assert cfg.load_concurrency_rehearsal_path is not None
+        self.assertTrue(Path(cfg.load_concurrency_rehearsal_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.load_concurrency_rehearsal_path),
+            DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH.resolve(),
+        )
+
+    def test_orchestration_topology_drill_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH": ".mesh-runtime-state/orchestration-topology-drill.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.orchestration_topology_drill_path)
+        assert cfg.orchestration_topology_drill_path is not None
+        self.assertTrue(Path(cfg.orchestration_topology_drill_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.orchestration_topology_drill_path),
+            DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH.resolve(),
+        )
+
+    def test_audit_sink_certification_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_AUDIT_SINK_CERTIFICATION_PATH": ".mesh-runtime-state/audit-sink-certification.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.audit_sink_certification_path)
+        assert cfg.audit_sink_certification_path is not None
+        self.assertTrue(Path(cfg.audit_sink_certification_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.audit_sink_certification_path),
+            DEFAULT_AUDIT_SINK_CERTIFICATION_PATH.resolve(),
+        )
+
+    def test_feature_flag_provider_proof_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH": ".mesh-runtime-state/feature-flag-provider-proof.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.feature_flag_provider_proof_path)
+        assert cfg.feature_flag_provider_proof_path is not None
+        self.assertTrue(Path(cfg.feature_flag_provider_proof_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.feature_flag_provider_proof_path),
+            DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH.resolve(),
+        )
+
+    def test_incident_provider_proof_path_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_INCIDENT_PROVIDER_PROOF_PATH": ".mesh-runtime-state/incident-provider-proof.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.incident_provider_proof_path)
+        assert cfg.incident_provider_proof_path is not None
+        self.assertTrue(Path(cfg.incident_provider_proof_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.incident_provider_proof_path),
+            DEFAULT_INCIDENT_PROVIDER_PROOF_PATH.resolve(),
+        )
+
+    def test_darkharness_registry_env_is_repo_anchored(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DARKHARNESS_REGISTRY_PATH": ".mesh-runtime-state/darkharness-registry.json"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertIsNotNone(cfg.darkharness_registry_path)
+        assert cfg.darkharness_registry_path is not None
+        self.assertTrue(Path(cfg.darkharness_registry_path).is_absolute())
+        self.assertEqual(
+            Path(cfg.darkharness_registry_path),
+            (DEFAULT_STATE_DIRECTORY / "darkharness-registry.json").resolve(),
+        )
+
+    def test_darkharness_packet_persistence_is_explicitly_ephemeral(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE": "ephemeral"},
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertEqual(cfg.darkharness_packet_persistence_mode, "ephemeral")
+
+        with self.assertRaisesRegex(ValueError, "only supports ephemeral"):
+            RuntimeConfig(darkharness_packet_persistence_mode="audit_artifact")
+
+    def test_darkharness_signing_env_configures_local_hmac_key(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_DARKHARNESS_SIGNING_KEY": "local-secret",
+                "MESH_DARKHARNESS_SIGNING_KEY_ID": "local-key",
+            },
+            clear=False,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertEqual(cfg.darkharness_signing_key, "local-secret")
+        self.assertEqual(cfg.darkharness_signing_key_id, "local-key")
+
+    def test_darkharness_classical_signing_key_can_load_from_env_or_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "darkharness-ed25519.pem"
+            key_path.write_text("file-private-key", encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {
+                    "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH": str(key_path),
+                    "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID": "file-key",
+                },
+                clear=False,
+            ):
+                file_cfg = RuntimeConfig.from_env()
+            self.assertEqual(file_cfg.darkharness_classical_signing_key_pem, "file-private-key")
+            self.assertEqual(file_cfg.darkharness_classical_signing_key_id, "file-key")
+
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM": "inline-private-key",
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH": "/ignored/key.pem",
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID": "inline-key",
+            },
+            clear=False,
+        ):
+            inline_cfg = RuntimeConfig.from_env()
+        self.assertEqual(inline_cfg.darkharness_classical_signing_key_pem, "inline-private-key")
+        self.assertEqual(inline_cfg.darkharness_classical_signing_key_id, "inline-key")
 
     def test_parse_state_json_file_corrupt_writes_backup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

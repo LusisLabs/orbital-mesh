@@ -1,0 +1,7 @@
+{
+  "name": "orbital-mesh",
+  "private": true,
+  "scripts": {
+    "lint": "npm --prefix web run lint"
+  }
+}

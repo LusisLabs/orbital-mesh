@@ -1,0 +1,83 @@
+{
+  "type": "object",
+  "required": ["version", "generated_at", "classes"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["mesh.data_classification_policy.v1"]
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "classes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "class_id",
+          "examples",
+          "owner",
+          "retention_days",
+          "deletion_mode",
+          "export_allowed",
+          "requires_redaction",
+          "storage_locations",
+          "deletion_controls",
+          "evidence_refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "class_id": {
+            "type": "string"
+          },
+          "examples": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "owner": {
+            "type": "string"
+          },
+          "retention_days": {
+            "type": "integer"
+          },
+          "deletion_mode": {
+            "type": "string",
+            "enum": ["purge", "redact", "retain"]
+          },
+          "export_allowed": {
+            "type": "boolean"
+          },
+          "requires_redaction": {
+            "type": "boolean"
+          },
+          "storage_locations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "deletion_controls": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

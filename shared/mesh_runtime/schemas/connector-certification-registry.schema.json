@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/connector-certification-registry.schema.json",
+  "title": "ConnectorCertificationRegistry",
+  "type": "object",
+  "required": ["schema_version", "connectors"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "connector.certification.registry.v1",
+      "type": "string"
+    },
+    "generated_from": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "connectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "connector_id",
+          "display_name",
+          "domain",
+          "state",
+          "required_before",
+          "authority_posture",
+          "credential_policy",
+          "credential_boundary",
+          "degraded_behavior",
+          "allowed_scopes",
+          "evidence_refs",
+          "blockers"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "connector_id": { "type": "string" },
+          "display_name": { "type": "string" },
+          "domain": { "type": "string" },
+          "state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "mock",
+              "unfinished",
+              "read-only",
+              "proposal-only",
+              "staging-ready",
+              "pilot-ready",
+              "production-ready"
+            ]
+          },
+          "required_before": {
+            "type": "string",
+            "enum": ["local", "staging", "pilot", "expansion"]
+          },
+          "authority_posture": { "type": "string" },
+          "credential_policy": { "type": "string" },
+          "credential_boundary": {
+            "type": "object",
+            "required": [
+              "service_account_ref",
+              "credential_mode",
+              "production_actuator_credentials_allowed",
+              "repo_write_credentials_allowed",
+              "runtime_secret_mount_required",
+              "rotation_evidence_ref",
+              "break_glass_recording_required"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "service_account_ref": { "type": ["string", "null"] },
+              "credential_mode": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "runtime-secret",
+                  "read-only-secret",
+                  "proposal-workspace"
+                ]
+              },
+              "production_actuator_credentials_allowed": { "type": "boolean" },
+              "repo_write_credentials_allowed": { "type": "boolean" },
+              "runtime_secret_mount_required": { "type": "boolean" },
+              "rotation_evidence_ref": { "type": ["string", "null"] },
+              "break_glass_recording_required": { "type": "boolean" }
+            }
+          },
+          "degraded_behavior": { "type": "string" },
+          "allowed_scopes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

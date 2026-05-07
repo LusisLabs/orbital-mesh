@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/operator-handoff.schema.json",
+  "title": "OperatorHandoff",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "run_id",
+    "created_at",
+    "from_operator",
+    "to_operator",
+    "reason",
+    "next_action",
+    "urgency",
+    "status",
+    "related_event_id",
+    "due_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.operator_handoff.v1"]
+    },
+    "handoff_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "from_operator": {
+      "type": "object",
+      "required": ["operator_id", "roles", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "to_operator": {
+      "type": "object",
+      "required": ["operator_id", "roles", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string" },
+    "next_action": { "type": "string" },
+    "urgency": {
+      "type": "string",
+      "enum": ["low", "normal", "high", "critical"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "acknowledged", "resolved", "cancelled"]
+    },
+    "related_event_id": { "type": ["string", "null"] },
+    "due_at": { "type": ["string", "null"] }
+  }
+}

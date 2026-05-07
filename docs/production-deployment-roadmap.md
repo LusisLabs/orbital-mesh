@@ -12,6 +12,8 @@ The first production test must prove:
 - live signals can enter through manual replay, Kubernetes watchers, vendor webhooks, and OTel metrics;
 - every proposed action is constrained by policy, evidence, evaluation, allowlists, and rollback metadata;
 - production integrations are classified honestly as ready, proposal-only, safety-default, or unfinished adapter;
+- deployment compatibility is classified honestly as validated, supported, recipe, or not planned;
+- forked Kubernetes operator work from `agentic-operator-core-main/` is imported through contract, provenance, and validation gates, not copied wholesale;
 - state, events, artifacts, Merkle proofs, and feedback survive restart and can be reviewed after the fact.
 
 ## Current Integrated Surface
@@ -19,8 +21,8 @@ The first production test must prove:
 | Surface | Current repo anchor | Production posture |
 | --- | --- | --- |
 | Control plane API and SSE | `control_plane_server.py`, `services/control_plane.py` | Core runtime. Must be placed behind authenticated TLS before external access. |
-| GPUI operator console | `apps/mesh-gpui/` | Target primary human application shell; uses the control plane API as the authority boundary. |
-| Browser operator UI | `web/`, served by `run_server.py` | Compatibility and CI-visible human test surface while the GPUI console graduates. |
+| Browser operator UI | `web/`, served by `run_server.py` | Primary human operator surface for local, CI-visible, and production-pilot review. |
+| Archived GPUI operator console | `docs/history/gpui/mesh-gpui/` | Archived experiment. Not an active build, packaging, or parity target. |
 | TUI | `run_tui.py` | Local companion only. |
 | Manual and fixture runs | `POST /api/runs`, `fixtures/signals/` | Safe replay and demo path. |
 | Kubernetes live signals | `services/ingest/kubernetes_live_signal.py`, `services/watchers/kubernetes.py` | Production candidate when kubeconfig, network reachability, context allowlist, and namespace allowlist are all set. |
@@ -32,11 +34,12 @@ The first production test must prove:
 | Orchestration and actuation | `services/orchestrator/`, `services/actuators/` | Bounded actions only. Kubernetes and SSH remain off unless explicit live flags and allowlists pass. |
 | Goose and Hermes | `services/orchestrator/*_bridge.py`, `docs/integrations.md` | Review/proposal lanes. They do not own production actuation. |
 | Deep Agents fabric | `services/orchestrator/deepagents_adapter.py` | Proposal-only sandbox lane. No direct kubeconfig, repo writes, or actuation. |
-| Evo | `services/orchestrator/agent_mesh.py`, `docs/integrations.md` | Explicit operator-launched proposal lane for scoped repo patch runs. |
 | Mesh Brain | `mesh_brain/`, `docs/post-training/` | Model-lifecycle plane. Runtime hooks are ready for controlled MVP proof, not broad model-serving production. |
 | Readiness and SLO surfaces | `/api/readiness`, `/api/agent/slo`, `/metrics` | Existing observability base. Needs tier-specific readiness profiles before pilot. |
 | Persistence | `.mesh-runtime-state`, Postgres-backed stores | JSON state is replay-friendly; Postgres projection is required before multi-operator production reliance. |
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
+| Deployment compatibility | `docker-compose.stack.yml`, `docker-compose.prod.yml`, `docs/deployment-compatibility.md`, `docs/reference-architectures.md` | Open by contract. Docker Compose and Kubernetes are validated paths; other container and orchestrator targets are supported, recipes, backlog, or not planned according to evidence. |
+| Agentic operator fork source | `agentic-operator-core-main/`, `docs/agentic-operator-core-import-plan.md` | Source input for CRDs, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. Must be adapted to Orbital Mesh authority gates before runtime use. |
 
 ## Release Phases
 
@@ -93,6 +96,8 @@ Required features:
 - threat model and abuse-case review for every authority boundary: HTTP API, SSE, webhooks, OTel ingest, kubeconfig, LLM keys, proposal lanes, state store, and exported run bundles;
 - data classification, retention, redaction, and deletion rules for signals, logs, traces, prompts, model outputs, vault notes, and exported postmortem bundles;
 - supply-chain record for the built image: pinned dependencies, SBOM, vulnerability scan, base-image digest, and build provenance;
+- deployment compatibility matrix that separates validated targets from supported contracts, recipes, backlog, and not-planned platforms;
+- import plan for `agentic-operator-core-main/` that maps AgentWorkload, Tenant, Argo, MCP, LiteLLM, Helm, cost, and network-isolation pieces into Orbital Mesh contracts;
 - least-privilege kubeconfig or in-cluster RBAC limited to staging namespaces;
 - webhook source registration per vendor with HMAC verification;
 - OTel ingest protected by bearer token or private ingress;
@@ -131,7 +136,7 @@ Scope constraints:
 - one namespace allowlist;
 - approval gate as default;
 - no autonomous feature-flag or incident-provider writes until real provider adapters replace local seams;
-- Deep Agents, Goose, Hermes, Evo, and Mesh Brain remain proposal/review planes unless separately approved.
+- Deep Agents, Goose, Hermes, and Mesh Brain remain proposal/review planes unless separately approved.
 
 Required features:
 
@@ -146,6 +151,8 @@ Required features:
 - pilot go/no-go generator that emits readiness snapshot, smoke results, allowed-target proof, denied-target proof, operator approvals, backup status, and rollback plan;
 - production-certified connector matrix for the specific pilot integrations;
 - release provenance for the exact image and config running in pilot, including commit, image digest, policy file hashes, migration version, and env profile;
+- deployment target proof for the pilot substrate, including health, readiness, ingress, persistence, feedback, audit, rollback, and release-packet evidence;
+- fork provenance for any imported agentic-operator code, including source commit, license carry-forward, renamed CRD groups, and validation evidence;
 - production on-call drill for kill switch, rollback, denied action, stuck run, failed dependency, and provider-key rotation;
 - pilot SLO and error budget: availability, run admission latency, evaluation latency, action latency, feedback latency, event persistence lag, and export success rate;
 - design-partner packet: pilot charter, success metrics, data handling terms, integration scope, support model, rollback plan, and executive summary of observed evidence;
@@ -174,10 +181,12 @@ Required features:
 - trust ladder is used per action class and service before autonomy expansion;
 - external incident provider, audit sink, and feature flag provider adapters replace local deterministic seams;
 - connector certification is required for every production integration and every certified connector has a tested degraded-state behavior;
+- AgentWorkload/Tenant-style CRDs are available only after they encode Orbital Mesh ownership, tenant boundary, policy, evidence sufficiency, approval, rollback, artifact, and audit requirements;
 - the failure-mode library is part of regression CI and includes replayable UI scenarios;
 - formal release gates require SBOM, vulnerability scan, image digest pinning, policy hash diff, migration rehearsal, and rollback rehearsal;
 - disaster recovery drills run on a schedule and include state restore, operator identity failure, observability outage, and corrupted-event replay;
 - enterprise procurement package covers SSO/OIDC/SAML path, audit export, retention controls, data processing boundaries, deployment models, security review answers, and support escalation;
+- deployment packaging covers Docker Compose, Kubernetes, and the first validated non-Kubernetes target without implying validated support for every container platform;
 - public technical proof package is generated from reproducible runs: benchmark report, architecture paper, demo dataset, run export, and limitations statement;
 - distribution channels cover open source/community adoption, cloud marketplaces, startup design partners, platform engineering communities, MSP/SI partners, and self-hosted private deployments;
 - packaging tiers are explicit: community/local proof, startup/team, production platform, regulated/private deployment, and partner-managed deployment;
@@ -194,45 +203,53 @@ Exit gates:
 
 | Capability | Required before | Status |
 | --- | --- | --- |
-| Authenticated ingress and operator identity | any external human test | App accepts proxy identity headers, records operators, and has a local ingress rehearsal harness; real TLS/SSO proxy deployment proof remains required before external access. |
+| Ownership ontology and tenant boundary | private staging | Machine-readable ownership registry exists at `config/ownership.registry.json`; normal run creation stamps an `ownership_boundary` artifact and event with owner, tenant, customer, namespace, customer boundary, approver roles, rollback authority, policy refs, data boundary, reservoir refs, export policy, retention, legal-action scope, and allowed action classes. Staging readiness now blocks when the registry is absent or invalid; broader customer-specific registry onboarding remains. |
+| Connector certification states | private staging | `config/connector-certification.registry.json` now records connector state, required tier, authority posture, credential policy, credential boundary, degraded behavior, allowed scopes, evidence refs, and blockers. `/api/connectors/certification`, `/api/readiness`, and release provenance expose the registry-backed matrix; staging readiness blocks when the registry is absent or invalid, and proposal-only lanes block if production actuator or repository write credentials appear at runtime. |
+| Policy lifecycle with signed hashes | private staging | `config/policy-lifecycle.manifest.json` covers every JSON policy with owner, state, risk tier, effective window, review expiry, and rollback ref. `/api/policy/lifecycle` and release provenance now emit signed policy hashes when `MESH_POLICY_SIGNING_KEY` is configured; staging readiness blocks without the signature. |
+| Evidence sufficiency by action and risk tier | private staging | Evaluation now emits `mesh.evidence_sufficiency.v1` under `stage_results.evidence_sufficiency` with action class, risk tier, required evidence refs, observed refs, missing markers, and a blocking reason when the gate fails. |
+| High-resolution timeline and proof chain | production pilot | `GET /api/runs/{run_id}/timeline-proof` emits `mesh.timeline_proof.v1` with `time_unix_nano`, payload hashes, Merkle leaves, latest-event proof, and sequence/timestamp/proof checks. Run exports include the same packet and archive `timeline-proof.json`; broader clock-skew and cross-store replay drills remain. |
+| Admission, queues, locks, quotas, cancellation, recovery | production pilot | Run creation now records `mesh.run_admission.v1` with queue depth, worker count, tenant active-run quota, target lock key, lock holder, decision, and blockers. Queue-full, tenant-quota, and required target-lock conflicts block before worker admission; existing cancellation and recovery paths remain event-backed. |
+| Authenticated ingress and operator identity | any external human test | App accepts proxy identity headers, records operators, and has a local ingress rehearsal harness. `mesh.authenticated_ingress_deployment_proof.v1`, `scripts/verify_authenticated_ingress_deployment.py`, and staging readiness gate `authenticated_ingress_deployment_verified` now require deployed TLS, SSO, header stripping, role mapping, private upstream, audit identity, and app rehearsal proof before external readiness claims. Target operators still need to capture the real proxy proof packet per environment. |
 | RBAC roles for viewer, launcher, approver, admin | production pilot | App-level role checks are implemented and rehearsed for launch, approval, simulation, and kill-switch paths; proxy identity remains the trust boundary. |
 | Tiered readiness profiles | private staging | Implemented in `/api/readiness` for `local`, `staging`, `pilot`, and `expansion`. |
 | Policy simulator | private staging | Mutation-free API exists for fixture, captured-run, and inline-signal replay; UI surface is present for operator inspection. |
 | Evidence graph as primary run surface | local production-like e2e | UI defaults to evidence-first run inspection with graph and proof surfaces. |
 | Executable invariant suite | local production-like e2e | Focused production cut-list tests cover readiness, role gates, simulator non-mutation, kill switch, feedback gates, and proposal-lane isolation. |
 | Distributed-systems fault tests | local production-like e2e | Focused tests cover duplicate/correlated signals, delayed deferred runs, queue backpressure, and packaging drift; broader clock-skew and partial-network coverage remains. |
-| Threat model and abuse-case register | private staging | Initial authority-boundary register is documented; owner/expiry tracking remains before external staging. |
-| Data classification and retention controls | private staging | Initial classification table is documented; run export redaction, size caps, retention metadata, pilot retention-review gate, and dry-run-first purge utility exist. Broader signal/log/trace deletion controls remain. |
-| Supply-chain provenance | private staging | `scripts/generate_release_provenance.py` emits a release packet and `--require-complete` fails without CI artifacts; SBOM, vulnerability scan, image digest, and clean signed CI packet generation remain. |
-| Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, and rollback evidence. |
-| Connector certification matrix | private staging | Machine-readable certification states are exposed in `/api/readiness` and documented. |
-| Failure-mode library | private staging | Core denied-action and fault tests exist; explicit product library and UI replay catalog remain. |
-| Operator trust ladder UI | private staging | API and browser trust surface now expose current ceiling, next level, threshold requirements, blockers, manual override reason, and per-service/action evidence. GPUI parity remains. |
+| Threat model and abuse-case register | private staging | `config/threat-model.register.json`, `mesh.threat_model_register.v1`, and `scripts/verify_threat_model_register.py` now enforce owner, decision, expiry, compensating control, evidence refs, duplicate-id checks, and no open or expired findings; staging readiness blocks on `threat_model_register_reviewed`. |
+| Data classification and retention controls | private staging | `config/data-classification.policy.json`, `mesh.data_classification_policy.v1`, and `scripts/verify_data_classification_policy.py` now enforce required classes, owners, retention windows, redaction requirements, storage locations, deletion controls, evidence refs, no secret export, and deletion controls for signals, logs, traces, model outputs, and training candidates; staging readiness blocks on `data_classification_policy_reviewed`. Target-environment deletion execution remains deployment-specific. |
+| Supply-chain provenance | private staging | `scripts/generate_release_provenance.py` emits a release packet and `--require-complete` fails without CI artifacts, migration rehearsal, SBOM, vulnerability scan, CI attestation, image digest, and clean signed CI packet generation. CI collects built image/base-image metadata, runs pinned Syft and Grype scanners through `scripts/generate_release_image_assurance.py`, feeds the digest metadata into `mesh.ci_attestation.v1`, uploads failed-status attestation evidence when the release-image gate fails, and uploads an incomplete release-provenance draft for review. |
+| Pilot go/no-go generator | production pilot | Implemented at `/api/pilot/go-no-go`; local stack generated `status: go` from observed smoke, approval, denied-action, Merkle, rollback, release-provenance, and on-call drill evidence. |
+| Connector certification matrix | private staging | Registry-backed certification states are exposed in `/api/readiness`, `/api/connectors/certification`, release provenance, and the browser Connectors page with authority posture, credential boundary, allowed scopes, and blockers visible. |
+| Failure-mode library | private staging | `mesh.failure_mode_library.v1`, `scripts/verify_failure_mode_library.py`, and `GET /api/failure-modes` now verify and expose required catalog coverage, UI replay ids, test refs, authority boundaries, operator actions, and entries; browser replay automation and target-environment live fault evidence remain. |
+| Operator trust ladder UI | private staging | API and browser trust surface now expose current ceiling, next level, threshold requirements, blockers, manual override reason, and per-service/action evidence. |
 | Kill-switch panel | production pilot | Consolidated API and UI panel exist for watcher pause, live execution disablement, namespace clearing, and approval-gate forcing. |
-| Disaster recovery drills | production pilot | Postgres restart-proof harness validates run events, memory, and Merkle roots; full drills for restore, key rotation, observability outage, and corrupted replay remain. |
-| Release provenance packet | production pilot | Local generator and completeness gate exist; CI must supply image digests, base-image digests, SBOM, vulnerability scan, clean tree, build command, and builder identity before a signed pilot packet is valid. |
+| Disaster recovery drills | production pilot | Postgres restart-proof harness, backup/restore rehearsal proof, and `mesh.on_call_drill.v1` contract now cover restore, kill switch, watcher pause, bad-target revocation, failed dependency, stuck run, and key-rotation evidence. Target-environment drill packets remain required. |
+| Release provenance packet | production pilot | Local generator and completeness gate exist; CI now has the real release-image SBOM/vulnerability scan handoff path, and the local release image has been reduced from 517 to 18 blocking Grype findings. A live CI artifact, clean tree, signed policy key, target migration proof, and zero blocking scanner findings are still required before a signed pilot packet is valid. |
 | Pilot SLO and error budget | production pilot | Initial contract exists in `docs/pilot-slo-error-budget.md` with hard stops, latency objectives, reliability budget, measurement sources, and review cadence; deployment-specific ingress, Prometheus, audit-sink, signed-release, and load evidence remain. |
-| Enterprise evaluation kit | private staging | Initial kit is documented in `docs/evaluation-kits.md`; sample export packaging and formal benchmark packet remain. |
+| Enterprise evaluation kit | private staging | `docs/evaluation-kits.md`, `scripts/generate_evaluation_kit_packet.py`, `scripts/verify_evaluation_kit_packet.py`, and `scripts/verify_benchmark_run_artifacts.py` now emit and verify `mesh.evaluation_kit_packet.v1` with a sample run export package, zip archive, retrieval proof, formal golden-suite benchmark command packet, and completed benchmark output artifact proof. Target-environment exports and durable benchmark publication remain deployment-specific evidence. |
 | Reference architectures | private staging | Initial active-path packet exists in `docs/reference-architectures.md` for local stack, single-VM private deployment, Kubernetes platform teams, private cloud/VPC-only, GPU/AI infrastructure, regulated enterprise, and air-gapped/offline-adjacent shapes; Helm, Terraform, marketplace, and ingress-controller-specific packages remain. |
-| Startup and developer evaluation path | private staging | Initial five-minute and thirty-minute paths are documented in `docs/evaluation-kits.md`; sample export artifact remains. |
+| Startup and developer evaluation path | private staging | Five-minute and thirty-minute paths are documented in `docs/evaluation-kits.md`; `scripts/generate_evaluation_kit_packet.py` creates the local sample export artifact and benchmark handoff packet. Target-environment sample exports remain deployment-specific. |
 | Community and open-source motion | private staging | Governance and community/commercial boundaries are documented in `docs/community-governance.md`; issue templates and example catalog remain. |
 | Cloud and ecosystem marketplaces | production expansion | Need packaging for Docker, Helm, Terraform, Kubernetes, and major cloud marketplace listings once production controls are real. |
+| Deployment compatibility matrix | private staging | `config/deployment-compatibility.registry.json`, `mesh.deployment_compatibility.v1`, `scripts/verify_deployment_compatibility.py`, and `GET /api/deployment/compatibility` now make deployment claims machine-checkable. Docker Compose and Kubernetes are validated paths; ECS/Fargate is the single next validated non-Kubernetes target with explicit promotion blockers and `scripts/verify_ecs_fargate_promotion.py` proof shape; recipe and not-planned targets cannot be promoted without target smoke, readiness, feedback, audit, rollback, and release-packet evidence. Staging readiness blocks on `deployment_compatibility_registry_reviewed`. |
+| Agentic operator core fork-in | private staging | `config/agentic-operator-source.provenance.json`, `mesh.agentic_operator_source_provenance.v1`, and `scripts/verify_agentic_operator_source_provenance.py` now record the imported source-input snapshot, Apache-2.0 license path, required source surfaces, fork posture, authority-gate adaptation requirements, forbidden credential classes, and no active runtime or wholesale-copy posture; staging readiness blocks on `agentic_operator_source_provenance_recorded`. Actual CRD/controller/Helm forks remain blocked until adapted contracts and tests exist. |
 | Partner/MSP/SI program | production expansion | Need managed-deployment playbook, support boundaries, partner certification, and escalation model. |
 | Segment pricing and packaging | production expansion | Need packaging for community/local proof, startup/team, production platform, regulated/private deployment, and partner-managed deployment. |
-| Design-partner packet | production pilot | Needed for serious enterprise conversations: charter, success metrics, data handling, integration scope, support model, rollback plan, and evidence summary. |
-| Procurement and security package | production expansion | SSO path, audit export, retention, data boundaries, deployment modes, security answers, and support escalation need one maintained artifact set. |
-| Reproducible public proof package | production expansion | Publish only evidence-backed benchmark reports, architecture paper, demo dataset, run export, and limitations statement. |
+| Design-partner packet | production pilot | `mesh.design_partner_packet.v1`, `scripts/verify_design_partner_packet.py`, `MESH_DESIGN_PARTNER_PACKET_PATH`, and pilot readiness gate `design_partner_packet_verified` now make the charter, success metrics, data handling, integration scope, support model, rollback plan, consent, go/no-go hash, release-provenance hash, run export ref, and readiness ref machine-checkable. Target pilot operators still need a partner-specific signed packet. |
+| Procurement and security package | production expansion | `config/procurement-security.package.json`, `mesh.procurement_security_package.v1`, `scripts/verify_procurement_security_package.py`, and expansion readiness gate `procurement_security_package_verified` now bind SSO path, audit export, retention controls, data boundaries, deployment modes, security answers, support escalation, and known limitations into one maintained artifact set. Target operators still need deployed SSO proof, external audit sink receipts, complete signed release provenance, and customer-specific support evidence. |
+| Reproducible public proof package | production expansion | `config/public-proof.package.json`, `mesh.public_proof_package.v1`, `scripts/verify_public_proof_package.py`, and expansion readiness gate `public_proof_package_verified` now require public proof claims to bind to benchmark report, architecture paper, demo dataset, run export, and limitations evidence. Durable public publication and target-environment benchmark/export artifacts remain deployment-specific evidence. |
 | Durable external audit sink | compliance reliance | Local audit seam only. |
-| External incident adapter | production incident creation | Local deterministic seam only. |
-| Real feature flag provider adapter | production flag rollback | Local deterministic seam only. |
-| Postgres default production store | multi-operator production | Production-like compose now defaults Mesh to Postgres and restart proof passed in-container; migration gate and load validation remain. |
-| Backup and restore automation | private staging | Runbook exists; rehearsal evidence required. |
+| External incident adapter | production incident creation | `mesh.provider_adapter_proof.v1` and `scripts/verify_provider_adapter_proof.py --adapter-id incident_provider` now define the proof required before incident-provider credentials can satisfy pilot readiness. Real target proof and connector certification remain required before production incident creation. |
+| Real feature flag provider adapter | production flag rollback | `mesh.provider_adapter_proof.v1` and `scripts/verify_provider_adapter_proof.py --adapter-id feature_flag_provider` now define the proof required before feature-flag credentials can satisfy pilot readiness. Real target proof and connector certification remain required before production flag rollback. |
+| Postgres default production store | multi-operator production | Production-like compose now defaults Mesh to Postgres and restart proof passed in-container; release provenance now requires `mesh.migration_rehearsal.v1` for complete packets, and `scripts/generate_migration_rehearsal.py` packages real rehearsal refs against the current migration hash. Load validation remains. |
+| Backup and restore automation | private staging | `mesh.backup_restore_rehearsal.v1` and `scripts/verify_backup_restore_rehearsal.py` now verify operator, backup ref, restore ref, RPO/RTO, measured restore duration, state backend, and restored state/vault/Merkle/integrations/research components. Staging readiness blocks on `backup_restore_rehearsal_verified`; target environment rehearsal evidence remains required. |
 | Live Prometheus feedback | production action validation | Pilot readiness requires live feedback; current local proof uses Kubernetes re-harvest, while Prometheus service metrics remain deployment-specific. |
-| Watcher ownership and pause controls | production watchers | Watcher registry exists; operator ownership workflow needs polish. |
-| Run export for postmortems | production pilot | API and UI can generate a portable JSON package and downloadable zip archive with timeline, Markdown postmortem, evidence artifacts, decision/evaluation/execution/feedback records, approvals, vault notes, Merkle snapshot, and latest-event proof; secret-shaped fields are redacted, `MESH_RUN_EXPORT_MAX_BYTES` compacts bulky fields, packages carry delete-after metadata, `scripts/purge_run_exports.py` purges expired generated files only with `--apply`, and pilot readiness blocks until `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`. |
-| Role-stamped approvals | production pilot | Implemented; approvals record operator id, roles, source, and event id. |
+| Watcher ownership and pause controls | production watchers | `GET /api/watchers/ownership` now resolves registered watcher targets through `config/ownership.registry.json` and embeds owner, tenant, customer boundary, approver roles, rollback authority, escalation route, allowed action classes, and blockers into `/api/watchers`; target private-staging runs from Kubernetes watcher plus webhook or OTel paths remain required. |
+| Run export for postmortems | production pilot | API and UI can generate a portable JSON package and downloadable zip archive with timeline, Markdown postmortem, evidence artifacts, decision/evaluation/execution/feedback records, approvals, handoffs, independent override reviews, independent postmortem reviews, vault notes, Merkle snapshot, and latest-event proof; secret-shaped fields are redacted, `MESH_RUN_EXPORT_MAX_BYTES` compacts bulky fields, packages carry delete-after metadata, `scripts/purge_run_exports.py` purges expired generated files only with `--apply`, and pilot readiness blocks until `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`. |
+| Role-stamped approvals and handoffs | production pilot | Implemented; approvals record operator id, roles, source, and event id. `GET /api/approvals` emits `mesh.approval_queue.v1` with pending run, owner, approver roles, blockers, allowed commands, and evidence refs. Operator handoffs emit `mesh.operator_handoff.v1`, persist as run artifacts, and appear in run export packages and archives. |
 | Integration readiness contract per deployment tier | private staging | Implemented in `/api/readiness` with required checks, optional checks, blockers, and connector certification. |
-| Load and concurrency testing | production expansion | Not a current release gate. |
+| Load and concurrency testing | production expansion | `mesh.load_concurrency_rehearsal.v1`, `scripts/verify_load_concurrency_rehearsal.py`, and expansion readiness gate `load_concurrency_rehearsal_verified` now define the proof required for multi-operator load, admission latency, event persistence latency, tenant quota, target-lock conflict, cancellation, stuck-run recovery, and backpressure evidence. Target-environment rehearsal evidence remains required. |
 | Mesh Brain sustained training proof | model-serving production | Gap report says real posttraining is not ready. |
 | MoE training and serving lane | any MoE claim | Not deployable; research only. |
 
@@ -286,6 +303,8 @@ Required artifacts:
 - a five-minute flagship demo path that starts from a real signal and ends with evidence, decision, approval, execution, feedback, and export;
 - a design-partner pilot brief with scope, success metrics, timeline, staffing, support, rollback, data handling, and proof artifacts;
 - reference deployments for local compose, single VM, Kubernetes, private VPC, and air-gapped/offline-adjacent operation;
+- a deployment compatibility matrix that prevents Docker-alternative and Kubernetes-alternative names from becoming false support claims;
+- a fork-in plan for `agentic-operator-core-main/` that converts Kubernetes-agent-runtime assets into Orbital Mesh authority contracts;
 - an OpenAPI or equivalent API contract bundle for platform teams that want to inspect integrations before running the stack;
 - a security review packet with threat model, SBOM, vulnerability scan, secret handling, auth boundary, audit model, and known limitations;
 - a public limitations statement that names what is not production-ready yet.
@@ -337,6 +356,8 @@ This is the extra layer that prevents the roadmap from failing under ordinary pr
 | Security | Threat model every ingress, secret, sandbox, file export, and actuator. Red-team prompt injection and tool-confusion paths as authority attacks, not only model-quality bugs. |
 | Privacy | Classify and redact production logs, prompts, traces, model outputs, vault notes, and exported bundles before retention or training reuse. |
 | Supply chain | Pin and attest build inputs. Record SBOM, vulnerability scan, image digest, dependency lock, policy hashes, and migration version in every release packet. |
+| Deployment compatibility | Keep the runtime contract at the OCI image, env/secret, network, persistence, ingress, readiness, audit, and release-packet layer. Do not add target-specific shortcuts that bypass authority gates. |
+| Forked operator substrate | Preserve source provenance and license notices. Fork CRDs, controllers, Helm, Argo, MCP, LiteLLM, metering, and network policy only after each piece is renamed, threat-modeled, and wired through Orbital Mesh authority checks. |
 | Recovery | Rehearse restore, key rotation, kill switch, watcher pause, bad-policy rollback, corrupted event replay, and state-store failover before pilot expansion. |
 
 The standard is not "works on the happy path." The standard is "fails closed, explains why, preserves evidence, and lets an operator regain control."
@@ -365,9 +386,12 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 
 - No public Internet exposure without authenticated TLS.
 - No production kubeconfig in proposal-lane sandboxes.
-- No direct repo writes from Deep Agents, Goose, Hermes, Evo, or Mesh Brain lanes.
+- No direct repo writes from Deep Agents, Goose, Hermes, or Mesh Brain lanes.
 - No autonomous action without allowlists, policy pass, evaluation pass, rollback metadata, and trust-ladder evidence.
 - No production claim for an adapter classified as unfinished in `docs/integrations.md`.
+- No validated deployment claim for a runtime, orchestrator, or managed platform without target-specific health, readiness, persistence, feedback, audit, rollback, and release-packet evidence.
+- No imported `agentic-operator-core-main/` code in the active runtime without source provenance, license preservation, renamed contracts, authority-gate adaptation, and focused tests.
+- No public kagent or competitor claim from the NineVigil source material until independently verified.
 - No broad blast-radius pilot. Start with one environment, one namespace, one service class, and approval gates.
 - No "best in the world" claim in public material unless backed by external benchmark evidence. Use the defensible claim: bounded, auditable, operator-steerable production remediation.
 
@@ -388,11 +412,13 @@ Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`comm
 10. Add a pilot go/no-go packet generator.
 11. Make live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
 12. Prove Postgres-backed state for run events, memory, and Merkle roots under restart.
-13. Replace or explicitly disable unfinished feature-flag, incident, and audit adapters for pilot deployments.
+13. Keep feature-flag and incident adapters disabled unless certified provider proof is mounted; require external audit-sink proof only before expansion or compliance reliance.
 14. Add a consolidated kill-switch panel before any production pilot.
-15. Package the enterprise evaluation kit and reference architectures from actual working paths.
-16. Package the startup/developer evaluation path with a five-minute demo, thirty-minute staging guide, and sample exported run.
-17. Write community/open-source contribution and governance docs that preserve the commercial boundary.
-18. Write the design-partner packet with pilot scope, success metrics, data handling, rollback, and support model.
-19. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
-20. Write the pilot go/no-go record from observed evidence, not intent.
+15. Package the enterprise evaluation kit and reference architectures from actual working paths, including `mesh.evaluation_kit_packet.v1` sample export and benchmark handoff evidence.
+16. Package the deployment compatibility matrix: Docker Compose and Kubernetes validated, OCI/container runtime compatibility supported by contract, non-core platforms documented as recipes or not planned until proven.
+17. Package the `agentic-operator-core-main/` fork-in plan and import the first contract slice only after provenance, rename, authority-gate, and test requirements are explicit.
+18. Package the startup/developer evaluation path with a five-minute demo, thirty-minute staging guide, and generated sample exported run packet.
+19. Write community/open-source contribution and governance docs that preserve the commercial boundary.
+20. Write the design-partner packet with pilot scope, success metrics, data handling, rollback, and support model.
+21. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
+22. Write the pilot go/no-go record from observed evidence, not intent.

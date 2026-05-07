@@ -105,6 +105,12 @@ test("exposes secondary control-plane, Hermes, agents, and integrations pages", 
   await expect(page.getByText("Development")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
   await expect(page.getByText("Connector Certification Matrix")).toBeVisible();
+  const kubernetesRow = page.locator("tr").filter({ hasText: "Kubernetes actuator" });
+  await expect(kubernetesRow).toBeVisible();
+  await expect(kubernetesRow.getByText("live execution requires explicit context and namespace allowlists")).toBeVisible();
+  await expect(kubernetesRow.getByText("runtime-secret")).toBeVisible();
+  await expect(kubernetesRow.getByText("serviceaccount://mesh/pilot-kubernetes-actuator")).toBeVisible();
+  await expect(kubernetesRow.getByText("rollout-restart")).toBeVisible();
 });
 
 test("keeps run detail topology secondary while preserving canvas modes", async ({ page }) => {
@@ -129,6 +135,25 @@ test("keeps run detail topology secondary while preserving canvas modes", async 
       await expect(unavailable).toBeDisabled();
     }
   }
+});
+
+test("exposes Darkharness packet status on the operator surface", async ({ page }) => {
+  await openFixture(page);
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Evidence Runs" }).click();
+  await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
+  await page.getByRole("button", { name: "Dark Harness" }).click();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dark Harness Packet" })).toBeVisible();
+  await expect(page.getByText("Harness Capabilities")).toBeVisible();
+  await expect(page.getByText("Evidence capture")).toBeVisible();
+  await expect(page.getByText("Action gate exercise")).toBeVisible();
+  await expect(page.getByText("Boundary Status")).toBeVisible();
+  await expect(page.getByText("Claim Boundary")).toBeVisible();
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Pilot Packet" }).click();
+  await expect(page.getByTestId("mesh-view-packets")).toBeVisible();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
 });
 
 test("submits operator note and Hermes chat through steering", async ({ page }) => {

@@ -153,6 +153,10 @@
           "additionalProperties": {},
           "type": "object"
         },
+        "lane_routing": {
+          "additionalProperties": {},
+          "type": "object"
+        },
         "memory_packet": {
           "additionalProperties": {},
           "type": "object"
@@ -170,6 +174,10 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "orchestration_topology": {
+          "additionalProperties": {},
+          "type": "object"
         },
         "run_id": {
           "type": "string"
@@ -215,6 +223,8 @@
         "memory_write_policy",
         "open_questions",
         "agents",
+        "orchestration_topology",
+        "lane_routing",
         "attempts",
         "selected_attempt_id"
       ],
@@ -296,9 +306,6 @@
         "deepagents": {
           "$ref": "#/$defs/IntegrationStatus"
         },
-        "evo": {
-          "$ref": "#/$defs/IntegrationStatus"
-        },
         "goose": {
           "$ref": "#/$defs/IntegrationStatus"
         },
@@ -312,6 +319,10 @@
           "$ref": "#/$defs/IntegrationStatus"
         },
         "optional_checks": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "orchestration_topology": {
           "additionalProperties": {},
           "type": "object"
         },
@@ -343,10 +354,10 @@
         "optional_checks",
         "blockers",
         "connector_certification",
+        "orchestration_topology",
         "promptfoo",
         "hermes",
         "goose",
-        "evo",
         "latentmas",
         "deepagents",
         "vault_path",

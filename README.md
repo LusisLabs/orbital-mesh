@@ -38,6 +38,7 @@ These are the dimensions this codebase is built to support; they match a discipl
 - Supports two evaluation modes:
   - `native` Mesh trajectory evaluation
   - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
+- Emits a native evaluation stack manifest for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix as advisory lanes.
 - Supports three orchestration modes:
   - `native`
   - `goose`
@@ -79,11 +80,11 @@ Runs choose one evaluation mode and one orchestration mode.
 
 ### Evaluation: `native`
 
-Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory.
+Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory. It also emits `stage_results.evaluation_stack`, which maps Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix to Mesh-native artifacts without giving those tools execution authority. Each lane can bind to an existing account through redacted environment-backed connection state.
 
 ### Evaluation: `promptfoo`
 
-Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
+Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but Promptfoo is now one advisory lane inside the native evaluation stack. Evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
 
 ### Orchestration: `native`
 
@@ -631,6 +632,8 @@ Supported configuration variables:
 - `MESH_MAX_RETRY_WINDOW_SECONDS`
 - `MESH_GOOSE_TIMEOUT_SECONDS`
 - `MESH_PROMPTFOO_COMMAND`
+- `MESH_EVAL_INTEGRATION_LANES` — comma-separated advisory lanes for the native evaluation stack; unset, `all`, or `*` emits every lane.
+- `MESH_EVAL_EXPORT_ENABLED` — enables outbound export for configured evaluation accounts; off by default.
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_COMMAND`

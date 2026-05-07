@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 import time
@@ -48,10 +49,10 @@ def main() -> int:
 
 
 def run_rehearsal(*, state_dir: str | None = None) -> dict[str, Any]:
-    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    temp_dir_path: Path | None = None
     if state_dir is None:
-        temp_dir = tempfile.TemporaryDirectory()
-        state_dir = temp_dir.name
+        temp_dir_path = Path(tempfile.mkdtemp(prefix="mesh-authenticated-ingress-"))
+        state_dir = str(temp_dir_path)
     base = Path(state_dir)
     server = None
     thread = None
@@ -253,8 +254,8 @@ def run_rehearsal(*, state_dir: str | None = None) -> dict[str, Any]:
             server.server_close()
         if thread is not None:
             thread.join(timeout=5)
-        if temp_dir is not None:
-            temp_dir.cleanup()
+        if temp_dir_path is not None:
+            shutil.rmtree(temp_dir_path, ignore_errors=True)
 
 
 def _poll_run(base_url: str, run_id: str, stage: str, timeout_seconds: float = 10.0) -> dict[str, Any]:

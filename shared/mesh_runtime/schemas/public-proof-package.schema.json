@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/public-proof-package.schema.json",
+  "title": "PublicProofPackage",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "package_id",
+    "status",
+    "owner",
+    "review_cadence",
+    "components",
+    "raw_secret_material_present"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.public_proof_package.v1"]
+    },
+    "package_id": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "blocked"]
+    },
+    "owner": { "type": "string" },
+    "review_cadence": { "type": "string" },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "component_id",
+          "status",
+          "owner",
+          "summary",
+          "artifact_refs",
+          "verification_commands",
+          "limitations_ref",
+          "public_claim_allowed"
+        ],
+        "properties": {
+          "component_id": {
+            "type": "string",
+            "enum": [
+              "benchmark_report",
+              "architecture_paper",
+              "demo_dataset",
+              "run_export",
+              "limitations_statement"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["ready", "blocked"]
+          },
+          "owner": { "type": "string" },
+          "summary": { "type": "string" },
+          "artifact_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "verification_commands": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "limitations_ref": { "type": "string" },
+          "public_claim_allowed": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "raw_secret_material_present": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

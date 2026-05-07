@@ -27,7 +27,7 @@ from shared.mesh_runtime import (
     build_readiness,
     load_fixture,
 )
-from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
+from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
 
 
 class DeepAgentsAgentMeshTests(unittest.TestCase):
@@ -111,17 +111,13 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
             evaluation=evaluation,
         )
         adapters = {a.agent: a.adapter for a in tasks[0].attempts}
-        self.assertEqual(
-            adapters,
-            {
-                "goose": "native_contract",
-                "hermes": "native_contract",
-                "codex": "native_contract",
-                "claudecode": "native_contract",
-                "openclaw": "native_contract",
-                "evo": "native_contract",
-            },
-        )
+        self.assertEqual(adapters["goose"], "native_contract")
+        self.assertEqual(adapters["hermes"], "native_contract")
+        self.assertEqual(adapters["codex"], "native_contract")
+        self.assertEqual(adapters["claudecode"], "native_contract")
+        self.assertEqual(adapters["openclaw"], "native_contract")
+        self.assertEqual(adapters["temporal"], "native_orchestration_contract")
+        self.assertEqual(set(adapters), set(DEFAULT_AGENT_WORKERS))
 
     def test_deepagents_fabric_uses_deepagents_adapter(self) -> None:
         self.config.agent_fabric_mode = "deepagents"
@@ -179,7 +175,7 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 0.2)
         attempts = tasks[0].attempts
-        self.assertEqual([attempt.agent for attempt in attempts], ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"])
+        self.assertEqual([attempt.agent for attempt in attempts], list(DEFAULT_AGENT_WORKERS))
         for attempt in attempts:
             self.assertEqual(attempt.status, "failed")
             self.assertEqual(attempt.risk_flags, ["agent_mesh_timeout"])
@@ -399,6 +395,169 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertEqual(model, "openai:gpt-4o-mini")
         mock_init.assert_not_called()
 
+    # ------------------------------------------------------------------
+    # Observer-fallback tests — deployments that already configure the
+    # LLM observer (MESH_OBSERVER_API_KEY / MESH_OBSERVER_MODEL /
+    # MESH_OBSERVER_BASE_URL) should not need to set OPENAI_API_KEY or
+    # ANTHROPIC_API_KEY again for deepagents to authenticate. Provider
+    # must match (we never proxy OpenAI through an Anthropic key).
+    # ------------------------------------------------------------------
+
+    def test_observer_fallback_supplies_anthropic_credentials_when_env_missing(self) -> None:
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="anthropic:claude-3-5-sonnet-20241022",
+            observer_enabled=True,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant-fallback",
+            observer_base_url="https://api.anthropic.com",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False):
+            api_key, base_url = deepagents_adapter_module._resolve_deepagents_credentials(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+            warnings = deepagents_adapter_module._model_env_warnings(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+        self.assertEqual(api_key, "sk-ant-fallback")
+        self.assertEqual(base_url, "https://api.anthropic.com")
+        self.assertEqual(warnings, [])
+
+    def test_observer_provider_mismatch_does_not_authorize(self) -> None:
+        # Critical safety property: an OpenAI observer key must never
+        # be handed to an Anthropic client (or vice versa). The observer
+        # fallback is gated on provider equality.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="anthropic:claude-3-5-sonnet-20241022",
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-openai-key",
+            observer_model="gpt-4-turbo",
+        )
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False):
+            api_key, _base_url = deepagents_adapter_module._resolve_deepagents_credentials(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+            warnings = deepagents_adapter_module._model_env_warnings(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+        self.assertEqual(api_key, "")
+        self.assertTrue(warnings)
+        self.assertIn("ANTHROPIC_API_KEY", warnings[0])
+
+    def test_resolve_deepagents_model_string_inherits_observer_when_no_explicit_env(self) -> None:
+        # Default field value, no MESH_DEEPAGENTS_MODEL env, observer
+        # configured for anthropic → effective model should be derived
+        # from observer_provider + observer_model.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            observer_enabled=True,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with patch.dict("os.environ", {"MESH_DEEPAGENTS_MODEL": ""}, clear=False):
+            model = deepagents_adapter_module._resolve_deepagents_model_string(cfg)
+        self.assertEqual(model, "anthropic:claude-haiku-4-5-20251001")
+
+    def test_explicit_deepagents_model_env_takes_precedence_over_observer(self) -> None:
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="openai:gpt-4o-mini",
+            observer_enabled=True,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with patch.dict("os.environ", {"MESH_DEEPAGENTS_MODEL": "openai:gpt-4o-mini"}, clear=False):
+            model = deepagents_adapter_module._resolve_deepagents_model_string(cfg)
+        self.assertEqual(model, "openai:gpt-4o-mini")
+
+    def test_resolve_deepagents_model_passes_observer_key_to_anthropic_client(self) -> None:
+        # End-to-end: build the chat-model object and verify the
+        # observer's api_key + base_url are threaded through to
+        # init_chat_model when the env path is empty.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="anthropic:claude-3-5-sonnet-20241022",
+            observer_enabled=True,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant-fallback",
+            observer_base_url="https://api.anthropic.com",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with (
+            patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False),
+            patch.object(deepagents_adapter_module, "init_chat_model", return_value=sentinel.model) as mock_init,
+        ):
+            result = deepagents_adapter_module._resolve_deepagents_model(
+                "anthropic:claude-3-5-sonnet-20241022", config=cfg,
+            )
+        self.assertIs(result, sentinel.model)
+        mock_init.assert_called_once_with(
+            "anthropic:claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            api_key="sk-ant-fallback",
+            base_url="https://api.anthropic.com",
+        )
+
+    def test_generic_openai_route_pins_use_responses_api_true(self) -> None:
+        # Regression for the bug Cursor's review caught: when
+        # OPENAI_API_KEY is set (or the observer fallback supplies an
+        # OpenAI key), the new generic-OpenAI branch in
+        # ``_resolve_deepagents_model`` pre-initializes the chat model
+        # via ``init_chat_model``. Pre-fix the call omitted
+        # ``use_responses_api=True``, which permanently silently
+        # switched all generic-OpenAI deepagents traffic from the
+        # Responses API to Chat Completions (because
+        # ``create_deep_agent`` passes pre-initialized BaseChatModel
+        # instances through unchanged — the harness profile that
+        # would have set the flag never runs).
+        with (
+            patch.dict("os.environ", {"OPENAI_API_KEY": "sk-test-generic", "OPENAI_BASE_URL": ""}, clear=False),
+            patch.object(deepagents_adapter_module, "init_chat_model", return_value=sentinel.model) as mock_init,
+        ):
+            result = deepagents_adapter_module._resolve_deepagents_model("openai:gpt-4o-mini")
+
+        self.assertIs(result, sentinel.model)
+        # Critical assertion: use_responses_api must be True so the
+        # Responses API path stays selected on the pre-initialized
+        # client.
+        mock_init.assert_called_once_with(
+            "openai:gpt-4o-mini",
+            use_responses_api=True,
+            api_key="sk-test-generic",
+        )
+
+    def test_generic_openai_route_with_observer_fallback_pins_use_responses_api(self) -> None:
+        # Same regression, exercised through the observer-fallback
+        # path (env unset, observer key supplies the credential).
+        # Both paths must pin ``use_responses_api=True``.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="openai:gpt-4o-mini",
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-observer-fallback",
+            observer_base_url="https://api.openai.com",
+            observer_model="gpt-4o-mini",
+        )
+        with (
+            patch.dict("os.environ", {"OPENAI_API_KEY": "", "OPENAI_BASE_URL": ""}, clear=False),
+            patch.object(deepagents_adapter_module, "init_chat_model", return_value=sentinel.model) as mock_init,
+        ):
+            result = deepagents_adapter_module._resolve_deepagents_model(
+                "openai:gpt-4o-mini", config=cfg,
+            )
+
+        self.assertIs(result, sentinel.model)
+        kwargs = mock_init.call_args.kwargs
+        self.assertEqual(kwargs.get("use_responses_api"), True)
+        self.assertEqual(kwargs.get("api_key"), "sk-observer-fallback")
+        self.assertEqual(kwargs.get("base_url"), "https://api.openai.com")
+
 
 class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
     def test_completed_run_records_deepagents_attempts_when_mocked(self) -> None:
@@ -469,7 +628,7 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                 )["tasks"]
                 self.assertEqual(
                     [a["adapter"] for a in api_tasks[0]["attempts"]],
-                    ["deepagents"] * 6,
+                    ["deepagents"] * len(DEFAULT_AGENT_WORKERS),
                 )
 
                 agent_note = json.loads(

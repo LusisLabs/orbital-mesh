@@ -1,0 +1,179 @@
+{
+  "title": "DesignPartnerPacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "packet_id",
+    "generated_at",
+    "partner",
+    "pilot_scope",
+    "success_metrics",
+    "data_handling",
+    "support_model",
+    "rollback_plan",
+    "consent",
+    "evidence_summary",
+    "raw_secret_material_present"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.design_partner_packet.v1"]
+    },
+    "packet_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "partner": {
+      "type": "object",
+      "required": ["partner_id", "technical_owner", "escalation_channel", "pilot_window_days"],
+      "additionalProperties": false,
+      "properties": {
+        "partner_id": { "type": "string" },
+        "technical_owner": { "type": "string" },
+        "escalation_channel": { "type": "string" },
+        "pilot_window_days": { "type": "integer" }
+      }
+    },
+    "pilot_scope": {
+      "type": "object",
+      "required": [
+        "environment",
+        "kubernetes_contexts",
+        "namespaces",
+        "service_classes",
+        "approval_gate_forced",
+        "live_execution_limited",
+        "feature_flag_adapter_disabled",
+        "incident_adapter_disabled",
+        "proposal_lanes_advisory_only",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "environment": { "type": "string" },
+        "kubernetes_contexts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "service_classes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "approval_gate_forced": { "type": "boolean" },
+        "live_execution_limited": { "type": "boolean" },
+        "feature_flag_adapter_disabled": { "type": "boolean" },
+        "incident_adapter_disabled": { "type": "boolean" },
+        "proposal_lanes_advisory_only": { "type": "boolean" },
+        "evidence_ref": { "type": "string" }
+      }
+    },
+    "success_metrics": {
+      "type": "object",
+      "required": [
+        "allowed_action_with_feedback",
+        "denied_action_with_blocker",
+        "no_proposal_lane_credentials",
+        "operator_identity_on_mutations",
+        "kill_switch_rehearsed",
+        "merkle_proofs_available",
+        "postgres_restart_proof_passed",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "allowed_action_with_feedback": { "type": "boolean" },
+        "denied_action_with_blocker": { "type": "boolean" },
+        "no_proposal_lane_credentials": { "type": "boolean" },
+        "operator_identity_on_mutations": { "type": "boolean" },
+        "kill_switch_rehearsed": { "type": "boolean" },
+        "merkle_proofs_available": { "type": "boolean" },
+        "postgres_restart_proof_passed": { "type": "boolean" },
+        "evidence_ref": { "type": "string" }
+      }
+    },
+    "data_handling": {
+      "type": "object",
+      "required": [
+        "retention_days",
+        "training_use_opt_in",
+        "audit_records_excluded_from_training_by_default",
+        "raw_secrets_disallowed",
+        "kubeconfig_contents_disallowed",
+        "private_keys_disallowed",
+        "customer_payloads_excluded",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "retention_days": { "type": "integer" },
+        "training_use_opt_in": { "type": "boolean" },
+        "audit_records_excluded_from_training_by_default": { "type": "boolean" },
+        "raw_secrets_disallowed": { "type": "boolean" },
+        "kubeconfig_contents_disallowed": { "type": "boolean" },
+        "private_keys_disallowed": { "type": "boolean" },
+        "customer_payloads_excluded": { "type": "boolean" },
+        "evidence_ref": { "type": "string" }
+      }
+    },
+    "support_model": {
+      "type": "object",
+      "required": ["mesh_support_hours", "partner_owner_ref", "emergency_owner", "postmortem_packet_required", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "mesh_support_hours": { "type": "string" },
+        "partner_owner_ref": { "type": "string" },
+        "emergency_owner": { "type": "string" },
+        "postmortem_packet_required": { "type": "boolean" },
+        "evidence_ref": { "type": "string" }
+      }
+    },
+    "rollback_plan": {
+      "type": "object",
+      "required": ["plan_ref", "kill_switch_ref", "rollback_metadata_required", "human_review_on_ambiguous_execution"],
+      "additionalProperties": false,
+      "properties": {
+        "plan_ref": { "type": "string" },
+        "kill_switch_ref": { "type": "string" },
+        "rollback_metadata_required": { "type": "boolean" },
+        "human_review_on_ambiguous_execution": { "type": "boolean" }
+      }
+    },
+    "consent": {
+      "type": "object",
+      "required": [
+        "partner_approved",
+        "mesh_approved",
+        "real_user_experiment_consent_required",
+        "real_user_experiment_consent_ref",
+        "data_handling_terms_ref",
+        "signed_at"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "partner_approved": { "type": "boolean" },
+        "mesh_approved": { "type": "boolean" },
+        "real_user_experiment_consent_required": { "type": "boolean" },
+        "real_user_experiment_consent_ref": { "type": ["string", "null"] },
+        "data_handling_terms_ref": { "type": "string" },
+        "signed_at": { "type": "string" }
+      }
+    },
+    "evidence_summary": {
+      "type": "object",
+      "required": ["go_no_go_status", "go_no_go_packet_sha256", "release_provenance_sha256", "run_export_ref", "readiness_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "go_no_go_status": { "type": "string" },
+        "go_no_go_packet_sha256": { "type": "string" },
+        "release_provenance_sha256": { "type": "string" },
+        "run_export_ref": { "type": "string" },
+        "readiness_ref": { "type": "string" }
+      }
+    },
+    "raw_secret_material_present": { "type": "boolean" }
+  }
+}

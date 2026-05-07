@@ -1,0 +1,4 @@
+[workspace]
+members = ["mesh-gpui"]
+exclude = ["latent-mesh/LatentMAS"]
+resolver = "3"

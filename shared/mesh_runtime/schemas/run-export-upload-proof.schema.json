@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/run-export-upload-proof.schema.json",
+  "title": "RunExportUploadProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "run_id",
+    "export_id",
+    "provider",
+    "restore_tested",
+    "restore_ref",
+    "uploads"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.run_export_upload_proof.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "run_id": { "type": "string" },
+    "export_id": { "type": "string" },
+    "provider": { "type": "string" },
+    "restore_tested": { "type": "boolean" },
+    "restore_ref": { "type": "string" },
+    "uploads": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": [
+          "artifact_type",
+          "blob_uri",
+          "sha256",
+          "byte_count",
+          "content_type",
+          "uploaded_at",
+          "provider"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "artifact_type": {
+            "type": "string",
+            "enum": ["package", "archive"]
+          },
+          "blob_uri": { "type": "string" },
+          "sha256": { "type": "string" },
+          "byte_count": { "type": "integer" },
+          "content_type": { "type": "string" },
+          "uploaded_at": { "type": "string" },
+          "provider": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -23,8 +23,8 @@ plane. Adding a second signal source means editing the daemon.
 
 `AgentMeshService`
 ([services/orchestrator/agent_mesh.py](../../services/orchestrator/agent_mesh.py))
-fans out every run to six hardcoded "lanes": `goose`, `hermes`, `codex`,
-`claudecode`, `openclaw`, `evo`. Each lane has a distinct role:
+fans out every run to core lanes plus native orchestration platform lanes:
+`goose`, `hermes`, `codex`, `claudecode`, and `openclaw`. Each core lane has a distinct role:
 
 | Lane | System-prompt role |
 |------|-------------------|
@@ -33,7 +33,6 @@ fans out every run to six hardcoded "lanes": `goose`, `hermes`, `codex`,
 | `codex` | patch proposal |
 | `claudecode` | review |
 | `openclaw` | staging validation |
-| `evo` | benchmark advisory |
 
 But:
 
@@ -252,7 +251,7 @@ keyed on `(signal_source, decision_type)`:
 ```python
 _LANE_ROUTING: dict[str, list[str]] = {
     "kubernetes": ["goose", "codex", "claudecode", "openclaw"],
-    "feature_flag": ["hermes", "openclaw", "evo"],
+    "feature_flag": ["hermes", "openclaw"],
     "argocd": ["goose", "openclaw"],
     "slo_breach": ["hermes", "goose"],
     "log_pattern": ["hermes", "codex"],

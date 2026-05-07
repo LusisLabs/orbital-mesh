@@ -20,7 +20,10 @@ REQUIRED_PATHS = (
     "docs/security-audit-readiness.md",
     "docs/production-hardening-records.md",
     "docs/release-provenance.md",
+    "config/procurement-security.package.json",
+    "latent-mesh/LatentMAS/osv-scanner.toml",
     "scripts/generate_release_provenance.py",
+    "scripts/verify_procurement_security_package.py",
 )
 
 REQUIRED_MARKERS = {
@@ -56,10 +59,13 @@ REQUIRED_MARKERS = {
         "cron:",
         "verify_security_audit_readiness.py --json",
         "actions/dependency-review-action@",
-        "gitleaks/gitleaks-action@",
-        "google/osv-scanner-action@",
+        "GITLEAKS_LINUX_X64_SHA256",
+        "gitleaks detect --source=.",
+        "ghcr.io/google/osv-scanner@sha256:",
+        "osv-lockfile-scan.json",
         "npm audit --audit-level=high",
-        "EXTERNAL_DEPENDENCY_AUDIT_ON_PRIVATE",
+        "npm-audit.json",
+        "GHAS_DEPENDENCY_REVIEW_ON_PRIVATE",
         "github/codeql-action/init@",
         "ossf/scorecard-action@",
     ),
@@ -68,17 +74,35 @@ REQUIRED_MARKERS = {
         "Regular Audit Cadence",
         "E2E Audit Commands",
         "Audit Evidence Package",
+        "Procurement Security Package",
         "OpenSSF Best Practices Badge",
     ),
     "docs/production-hardening-records.md": (
         "OpenSSF",
         "scripts/verify_security_audit_readiness.py",
+        "procurement_security_package_verified",
         "security audit workflow",
+    ),
+    "config/procurement-security.package.json": (
+        "mesh.procurement_security_package.v1",
+        "sso_identity",
+        "audit_export",
+        "retention_controls",
+        "data_boundaries",
+        "deployment_modes",
+        "security_answers",
+        "support_escalation",
+        "known_limits",
     ),
     "docs/release-provenance.md": (
         "SBOM path",
         "vulnerability scan path",
         "builder identity",
+    ),
+    "latent-mesh/LatentMAS/osv-scanner.toml": (
+        "RUSTSEC-2024-0436",
+        "tokenizers",
+        "2026-08-06",
     ),
 }
 

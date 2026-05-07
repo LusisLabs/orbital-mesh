@@ -1,0 +1,140 @@
+{
+  "fixture_id": "perennial.reservoir_denial.fixture.v1",
+  "description": "Denied raw sensitive reservoir egress request.",
+  "contracts": {
+    "sensitive_reservoir": {
+      "contract": "perennial.sensitive_reservoir.v1",
+      "reservoir_id": "reservoir_security_findings",
+      "name": "Security findings and secret-adjacent evidence",
+      "owner": {
+        "team": "security",
+        "service_owner": "owner.security",
+        "data_steward": "steward.security"
+      },
+      "classification": {
+        "data_classes": ["security", "secret_adjacent", "regulated"],
+        "sensitivity": "restricted",
+        "trainable": "prohibited"
+      },
+      "locality": {
+        "boundary": "on_prem",
+        "region": "customer-a-dc1",
+        "storage_ref": "postgres://mesh/security_findings",
+        "external_egress_default": "deny"
+      },
+      "access_policy": {
+        "allowed_purposes": ["rca", "audit", "policy_check"],
+        "allowed_compute_modes": ["in_place", "hash_only", "aggregate_only"],
+        "approval_required": true,
+        "retention_days": 90
+      },
+      "projection": {
+        "redaction_profile": "security-no-snippets",
+        "max_snippet_chars": 0,
+        "hash_algorithm": "sha256",
+        "allowed_index_fields": ["finding_type", "severity", "hash"]
+      },
+      "crypto": {
+        "encryption_profile": "customer-managed-aes256",
+        "signing_profile": null,
+        "pqc_profile": null
+      }
+    },
+    "agent_action_record": {
+      "contract": "perennial.agent_action_record.v1",
+      "action_record_id": "aar_reservoir_denial_001",
+      "observed_at": "2026-05-05T14:10:00Z",
+      "actor": {
+        "actor_type": "model",
+        "actor_id": "external-llm.request",
+        "display_name": "External model request",
+        "authority_source": "unknown"
+      },
+      "action": {
+        "action_class": "deny",
+        "action_type": "raw_reservoir_export",
+        "target": {
+          "environment": "pilot",
+          "service": null,
+          "namespace": null,
+          "resource_ref": "reservoir/reservoir_security_findings",
+          "reservoir_id": "reservoir_security_findings"
+        },
+        "production_impact": "none"
+      },
+      "context": {
+        "run_id": "run_reservoir_denial_001",
+        "run_event_id": "evt_reservoir_denial",
+        "decision_id": null,
+        "evaluation_id": null,
+        "feedback_id": null,
+        "source_system": "darkharness-boundary-check"
+      },
+      "governance": {
+        "risk_tier": "unacceptable",
+        "autonomy_tier": "no_action",
+        "policy_refs": ["policy://darkharness/pilot/raw-egress-deny"],
+        "evidence_refs": ["reservoir://reservoir_security_findings/policy"],
+        "proof_refs": ["proof_reservoir_denial"],
+        "operator_authority_refs": []
+      },
+      "outcome": {
+        "status": "denied",
+        "denial_reasons": ["raw reservoir egress denied by default"],
+        "rollback_ref": null,
+        "side_effect_refs": []
+      },
+      "boundary": {
+        "tenant_id": "customer-a",
+        "data_boundary": "on_prem",
+        "reservoir_refs": ["reservoir_security_findings"]
+      }
+    },
+    "governance_commit": {
+      "contract": "perennial.governance_commit.v1",
+      "governance_commit_id": "gc_reservoir_denial_001",
+      "created_at": "2026-05-05T14:10:03Z",
+      "commit_type": "deny_action",
+      "subject": {
+        "run_id": "run_reservoir_denial_001",
+        "trigger_id": null,
+        "decision_id": null,
+        "evaluation_id": null,
+        "action_record_id": "aar_reservoir_denial_001"
+      },
+      "state_refs": {
+        "epistemic_state_id": "epi_allowed_restart_001",
+        "ontological_state_id": "onto_allowed_restart_001"
+      },
+      "inputs": {
+        "evidence_refs": ["reservoir://reservoir_security_findings/policy"],
+        "scenario_analysis_ref": null,
+        "policy_refs": ["policy://darkharness/pilot/raw-egress-deny"],
+        "remediation_safety_ref": null,
+        "trust_ladder_ref": null,
+        "readiness_ref": "readiness://pilot/go"
+      },
+      "authority": {
+        "operator_required": true,
+        "operator_approval_refs": [],
+        "service_owner_refs": ["owner.security"]
+      },
+      "action": {
+        "action_type": "raw_reservoir_export",
+        "target_ref": "reservoir://reservoir_security_findings",
+        "production_impact": "none",
+        "rollback_ref": null
+      },
+      "proof": {
+        "proof_envelope_id": "proof_reservoir_denial",
+        "merkle_root": "sha256:reservoir-denial-root",
+        "signature_ref": null
+      },
+      "outcome": {
+        "gate_result": "denied",
+        "reasons": ["raw reservoir egress denied by default", "external model calls deny by default"],
+        "expires_at": null
+      }
+    }
+  }
+}

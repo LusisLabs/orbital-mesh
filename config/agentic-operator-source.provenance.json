@@ -1,0 +1,122 @@
+{
+  "version": "mesh.agentic_operator_source_provenance.v1",
+  "generated_at": "2026-05-06T00:00:00Z",
+  "source_root": "agentic-operator-core-main",
+  "source_commit": null,
+  "source_commit_status": "unavailable_import_snapshot",
+  "source_snapshot_sha256": "d195618d87b95bcb58c55c28b6b2d981c606faa8df0b0c8f0e40e4f3813d2b97",
+  "license": "Apache-2.0",
+  "license_path": "agentic-operator-core-main/LICENSE",
+  "runtime_posture": "source-input-only",
+  "active_runtime": false,
+  "wholesale_copy_allowed": false,
+  "comparative_claims_allowed": false,
+  "required_authority_gates": [
+    "ownership_boundary",
+    "tenant_boundary",
+    "policy_lifecycle",
+    "evidence_sufficiency",
+    "operator_approval",
+    "rollback_authority",
+    "timeline_proof",
+    "release_provenance"
+  ],
+  "forbidden_credentials": [
+    "production_actuator_credentials",
+    "production_kubeconfig",
+    "repository_write_credentials"
+  ],
+  "source_paths": [
+    {
+      "path": "agentic-operator-core-main/api/v1alpha1/agentworkload_types.go",
+      "import_value": "AgentWorkload CRD shape for objective, agents, providers, orchestration, workflow refs, proposed actions, executed actions, and status conditions.",
+      "fork_posture": "schema-seed-only",
+      "orbital_mesh_adaptation": "Add ownership, policy hash, evidence sufficiency, rollback authority, export permissions, and no auto-approval bypass.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/api/v1alpha1/tenant_types.go",
+      "import_value": "Tenant namespace, provider, quota, SLA, network policy, and status model.",
+      "fork_posture": "schema-seed-only",
+      "orbital_mesh_adaptation": "Add data boundary, customer boundary, owner, approver, retention, export, and legal action scope.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/internal/controller",
+      "import_value": "Reconciliation patterns for workload and tenant status.",
+      "fork_posture": "reference-only",
+      "orbital_mesh_adaptation": "Every reconcile mutation must pass Mesh admission, policy, evidence, evaluation, approval, rollback, and proof gates.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/pkg/argo",
+      "import_value": "Argo Workflow creation, status tracking, timeout, artifact mapping, and suspend-gate lifecycle.",
+      "fork_posture": "scheduler-seed-only",
+      "orbital_mesh_adaptation": "Preserve suspend gates only when mapped to Mesh operator approval and target locks.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/pkg/multitenancy",
+      "import_value": "Tenant resolver, quota, SLA, and isolation primitives.",
+      "fork_posture": "tenant-boundary-seed-only",
+      "orbital_mesh_adaptation": "Connect quota and isolation to run admission, ownership boundary, export policy, and audit events.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/pkg/finops",
+      "import_value": "Cost reporter interface and no-op reporter shape.",
+      "fork_posture": "interface-seed-only",
+      "orbital_mesh_adaptation": "Cost and budget can block admission but cannot weaken safety gates.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/pkg/llm",
+      "import_value": "Provider routing and LiteLLM-oriented abstractions.",
+      "fork_posture": "connector-seed-only",
+      "orbital_mesh_adaptation": "Import only as a certified proposal connector with no production actuator credentials.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/pkg/mcp",
+      "import_value": "MCP server/client patterns for agent-callable workload provisioning.",
+      "fork_posture": "proposal-interface-seed-only",
+      "orbital_mesh_adaptation": "MCP cannot receive production kubeconfig, actuator credentials, or repository write authority.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/charts",
+      "import_value": "Helm umbrella chart, subcharts, RBAC, webhook, network policy, and shared services.",
+      "fork_posture": "packaging-seed-only",
+      "orbital_mesh_adaptation": "Rename chart values, labels, namespaces, images, CRD groups, and add readiness plus release-provenance gates.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/config/crd",
+      "import_value": "Generated CRD manifests.",
+      "fork_posture": "manifest-seed-only",
+      "orbital_mesh_adaptation": "Regenerate after Orbital Mesh names, authority fields, and schema compatibility tests exist.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/config/rbac",
+      "import_value": "RBAC manifests and Argo permissions.",
+      "fork_posture": "rbac-seed-only",
+      "orbital_mesh_adaptation": "Reduce to least-privilege pilot namespace authority and keep proposal lanes without production credentials.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/config/policies",
+      "import_value": "OPA policy samples for budgets, egress, and model allowlists.",
+      "fork_posture": "policy-fixture-seed-only",
+      "orbital_mesh_adaptation": "Convert only through policy lifecycle versioning, owner approval, dry-run impact preview, rollback, and signed hashes.",
+      "imported_paths": []
+    },
+    {
+      "path": "agentic-operator-core-main/cmd/agentctl",
+      "import_value": "CLI workflow verbs for status, approve, reject, cost, and descriptions.",
+      "fork_posture": "workflow-reference-only",
+      "orbital_mesh_adaptation": "Mine verbs for parity while keeping browser UI and Mesh APIs as authority surfaces.",
+      "imported_paths": []
+    }
+  ]
+}

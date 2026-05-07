@@ -7,27 +7,28 @@
 - Evaluation modes:
   - `native` runs the `services.evaluation.mesh_eval` package: deterministic contract checks, Mesh trajectory scoring, verifier output, and LatentMAS tokenizer metadata in-process.
   - `promptfoo` is legacy-compatible input only. It no longer controls pass/fail; Mesh still evaluates `task -> trace -> verifier -> scorer -> memory`.
+  - Native evaluation emits `stage_results.evaluation_stack` for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix. These are advisory lanes mapped to Mesh artifacts, not approval authorities.
 - Orchestration modes:
   - `native` keeps orchestration in-process through the bounded local actuators.
   - `goose` runs `services/orchestrator/goose_bridge.py`, which invokes the configured Goose command and returns structured review metadata before actuation.
   - `hermes` runs `services/orchestrator/hermes_bridge.py`, which invokes the configured Hermes command and returns structured review metadata before actuation.
 - Proposal lanes:
-  - `evo` is bounded in Mesh. Readiness verifies the configured Evo CLI, agent tasks record whether a bounded code-remediation run is suitable for Evo discovery or benchmark preparation, and operator steering can explicitly launch a scoped Evo bootstrap or status check for eligible runs.
+  - Native orchestration platform lanes are built into agent tasks for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n. They emit evaluator-contract metadata and integration evidence requirements inside Mesh; they are not alternate orchestration modes and do not replace Mesh authority.
 - Agent fabric modes:
   - `native` keeps agent-task lanes as deterministic `native_contract` artifacts.
-  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw/Evo proposal lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
+  - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw plus the native orchestration platform lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
 
 ## Environment variables
 
 - `MESH_PROMPTFOO_COMMAND`
+- `MESH_EVAL_INTEGRATION_LANES`
+- `MESH_EVAL_EXPORT_ENABLED`
 - `MESH_GOOSE_COMMAND`
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_RUN_TIMEOUT_SECONDS`
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_HERMES_RUN_TIMEOUT_SECONDS`
-- `MESH_EVO_COMMAND`
-- `MESH_EVO_COMMAND_TIMEOUT_SECONDS`
 
 Promptfoo readiness may still appear for older stacks, but the active evaluation
 artifacts are `task_trace`, `trajectory_score`, `verifier_output`, and
@@ -42,6 +43,7 @@ inspection and never blocks execution.
 - `MESH_EVAL_LATENTMAS_TIMEOUT_SECONDS`
 - `MESH_READINESS_PROBE_TIMEOUT_SECONDS`
 - `MESH_AGENT_FABRIC_MODE`
+- `MESH_AGENT_MESH_AGENTS`
 - `MESH_DEEPAGENTS_MODEL`
 - `MESH_DEEPAGENTS_TIMEOUT_SECONDS`
 - `MESH_DEEPAGENTS_WORKSPACE_ROOT`
@@ -56,6 +58,14 @@ If `setup_integrations.py` has already written a command into `.mesh-runtime-sta
 `mesh_eval` is the package boundary for the Promptfoo replacement. It packages
 the native trajectory evaluator with the LatentMAS tokenizer boundary so every
 task trace records the context-budget basis used for evaluation.
+
+The full advisory framework map is documented in
+[`docs/evaluation-integrations.md`](./evaluation-integrations.md).
+That document also lists the account-binding variables for Promptfoo,
+LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave,
+Maxim AI, ZenML, and Arize Phoenix. Mesh records redacted connection state for
+configured accounts; outbound export remains disabled unless
+`MESH_EVAL_EXPORT_ENABLED=true` or the lane-specific export flag is set.
 
 Set either `MESH_EVAL_TOKENIZER_JSON` or `MESH_EVAL_SENTENCEPIECE_MODEL`, not
 both. If neither is set, `mesh_eval` records the explicit heuristic fallback.
@@ -128,7 +138,6 @@ Legacy host-driven e2e overlay variables:
 - Promptfoo readiness checks the resolved Promptfoo command.
 - Goose readiness checks the resolved Goose bridge target and reports provider/profile warnings when configuration is incomplete.
 - Hermes readiness checks the resolved Hermes bridge target and reports the resolved command description.
-- Evo readiness runs the resolved command with `--version` and only reports ready when the output identifies `evo-hq-cli`. The unrelated PyPI `evo` package is reported as an unexpected package.
 - Readiness probes run concurrently, use `MESH_READINESS_PROBE_TIMEOUT_SECONDS` for each generic CLI probe, and are cached briefly by the control plane so one slow optional integration does not serialize every `/api/readiness` or system stream response.
 - Deep Agents readiness reports:
   - disabled when `MESH_AGENT_FABRIC_MODE` is not `deepagents`
@@ -156,8 +165,11 @@ Goose no longer probes installed Ollama models during integration resolution. If
 | Native evaluation/orchestration modes | Intentional deterministic local modes | Used for CI and local smoke paths; live action still depends on the relevant actuator allowlists and execution flags. |
 
 Paths classified as unfinished production adapters must not be presented as
-production integrations in release notes or readiness output. Paths classified
-as intentional safety defaults are acceptable only when their operational docs
+production integrations in release notes or readiness output. In the staging
+readiness profile, their connector contracts are online as deterministic dry-run
+or fixture-intake paths only. Pilot readiness still blocks when provider
+credentials are present without a passing provider proof. Paths classified as
+intentional safety defaults are acceptable only when their operational docs
 state the enablement flags, allowlists, and failure behavior.
 
 `GET /api/readiness` exposes a machine-readable `connector_certification` map.
@@ -166,39 +178,11 @@ Certification states are documented in
 separate from live probe readiness: a connector can be reachable while still
 classified as `proposal-only`, `unfinished`, or `mock`.
 
-## Evo proposal lane
-
-Use a globally installed `evo-hq-cli`:
-
-```bash
-MESH_EVO_COMMAND=evo
-```
-
-Or point Mesh at the vendored source checkout when `uv` is available in the runtime:
-
-```bash
-MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"
-```
-
-The stack image now installs `uv` into `/usr/local/bin`, so this command remains valid after the container drops from `root` to the non-root `mesh` user.
-
-Mesh stores Evo readiness and agent-task recommendations by default. Evo execution is not part of normal run progression; it requires an explicit `launch_evo` steering command on an eligible run.
-
-`launch_evo` rules:
-
-- accepted only when a run is paused at `evaluation_ready` or after completion
-- requires `evo.ready == true`
-- requires a `repo_patch_service` decision plus `repo_path`, `allowed_paths`, and `test_commands`
-- requires `target_path` to stay inside the run's `allowed_paths`
-- requires `benchmark_command` when `.evo/meta.json` is not already present
-
-`launch_evo` records run-scoped artifacts under `evo_launches`, writes an `Evo/<run_id>.md` vault note, and emits `integration_name="evo"` events as the launch moves through queued, running, and completed or failed states.
-
-Operational boundary:
-
-- Mesh may run `evo status` for an existing workspace or `evo init`, `evo new`, and `evo run` for an explicitly steered bounded bootstrap.
-- Mesh does not run `evo optimize`, create pull requests, merge branches, or bypass evaluation and operator gates.
-- Evo workspace state (`.evo/`), benchmark instrumentation, worktrees, and experiment commits must not be committed to `main` as a side effect of readiness or agent-task recording.
+For staging, readiness synthesizes Mesh-native fallback status for optional
+Promptfoo, Hermes, Goose, LatentMAS, and Deep Agents lanes when their external
+CLI or sidecar is absent. That makes the contract online for staging without
+granting approval, repository-write, Kubernetes, feature-flag, incident-provider,
+or production actuator authority.
 
 ## Deep Agents agent fabric
 

@@ -1,0 +1,255 @@
+{
+  "title": "EcsFargatePromotionProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "operator_id",
+    "target_id",
+    "environment",
+    "aws_account_boundary",
+    "image",
+    "release_provenance",
+    "health",
+    "readiness",
+    "ingress_identity",
+    "persistence",
+    "feedback",
+    "audit",
+    "rollback"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.ecs_fargate_promotion_proof.v1"]
+    },
+    "proof_id": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "operator_id": {
+      "type": "string"
+    },
+    "target_id": {
+      "type": "string",
+      "enum": ["ecs_fargate"]
+    },
+    "environment": {
+      "type": "string"
+    },
+    "aws_account_boundary": {
+      "type": "object",
+      "required": [
+        "account_id",
+        "region",
+        "cluster_arn",
+        "service_arn",
+        "task_definition_arn",
+        "execution_role_arn",
+        "task_role_arn",
+        "secret_refs",
+        "raw_secret_material_present",
+        "public_ingress"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "account_id": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        },
+        "cluster_arn": {
+          "type": "string"
+        },
+        "service_arn": {
+          "type": "string"
+        },
+        "task_definition_arn": {
+          "type": "string"
+        },
+        "execution_role_arn": {
+          "type": "string"
+        },
+        "task_role_arn": {
+          "type": "string"
+        },
+        "secret_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "raw_secret_material_present": {
+          "type": "boolean"
+        },
+        "public_ingress": {
+          "type": "boolean"
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "required": ["tag", "digest"],
+      "additionalProperties": false,
+      "properties": {
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        }
+      }
+    },
+    "release_provenance": {
+      "type": "object",
+      "required": ["status", "packet_sha256", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "packet_sha256": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "health": {
+      "type": "object",
+      "required": ["status", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "readiness": {
+      "type": "object",
+      "required": ["status", "evidence_ref", "blockers"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ingress_identity": {
+      "type": "object",
+      "required": [
+        "tls_terminated",
+        "sso_enforced",
+        "mesh_headers_stripped",
+        "operator_headers_stamped",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tls_terminated": {
+          "type": "boolean"
+        },
+        "sso_enforced": {
+          "type": "boolean"
+        },
+        "mesh_headers_stripped": {
+          "type": "boolean"
+        },
+        "operator_headers_stamped": {
+          "type": "boolean"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "required": ["state_backend", "database_secret_ref", "restart_proof_ref", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "state_backend": {
+          "type": "string"
+        },
+        "database_secret_ref": {
+          "type": "string"
+        },
+        "restart_proof_ref": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "feedback": {
+      "type": "object",
+      "required": ["status", "source", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "required": ["status", "sink_ref", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "sink_ref": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "required": ["status", "plan_ref", "rehearsal_ref", "evidence_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "plan_ref": {
+          "type": "string"
+        },
+        "rehearsal_ref": {
+          "type": "string"
+        },
+        "evidence_ref": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

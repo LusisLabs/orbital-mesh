@@ -1,0 +1,119 @@
+# Darkharness Operator Runbook
+
+Darkharness packets are read-only governance exports. Postgres remains authoritative
+for runs, events, memory, and audit state; packet endpoints must not write packet
+artifacts, run events, vault notes, or side effects.
+
+## Endpoints
+
+- `GET /api/runs/{run_id}/darkharness-packet`: materializes one run into a
+  Darkharness packet when the run has timeline, decision, evaluation, Merkle,
+  scenario analysis, registry, reservoir, and policy evidence.
+- `GET /api/darkharness/pilot-packet`: materializes the pilot checkpoint across
+  observed runs after `/api/pilot/go-no-go` returns `status: go`.
+- `GET /api/pilot/go-no-go`: source of readiness, allowed action, denied
+  action, Merkle, Mesh Brain model-kernel, live-serving, rollback drill, and
+  rollback-plan predicates.
+
+## Operator Flow
+
+1. Confirm `/api/readiness` is `ready` for the pilot profile.
+2. Confirm `/api/pilot/go-no-go` is `go` and `missing_evidence` is empty.
+3. Open the allowed remediation run and verify the operator approval record,
+   action target, rollback metadata, and Merkle proof.
+4. Open the denied-action run and verify the blocker reason is explicit.
+5. Verify Mesh Brain model-kernel, live-serving, and rollback drill run ids are
+   listed in the go/no-go packet.
+6. Export `GET /api/darkharness/pilot-packet` for the checkpoint packet.
+7. If a single run needs inspection, export
+   `GET /api/runs/{run_id}/darkharness-packet`.
+
+## Live Local Proof
+
+Run the local verifier before treating Darkharness as end-to-end tested:
+
+```bash
+PYTHONPATH=. scripts/verify_darkharness_live_packet.py --json
+```
+
+The verifier starts a local control-plane server and an OpenAI-compatible mock
+serving backend, executes one approved live Kubernetes remediation through a
+fake allowlisted `kubectl`, records one denied action, runs Mesh Brain model
+kernel/live-smoke/rollback probes, and validates:
+
+- `GET /api/runs/{approved_run_id}/darkharness-packet`
+- `GET /api/runs/{denied_run_id}/darkharness-packet`
+- `GET /api/darkharness/pilot-packet`
+
+The proof is local and deterministic. It is not production serving proof, but it
+does verify Darkharness packets against real control-plane run ids rather than
+seeded test sessions.
+
+## Evidence Adapter Coverage
+
+Darkharness exports typed Perennial action attestations for remediation safety,
+trust-ladder ceiling, readiness gaps, operator approval provenance, rollback
+plan metadata, and Mesh Brain artifact lanes. These records are projections over
+existing run/export state; packet generation does not execute remediation,
+training, serving, rollback drill, or promotion work.
+
+Reservoir projections must go through `project_reservoir_access()`. The helper
+allows only configured purposes and compute modes, emits hash-only,
+aggregate-only, redacted, or in-place projection metadata, and returns a denial
+record instead of raw data when a request violates the reservoir policy.
+
+## Signature Configuration
+
+Set `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH` to an Ed25519 private key PEM
+for public-key packet signatures. `MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM`
+can carry the same PEM inline for local tests. `MESH_DARKHARNESS_SIGNING_KEY`
+remains a local HMAC integrity fallback, not a public-key signature.
+
+PQC signature, KEM, and ZK providers are intentionally fail-closed. If no real
+provider is configured, `CryptoProviderRegistry` raises `NotImplementedError`
+and packets retain those fields as proposed proof hooks only.
+
+## Blocked States
+
+- `decision_record_present`, `evaluation_record_present`,
+  `scenario_analysis_present`, `merkle_root_present`, or `merkle_proof_valid`:
+  the selected run is not packet-eligible. Re-run or repair the source run
+  evidence; do not fabricate Perennial records.
+- `registry_invalid:*`: `MESH_DARKHARNESS_REGISTRY_PATH` points to a missing or
+  invalid registry, or the registry violates on-prem, egress, external-model, or
+  approval boundaries.
+- `policy_violation:production_action_has_operator_approval`: an allowed
+  production-impacting action lacks an approval record.
+- `policy_violation:raw_reservoir_egress_denied` or
+  `policy_violation:external_model_calls_denied_by_default`: the pilot scope is
+  not safe for Darkharness export.
+- `allowed_remediation_run_present` or `denied_action_run_present`: go/no-go may
+  have evidence, but no run also satisfies Darkharness packet requirements.
+- `rollback_drill_run_export_present`: go/no-go reports rollback evidence, but
+  the checkpoint packet cannot materialize the rollback run export.
+- `materialization_failed:*`: schema or materializer failure. Treat this as a
+  release blocker until the exact field mismatch is fixed.
+
+## Release Checks
+
+The release verifier must pass:
+
+```bash
+scripts/verify_release_cut_list.py --json
+```
+
+The repository-level lint command delegates to the web contract/typecheck gate:
+
+```bash
+npm run lint
+```
+
+The focused Darkharness CI step must pass:
+
+```bash
+PYTHONPATH=. python3 -m unittest \
+  tests.test_darkharness_packet \
+  tests.test_darkharness_policy \
+  tests.test_darkharness_export_path \
+  tests.test_darkharness_live_verifier
+```

@@ -2,6 +2,10 @@
 Committed branch: `codex/reth-kurtosis-full-loop`  
 Commit: `5fe06cd Add Kurtosis Reth full-loop remediation`
 
+This page is archived research provenance. The referenced
+`tests/test_kurtosis_reth_actuation.py` test file is not present in the current
+checkout and is not a controlled-production-pilot release gate.
+
 Static and unit validation passed:
 
 ```bash

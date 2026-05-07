@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/epistemic-state.schema.json",
+  "title": "EpistemicState",
+  "type": "object",
+  "required": [
+    "contract",
+    "epistemic_state_id",
+    "subject_ref",
+    "run_id",
+    "created_at",
+    "claims",
+    "uncertainty",
+    "governance_use"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.epistemic_state.v1"]
+    },
+    "epistemic_state_id": { "type": "string" },
+    "subject_ref": { "type": "string" },
+    "run_id": { "type": ["string", "null"] },
+    "created_at": { "type": "string" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["claim_id", "claim_type", "statement", "confidence", "evidence_refs", "contradicted_by", "source", "status"],
+        "properties": {
+          "claim_id": { "type": "string" },
+          "claim_type": {
+            "type": "string",
+            "enum": ["observation", "hypothesis", "inference", "policy_assertion", "operator_assertion", "model_assertion"]
+          },
+          "statement": { "type": "string" },
+          "confidence": { "type": "number" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "contradicted_by": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "source": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["active", "disputed", "superseded", "rejected"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "uncertainty": {
+      "type": "object",
+      "required": ["missing_evidence", "competing_hypotheses", "confidence_floor", "confidence_ceiling"],
+      "properties": {
+        "missing_evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "competing_hypotheses": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "confidence_floor": { "type": "number" },
+        "confidence_ceiling": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "governance_use": {
+      "type": "object",
+      "required": ["usable_for_decision", "usable_for_execution", "review_required"],
+      "properties": {
+        "usable_for_decision": { "type": "boolean" },
+        "usable_for_execution": { "type": "boolean" },
+        "review_required": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/watcher-ownership.schema.json",
+  "title": "WatcherOwnership",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "environment",
+    "watcher_count",
+    "resolved_watcher_count",
+    "unresolved_watchers",
+    "source_refs",
+    "watchers"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.watcher_ownership.v1"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked", "empty"]
+    },
+    "environment": { "type": "string" },
+    "watcher_count": { "type": "integer", "minimum": 0 },
+    "resolved_watcher_count": { "type": "integer", "minimum": 0 },
+    "unresolved_watchers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "source_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "watchers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "signal_source",
+          "running",
+          "target_count",
+          "resolved_target_count",
+          "owner",
+          "targets",
+          "blockers"
+        ],
+        "properties": {
+          "name": { "type": "string" },
+          "signal_source": { "type": "string" },
+          "running": { "type": "boolean" },
+          "target_count": { "type": "integer", "minimum": 0 },
+          "resolved_target_count": { "type": "integer", "minimum": 0 },
+          "owner": { "type": "object" },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "service",
+                "namespace",
+                "kube_context",
+                "environment",
+                "resolved",
+                "record_id",
+                "owner",
+                "tenant_id",
+                "customer_id",
+                "customer_boundary",
+                "approver_roles",
+                "rollback_authority",
+                "escalation_route",
+                "allowed_action_classes",
+                "blockers"
+              ],
+              "properties": {
+                "service": { "type": "string" },
+                "namespace": { "type": "string" },
+                "kube_context": { "type": ["string", "null"] },
+                "environment": { "type": "string" },
+                "resolved": { "type": "boolean" },
+                "record_id": { "type": "string" },
+                "owner": { "type": "object" },
+                "tenant_id": { "type": "string" },
+                "customer_id": { "type": "string" },
+                "customer_boundary": { "type": "string" },
+                "approver_roles": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "rollback_authority": { "type": "object" },
+                "escalation_route": { "type": "string" },
+                "allowed_action_classes": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "blockers": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

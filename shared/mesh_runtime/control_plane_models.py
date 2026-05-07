@@ -171,6 +171,8 @@ class AgentTask(JsonModel):
     memory_write_policy: dict[str, Any] = field(default_factory=dict)
     open_questions: list[str] = field(default_factory=list)
     agents: list[str] = field(default_factory=list)
+    orchestration_topology: dict[str, Any] = field(default_factory=dict)
+    lane_routing: dict[str, Any] = field(default_factory=dict)
     attempts: list[AgentAttempt] = field(default_factory=list)
     selected_attempt_id: str | None = None
 
@@ -199,10 +201,10 @@ class IntegrationReadiness(JsonModel):
     optional_checks: dict[str, Any]
     blockers: list[str]
     connector_certification: dict[str, Any]
+    orchestration_topology: dict[str, Any]
     promptfoo: IntegrationStatus
     hermes: IntegrationStatus
     goose: IntegrationStatus
-    evo: IntegrationStatus
     latentmas: IntegrationStatus
     deepagents: IntegrationStatus
     vault_path: str

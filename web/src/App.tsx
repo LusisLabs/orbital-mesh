@@ -50,7 +50,11 @@ import {
   type RunGraphNode,
 } from "./lib/runGraph";
 import type {
+  ApprovalQueueItem,
+  ApprovalQueuePacket,
   BenchmarkRecord,
+  ConnectorCertificationPacket,
+  DarkharnessPilotPacket,
   HealthSnapshot,
   KillSwitchStatus,
   ConnectionStatus,
@@ -69,7 +73,6 @@ import type {
   RunEventRecord,
   RunSessionRecord,
   AgentTask,
-  EvoLaunchRecord,
   ScenarioAnalysis,
   ScenarioRecord,
   ServiceAgentRecord,
@@ -125,7 +128,7 @@ type AppView =
   | "packets"
   | "roadmap"
   | "settings";
-type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "audit" | "agents" | "topology";
+type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "darkharness" | "audit" | "agents" | "topology";
 type ConnectorState =
   | "ready"
   | "degraded"
@@ -172,14 +175,6 @@ interface DashboardMetric {
   value: string;
   detail: string;
   tone: "good" | "warn" | "danger" | "neutral";
-}
-
-interface ApprovalQueueItem {
-  id: string;
-  title: string;
-  detail: string;
-  stage: string;
-  blocked: boolean;
 }
 
 interface ConfidencePoint {
@@ -370,6 +365,8 @@ export default function App() {
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
+  const [connectorCertification, setConnectorCertification] = useState<ConnectorCertificationPacket | null>(null);
+  const [approvalPacket, setApprovalPacket] = useState<ApprovalQueuePacket | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
@@ -417,6 +414,7 @@ export default function App() {
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
   const [runExport, setRunExport] = useState<RunExportPackage | null>(null);
+  const [darkharnessPacket, setDarkharnessPacket] = useState<DarkharnessPilotPacket | null>(null);
 
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
@@ -484,6 +482,8 @@ export default function App() {
         setSystemConnection("connected");
         setRuns(snapshot.runs);
         setReadiness(snapshot.readiness);
+        void api.getConnectorCertification(baseUrl).then(setConnectorCertification).catch(() => setConnectorCertification(null));
+        void api.getApprovals(baseUrl).then(setApprovalPacket).catch(() => setApprovalPacket(null));
         void api.getWatchers(baseUrl).then(setWatchers).catch(() => setWatchers(null));
         if (!activeRunId && snapshot.runs.length > 0) {
           setActiveRunId(snapshot.runs[0].run_id);
@@ -503,6 +503,7 @@ export default function App() {
       setEvidenceGraph(null);
       setMemoryCrystallization(null);
       setRunExport(null);
+      setDarkharnessPacket(null);
       setRunConnection("disconnected");
       return;
     }
@@ -605,6 +606,8 @@ export default function App() {
         serviceAgentsRes,
         trustLadderRes,
         killSwitchRes,
+        connectorCertificationRes,
+        approvalQueueRes,
         pilotPacketRes,
       ] = await Promise.all([
         boot(api.getHealth(baseUrl), null),
@@ -619,6 +622,8 @@ export default function App() {
         boot(api.getServiceAgents(baseUrl), { service_agents: [] }),
         boot(api.getTrustLadder(baseUrl), { entries: [] }),
         boot(api.getKillSwitch(baseUrl), null),
+        boot(api.getConnectorCertification(baseUrl), null),
+        boot(api.getApprovals(baseUrl), null),
         boot(api.getPilotGoNoGo(baseUrl), null),
       ]);
       if (!healthRes) {
@@ -636,6 +641,8 @@ export default function App() {
       setServiceAgents(serviceAgentsRes.service_agents);
       setTrustLadder(trustLadderRes.entries);
       setKillSwitchStatus(killSwitchRes);
+      setConnectorCertification(connectorCertificationRes);
+      setApprovalPacket(approvalQueueRes);
       setPilotPacket(pilotPacketRes);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
@@ -659,18 +666,20 @@ export default function App() {
 
   async function loadRun(runId: string) {
     try {
-      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse] = await Promise.all([
+      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse, darkharnessResponse] = await Promise.all([
         api.getRun(baseUrl, runId),
         api.getAgentTasks(baseUrl, runId).catch(() => ({ tasks: [] as AgentTask[] })),
         api.getScenarioAnalysis(baseUrl, runId).catch(() => null),
         api.getEvidenceGraph(baseUrl, runId).catch(() => null),
         api.getMemoryCrystallization(baseUrl, runId).catch(() => null),
+        api.getRunDarkharnessPacket(baseUrl, runId).catch(() => null),
       ]);
       setActiveRun(run);
       setAgentTasks(taskResponse.tasks);
       setScenarioAnalysis(analysisResponse);
       setEvidenceGraph(evidenceResponse);
       setMemoryCrystallization(memoryResponse);
+      setDarkharnessPacket(darkharnessResponse);
       setRunExport((current) => (current?.run_id === runId ? current : null));
     } catch (error) {
       addToast({ variant: "error", title: "Failed to load run", description: error instanceof Error ? error.message : "Unknown error" });
@@ -828,10 +837,7 @@ export default function App() {
       try {
         await api.steerRun(baseUrl, activeRunId, { command, ...payload });
         await loadRun(activeRunId);
-        addToast({
-          variant: "success",
-          title: command === "launch_evo" ? "Evo launch requested" : `Run ${humanize(command).toLowerCase()}d`,
-        });
+        addToast({ variant: "success", title: `Run ${humanize(command).toLowerCase()}d` });
       } catch (error) {
         addToast({ variant: "error", title: `Steer failed`, description: error instanceof Error ? error.message : "Unknown error" });
       } finally {
@@ -1146,13 +1152,12 @@ export default function App() {
         readiness.promptfoo,
         readiness.hermes,
         readiness.goose,
-        readiness.evo,
         readiness.latentmas,
         readiness.deepagents,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 6;
+  const integrationsTotal = readinessItems.length || 5;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -1172,8 +1177,8 @@ export default function App() {
     [activeSignal, readiness, watchers],
   );
   const approvalQueue = useMemo(
-    () => buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
-    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked],
+    () => approvalPacket?.items ?? buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
+    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked, approvalPacket?.items],
   );
   const incidentRuns = useMemo(
     () =>
@@ -1490,6 +1495,7 @@ export default function App() {
               selectedEventInsights={selectedEventInsights}
               merkleProof={merkleProof}
               runExport={runExport}
+              darkharnessPacket={darkharnessPacket}
               exportingRun={exportingRun}
               exportingArchive={exportingArchive}
               onSelectRun={(runId) => {
@@ -1533,7 +1539,12 @@ export default function App() {
               onSteer={handleSteer}
             />
           ) : activeView === "integrations" ? (
-            <IntegrationsView connectors={integrationConnectors} readiness={readiness} watchers={watchers} />
+            <IntegrationsView
+              connectors={integrationConnectors}
+              readiness={readiness}
+              connectorCertification={connectorCertification}
+              watchers={watchers}
+            />
           ) : activeView === "control-plane" ? (
             <ControlPlaneView
               health={health}
@@ -1572,7 +1583,13 @@ export default function App() {
           ) : activeView === "trust" ? (
             <TrustLadderView trustLadder={trustLadder} serviceAgents={serviceAgents} activeRun={activeRun} />
           ) : activeView === "packets" ? (
-            <PilotPacketView packet={pilotPacket} readiness={readiness} benchmarks={benchmarks} activeRun={activeRun} />
+            <PilotPacketView
+              packet={pilotPacket}
+              darkharnessPacket={darkharnessPacket}
+              readiness={readiness}
+              benchmarks={benchmarks}
+              activeRun={activeRun}
+            />
           ) : activeView === "roadmap" ? (
             <RoadmapView readiness={readiness} pilotPacket={pilotPacket} simulations={simulations} trustLadder={trustLadder} />
           ) : activeView === "evidence" || activeView === "audit" ? (
@@ -1712,7 +1729,7 @@ export default function App() {
               onOverrideParams={handleOverrideParams}
             />
           ) : rightRailTab === "agents" ? (
-            <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={handleSteer} />
+            <AgentMeshPanel run={activeRun} tasks={agentTasks} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -1959,9 +1976,9 @@ function OverviewDashboard({
         </div>
         <div className="mesh-stack">
           {approvalQueue.slice(0, 4).map((item) => (
-            <button key={item.id} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <button key={approvalItemId(item)} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </button>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No operator approvals are pending." /> : null}
@@ -2069,6 +2086,7 @@ function RunsView({
   selectedEventInsights,
   merkleProof,
   runExport,
+  darkharnessPacket,
   exportingRun,
   exportingArchive,
   onSelectRun,
@@ -2101,6 +2119,7 @@ function RunsView({
   selectedEventInsights: Array<{ label: string; value: string; tone?: string }>;
   merkleProof: MerkleProof | null;
   runExport: RunExportPackage | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
   exportingRun: boolean;
   exportingArchive: boolean;
   onSelectRun: (runId: string) => void;
@@ -2146,7 +2165,7 @@ function RunsView({
           {activeRun ? <StatusChip label={humanize(activeRun.stage)} tone={toneForStage(activeRun.stage)} /> : null}
         </div>
         <div className="mesh-tab-list" role="tablist" aria-label="Run detail">
-          {(["timeline", "evidence", "rca", "approvals", "actions", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
+          {(["timeline", "evidence", "rca", "approvals", "actions", "darkharness", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
             <button key={tab} className={runDetailTab === tab ? "tab active" : "tab"} type="button" onClick={() => onRunDetailTabChange(tab)}>
               {runDetailTabLabel(tab)}
             </button>
@@ -2162,6 +2181,8 @@ function RunsView({
           <RunApprovalPanel queue={approvalQueue} activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "actions" ? (
           <RunActionPanel activeRun={activeRun} onJumpContext={onJumpContext} />
+        ) : runDetailTab === "darkharness" ? (
+          <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} />
         ) : runDetailTab === "audit" ? (
           <RunAuditPanel
             activeRun={activeRun}
@@ -2174,7 +2195,7 @@ function RunsView({
             onJumpContext={onJumpContext}
           />
         ) : runDetailTab === "agents" ? (
-          <AgentMeshPanel run={activeRun} tasks={agentTasks} active="" onSteer={() => undefined} />
+          <AgentMeshPanel run={activeRun} tasks={agentTasks} />
         ) : (
           <TopologyPanel
             activeRun={activeRun}
@@ -2362,7 +2383,7 @@ function AgentsView({
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Bot size={15} />} title="Active Run Agent Attempts" />
-        <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={onSteer} />
+        <AgentMeshPanel run={activeRun} tasks={agentTasks} />
       </section>
     </div>
   );
@@ -2371,10 +2392,12 @@ function AgentsView({
 function IntegrationsView({
   connectors,
   readiness,
+  connectorCertification,
   watchers,
 }: {
   connectors: IntegrationConnectorSummary[];
   readiness: IntegrationReadiness | null;
+  connectorCertification: ConnectorCertificationPacket | null;
   watchers: WatcherStatus | null;
 }) {
   const groups = ["Web3", "Web2 Production", "Development", "Operations"] as const;
@@ -2402,7 +2425,7 @@ function IntegrationsView({
       ))}
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Connector Certification Matrix" />
-        <ConnectorCertificationMatrix readiness={readiness} />
+        <ConnectorCertificationMatrix readiness={readiness} certification={connectorCertification} />
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Connection Boundary" />
@@ -2438,7 +2461,7 @@ function ControlPlaneView({
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
-  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "evo" | "latentmas" | "deepagents">][];
+  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents">][];
   integrationsReady: number;
   integrationsTotal: number;
   systemConnection: ConnectionStatus;
@@ -2469,6 +2492,7 @@ function ControlPlaneView({
           <MetricCard metric={{ label: "Environment", value: health ? humanize(health.environment) : "Unknown", detail: health ? `${health.version} ${health.commit.slice(0, 7)}` : "Health unavailable", tone: health ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Readiness", value: readiness ? humanize(readiness.status) : "Unknown", detail: readiness ? `${humanize(readiness.profile)} profile` : "Profile unavailable", tone: readiness?.status === "ready" ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Required gates", value: `${requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length}/${requiredChecks.length}`, detail: "profile checks", tone: readiness?.blockers.length ? "danger" : "good" }} />
+          <MetricCard metric={{ label: "Topology", value: readiness?.orchestration_topology?.active_topology ? humanize(String(readiness.orchestration_topology.active_topology)) : "Unknown", detail: readiness?.orchestration_topology?.ready ? "profile configured" : "profile unavailable", tone: readiness?.orchestration_topology?.ready ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Integrations", value: `${integrationsReady}/${integrationsTotal}`, detail: "optional connector probes", tone: integrationsReady === integrationsTotal ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Agents", value: `${agentConnectors.filter((a) => a.state === "ready").length}/${agentConnectors.length}`, detail: "worker connectors", tone: "neutral" }} />
           <MetricCard metric={{ label: "Run stream", value: humanize(runConnection), detail: "active run SSE", tone: runConnection === "connected" ? "good" : "warn" }} />
@@ -2664,23 +2688,44 @@ function ReadinessGateList({
   );
 }
 
-function ConnectorCertificationMatrix({ readiness }: { readiness: IntegrationReadiness | null }) {
-  const entries = Object.entries(readiness?.connector_certification ?? {});
+function ConnectorCertificationMatrix({
+  readiness,
+  certification,
+}: {
+  readiness: IntegrationReadiness | null;
+  certification: ConnectorCertificationPacket | null;
+}) {
+  const entries = Object.entries(certification?.connectors ?? readiness?.connector_certification ?? {});
   if (entries.length === 0) return <EmptyState text="No connector certification state returned by readiness." />;
   return (
     <div className="mesh-table-wrap">
       <table className="mesh-table">
-        <thead><tr><th>Connector</th><th>State</th><th>Required Before</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Connector</th><th>State</th><th>Authority</th><th>Credential Boundary</th><th>Scopes / Blockers</th></tr></thead>
         <tbody>
           {entries.map(([name, raw]) => {
             const item = asRecord(raw);
-            const state = toConnectorState(String(item.state ?? ""), "config-only");
+            const state = toConnectorState(String(item.state ?? item.certified_state ?? item.observed_state ?? ""), "config-only");
+            const connectorName = String(item.display_name ?? item.connector_id ?? name);
+            const authority = String(item.authority_posture ?? item.detail ?? "");
+            const credentialBoundary = connectorCredentialBoundarySummary(item.credential_boundary);
+            const scopes = stringList(item.allowed_scopes);
+            const blockers = stringList(item.blockers);
             return (
               <tr key={name}>
-                <td>{humanize(name)}</td>
+                <td>
+                  <strong>{connectorName}</strong>
+                  <small>{humanize(String(item.domain ?? name))}</small>
+                </td>
                 <td><StatusPill state={state} label={humanize(state)} /></td>
-                <td>{humanize(String(item.required_before ?? "unset"))}</td>
-                <td>{String(item.detail ?? "")}</td>
+                <td>
+                  <span>{authority || "Not recorded"}</span>
+                  <small>Before {humanize(String(item.required_before ?? "unset"))}</small>
+                </td>
+                <td>{credentialBoundary}</td>
+                <td>
+                  <span>{scopes.length ? scopes.join(", ") : "No scopes"}</span>
+                  <small>{blockers.length ? `Blocked: ${blockers.join(", ")}` : "No blockers"}</small>
+                </td>
               </tr>
             );
           })}
@@ -2688,6 +2733,22 @@ function ConnectorCertificationMatrix({ readiness }: { readiness: IntegrationRea
       </table>
     </div>
   );
+}
+
+function connectorCredentialBoundarySummary(value: unknown): string {
+  const boundary = asRecord(value);
+  if (Object.keys(boundary).length === 0) return "Not recorded";
+  const flags = [
+    boundary.production_actuator_credentials_allowed === true ? "actuator creds" : "no actuator creds",
+    boundary.repo_write_credentials_allowed === true ? "repo write" : "no repo write",
+    boundary.runtime_secret_mount_required === true ? "runtime mount" : null,
+    boundary.break_glass_recording_required === true ? "break-glass recorded" : null,
+  ].filter(Boolean);
+  return [
+    boundary.credential_mode,
+    boundary.service_account_ref,
+    flags.join(", "),
+  ].filter(Boolean).join(" / ");
 }
 
 function SimulatorView({
@@ -2959,11 +3020,13 @@ function TrustLadderCard({ entry }: { entry: TrustLadderEntry }) {
 
 function PilotPacketView({
   packet,
+  darkharnessPacket,
   readiness,
   benchmarks,
   activeRun,
 }: {
   packet: PilotGoNoGoPacket | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
   readiness: IntegrationReadiness | null;
   benchmarks: BenchmarkRecord[];
   activeRun: RunDetail | null;
@@ -3025,6 +3088,9 @@ function PilotPacketView({
             <ConnectorRow key={path} name={label} detail={path} state="config-only" />
           ))}
         </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} compact />
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Activity size={15} />} title="Benchmark Records" />
@@ -3113,7 +3179,7 @@ function RoadmapView({
         <SectionTitle icon={<AlertTriangle size={15} />} title="Non-Negotiable Rules" />
         <div className="mesh-stack">
           <ConnectorRow name="Authenticated TLS" detail="No public exposure without identity enforcement" state="config-only" />
-          <ConnectorRow name="Proposal lanes" detail="Deep Agents, Goose, Hermes, Evo, and Mesh Brain do not own actuation" state="ready" />
+          <ConnectorRow name="Proposal lanes" detail="Deep Agents, Goose, Hermes, and Mesh Brain do not own actuation" state="ready" />
           <ConnectorRow name="Autonomy" detail="No action without allowlist, policy, evaluation, approval, rollback, and trust evidence" state="ready" />
           <ConnectorRow name="Adapter claims" detail="Unfinished adapters stay visibly unfinished" state="ready" />
         </div>
@@ -3215,9 +3281,9 @@ function ApprovalsView({
         <SectionTitle icon={<ShieldCheck size={15} />} title="Approval Queue" />
         <div className="mesh-stack">
           {approvalQueue.map((item) => (
-            <div key={item.id} className="mesh-list-row static">
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <div key={approvalItemId(item)} className="mesh-list-row static">
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </div>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No pending approvals." /> : null}
@@ -3284,7 +3350,7 @@ function FleetView({
         <SectionTitle icon={<Waves size={15} />} title="Watchers" />
         <div className="mesh-stack">
           {(watchers?.watchers ?? []).map((watcher) => (
-            <ConnectorRow key={watcher.name} name={watcher.name} detail={`${watcher.signal_source} / ${watcher.interval_seconds}s`} state={watcher.running ? "ready" : "degraded"} />
+            <ConnectorRow key={watcher.name} name={watcher.name} detail={watcherOwnerDetail(watcher)} state={watcher.running ? "ready" : "degraded"} />
           ))}
           {(!watchers || watchers.watchers.length === 0) ? <EmptyState text="No typed watchers registered." /> : null}
         </div>
@@ -3303,6 +3369,19 @@ function FleetView({
       </section>
     </div>
   );
+}
+
+function watcherOwnerDetail(watcher: WatcherStatus["watchers"][number]): string {
+  const owner = watcher.ownership?.owner?.display_name ?? watcher.ownership?.owner?.owner_id;
+  const resolved = watcher.ownership?.resolved_target_count ?? 0;
+  const total = watcher.ownership?.target_count ?? 0;
+  const target = watcher.ownership?.targets?.[0];
+  const escalation = typeof target?.escalation_route === "string" && target.escalation_route ? target.escalation_route : null;
+  const blockers = watcher.ownership?.blockers ?? [];
+  if (owner && escalation) return `${owner} / ${resolved}/${total} targets / ${escalation}`;
+  if (owner) return `${owner} / ${resolved}/${total} targets`;
+  if (blockers.length > 0) return `${watcher.signal_source} / ${blockers.join(", ")}`;
+  return `${watcher.signal_source} / ${watcher.interval_seconds}s`;
 }
 
 function AutomationView({
@@ -3711,7 +3790,14 @@ function RunApprovalPanel({
         <div className="mesh-stack">
           <ContextStat label="Run" value={activeRun?.run_id ?? "No run"} />
           <ContextStat label="Stage" value={activeRun ? humanize(activeRun.stage) : "Idle"} />
-          {queue.map((item) => <ConnectorRow key={item.id} name={item.title} detail={item.detail} state={item.blocked ? "degraded" : "config-only"} />)}
+          {queue.map((item) => (
+            <ConnectorRow
+              key={approvalItemId(item)}
+              name={approvalItemTitle(item)}
+              detail={approvalItemDetail(item)}
+              state={approvalItemBlocked(item) ? "degraded" : "config-only"}
+            />
+          ))}
           {queue.length === 0 ? <EmptyState text="No pending approval for this run." /> : null}
           <button className="action-button compact" type="button" onClick={() => onJumpContext("steering")}>Open steering</button>
         </div>
@@ -3725,7 +3811,7 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
     <div className="mesh-detail-grid">
       <section className="context-panel">
         <SectionTitle icon={<Play size={14} />} title="Action Surface" />
-        <p className="mesh-muted">Approvals, notes, overrides, Evo launch, and execution context remain behind Mesh steering controls.</p>
+        <p className="mesh-muted">Approvals, notes, overrides, and execution context remain behind Mesh steering controls.</p>
         <div className="context-action-row">
           <button className="action-button compact primary" type="button" disabled={!activeRun} onClick={() => onJumpContext("steering")}>Steering</button>
           <button className="action-button compact" type="button" disabled={!activeRun} onClick={() => onJumpContext("execution")}>Execution</button>
@@ -3733,6 +3819,204 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
         </div>
       </section>
     </div>
+  );
+}
+
+function DarkharnessPacketPanel({
+  packet,
+  activeRun,
+  compact,
+}: {
+  packet: DarkharnessPilotPacket | null;
+  activeRun: RunDetail | null;
+  compact?: boolean;
+}) {
+  const missingEvidence = packet?.missing_evidence ?? [];
+  const checks = Object.entries(packet?.checks ?? {});
+  const evidence = packet?.implemented_evidence;
+  const records = packet?.perennial_records;
+  const allowedProofs = evidence?.allowed_action_proofs ?? [];
+  const deniedProofs = evidence?.denied_action_proofs ?? [];
+  const merkleProofs = evidence?.merkle_proofs ?? [];
+  const governanceCommits = records?.governance_commits ?? [];
+  const agentRecords = records?.agent_action_records ?? [];
+  const reservoirs = records?.sensitive_reservoirs ?? [];
+  const runExports = evidence?.run_exports ?? [];
+  const proofEnvelopes = records?.proof_envelopes ?? [];
+  const implementedClaims = packet?.claim_boundary.implemented ?? [];
+  const proposedClaims = packet?.claim_boundary.proposed ?? [];
+  const notImplementedClaims = packet?.claim_boundary.not_implemented ?? [];
+  const state: ConnectorState = !packet ? "disconnected" : packet.status === "blocked" ? "degraded" : "ready";
+  const statusLabel = !packet ? "Unavailable" : packet.status === "blocked" ? "Blocked" : "Packet ready";
+  const boundaryPasses =
+    packet?.boundaries.raw_reservoir_egress === "deny" &&
+    packet.boundaries.external_model_calls === "deny" &&
+    packet.boundaries.production_actions_approval_required === true;
+  const checkedValues = Object.values(packet?.checks ?? {});
+  const capabilityRows: Array<{ name: string; detail: string; state: ConnectorState }> = [
+    {
+      name: "Evidence capture",
+      detail: `${runExports.length} run exports, ${merkleProofs.length} Merkle proofs, ${missingEvidence.length} blockers`,
+      state: !packet ? "disconnected" : runExports.length > 0 && merkleProofs.length > 0 && missingEvidence.length === 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Action gate exercise",
+      detail: `${allowedProofs.length} allowed proofs, ${deniedProofs.length} denied proofs, ${governanceCommits.length} governance commits`,
+      state: !packet ? "disconnected" : allowedProofs.length > 0 && governanceCommits.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Boundary enforcement",
+      detail: `Raw egress ${packet?.boundaries.raw_reservoir_egress ?? "unavailable"}, external models ${packet?.boundaries.external_model_calls ?? "unavailable"}, approval ${packet ? String(packet.boundaries.production_actions_approval_required) : "unavailable"}`,
+      state: !packet ? "disconnected" : boundaryPasses ? "ready" : "degraded",
+    },
+    {
+      name: "Perennial record materialization",
+      detail: `${reservoirs.length} reservoirs, ${agentRecords.length} agent actions, ${proofEnvelopes.length} proof envelopes`,
+      state: !packet ? "disconnected" : reservoirs.length > 0 && agentRecords.length > 0 && proofEnvelopes.length > 0 ? "ready" : "config-only",
+    },
+    {
+      name: "Claim separation",
+      detail: `${implementedClaims.length} implemented, ${proposedClaims.length} proposed, ${notImplementedClaims.length} not implemented`,
+      state: !packet ? "disconnected" : implementedClaims.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Policy checks",
+      detail: `${checkedValues.filter(Boolean).length} observed, ${checkedValues.filter((passed) => !passed).length} missing`,
+      state: !packet ? "disconnected" : checkedValues.length === 0 || checkedValues.every(Boolean) ? "ready" : "degraded",
+    },
+  ];
+  return (
+    <div className={compact ? "darkharness-panel compact" : "mesh-detail-grid darkharness-panel"} data-testid="darkharness-packet-panel">
+      <section className="context-panel">
+        <div className="mesh-section-header">
+          <SectionTitle icon={<ShieldCheck size={14} />} title="Dark Harness Packet" />
+          <StatusPill state={state} label={statusLabel} />
+        </div>
+        <div className="context-stat-grid">
+          <ContextStat label="Run" value={activeRun?.run_id ?? packet?.run_id ?? "No run"} />
+          <ContextStat label="Packet" value={packet?.packet_id?.slice(0, 18) ?? packet?.packet ?? "Unavailable"} />
+          <ContextStat label="Allowed proof" value={String(allowedProofs.length)} />
+          <ContextStat label="Denied proof" value={String(deniedProofs.length)} />
+          <ContextStat label="Merkle proofs" value={String(merkleProofs.length)} />
+          <ContextStat label="Missing evidence" value={String(missingEvidence.length)} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<SlidersHorizontal size={14} />} title="Harness Capabilities" />
+        <div className="mesh-stack">
+          {capabilityRows.map((row) => (
+            <ConnectorRow key={row.name} name={row.name} detail={row.detail} state={row.state} />
+          ))}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Binary size={14} />} title="Boundary Status" />
+        <div className="gate-matrix compact">
+          <DarkharnessBoundaryRow
+            label="Raw reservoir egress"
+            value={packet?.boundaries.raw_reservoir_egress}
+            passed={packet?.boundaries.raw_reservoir_egress === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="External model calls"
+            value={packet?.boundaries.external_model_calls}
+            passed={packet?.boundaries.external_model_calls === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="Production approval"
+            value={packet ? String(packet.boundaries.production_actions_approval_required) : undefined}
+            passed={packet?.boundaries.production_actions_approval_required === true}
+          />
+          {checks.map(([name, passed]) => (
+            <div key={name} className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+              <span>{humanize(name)}</span>
+              <strong>{passed ? "observed" : "missing"}</strong>
+              <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<AlertTriangle size={14} />} title="Missing Evidence" />
+        <div className="mesh-stack">
+          {missingEvidence.map((item) => (
+            <ConnectorRow key={item} name={humanize(item)} detail="Packet eligibility blocker" state="degraded" />
+          ))}
+          {packet && missingEvidence.length === 0 ? <EmptyState text="No missing evidence in the Dark Harness packet." /> : null}
+          {!packet ? <EmptyState text="No Dark Harness packet is available for the selected run." /> : null}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Activity size={14} />} title="Implemented Evidence" />
+        <div className="context-stat-grid">
+          <ContextStat label="Run exports" value={String(evidence?.run_exports?.length ?? 0)} />
+          <ContextStat label="Agent records" value={String(agentRecords.length)} />
+          <ContextStat label="Governance commits" value={String(governanceCommits.length)} />
+          <ContextStat label="Reservoirs" value={String(reservoirs.length)} />
+          <ContextStat label="Readiness" value={humanize(String(evidence?.readiness?.status ?? "unavailable"))} />
+          <ContextStat label="Go/no-go" value={humanize(String(evidence?.go_no_go?.status ?? evidence?.go_no_go?.final_release_decision ?? "unavailable"))} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<FolderGit2 size={14} />} title="Claim Boundary" />
+        <ClaimBoundaryList title="Implemented" items={implementedClaims} state="ready" />
+        <ClaimBoundaryList title="Proposed" items={proposedClaims} state="config-only" />
+        <ClaimBoundaryList title="Not implemented" items={notImplementedClaims} state="degraded" />
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<BookOpen size={14} />} title="Perennial Records" />
+        <div className="mesh-table-wrap">
+          <table className="mesh-table">
+            <thead><tr><th>Record</th><th>Count</th><th>Status</th></tr></thead>
+            <tbody>
+              <DarkharnessRecordRow label="Sensitive reservoirs" count={reservoirs.length} />
+              <DarkharnessRecordRow label="Agent actions" count={agentRecords.length} />
+              <DarkharnessRecordRow label="Governance commits" count={governanceCommits.length} />
+              <DarkharnessRecordRow label="Epistemic states" count={records?.epistemic_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Ontological states" count={records?.ontological_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Proof envelopes" count={records?.proof_envelopes?.length ?? 0} />
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DarkharnessBoundaryRow({ label, value, passed }: { label: string; value?: string; passed: boolean }) {
+  return (
+    <div className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+      <span>{label}</span>
+      <strong>{value ?? "unavailable"}</strong>
+      <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+    </div>
+  );
+}
+
+function ClaimBoundaryList({ title, items, state }: { title: string; items: string[]; state: ConnectorState }) {
+  return (
+    <div className="darkharness-claim-group">
+      <div className="mesh-section-header compact">
+        <strong>{title}</strong>
+        <StatusPill state={state} label={String(items.length)} />
+      </div>
+      <div className="darkharness-claim-list">
+        {items.map((item) => (
+          <span key={`${title}-${item}`}>{humanize(item)}</span>
+        ))}
+        {items.length === 0 ? <small>None</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function DarkharnessRecordRow({ label, count }: { label: string; count: number }) {
+  return (
+    <tr>
+      <td>{label}</td>
+      <td>{count}</td>
+      <td><StatusPill state={count > 0 ? "ready" : "config-only"} label={count > 0 ? "present" : "empty"} /></td>
+    </tr>
   );
 }
 
@@ -3912,12 +4196,45 @@ function buildDashboardMetrics({
 function buildApprovalQueue(run: RunDetail | null, blocked: boolean, reasons: string[]): ApprovalQueueItem[] {
   if (!run || run.stage !== "awaiting_operator") return [];
   return [{
-    id: `${run.run_id}-approval`,
-    title: blocked ? "Approval blocked" : "Awaiting operator approval",
-    detail: reasons[0] ?? "Run is paused at the operator gate.",
-    stage: run.pending_pause_stage ?? run.stage,
-    blocked,
+    queue_id: `approval://${run.run_id}`,
+    run_id: run.run_id,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    scenario_key: run.scenario_key,
+    service: asRecord(run.artifacts?.input_signal).service ?? asRecord(run.artifacts?.ownership_boundary).service ?? null,
+    namespace: asRecord(run.artifacts?.input_signal).namespace ?? asRecord(run.artifacts?.ownership_boundary).namespace ?? null,
+    environment: asRecord(run.artifacts?.input_signal).environment ?? "local",
+    stage: run.stage,
+    pending_pause_stage: run.pending_pause_stage,
+    steering_mode: run.steering_mode,
+    decision_type: asRecord(run.artifacts?.decision).decision_type ?? null,
+    risk_level: asRecord(run.artifacts?.decision).risk_level ?? null,
+    final_recommendation: asRecord(run.artifacts?.evaluation).final_recommendation ?? null,
+    approval_state: blocked ? "blocked" : "pending",
+    blockers: reasons,
+    requested_by: asRecord(run.artifacts?.operator),
+    owner: asRecord(run.artifacts?.ownership_boundary).owner ?? null,
+    approver_roles: firstArray(asRecord(run.artifacts?.ownership_boundary).approver_roles),
+    allowed_commands: blocked ? ["explain_blockers", "override_decision", "cancel", "handoff"] : ["approve", "resume", "cancel", "handoff"],
+    evidence_refs: [`run://${run.run_id}`, ...(run.latest_event_id ? [`event://${run.latest_event_id}`] : [])],
+    latest_event_id: run.latest_event_id,
   }];
+}
+
+function approvalItemId(item: ApprovalQueueItem): string {
+  return item.queue_id || `approval://${item.run_id}`;
+}
+
+function approvalItemBlocked(item: ApprovalQueueItem): boolean {
+  return item.approval_state === "blocked";
+}
+
+function approvalItemTitle(item: ApprovalQueueItem): string {
+  return approvalItemBlocked(item) ? "Approval blocked" : "Awaiting operator approval";
+}
+
+function approvalItemDetail(item: ApprovalQueueItem): string {
+  return item.blockers[0] ?? item.decision_type ?? item.service ?? "Run is paused at the operator gate.";
 }
 
 function buildRcaSnapshot(
@@ -4173,10 +4490,12 @@ function buildConfidenceMovement(
   return points.slice(0, 8);
 }
 
-function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
+export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "evo" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const certification = readiness?.connector_certification ?? {};
+  const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
     if (!status) return "disconnected";
     if (status.ready) return "ready";
@@ -4184,31 +4503,53 @@ function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: Age
     if (status.command || status.url || status.detail) return "config-only";
     return "disconnected";
   };
-  const specs = [
-    ["hermes", "Hermes", "Default root-cause and blocker interaction", "hermes bridge", readinessFor("hermes"), true],
-    ["goose", "Goose", "Operational coordination and review", "goose bridge", readinessFor("goose"), false],
-    ["codex", "Codex", "Patch proposal lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["claudecode", "Claude Code", "Review and risk lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["openclaw", "OpenClaw", "Staging validation lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["evo", "Evo", "Benchmark and discovery lane", "evo cli", readinessFor("evo"), false],
-    ["latentmas", "LatentMAS", "Advisory full-inference worker", "latentmas sidecar", readinessFor("latentmas"), false],
-    ["deepagents", "Deep Agents", "Sandboxed multi-agent proposal fabric", "deepagents", readinessFor("deepagents"), false],
-    ["custom-http", "Custom HTTP Agent", "Future external worker connector", "http connector", null, false],
-  ] as const;
-  return specs.map(([id, name, role, adapter, status, primary]) => {
+  const specs: Array<{
+    id: string;
+    name: string;
+    role: string;
+    adapter: string;
+    status: IntegrationReadiness["hermes"] | null;
+    primary: boolean;
+    platform?: boolean;
+  }> = [
+    { id: "hermes", name: "Hermes", role: "Default root-cause and blocker interaction", adapter: "hermes bridge", status: readinessFor("hermes"), primary: true },
+    { id: "goose", name: "Goose", role: "Operational coordination and review", adapter: "goose bridge", status: readinessFor("goose"), primary: false },
+    { id: "codex", name: "Codex", role: "Patch proposal lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "claudecode", name: "Claude Code", role: "Review and risk lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
+    { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "temporal", name: "Temporal", role: "Durable workflow history and supervisor lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "dagster", name: "Dagster", role: "Asset lineage and materialization evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "prefect", name: "Prefect", role: "Flow run state and work-pool evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "flyte", name: "Flyte", role: "ML workflow reproducibility evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "luigi", name: "Luigi", role: "Pipeline dependency proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "oozie", name: "Apache Oozie", role: "Hadoop workflow status evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "kubernetes", name: "Kubernetes", role: "Controller reconciliation and bounded actuator lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "n8n", name: "n8n", role: "Low-code workflow trace proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "custom-http", name: "Custom HTTP Agent", role: "Future external worker connector", adapter: "http connector", status: null, primary: false },
+  ];
+  return specs.map(({ id, name, role, adapter, status, primary, platform }) => {
     const attempt = lastAttempt(id);
+    const cert = certFor(id);
+    const certState = String(cert.state ?? "");
     return {
       id,
       name,
       role,
       adapter,
-      state: id === "custom-http" ? "disconnected" : fromReadiness(status),
-      scope: primary ? "Default Mesh run context" : "Domain/service scoped",
-      profile: status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
-      readinessDetail: status?.detail ?? "Connector registry placeholder",
+      state: platform ? toConnectorState(certState, "config-only") : id === "custom-http" ? "disconnected" : fromReadiness(status),
+      scope: platform ? "Topology routed orchestration lane" : primary ? "Default Mesh run context" : "Domain/service scoped",
+      profile: platform
+        ? `${humanize(certState || "mock")} before ${humanize(String(cert.required_before ?? "expansion"))}`
+        : status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
+      readinessDetail: platform ? String(cert.detail ?? cert.authority_posture ?? "Connector certification governs authority") : status?.detail ?? "Connector registry placeholder",
       lastAttempt: attempt ? `${humanize(attempt.status)}: ${attempt.summary}` : undefined,
-      riskFlags: attempt?.risk_flags ?? status?.warnings ?? [],
-      boundary: "Proposal-only. Mesh owns policy, approval, audit, and execution.",
+      riskFlags: attempt?.risk_flags ?? stringList(cert.blockers ?? status?.warnings ?? []),
+      boundary: platform
+        ? String(cert.authority_posture ?? "Mesh governs topology, approval, audit, and execution authority.")
+        : "Proposal-only. Mesh owns policy, approval, audit, and execution.",
       primary,
     };
   });
@@ -4627,39 +4968,17 @@ function SteeringConsolePanel({
   );
 }
 
-function AgentMeshPanel({
+export function AgentMeshPanel({
   run,
   tasks,
-  active,
-  onSteer,
 }: {
   run: RunDetail | null;
   tasks: AgentTask[];
-  active: string;
-  onSteer: (command: string, payload?: Record<string, unknown>) => void;
 }) {
   const fallbackTasks = Array.isArray(run?.artifacts?.agent_tasks)
     ? (run?.artifacts?.agent_tasks as AgentTask[])
     : [];
   const resolvedTasks = tasks.length > 0 ? tasks : fallbackTasks;
-  const evoLaunches = Array.isArray((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] } | undefined)?.launches)
-    ? (((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] }).launches ?? []) as EvoLaunchRecord[])
-    : [];
-  const defaultTargetPath = resolvedTasks.flatMap((task) => task.allowed_paths)[0] ?? "";
-  const defaultGateCommand = resolvedTasks.flatMap((task) => task.test_commands)[0] ?? "";
-  const [targetPath, setTargetPath] = useState(defaultTargetPath);
-  const [benchmarkCommand, setBenchmarkCommand] = useState("");
-  const [metric, setMetric] = useState("max");
-  const [instrumentationMode, setInstrumentationMode] = useState("inline");
-  const [gateCommand, setGateCommand] = useState(defaultGateCommand);
-
-  useEffect(() => {
-    setTargetPath(defaultTargetPath);
-    setGateCommand(defaultGateCommand);
-    setBenchmarkCommand("");
-    setMetric("max");
-    setInstrumentationMode("inline");
-  }, [run?.run_id, defaultTargetPath, defaultGateCommand]);
 
   if (!run) {
     return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
@@ -4692,86 +5011,6 @@ function AgentMeshPanel({
         </p>
       </section>
 
-      <section className="context-panel">
-        <div className="context-panel-header">
-          <div>
-            <p className="eyebrow">Evo Launch</p>
-            <h4>Operator-triggered discovery bootstrap</h4>
-          </div>
-          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#e8a33e" : "#2aacb8"} />
-        </div>
-        <div className="stack">
-          <input
-            value={targetPath}
-            onChange={(e) => setTargetPath(e.target.value)}
-            placeholder="Target path"
-            disabled={!defaultTargetPath || active === "launch_evo"}
-          />
-          <textarea
-            value={benchmarkCommand}
-            onChange={(e) => setBenchmarkCommand(e.target.value)}
-            placeholder="Benchmark command (required unless the repo already contains .evo/meta.json)"
-            className="small-textarea mono-textarea"
-            disabled={active === "launch_evo"}
-          />
-          <div className="steering-grid">
-            <select value={metric} onChange={(e) => setMetric(e.target.value)} disabled={active === "launch_evo"}>
-              <option value="max">Metric: max</option>
-              <option value="min">Metric: min</option>
-            </select>
-            <select
-              value={instrumentationMode}
-              onChange={(e) => setInstrumentationMode(e.target.value)}
-              disabled={active === "launch_evo"}
-            >
-              <option value="inline">Instrumentation: inline</option>
-              <option value="sdk">Instrumentation: sdk</option>
-            </select>
-          </div>
-          <input
-            value={gateCommand}
-            onChange={(e) => setGateCommand(e.target.value)}
-            placeholder="Gate command"
-            disabled={active === "launch_evo"}
-          />
-          <button
-            className="action-button compact"
-            disabled={!targetPath.trim() || !gateCommand.trim() || active === "launch_evo"}
-            onClick={() =>
-              onSteer("launch_evo", {
-                target_path: targetPath.trim(),
-                benchmark_command: benchmarkCommand.trim() || undefined,
-                metric,
-                instrumentation_mode: instrumentationMode,
-                gate_command: gateCommand.trim(),
-              })
-            }
-          >
-            Launch Evo
-          </button>
-          {evoLaunches.length > 0 && (
-            <div className="stack">
-              {evoLaunches.map((launch) => (
-                <article key={launch.launch_id} className="agent-attempt-card">
-                  <div className="agent-attempt-header">
-                    <strong>{humanize(launch.action)}</strong>
-                    <span className={launch.status === "completed" ? "agent-risk-badge good" : launch.status === "failed" ? "agent-risk-badge warn" : "agent-risk-badge"}>
-                      {humanize(launch.status)}
-                    </span>
-                  </div>
-                  <div className="context-link-list compact">
-                    <ContextLink label="Target" value={launch.target_path} mono />
-                    {launch.experiment_id ? <ContextLink label="Experiment" value={launch.experiment_id} mono /> : null}
-                    {launch.dashboard_url ? <ContextLink label="Dashboard" value={launch.dashboard_url} mono /> : null}
-                  </div>
-                  {launch.error ? <div className="readiness-warning">{launch.error}</div> : null}
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
       {resolvedTasks.map((task) => (
         <section key={task.task_id} className="context-panel">
           <div className="context-panel-header">
@@ -4787,6 +5026,7 @@ function AgentMeshPanel({
             <ContextStat label="Paths" value={String(task.allowed_paths.length)} />
             <ContextStat label="Tests" value={String(task.test_commands.length)} />
           </div>
+          <AgentTopologyPanel task={task} />
           {Object.keys(task.kubernetes_scope ?? {}).length > 0 && (
             <div className="context-link-list">
               {Object.entries(task.kubernetes_scope).map(([key, value]) => (
@@ -4846,6 +5086,64 @@ function AgentMeshPanel({
         </section>
       ))}
     </div>
+  );
+}
+
+function AgentTopologyPanel({ task }: { task: AgentTask }) {
+  const topology = asRecord(task.orchestration_topology || task.lane_routing);
+  if (Object.keys(topology).length === 0) return null;
+  const lanes = firstArray(topology.selected_lanes);
+  const blockers = stringList(topology.blockers);
+  const sourceEvidence = asRecord(topology.source_evidence);
+  const ownership = asRecord(sourceEvidence.ownership_boundary);
+  return (
+    <section className="agent-topology-panel" data-testid="agent-topology-panel">
+      <div className="context-panel-header">
+        <div>
+          <p className="eyebrow">Topology</p>
+          <h4>{humanize(String(topology.active_topology ?? "centralized"))}</h4>
+        </div>
+        <StatusChip label={blockers.length ? "Blocked" : "Mesh Governed"} tone={blockers.length ? "#e8a33e" : "#2aacb8"} />
+      </div>
+      <div className="context-stat-grid">
+        <ContextStat label="Rule" value={String(topology.rule_id ?? "default")} />
+        <ContextStat label="Lanes" value={String(lanes.length || task.agents.length)} />
+        <ContextStat label="Reconciliation" value={humanize(String(topology.reconciliation ?? "mesh_reconciles"))} />
+        <ContextStat label="Authority" value="Mesh" />
+      </div>
+      <div className="context-link-list compact">
+        <ContextLink label="Reason" value={String(topology.routing_reason ?? "default profile topology")} />
+        {ownership.record_id ? <ContextLink label="Ownership" value={String(ownership.record_id)} /> : null}
+        {ownership.tenant_id ? <ContextLink label="Tenant" value={String(ownership.tenant_id)} /> : null}
+      </div>
+      {lanes.length > 0 ? (
+        <div className="mesh-table-wrap compact-table">
+          <table className="mesh-table">
+            <thead>
+              <tr><th>Lane</th><th>Role</th><th>Authority</th><th>State</th></tr>
+            </thead>
+            <tbody>
+              {lanes.map((lane, index) => {
+                const record = asRecord(lane);
+                return (
+                  <tr key={`${record.lane_id ?? index}`}>
+                    <td>{humanize(String(record.lane_id ?? "lane"))}</td>
+                    <td>{humanize(String(record.role ?? "worker"))}</td>
+                    <td>{humanize(String(record.authority ?? "proposal_only"))}</td>
+                    <td>{humanize(String(record.certified_state ?? "unknown"))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {blockers.length > 0 && (
+        <div className="readiness-warning">
+          {blockers.map((blocker) => humanize(blocker)).join(", ")}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -5020,6 +5318,8 @@ function runDetailTabLabel(tab: RunDetailTab) {
       return "Review gates";
     case "actions":
       return "Steering";
+    case "darkharness":
+      return "Dark Harness";
     default:
       return humanize(tab);
   }

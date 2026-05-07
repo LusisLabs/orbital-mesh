@@ -1,0 +1,102 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "description": {
+      "type": "string"
+    },
+    "default_topology": {
+      "enum": ["centralized", "hierarchical", "decentralized", "federated", "hybrid"]
+    },
+    "rules": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "credential_boundary_required": {
+            "type": "boolean"
+          },
+          "data_boundary_required": {
+            "type": "boolean"
+          },
+          "lanes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "match": {
+            "additionalProperties": false,
+            "properties": {
+              "action_classes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "risk_tiers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "services": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "signal_sources": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "tenant_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "trust_levels": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reconciliation": {
+            "type": "string"
+          },
+          "rule_id": {
+            "type": "string"
+          },
+          "topology": {
+            "enum": ["centralized", "hierarchical", "decentralized", "federated", "hybrid"]
+          }
+        },
+        "required": ["rule_id", "topology", "match"],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "source_refs": {
+      "additionalProperties": {},
+      "type": "object"
+    },
+    "version": {
+      "enum": ["mesh.orchestration_topology_profile.v1"]
+    }
+  },
+  "required": ["version", "default_topology", "source_refs", "rules"],
+  "type": "object"
+}

@@ -7,7 +7,7 @@ from shared.mesh_runtime import RuntimeConfig, bootstrap_integrations
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bootstrap Promptfoo, Hermes, Goose, and Evo integration configuration.")
+    parser = argparse.ArgumentParser(description="Bootstrap Promptfoo, Hermes, and Goose integration configuration.")
     parser.add_argument(
         "--install-missing",
         action="store_true",

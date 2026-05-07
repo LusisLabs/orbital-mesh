@@ -1,0 +1,63 @@
+{
+  "version": "mesh.orchestration_topology_profile.v1",
+  "default_topology": "centralized",
+  "description": "Mesh-native topology profile. External orchestrators remain evidence or proposal lanes unless connector certification grants bounded action.",
+  "source_refs": {
+    "ownership_registry": "config/ownership.registry.json",
+    "connector_certification_registry": "config/connector-certification.registry.json",
+    "policy_lifecycle_manifest": "config/policy-lifecycle.manifest.json",
+    "threat_model_register": "config/threat-model.register.json",
+    "service_agent_registry": "state://service-agents",
+    "readiness": "/api/readiness",
+    "historical_outcomes": "state://runs",
+    "trust_ladder": "state://learning/trust_ladder.json"
+  },
+  "rules": [
+    {
+      "rule_id": "search-kubernetes-hybrid",
+      "topology": "hybrid",
+      "match": {
+        "services": ["search-api", "semantic-search"],
+        "action_classes": ["rollback_deployment"],
+        "risk_tiers": ["medium", "high"],
+        "signal_sources": ["kubernetes"]
+      },
+      "lanes": ["temporal", "kubernetes", "hermes"],
+      "reason": "High-risk search rollback uses durable workflow evidence, Kubernetes bounded action, and Hermes proposal review.",
+      "reconciliation": "mesh_reconciles_per_rule_topology_outputs"
+    },
+    {
+      "rule_id": "workflow-supervisor-hierarchy",
+      "topology": "hierarchical",
+      "match": {
+        "signal_sources": ["workflow"]
+      },
+      "lanes": ["temporal", "airflow", "hermes"],
+      "reason": "Workflow-originated incidents route through a Temporal supervisor lane and worker evidence lanes before Mesh reconciliation.",
+      "reconciliation": "mesh_reconciles_supervisor_and_worker_outputs"
+    },
+    {
+      "rule_id": "data-pipeline-peer-proposals",
+      "topology": "decentralized",
+      "match": {
+        "signal_sources": ["data"]
+      },
+      "lanes": ["dagster", "prefect", "flyte"],
+      "reason": "Data-pipeline incidents collect certified peer proposals in parallel while Mesh remains the reconciler.",
+      "reconciliation": "mesh_reconciles_parallel_peer_proposals"
+    },
+    {
+      "rule_id": "tenant-model-federation",
+      "topology": "federated",
+      "match": {
+        "signal_sources": ["ml"],
+        "tenant_ids": ["tenant_a"]
+      },
+      "lanes": ["flyte", "dagster", "hermes"],
+      "reason": "Tenant-scoped model workflow evidence can collaborate only through recorded ownership, data, and credential boundaries.",
+      "reconciliation": "mesh_reconciles_with_tenant_data_and_credential_boundaries",
+      "data_boundary_required": true,
+      "credential_boundary_required": true
+    }
+  ]
+}
