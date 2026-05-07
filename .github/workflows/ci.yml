@@ -176,6 +176,7 @@ jobs:
             --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
+        if: always()
         run: |
           set -euo pipefail
           BASE_IMAGE_ARGS=()
