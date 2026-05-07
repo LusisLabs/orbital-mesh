@@ -90,7 +90,7 @@ Auditors should receive:
 
 Audit packages must not include raw secrets, kubeconfigs, bearer tokens, database URLs with credentials, private keys, or unredacted production traces.
 
-The LatentMAS lockfile carries a scoped OSV exception in `latent-mesh/LatentMAS/osv-scanner.toml` for `RUSTSEC-2024-0436`. The advisory is informational/unmaintained, comes from transitive `tokenizers` dependency `paste`, and expires on 2026-08-06 for review. This exception does not apply to release-image SBOM or Grype vulnerability gates.
+The LatentMAS lockfile carries a scoped OSV exception in `latent-mesh/LatentMAS/osv-scanner.toml` for `RUSTSEC-2024-0436`. The advisory is informational/unmaintained, comes from transitive `tokenizers` dependency `paste`, and expires on 2026-08-06 for review. Release-image Grype exceptions are separate and must live in `config/release-vulnerability-exceptions.json` with owner, expiry, decision, reason, and compensating controls.
 
 ## Procurement Security Package
 

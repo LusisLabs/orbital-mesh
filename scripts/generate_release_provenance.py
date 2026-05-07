@@ -591,6 +591,13 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
         finding
         for finding in findings
         if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
+        and not _valid_accepted_exception(finding)
+    ]
+    accepted_blocking_findings = [
+        finding
+        for finding in findings
+        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
+        and _valid_accepted_exception(finding)
     ]
     valid = bool(record.get("exists") and scanner and not blocking_findings and not rehearsal and image_digest_matches)
     record.update(
@@ -602,6 +609,7 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
             "image_digest_matches": image_digest_matches,
             "finding_count": len(findings),
             "blocking_finding_count": len(blocking_findings),
+            "accepted_exception_count": len(accepted_blocking_findings),
             "missing": [] if valid else _missing_vulnerability_scan_fields(
                 record,
                 scanner,
@@ -612,6 +620,27 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
         }
     )
     return record
+
+
+def _valid_accepted_exception(finding: dict[str, Any]) -> bool:
+    exception = finding.get("accepted_exception")
+    if not isinstance(exception, dict):
+        return False
+    required = ("owner", "expires_at", "decision", "reason", "compensating_controls")
+    for key in required:
+        if key == "compensating_controls":
+            controls = exception.get(key)
+            if not isinstance(controls, list) or not all(isinstance(item, str) and item.strip() for item in controls):
+                return False
+            continue
+        if not isinstance(exception.get(key), str) or not exception[key].strip():
+            return False
+    try:
+        expires_at = time.strptime(str(exception["expires_at"]), "%Y-%m-%d")
+    except ValueError:
+        return False
+    today = time.strptime(time.strftime("%Y-%m-%d", time.gmtime()), "%Y-%m-%d")
+    return expires_at >= today
 
 
 def _is_rehearsal_scan(payload: dict[str, Any], scanner: str | None) -> bool:

@@ -19,6 +19,11 @@ def main() -> int:
     parser.add_argument("--output-dir", required=True, help="Directory for normalized release assurance artifacts.")
     parser.add_argument("--syft-bin", default="syft", help="Syft executable path.")
     parser.add_argument("--grype-bin", default="grype", help="Grype executable path.")
+    parser.add_argument(
+        "--exception-policy",
+        default="",
+        help="Optional Mesh-owned release vulnerability exception policy JSON.",
+    )
     args = parser.parse_args()
 
     _validate_digest(args.image_digest)
@@ -58,6 +63,7 @@ def main() -> int:
             args.image_digest,
             "--require-scan",
             "--fail-on-blocking",
+            *(["--exception-policy", args.exception_policy] if args.exception_policy else []),
         ],
         check=False,
         capture_output=True,
@@ -86,6 +92,8 @@ def main() -> int:
                 },
                 "finding_count": normalized_payload["finding_count"],
                 "blocking_finding_count": normalized_payload["blocking_finding_count"],
+                "accepted_exception_count": normalized_payload.get("accepted_exception_count", 0),
+                "unaccepted_blocking_finding_count": normalized_payload.get("unaccepted_blocking_finding_count", 0),
             },
             indent=2,
             sort_keys=True,
@@ -132,6 +140,8 @@ def _blocking_findings_summary(scan_path: Path) -> str:
             continue
         severity = str(item.get("severity") or "").lower()
         if severity not in {"high", "critical"}:
+            continue
+        if isinstance(item.get("accepted_exception"), dict):
             continue
         blocking.append(
             (

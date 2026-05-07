@@ -88,6 +88,10 @@ REQUIRED_SCRIPTS = (
     "scripts/verify_credential_rotation.py",
 )
 
+REQUIRED_CONFIGS = (
+    "config/release-vulnerability-exceptions.json",
+)
+
 REQUIRED_API_MARKERS = (
     "/api/readiness",
     "/api/kill-switch",
@@ -196,6 +200,8 @@ REQUIRED_MARKERS = {
         "attestation_sha256",
         "_sbom_record",
         "_vulnerability_scan_record",
+        "_valid_accepted_exception",
+        "accepted_exception_count",
         "no_high_or_critical_findings",
         "real_release_image_sbom",
         "real_release_image_vulnerability_scan",
@@ -232,14 +238,20 @@ REQUIRED_MARKERS = {
         "raw-vulnerability-scan.grype.json",
         "normalize_release_assurance_artifacts.py",
         "--fail-on-blocking",
+        "--exception-policy",
+        "unaccepted_blocking_finding_count",
     ),
     "scripts/normalize_release_assurance_artifacts.py": (
         "mesh.release_assurance_artifact_normalization.v1",
+        "mesh.release_vulnerability_exceptions.v1",
         "bomFormat",
         "CycloneDX",
         "blocking_finding_count",
+        "accepted_exception",
+        "unaccepted_blocking_finding_count",
         "--image-digest",
         "--fail-on-blocking",
+        "--exception-policy",
         "--require-scan",
     ),
     "docs/release-provenance.md": (
@@ -248,6 +260,7 @@ REQUIRED_MARKERS = {
         "MESH_VULNERABILITY_SCAN_PATH",
         "MESH_CI_ATTESTATION_PATH",
         "MESH_RELEASE_PROVENANCE_PATH",
+        "config/release-vulnerability-exceptions.json",
         "normalize_release_assurance_artifacts.py",
         "scripts/verify_mesh_brain_artifact_registry.py",
         "Policy Lifecycle Hashes",
@@ -1144,6 +1157,7 @@ def main() -> int:
     checks.extend(_check_required_paths("doc", REQUIRED_DOCS))
     checks.extend(_check_required_paths("test", REQUIRED_TESTS))
     checks.extend(_check_required_paths("script", REQUIRED_SCRIPTS))
+    checks.extend(_check_required_paths("config", REQUIRED_CONFIGS))
     checks.extend(_check_api_markers())
     checks.extend(_check_required_markers())
     checks.extend(_check_docs_reference_active_paths())

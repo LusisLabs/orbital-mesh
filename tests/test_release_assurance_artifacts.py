@@ -271,6 +271,161 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             self.assertIn("blocking vulnerability findings:", output)
             self.assertIn("high\tCVE-HIGH\topenssl\t3.0", output)
 
+    def test_normalizer_applies_mesh_release_vulnerability_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sbom = tmp_path / "raw-sbom.json"
+            scan = tmp_path / "raw-scan.json"
+            policy = tmp_path / "release-vulnerability-exceptions.json"
+            output_dir = tmp_path / "dist"
+            image_digest = f"sha256:{'d' * 64}"
+            sbom.write_text('{"bomFormat":"CycloneDX","components":[]}\n', encoding="utf-8")
+            scan.write_text(
+                '{"matches":[{"vulnerability":{"id":"CVE-HIGH","severity":"High"},'
+                '"artifact":{"name":"openssl","version":"3.0"}}]}\n',
+                encoding="utf-8",
+            )
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.release_vulnerability_exceptions.v1",
+                        "owner": "platform-security",
+                        "expires_at": "2999-01-01",
+                        "decision": "accepted_for_test",
+                        "reason": "test exception",
+                        "compensating_controls": ["test control"],
+                        "exceptions": [
+                            {
+                                "id": "CVE-HIGH",
+                                "severity": "high",
+                                "package": "openssl",
+                                "version": "3.0",
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    NORMALIZER,
+                    "--sbom-input",
+                    str(sbom),
+                    "--scan-input",
+                    str(scan),
+                    "--scanner",
+                    "grype",
+                    "--output-dir",
+                    str(output_dir),
+                    "--image-digest",
+                    image_digest,
+                    "--fail-on-blocking",
+                    "--exception-policy",
+                    str(policy),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["blocking_finding_count"], 1)
+            self.assertEqual(payload["accepted_exception_count"], 1)
+            self.assertEqual(payload["unaccepted_blocking_finding_count"], 0)
+            normalized_scan = json.loads((output_dir / "vulnerability-scan.json").read_text(encoding="utf-8"))
+            accepted = normalized_scan["findings"][0]["accepted_exception"]
+            self.assertEqual(accepted["owner"], "platform-security")
+            self.assertEqual(accepted["expires_at"], "2999-01-01")
+
+            provenance = subprocess.run(
+                [
+                    sys.executable,
+                    PROVENANCE,
+                    "--json",
+                    "--allow-dirty",
+                    "--image-digest",
+                    image_digest,
+                    "--sbom",
+                    str(output_dir / "sbom.cdx.json"),
+                    "--vulnerability-scan",
+                    str(output_dir / "vulnerability-scan.json"),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(provenance.returncode, 0, provenance.stderr + provenance.stdout)
+            packet = json.loads(provenance.stdout)
+            self.assertTrue(packet["checks"]["vulnerability_scan_path"])
+            self.assertEqual(packet["vulnerability_scan"]["accepted_exception_count"], 1)
+            self.assertEqual(packet["vulnerability_scan"]["blocking_finding_count"], 0)
+
+    def test_normalizer_rejects_expired_release_vulnerability_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sbom = tmp_path / "raw-sbom.json"
+            scan = tmp_path / "raw-scan.json"
+            policy = tmp_path / "release-vulnerability-exceptions.json"
+            sbom.write_text('{"bomFormat":"CycloneDX","components":[]}\n', encoding="utf-8")
+            scan.write_text(
+                '{"matches":[{"vulnerability":{"id":"CVE-HIGH","severity":"High"},'
+                '"artifact":{"name":"openssl","version":"3.0"}}]}\n',
+                encoding="utf-8",
+            )
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.release_vulnerability_exceptions.v1",
+                        "owner": "platform-security",
+                        "expires_at": "2000-01-01",
+                        "decision": "accepted_for_test",
+                        "reason": "test exception",
+                        "compensating_controls": ["test control"],
+                        "exceptions": [
+                            {
+                                "id": "CVE-HIGH",
+                                "severity": "high",
+                                "package": "openssl",
+                                "version": "3.0",
+                            }
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    NORMALIZER,
+                    "--sbom-input",
+                    str(sbom),
+                    "--scan-input",
+                    str(scan),
+                    "--scanner",
+                    "grype",
+                    "--output-dir",
+                    str(tmp_path / "dist"),
+                    "--fail-on-blocking",
+                    "--exception-policy",
+                    str(policy),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("expired on 2000-01-01", result.stderr + result.stdout)
+
     def test_normalizer_writes_release_provenance_compatible_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

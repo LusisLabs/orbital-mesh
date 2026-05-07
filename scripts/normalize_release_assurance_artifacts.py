@@ -17,6 +17,11 @@ def main() -> int:
     parser.add_argument("--image-digest", default="", help="Release image digest these artifacts describe.")
     parser.add_argument("--require-scan", action="store_true", help="Fail when no vulnerability scan input is provided.")
     parser.add_argument("--fail-on-blocking", action="store_true", help="Fail when high or critical findings are present.")
+    parser.add_argument(
+        "--exception-policy",
+        default="",
+        help="Optional Mesh-owned release vulnerability exception policy JSON.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -34,6 +39,7 @@ def main() -> int:
     if args.require_scan and not args.scan_input:
         raise SystemExit("--require-scan needs at least one --scan-input")
 
+    exception_policy = _load_exception_policy(args.exception_policy)
     findings: list[dict[str, Any]] = []
     source_files: list[str] = []
     for raw_input in args.scan_input:
@@ -41,6 +47,17 @@ def main() -> int:
         payload = _load_json(path)
         source_files.append(str(path))
         findings.extend(_extract_findings(payload, source=str(path)))
+    _apply_exception_policy(findings, exception_policy)
+
+    blocking_findings = [
+        finding for finding in findings if _severity_rank(str(finding.get("severity") or "")) >= 3
+    ]
+    accepted_blocking_findings = [
+        finding for finding in blocking_findings if isinstance(finding.get("accepted_exception"), dict)
+    ]
+    unaccepted_blocking_findings = [
+        finding for finding in blocking_findings if not isinstance(finding.get("accepted_exception"), dict)
+    ]
 
     normalized_scan = {
         "schema_version": "mesh.normalized_vulnerability_scan.v1",
@@ -48,13 +65,19 @@ def main() -> int:
         "scanner": args.scanner,
         "image_digest": args.image_digest or None,
         "source_files": source_files,
+        "exception_policy": _exception_policy_summary(exception_policy),
         "findings": findings,
-        "blocking_finding_count": sum(1 for finding in findings if _severity_rank(str(finding.get("severity") or "")) >= 3),
+        "blocking_finding_count": len(blocking_findings),
+        "accepted_exception_count": len(accepted_blocking_findings),
+        "unaccepted_blocking_finding_count": len(unaccepted_blocking_findings),
     }
     scan_output.write_text(json.dumps(normalized_scan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    if args.fail_on_blocking and normalized_scan["blocking_finding_count"]:
-        raise SystemExit(f"blocking vulnerability findings present: {normalized_scan['blocking_finding_count']}")
+    if args.fail_on_blocking and normalized_scan["unaccepted_blocking_finding_count"]:
+        raise SystemExit(
+            "unaccepted blocking vulnerability findings present: "
+            f"{normalized_scan['unaccepted_blocking_finding_count']}"
+        )
 
     print(
         json.dumps(
@@ -65,6 +88,8 @@ def main() -> int:
                 "vulnerability_scan": str(scan_output),
                 "finding_count": len(findings),
                 "blocking_finding_count": normalized_scan["blocking_finding_count"],
+                "accepted_exception_count": normalized_scan["accepted_exception_count"],
+                "unaccepted_blocking_finding_count": normalized_scan["unaccepted_blocking_finding_count"],
             },
             indent=2,
             sort_keys=True,
@@ -214,6 +239,130 @@ def _finding(*, vulnerability_id: str, severity: str, package: str, version: str
         "version": version or None,
         "source": source,
     }
+
+
+def _load_exception_policy(raw_path: str) -> dict[str, Any] | None:
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    payload = _load_json(path)
+    if payload.get("schema_version") != "mesh.release_vulnerability_exceptions.v1":
+        raise SystemExit(f"release vulnerability exception policy {path} has unsupported schema_version")
+    exceptions = payload.get("exceptions")
+    if not isinstance(exceptions, list) or not exceptions:
+        raise SystemExit(f"release vulnerability exception policy {path} must contain exceptions")
+    today = _today()
+    validated: list[dict[str, Any]] = []
+    for index, item in enumerate(exceptions):
+        if not isinstance(item, dict):
+            raise SystemExit(f"release vulnerability exception #{index + 1} must be an object")
+        resolved = _resolve_exception_defaults(payload, item, index=index)
+        expires_at = str(resolved["expires_at"])
+        if _parse_date(expires_at, field=f"exceptions[{index}].expires_at") < today:
+            raise SystemExit(f"release vulnerability exception {resolved['id']} expired on {expires_at}")
+        validated.append(resolved)
+    payload = dict(payload)
+    payload["exceptions"] = validated
+    payload["_path"] = str(path)
+    return payload
+
+
+def _resolve_exception_defaults(policy: dict[str, Any], item: dict[str, Any], *, index: int) -> dict[str, Any]:
+    resolved = dict(item)
+    for key in ("owner", "expires_at", "decision", "reason"):
+        if not resolved.get(key):
+            resolved[key] = policy.get(key)
+    controls = resolved.get("compensating_controls")
+    if controls is None:
+        controls = resolved.get("compensating_control")
+    if controls is None:
+        controls = policy.get("compensating_controls")
+    if controls is None:
+        controls = policy.get("compensating_control")
+    if isinstance(controls, str):
+        controls = [controls]
+    resolved["compensating_controls"] = controls
+
+    missing = [
+        key
+        for key in ("id", "package", "owner", "expires_at", "decision", "reason")
+        if not isinstance(resolved.get(key), str) or not str(resolved.get(key)).strip()
+    ]
+    if not isinstance(resolved.get("compensating_controls"), list) or not all(
+        isinstance(control, str) and control.strip() for control in resolved["compensating_controls"]
+    ):
+        missing.append("compensating_controls")
+    if missing:
+        raise SystemExit(
+            f"release vulnerability exception #{index + 1} missing required fields: {', '.join(missing)}"
+        )
+    severity = resolved.get("severity")
+    if severity is not None and _severity_rank(str(severity)) < 3:
+        raise SystemExit(f"release vulnerability exception {resolved['id']} must target high or critical severity")
+    return resolved
+
+
+def _apply_exception_policy(findings: list[dict[str, Any]], policy: dict[str, Any] | None) -> None:
+    if not policy:
+        return
+    exceptions = policy.get("exceptions")
+    if not isinstance(exceptions, list):
+        return
+    for finding in findings:
+        if _severity_rank(str(finding.get("severity") or "")) < 3:
+            continue
+        for exception in exceptions:
+            if not isinstance(exception, dict):
+                continue
+            if not _exception_matches(finding, exception):
+                continue
+            finding["accepted_exception"] = {
+                "id": str(exception["id"]),
+                "owner": str(exception["owner"]),
+                "expires_at": str(exception["expires_at"]),
+                "decision": str(exception["decision"]),
+                "reason": str(exception["reason"]),
+                "compensating_controls": list(exception["compensating_controls"]),
+                "policy_path": str(policy.get("_path") or ""),
+            }
+            break
+
+
+def _exception_matches(finding: dict[str, Any], exception: dict[str, Any]) -> bool:
+    if str(finding.get("id") or "") != str(exception.get("id") or ""):
+        return False
+    if str(finding.get("package") or "") != str(exception.get("package") or ""):
+        return False
+    expected_version = str(exception.get("version") or "*")
+    if expected_version != "*" and str(finding.get("version") or "") != expected_version:
+        return False
+    expected_severity = exception.get("severity")
+    if expected_severity and str(finding.get("severity") or "").lower() != str(expected_severity).lower():
+        return False
+    return True
+
+
+def _exception_policy_summary(policy: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not policy:
+        return None
+    exceptions = policy.get("exceptions")
+    return {
+        "schema_version": policy.get("schema_version"),
+        "path": policy.get("_path"),
+        "exception_count": len(exceptions) if isinstance(exceptions, list) else 0,
+    }
+
+
+def _parse_date(value: str, *, field: str) -> time.struct_time:
+    try:
+        parsed = time.strptime(value, "%Y-%m-%d")
+    except ValueError as exc:
+        raise SystemExit(f"{field} must be YYYY-MM-DD") from exc
+    return parsed
+
+
+def _today() -> time.struct_time:
+    return time.strptime(time.strftime("%Y-%m-%d", time.gmtime()), "%Y-%m-%d")
 
 
 def _osv_severity(vulnerability: dict[str, Any]) -> str:

@@ -70,7 +70,9 @@ scripts/generate_release_provenance.py \
 
 `--migration-rehearsal` must point at a `mesh.migration_rehearsal.v1` packet verified by `scripts/verify_migration_rehearsal.py`. The proof must match the release packet's latest migration version and combined migration hash, include pre-migration snapshot and post-migration validation refs, and prove rollback was rehearsed. Use `scripts/generate_migration_rehearsal.py` after a real Postgres rehearsal to compute the repo migration version/hash and package the operator-supplied snapshot, rollback, validation, review, and timing evidence.
 
-The SBOM artifact must be JSON with `bomFormat: "CycloneDX"`. The vulnerability scan artifact must be normalized JSON with a `scanner` string and a `findings`, `vulnerabilities`, or `results` array. Any `high` or `critical` severity finding keeps `vulnerability_scan_path` incomplete with `no_high_or_critical_findings`.
+The SBOM artifact must be JSON with `bomFormat: "CycloneDX"`. The vulnerability scan artifact must be normalized JSON with a `scanner` string and a `findings`, `vulnerabilities`, or `results` array. Any unaccepted `high` or `critical` severity finding keeps `vulnerability_scan_path` incomplete with `no_high_or_critical_findings`.
+
+`config/release-vulnerability-exceptions.json` is the only in-repo release-image exception policy. It must use `mesh.release_vulnerability_exceptions.v1`; each accepted finding needs an owner, expiry, decision, reason, and compensating control. The normalizer annotates matching findings with `accepted_exception` metadata and still records the total `blocking_finding_count`. Expired, ownerless, or unmatched high/critical findings remain blocking.
 
 Normalize raw CI scanner output before generating the release packet:
 
@@ -82,7 +84,8 @@ python3 scripts/normalize_release_assurance_artifacts.py \
   --image-digest "$MESH_IMAGE_DIGEST" \
   --output-dir dist/release-assurance \
   --require-scan \
-  --fail-on-blocking
+  --fail-on-blocking \
+  --exception-policy config/release-vulnerability-exceptions.json
 ```
 
 Then set `MESH_SBOM_PATH=dist/release-assurance/sbom.cdx.json` and `MESH_VULNERABILITY_SCAN_PATH=dist/release-assurance/vulnerability-scan.json` for `scripts/generate_release_provenance.py`. The normalizer accepts CycloneDX SBOM JSON plus OSV, npm audit, Grype, or already-normalized scan JSON. Pilot provenance rejects SBOM and vulnerability scan artifacts unless their recorded image digest matches `MESH_IMAGE_DIGEST` with `release_image_digest_match`.
@@ -94,10 +97,11 @@ python3 scripts/generate_release_image_assurance.py \
   --image-tag orbital-mesh:ci \
   --image-digest "$MESH_IMAGE_DIGEST" \
   --raw-output-dir dist/release-assurance-raw \
-  --output-dir dist/release-assurance
+  --output-dir dist/release-assurance \
+  --exception-policy config/release-vulnerability-exceptions.json
 ```
 
-The script runs Syft for a CycloneDX SBOM, runs Grype as the real release-image scanner for vulnerability findings, normalizes both artifacts, binds them to `MESH_IMAGE_DIGEST`, and fails on high or critical findings. It must run after image metadata collection so the SBOM and vulnerability scan match the same image digest used by the CI attestation. `scripts/generate_release_assurance_rehearsal_inputs.py` remains only a local contract fixture; release provenance marks those rehearsal artifacts incomplete with `real_release_image_sbom` and `real_release_image_vulnerability_scan`.
+The script runs Syft for a CycloneDX SBOM, runs Grype as the real release-image scanner for vulnerability findings, normalizes both artifacts, binds them to `MESH_IMAGE_DIGEST`, and fails on unaccepted high or critical findings. It must run after image metadata collection so the SBOM and vulnerability scan match the same image digest used by the CI attestation. `scripts/generate_release_assurance_rehearsal_inputs.py` remains only a local contract fixture; release provenance marks those rehearsal artifacts incomplete with `real_release_image_sbom` and `real_release_image_vulnerability_scan`.
 
 Collect release image metadata before generating the CI attestation:
 
