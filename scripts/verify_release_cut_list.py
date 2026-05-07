@@ -50,6 +50,7 @@ REQUIRED_SCRIPTS = (
     "scripts/verify_postgres_restart_proof.py",
     "scripts/collect_release_image_metadata.py",
     "scripts/generate_release_image_handoff.py",
+    "scripts/verify_release_image_handoff.py",
     "scripts/generate_release_provenance.py",
     "scripts/generate_ci_attestation.py",
     "scripts/generate_release_assurance_rehearsal_inputs.py",
@@ -228,6 +229,18 @@ REQUIRED_MARKERS = {
         "--git-commit",
         "handoff_sha256",
     ),
+    "scripts/verify_release_image_handoff.py": (
+        "mesh.release_image_handoff_verification.v1",
+        "mesh.release_image_handoff.v1",
+        "EXPORT_RELEASE_IMAGE",
+        "--manifest",
+        "--image-archive",
+        "--artifact-root",
+        "--require-artifacts",
+        "image_archive_sha256_match",
+        "ci_attestation_image_digest_match",
+        "release_provenance_commit_match",
+    ),
     ".github/workflows/release-image-handoff.yml": (
         "workflow_dispatch",
         "confirm_export",
@@ -314,6 +327,7 @@ REQUIRED_MARKERS = {
         "Release Image Handoff",
         ".github/workflows/release-image-handoff.yml",
         "scripts/generate_release_image_handoff.py",
+        "scripts/verify_release_image_handoff.py",
         "EXPORT_RELEASE_IMAGE",
     ),
     "scripts/verify_authenticated_ingress.py": (
@@ -1296,6 +1310,7 @@ def _check_docs_reference_active_paths() -> list[dict[str, Any]]:
         "docs/release-provenance.md": (
             "scripts/generate_release_provenance.py",
             "scripts/generate_release_image_handoff.py",
+            "scripts/verify_release_image_handoff.py",
             "scripts/verify_mesh_brain_artifact_registry.py",
             ".github/workflows/release-image-handoff.yml",
         ),

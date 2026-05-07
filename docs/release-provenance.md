@@ -148,6 +148,13 @@ The uploaded artifact includes:
 After downloading the handoff artifact, load and verify the image before deployment:
 
 ```bash
+scripts/verify_release_image_handoff.py \
+  --manifest release-image-handoff/release-image-handoff.json \
+  --image-archive release-image-handoff/orbital-mesh-handoff-image.tar.gz \
+  --artifact-root . \
+  --require-artifacts \
+  --json
+
 docker load -i release-image-handoff/orbital-mesh-handoff-image.tar.gz
 
 scripts/verify_release_runtime_binding.py \
@@ -168,7 +175,7 @@ scripts/verify_release_runtime_binding.py \
   --json
 ```
 
-Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
+`scripts/verify_release_image_handoff.py` checks the handoff manifest hash, explicit operator confirmation marker, archive byte count and SHA-256, referenced JSON artifacts, CI attestation commit and image digest, and release provenance commit and image digest. Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
 
 Generate the CI attestation artifact inside the CI job that owns the release image:
 

@@ -106,7 +106,10 @@ service container and succeeded.
   `.github/workflows/release-image-handoff.yml` path now exists for explicit
   operator-approved exports only; it requires `confirm_export=EXPORT_RELEASE_IMAGE`
   and uploads a runnable image artifact plus `mesh.release_image_handoff.v1`.
-  This path has not been run for pilot clearance in the current audit.
+  Downloaded handoff artifacts must pass
+  `scripts/verify_release_image_handoff.py --require-artifacts` before runtime
+  deployment binding. This path has not been run for pilot clearance in the
+  current audit.
 - Pilot readiness is currently green in the running compose stack. Pilot
   go/no-go remains blocked only by `release_provenance_complete`, caused by
   missing runtime commit and image-digest binding.
