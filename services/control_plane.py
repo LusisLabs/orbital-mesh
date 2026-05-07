@@ -2125,6 +2125,139 @@ class RunCoordinator:
         self._update_session(session.run_id, stage=final_stage, status=final_status)
         return self.get_run(session.run_id) or session.to_dict()
 
+    def run_mesh_brain_meshmodel_probe(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="mesh_brain_meshmodel_probe",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="mesh_brain_meshmodel_probe",
+            orchestration_mode="native",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "operator": operator,
+            },
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "mesh-brain" / "meshmodel-probe" / session.run_id
+        output_directory.mkdir(parents=True, exist_ok=True)
+        benchmark_summary = _meshmodel_benchmark_summary(payload=payload, run_id=session.run_id)
+        governance_evidence = _meshmodel_governance_evidence(
+            payload=payload,
+            run_id=session.run_id,
+            benchmark_summary=benchmark_summary,
+        )
+        research_records = _meshmodel_research_records(
+            payload=payload,
+            run_id=session.run_id,
+            benchmark_summary=benchmark_summary,
+            governance_evidence=governance_evidence,
+        )
+        release_readiness = _meshmodel_release_readiness(payload=payload, benchmark_summary=benchmark_summary)
+        deployment_record = {
+            "status": "recorded" if release_readiness["release_decision"] == "advisory_governance_candidate" else "blocked",
+            "deployed": False,
+            "release_decision": release_readiness["release_decision"],
+            "target": "advisory_governance_candidate",
+            "advisory_recorded": release_readiness["release_decision"] == "advisory_governance_candidate",
+            "production_serving": False,
+            "promotion_authority": False,
+            "mesh_brain_authoritative": True,
+            "policy_bypass": False,
+        }
+        artifact_refs = _write_meshmodel_probe_artifacts(
+            output_directory=output_directory,
+            benchmark_summary=benchmark_summary,
+            governance_evidence=governance_evidence,
+            research_records=research_records,
+            release_readiness=release_readiness,
+            deployment_record=deployment_record,
+        )
+        run_record = _meshmodel_probe_run_record(
+            run_id=session.run_id,
+            tenant_id=str(benchmark_summary.get("tenant_id") or "tenant_a"),
+            artifact_refs=artifact_refs,
+            benchmark_summary=benchmark_summary,
+            governance_evidence=governance_evidence,
+            research_records=research_records,
+            release_readiness=release_readiness,
+            deployment_record=deployment_record,
+        )
+        run_record_path = output_directory / "meshmodel_run_record.json"
+        run_record_path.write_text(json.dumps(run_record, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+        artifact_refs["mesh_brain_meshmodel_run_record"] = _meshmodel_artifact_ref(
+            "mesh_brain_meshmodel_run_record",
+            run_record_path,
+        )
+        self._record_mesh_brain_artifact_refs(session.run_id, artifact_refs)
+        self._set_artifact(session.run_id, "mesh_brain_meshmodel_run_record", run_record)
+        self._set_artifact(session.run_id, "mesh_brain_meshmodel_deployment_record", deployment_record)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=run_record,
+            summary={
+                "release_decision": release_readiness["release_decision"],
+                "blockers": release_readiness["blockers"],
+                "advisory_recorded": deployment_record["advisory_recorded"],
+            },
+            artifact_key="mesh_brain_meshmodel_probe_summary",
+            integration_name="mesh_brain_meshmodel",
+            status="recorded",
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="policy_evaluated",
+            event_type="policy_decision",
+            payload={
+                "decision": "record_advisory"
+                if release_readiness["release_decision"] == "advisory_governance_candidate"
+                else "block_release",
+                "release_readiness": release_readiness,
+                "policy": run_record["policy"],
+            },
+            summary={
+                "release_decision": release_readiness["release_decision"],
+                "production_serving": False,
+                "policy_bypass": False,
+            },
+            artifact_key="mesh_brain_meshmodel_release_readiness",
+            integration_name="mesh_brain_meshmodel",
+            status="recorded",
+        )
+        final_stage = "completed" if release_readiness["release_decision"] == "advisory_governance_candidate" else "failed"
+        final_status = "completed" if release_readiness["release_decision"] == "advisory_governance_candidate" else "blocked"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if final_stage == "completed" else RUN_FAILED,
+            payload=run_record,
+            summary={
+                "status": final_status,
+                "release_decision": release_readiness["release_decision"],
+                "production_serving": False,
+            },
+            artifact_key="mesh_brain_meshmodel_run_record",
+            integration_name="mesh_brain_meshmodel",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
     def run_mesh_brain_live_serving_smoke(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = payload or {}
         operator = _operator_context(payload)
@@ -5482,6 +5615,273 @@ class RunCoordinator:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _meshmodel_benchmark_summary(*, payload: dict[str, Any], run_id: str) -> dict[str, Any]:
+    raw = payload.get("benchmark_summary")
+    if isinstance(raw, dict):
+        summary = dict(raw)
+    else:
+        summary = {
+            "version": "mesh.meshmodel_benchmark_run.v1",
+            "input_mode": "control_plane_evidence_ingestion",
+            "tenant_id": str(payload.get("tenant_id") or "tenant_a"),
+            "bundle_id": str(payload.get("bundle_id") or "meshmodel_live_bundle"),
+            "bundle_hash": str(payload.get("bundle_hash") or ""),
+            "strict_passed": False,
+            "gates": {
+                "reports_written": False,
+                "replay_hashes_present": False,
+                "deterministic_report_replay": False,
+                "citation_fidelity": False,
+                "hidden_source_controls": False,
+                "tenant_controls": bool(payload.get("tenant_id") or True),
+                "phase_exit_gates_observed": False,
+            },
+            "phases": {},
+            "task_count": 0,
+            "task_ids": [],
+            "policy": {
+                "control_plane_endpoint": True,
+                "model_calls_allowed": False,
+                "production_serving": False,
+                "research_only": True,
+            },
+        }
+    summary["run_id"] = run_id
+    summary["summary_hash"] = f"sha256:{_canonical_sha256(summary)}"
+    return summary
+
+
+def _meshmodel_governance_evidence(
+    *,
+    payload: dict[str, Any],
+    run_id: str,
+    benchmark_summary: dict[str, Any],
+) -> dict[str, Any]:
+    raw = payload.get("governance_evidence")
+    if isinstance(raw, dict):
+        evidence = dict(raw)
+    else:
+        evidence = {
+            "version": "mesh.mesh_brain_meshmodel_governance_evidence.v1",
+            "run_id": run_id,
+            "tenant_id": str(benchmark_summary.get("tenant_id") or "tenant_a"),
+            "benchmark_summary_hash": benchmark_summary["summary_hash"],
+            "records": [
+                {
+                    "record_id": f"meshmodel-governance-{run_id}",
+                    "record_kind": "meshmodel_control_plane_governance_evidence",
+                    "governance_use": "recommendation_evidence_only",
+                    "deployment_effect": "none",
+                    "release_authority": "none",
+                    "production_serving": False,
+                    "policy_bypass": False,
+                }
+            ],
+            "policy": _meshmodel_route_policy(),
+        }
+    evidence["evidence_hash"] = f"sha256:{_canonical_sha256(evidence)}"
+    return evidence
+
+
+def _meshmodel_research_records(
+    *,
+    payload: dict[str, Any],
+    run_id: str,
+    benchmark_summary: dict[str, Any],
+    governance_evidence: dict[str, Any],
+) -> dict[str, Any]:
+    raw = payload.get("research_records")
+    if isinstance(raw, dict):
+        records = dict(raw)
+    else:
+        records = {
+            "version": "mesh.meshmodel_research_records.v1",
+            "run_id": run_id,
+            "tenant_id": str(benchmark_summary.get("tenant_id") or "tenant_a"),
+            "bundle_hash": str(benchmark_summary.get("bundle_hash") or ""),
+            "records": [
+                {
+                    "record_id": f"meshmodel-research-{run_id}",
+                    "record_kind": "meshmodel_control_plane_research_record",
+                    "governance_evidence_hash": governance_evidence["evidence_hash"],
+                    "deployment_effect": "none",
+                    "release_authority": "none",
+                    "production_serving": False,
+                    "policy_bypass": False,
+                    "research_only": True,
+                }
+            ],
+            "policy": _meshmodel_route_policy(),
+        }
+    records["records_hash"] = f"sha256:{_canonical_sha256(records)}"
+    return records
+
+
+def _meshmodel_release_readiness(*, payload: dict[str, Any], benchmark_summary: dict[str, Any]) -> dict[str, Any]:
+    raw = payload.get("release_readiness")
+    if isinstance(raw, dict):
+        readiness = dict(raw)
+    else:
+        readiness = {
+            "version": "mesh.meshmodel_release_readiness.v1",
+            "tenant_id": str(benchmark_summary.get("tenant_id") or "tenant_a"),
+            "target": "advisory_governance_candidate",
+            "status": "blocked",
+            "blocked": True,
+            "advisory_recorded": False,
+            "release_decision": "block",
+            "blockers": [
+                "explicit_meshmodel_promotion_gate_missing",
+                "operator_approval_missing",
+                "external_model_kernel_benchmarks_not_started",
+                "production_serving_disabled",
+            ],
+            "production_blockers": ["production_serving_disabled"],
+            "production_serving_blocked": True,
+            "promotion_gates": {
+                "explicit_meshmodel_promotion_gate": False,
+                "operator_approval": False,
+                "external_model_kernel_benchmarks": False,
+                "production_serving_authority": False,
+                "policy_bypass": False,
+            },
+            "benchmark_gates": dict(benchmark_summary.get("gates") or {}),
+            "policy": _meshmodel_route_policy(),
+        }
+    release_decision = str(readiness.get("release_decision") or "block")
+    if release_decision != "advisory_governance_candidate":
+        release_decision = "block"
+    readiness["release_decision"] = release_decision
+    readiness["target"] = "advisory_governance_candidate"
+    readiness["production_serving_blocked"] = True
+    readiness["production_blockers"] = ["production_serving_disabled"]
+    blockers = sorted(set(list(readiness.get("blockers") or []) + ["production_serving_disabled"]))
+    readiness["blockers"] = blockers
+    readiness["blocked"] = release_decision == "block"
+    readiness["advisory_recorded"] = release_decision == "advisory_governance_candidate"
+    readiness["status"] = "advisory_recorded" if readiness["advisory_recorded"] else "blocked"
+    readiness["policy"] = _meshmodel_route_policy()
+    readiness["readiness_hash"] = f"sha256:{_canonical_sha256(readiness)}"
+    return readiness
+
+
+def _write_meshmodel_probe_artifacts(
+    *,
+    output_directory: Path,
+    benchmark_summary: dict[str, Any],
+    governance_evidence: dict[str, Any],
+    research_records: dict[str, Any],
+    release_readiness: dict[str, Any],
+    deployment_record: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    payloads = {
+        "mesh_brain_meshmodel_benchmark_summary": ("meshmodel_benchmark_summary.json", benchmark_summary),
+        "mesh_brain_meshmodel_governance_evidence": ("meshmodel_governance_evidence.json", governance_evidence),
+        "mesh_brain_meshmodel_research_records": ("meshmodel_research_records.json", research_records),
+        "mesh_brain_meshmodel_release_readiness": ("meshmodel_release_readiness.json", release_readiness),
+        "mesh_brain_meshmodel_deployment_record": ("meshmodel_deployment_record.json", deployment_record),
+    }
+    refs: dict[str, dict[str, Any]] = {}
+    for artifact_key, (filename, artifact_payload) in payloads.items():
+        path = output_directory / filename
+        path.write_text(json.dumps(artifact_payload, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+        refs[artifact_key] = _meshmodel_artifact_ref(artifact_key, path)
+    probe_summary = {
+        "benchmark_summary": benchmark_summary,
+        "governance_evidence": {
+            "evidence_hash": governance_evidence.get("evidence_hash"),
+            "record_count": len(list(governance_evidence.get("records") or [])),
+        },
+        "research_records": {
+            "records_hash": research_records.get("records_hash"),
+            "record_count": len(list(research_records.get("records") or [])),
+        },
+        "release_readiness": release_readiness,
+        "deployment_record": deployment_record,
+        "policy": _meshmodel_route_policy(),
+    }
+    probe_summary["probe_hash"] = f"sha256:{_canonical_sha256(probe_summary)}"
+    probe_path = output_directory / "meshmodel_probe_summary.json"
+    probe_path.write_text(json.dumps(probe_summary, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
+    refs["mesh_brain_meshmodel_probe_summary"] = _meshmodel_artifact_ref("mesh_brain_meshmodel_probe_summary", probe_path)
+    return refs
+
+
+def _meshmodel_probe_run_record(
+    *,
+    run_id: str,
+    tenant_id: str,
+    artifact_refs: dict[str, dict[str, Any]],
+    benchmark_summary: dict[str, Any],
+    governance_evidence: dict[str, Any],
+    research_records: dict[str, Any],
+    release_readiness: dict[str, Any],
+    deployment_record: dict[str, Any],
+) -> dict[str, Any]:
+    blocked = release_readiness["release_decision"] == "block"
+    return {
+        "run_id": run_id,
+        "tenant_id": tenant_id,
+        "stage": "failed" if blocked else "completed",
+        "status": "blocked" if blocked else "completed",
+        "artifact_refs": artifact_refs,
+        "audit_events": [{"event_type": "meshmodel_probe_recorded", "release_decision": release_readiness["release_decision"]}],
+        "policy_events": [
+            {
+                "event_type": "policy_decision",
+                "decision": "block_release" if blocked else "record_advisory",
+                "reasons": list(release_readiness.get("blockers") or []),
+                "policy": _meshmodel_route_policy(),
+            }
+        ],
+        "summary_metrics": {
+            "strict_passed": bool(benchmark_summary.get("strict_passed")),
+            "governance_evidence_records": len(list(governance_evidence.get("records") or [])),
+            "research_record_count": len(list(research_records.get("records") or [])),
+            "release_blocker_count": len(list(release_readiness.get("blockers") or [])),
+            "production_serving": False,
+            "control_plane_endpoint": True,
+        },
+        "governance_evidence": {
+            "evidence_hash": governance_evidence.get("evidence_hash"),
+            "record_count": len(list(governance_evidence.get("records") or [])),
+        },
+        "research_records": {
+            "records_hash": research_records.get("records_hash"),
+            "record_count": len(list(research_records.get("records") or [])),
+        },
+        "release_readiness": release_readiness,
+        "deployment_record": deployment_record,
+        "policy": _meshmodel_route_policy(),
+        "final_release_decision": release_readiness["release_decision"],
+    }
+
+
+def _meshmodel_artifact_ref(artifact_key: str, path: Path) -> dict[str, Any]:
+    return {
+        "artifact_key": artifact_key,
+        "path": str(path),
+        "exists": path.exists(),
+        "sha256": _file_sha256(path) if path.exists() else None,
+        "content_type": "application/json",
+    }
+
+
+def _meshmodel_route_policy() -> dict[str, Any]:
+    return {
+        "allowed_advisory_target": "advisory_governance_candidate",
+        "model_calls_allowed": False,
+        "external_dependencies": [],
+        "control_plane_endpoint": True,
+        "production_serving": False,
+        "production_authority": False,
+        "mesh_brain_authoritative": True,
+        "governance_evidence_only": True,
+        "policy_bypass": False,
+        "research_only": True,
+    }
 
 
 def _canonical_sha256(payload: dict[str, Any]) -> str:

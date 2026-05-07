@@ -18,6 +18,20 @@ This slice does not start vLLM, SGLang, Dynamo, MLX, or llama.cpp. It produces t
 
 `shared.mesh_runtime.mesh_brain` remains a compatibility import path. New code should import from `mesh_brain`.
 
+## MeshModel Research Lane
+
+MeshModel is the proposed memory-native model-kernel evolution of Mesh Brain.
+It is documented as a research and benchmark lane in
+`docs/meshmodel-architecture.md`, `docs/meshmodel-preliminary-research.md`,
+`docs/meshmodel-research-matrix.md`, and
+`docs/meshmodel-benchmark-plan.md`.
+It does not add production serving authority, actuation authority, or a current
+runtime dependency on external architecture repositories.
+
+MeshModel work must stay inside the existing Mesh Brain control-plane boundary:
+source-grounded artifacts, tenant/data-policy checks, benchmark packets,
+non-deployment records, and explicit promotion gates before any serving claim.
+
 ## End-to-End Reference Flow
 
 `run_e2e_reference_flow()` exercises the MVP control loop:
