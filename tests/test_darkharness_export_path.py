@@ -4,7 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
@@ -42,6 +42,37 @@ def _write_complete_release_provenance(path: Path) -> None:
                 "status": "complete",
                 "missing": [],
                 "packet_sha256": "c" * 64,
+                "checks": {
+                    "git_commit": True,
+                    "clean_git_tree": True,
+                    "image_tag": True,
+                    "image_digest": True,
+                    "base_image_digests": True,
+                    "dependency_lockfiles": True,
+                    "policy_hashes": True,
+                    "policy_lifecycle_signed": True,
+                    "connector_certification_registry": True,
+                    "deployment_compatibility_registry": True,
+                    "migration_version": True,
+                    "migration_rehearsal": True,
+                    "sbom_path": True,
+                    "vulnerability_scan_path": True,
+                    "ci_attestation": True,
+                    "build_command": True,
+                    "builder_identity": True,
+                    "readiness_profile": True,
+                    "environment": True,
+                },
+                "ci": {
+                    "attestation": {
+                        "provider": "github-actions",
+                        "run_id": "ci-run-1",
+                        "sha": "a" * 40,
+                        "expected_sha": "a" * 40,
+                        "sha_matches_git_commit": True,
+                        "valid": True,
+                    }
+                },
             }
         )
         + "\n",
@@ -643,11 +674,15 @@ def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
 
 def _ed25519_private_key_pem() -> str:
     private_key = Ed25519PrivateKey.generate()
-    return private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption(),
-    ).decode("utf-8")
+    raw = cast(
+        bytes,
+        private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ),
+    )
+    return raw.decode("utf-8")
 
 
 def _attach_mesh_brain_artifacts(coordinator: RunCoordinator, run_id: str) -> None:

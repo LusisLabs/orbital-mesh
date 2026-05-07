@@ -137,9 +137,9 @@ The proof must identify the operator, environment, recovery target, and measured
 
 ## Design Partner Packet Evidence
 
-`scripts/verify_design_partner_packet.py --packet <design-partner-packet.json> --json` verifies a `mesh.design_partner_packet.v1` packet for production-pilot readiness.
+`scripts/verify_design_partner_packet.py --packet <design-partner-packet.json> --json` verifies the full `mesh.design_partner_packet.v1` packet before production-pilot signoff.
 
-The packet must identify the partner owner and escalation path, bound the pilot to one environment, one Kubernetes context, one namespace, and at most two service classes, force approval gates, keep proposal lanes advisory, disable unfinished feature-flag and incident adapters, prove success metrics, keep data retention within the pilot window, exclude raw secrets and customer payloads, record support and rollback references, document required real-user experiment consent, and bind the packet to a `go` pilot go/no-go hash, release-provenance hash, run-export ref, and readiness ref. Pilot readiness now reports `design_partner_packet_verified`; production Compose requires `MESH_DESIGN_PARTNER_PACKET_PATH` so pilot readiness cannot pass from generic docs alone.
+The packet must identify the partner owner and escalation path, bound the pilot to one environment, one Kubernetes context, one namespace, and at most two service classes, force approval gates, keep proposal lanes advisory, disable unfinished feature-flag and incident adapters, prove success metrics, keep data retention within the pilot window, exclude raw secrets and customer payloads, record support and rollback references, document required real-user experiment consent, and bind the packet to a `go` pilot go/no-go hash, release-provenance hash, run-export ref, and readiness ref. Pilot readiness now reports `design_partner_packet_verified` after the scope, consent, support, rollback, and safety fields pass; the go/no-go and release-provenance binding remains advisory in the readiness gate and mandatory in the full signoff verifier. Production Compose requires `MESH_DESIGN_PARTNER_PACKET_PATH` so pilot readiness cannot pass from generic docs alone.
 
 ## Ownership Boundary
 

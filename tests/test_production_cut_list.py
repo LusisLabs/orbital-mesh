@@ -402,6 +402,46 @@ def _on_call_drill() -> dict:
     }
 
 
+def _complete_release_provenance(packet_sha256: str) -> dict:
+    return {
+        "schema_version": "mesh.release_provenance.v1",
+        "status": "complete",
+        "missing": [],
+        "packet_sha256": packet_sha256,
+        "checks": {
+            "git_commit": True,
+            "clean_git_tree": True,
+            "image_tag": True,
+            "image_digest": True,
+            "base_image_digests": True,
+            "dependency_lockfiles": True,
+            "policy_hashes": True,
+            "policy_lifecycle_signed": True,
+            "connector_certification_registry": True,
+            "deployment_compatibility_registry": True,
+            "migration_version": True,
+            "migration_rehearsal": True,
+            "sbom_path": True,
+            "vulnerability_scan_path": True,
+            "ci_attestation": True,
+            "build_command": True,
+            "builder_identity": True,
+            "readiness_profile": True,
+            "environment": True,
+        },
+        "ci": {
+            "attestation": {
+                "provider": "github-actions",
+                "run_id": "ci-run-1",
+                "sha": "a" * 40,
+                "expected_sha": "a" * 40,
+                "sha_matches_git_commit": True,
+                "valid": True,
+            }
+        },
+    }
+
+
 class ReadinessProfileTests(unittest.TestCase):
     def test_staging_profile_fails_required_identity_not_optional_clis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -683,14 +723,7 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertIn("release_provenance_complete", still_blocked["missing_evidence"])
                 self.assertIn("on_call_drill_verified", still_blocked["missing_evidence"])
                 release_provenance.write_text(
-                    json.dumps(
-                        {
-                            "schema_version": "mesh.release_provenance.v1",
-                            "status": "complete",
-                            "missing": [],
-                            "packet_sha256": "b" * 64,
-                        }
-                    )
+                    json.dumps(_complete_release_provenance("b" * 64))
                     + "\n",
                     encoding="utf-8",
                 )
@@ -713,6 +746,41 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertEqual(len(packet["observed"]["mesh_brain_model_kernel_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_rollback_drill_run_ids"]), 1)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_release_provenance_without_ci_sha_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                stale_release = _complete_release_provenance("b" * 64)
+                stale_release["ci"]["attestation"]["sha_matches_git_commit"] = False
+                release_provenance.write_text(
+                    json.dumps(stale_release) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("release_provenance_complete", packet["missing_evidence"])
+                self.assertEqual(packet["release_provenance"]["status"], "incomplete")
+                self.assertIn("ci_attestation_sha_matches_git_commit", packet["release_provenance"]["missing"])
             finally:
                 coordinator.stop_background_workers()
 

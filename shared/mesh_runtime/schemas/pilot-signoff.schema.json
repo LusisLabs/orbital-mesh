@@ -66,11 +66,37 @@
     },
     "release_provenance": {
       "type": "object",
-      "required": ["status", "packet_sha256"],
+      "required": ["status", "packet_sha256", "missing", "checks", "ci_attestation"],
       "additionalProperties": false,
       "properties": {
         "status": { "type": "string" },
-        "packet_sha256": { "type": ["string", "null"] }
+        "packet_sha256": { "type": ["string", "null"] },
+        "missing": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": { "type": "boolean" }
+        },
+        "ci_attestation": {
+          "type": "object",
+          "required": [
+            "provider",
+            "run_id",
+            "sha",
+            "expected_sha",
+            "sha_matches_git_commit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "type": ["string", "null"] },
+            "run_id": { "type": ["string", "null"] },
+            "sha": { "type": ["string", "null"] },
+            "expected_sha": { "type": ["string", "null"] },
+            "sha_matches_git_commit": { "type": "boolean" }
+          }
+        }
       }
     },
     "signature": {

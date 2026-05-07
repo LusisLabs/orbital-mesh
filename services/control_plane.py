@@ -976,11 +976,35 @@ class RunCoordinator:
         record["status"] = payload.get("status") if isinstance(payload.get("status"), str) else "invalid"
         record["packet_sha256"] = payload.get("packet_sha256") if isinstance(payload.get("packet_sha256"), str) else None
         missing = payload.get("missing")
-        record["missing"] = list(missing) if isinstance(missing, list) else []
+        packet_missing = [str(item) for item in missing] if isinstance(missing, list) else []
+        raw_checks = payload.get("checks")
+        checks = cast(dict[str, Any], raw_checks) if isinstance(raw_checks, dict) else {}
+        raw_ci = payload.get("ci")
+        ci = cast(dict[str, Any], raw_ci) if isinstance(raw_ci, dict) else {}
+        raw_attestation = ci.get("attestation")
+        attestation = cast(dict[str, Any], raw_attestation) if isinstance(raw_attestation, dict) else {}
+        derived_missing: list[str] = []
+        if not isinstance(missing, list):
+            derived_missing.append("release_provenance_missing_list")
+        if not checks:
+            derived_missing.append("release_provenance_checks")
+        else:
+            derived_missing.extend(name for name, passed in checks.items() if passed is not True)
+        if attestation.get("sha_matches_git_commit") is not True:
+            derived_missing.append("ci_attestation_sha_matches_git_commit")
+        record["missing"] = _dedupe([*packet_missing, *derived_missing])
+        record["checks"] = checks
+        record["ci_attestation"] = {
+            "provider": attestation.get("provider") if isinstance(attestation.get("provider"), str) else None,
+            "run_id": attestation.get("run_id") if isinstance(attestation.get("run_id"), str) else None,
+            "sha": attestation.get("sha") if isinstance(attestation.get("sha"), str) else None,
+            "expected_sha": attestation.get("expected_sha") if isinstance(attestation.get("expected_sha"), str) else None,
+            "sha_matches_git_commit": attestation.get("sha_matches_git_commit") is True,
+        }
         if record["schema_version"] != "mesh.release_provenance.v1":
             record["status"] = "invalid"
             record["missing"] = [*record["missing"], "schema_version:mesh.release_provenance.v1"]
-        elif record["status"] != "complete":
+        elif record["status"] != "complete" or record["missing"]:
             record["status"] = "incomplete"
         return record
 
@@ -5899,6 +5923,17 @@ def _file_sha256(path: Path) -> str:
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
 
 
 def _run_export_approval_records(artifacts: dict[str, Any], events: list[RunEvent]) -> list[dict[str, Any]]:

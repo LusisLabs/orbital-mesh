@@ -6,13 +6,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from shared.mesh_runtime import RuntimeConfig, load_schema, validate_payload
 from shared.mesh_runtime.design_partner import design_partner_packet_ready, verify_design_partner_packet
 from shared.mesh_runtime.integrations import build_readiness
 
 
-def _packet(**overrides) -> dict:
+def _packet(**overrides: Any) -> dict[str, Any]:
     payload = {
         "schema_version": "mesh.design_partner_packet.v1",
         "packet_id": "design_partner_test",
@@ -157,6 +158,36 @@ class DesignPartnerPacketTests(unittest.TestCase):
         self.assertFalse(result["checks"]["consent_documented"])
         self.assertFalse(design_partner_packet_ready(path))
 
+    def test_readiness_accepts_design_partner_scope_before_final_go_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            ingress_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
+            ingress_path.write_text(json.dumps(_authenticated_ingress_proof()), encoding="utf-8")
+            packet_path = Path(tmp) / "design-partner-packet.json"
+            packet_path.write_text(
+                json.dumps(
+                    _packet(
+                        evidence_summary={
+                            "go_no_go_status": "blocked",
+                            "go_no_go_packet_sha256": "pending",
+                            "release_provenance_sha256": "pending",
+                            "run_export_ref": "run-export://partner-a/run_1",
+                            "readiness_ref": "readiness://partner-a/pilot",
+                        }
+                    )
+                ),
+                encoding="utf-8",
+            )
+
+            full_packet = verify_design_partner_packet(packet_path)
+            readiness_packet = verify_design_partner_packet(packet_path, require_go_evidence=False)
+            readiness = build_readiness(_runtime_config(tmp, packet_path=str(packet_path)), force=True).to_dict()
+
+        self.assertEqual(full_packet["status"], "fail")
+        self.assertFalse(full_packet["checks"]["evidence_summary_go"])
+        self.assertEqual(readiness_packet["status"], "pass")
+        self.assertIn("evidence_summary_go", readiness_packet["advisory_checks"])
+        self.assertTrue(readiness["required_checks"]["design_partner_packet_verified"])
+
     def test_pilot_readiness_requires_design_partner_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ingress_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
@@ -197,7 +228,7 @@ class DesignPartnerPacketTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
 
 
-def _authenticated_ingress_proof() -> dict:
+def _authenticated_ingress_proof() -> dict[str, Any]:
     return {
         "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
         "proof_id": "authenticated_ingress_deployment_test",
