@@ -15,6 +15,7 @@ from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
 from services.orchestrator.latentmas_server import MeshLatentMasRuntime, _fit_past_to_context_window
 from services.trigger.service import TriggerService
+from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS
 from shared.mesh_runtime import FileStateStore, RuntimeConfig, RuntimeStateStore, build_readiness, load_fixture
 
 
@@ -43,8 +44,26 @@ class LatentMasAgentMeshTests(unittest.TestCase):
         )
         self.assertEqual(
             [attempt.agent for attempt in tasks[0].attempts],
-            ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"],
+            list(DEFAULT_AGENT_WORKERS),
         )
+
+    def test_native_orchestration_platform_lanes_emit_evaluator_contracts(self) -> None:
+        self.config.agent_mesh_agents = ("temporal", "airflow", "kubernetes", "n8n")
+        trigger, decision, evaluation = self._build_runtime_artifacts()
+        task = AgentMeshService(config=self.config).build_tasks(
+            run_id="run_platform_lanes",
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+        )[0]
+        attempts = {attempt.agent: attempt for attempt in task.attempts}
+
+        self.assertEqual(list(attempts), ["airflow", "temporal", "kubernetes", "n8n"])
+        self.assertEqual(attempts["temporal"].adapter, "native_orchestration_contract")
+        self.assertTrue(attempts["temporal"].output["supports_agentic_execution"])
+        self.assertEqual(attempts["airflow"].output["native_evaluator_signal"], "dag_dependency_coverage")
+        self.assertEqual(attempts["kubernetes"].risk_flags, ["kubernetes_scope_missing"])
+        self.assertEqual(attempts["n8n"].output["best_fit"], "automation")
 
     def test_latentmas_enabled_prepends_completed_attempt(self) -> None:
         server, thread = _start_fake_latentmas(

@@ -10,14 +10,34 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
+from urllib.parse import urlparse
 from urllib.request import urlopen
 
 from .config import RuntimeConfig
 from .control_plane_models import IntegrationReadiness, IntegrationStatus
+from .agentic_operator_provenance import agentic_operator_source_provenance_ready
+from .authenticated_ingress import authenticated_ingress_deployment_ready
+from .audit_sink import audit_sink_proof_ready, verify_audit_sink_proof
+from .audit_sink_certification import audit_sink_certification_ready
+from .backup_restore import backup_restore_rehearsal_ready
+from .connector_certification import build_connector_certification_matrix, connector_certification_registry_ready
+from .data_classification import data_classification_policy_ready
+from .deployment_compatibility import deployment_compatibility_registry_ready
+from .design_partner import design_partner_packet_ready
+from .failure_modes import failure_mode_library_ready
+from .load_concurrency import load_concurrency_rehearsal_ready
+from .orchestration_drill import orchestration_topology_drill_ready
+from .orchestration_topology import build_orchestration_topology_status, orchestration_topology_profile_ready
+from .ownership import ownership_registry_ready
+from .policy_lifecycle import policy_lifecycle_ready
+from .procurement_security import procurement_security_package_ready
+from .provider_adapter import provider_adapter_proof_ready
+from .public_proof import public_proof_package_ready
+from .threat_model import threat_model_register_ready
 
 
 DEFAULT_GITNEXUS_PORT = 4747
@@ -30,6 +50,8 @@ GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
 HERMES_BRIDGE_MODULE = "services.orchestrator.hermes_bridge"
 GOOSE_BRIDGE_MODULE = "services.orchestrator.goose_bridge"
+_PROFILE_ORDER = {"local": 0, "staging": 1, "pilot": 2, "expansion": 3}
+_DURABLE_ARTIFACT_URI_SCHEMES = frozenset({"s3", "gs", "az", "azblob", "r2", "https"})
 
 
 @dataclass
@@ -37,7 +59,6 @@ class IntegrationsConfig:
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     goose_command: str | None = None
-    evo_command: str | None = None
     gitnexus_sidecar_url: str | None = None
     gitnexus_sidecar_command: str | None = None
 
@@ -46,7 +67,6 @@ class IntegrationsConfig:
             "promptfoo_command": self.promptfoo_command,
             "hermes_command": self.hermes_command,
             "goose_command": self.goose_command,
-            "evo_command": self.evo_command,
             "gitnexus_sidecar_url": self.gitnexus_sidecar_url,
             "gitnexus_sidecar_command": self.gitnexus_sidecar_command,
         }
@@ -61,7 +81,6 @@ def load_integrations_config(path: str | Path) -> IntegrationsConfig:
         promptfoo_command=raw.get("promptfoo_command"),
         hermes_command=raw.get("hermes_command"),
         goose_command=raw.get("goose_command"),
-        evo_command=raw.get("evo_command"),
         gitnexus_sidecar_url=raw.get("gitnexus_sidecar_url"),
         gitnexus_sidecar_command=raw.get("gitnexus_sidecar_command"),
     )
@@ -87,7 +106,6 @@ def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsCo
         promptfoo_command=_resolve_promptfoo_command(runtime_config.promptfoo_command or loaded.promptfoo_command),
         hermes_command=_resolve_hermes_command(runtime_config.hermes_command or loaded.hermes_command),
         goose_command=_resolve_goose_command(runtime_config.goose_command or loaded.goose_command),
-        evo_command=_resolve_evo_command(runtime_config.evo_command or loaded.evo_command),
         gitnexus_sidecar_url=runtime_config.gitnexus_sidecar_url
         or loaded.gitnexus_sidecar_url
         or f"http://127.0.0.1:{DEFAULT_GITNEXUS_PORT}",
@@ -97,7 +115,7 @@ def resolve_integrations_config(runtime_config: RuntimeConfig) -> IntegrationsCo
 
 def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> IntegrationReadiness:
     # Module-level TTL cache: subprocess probes (promptfoo --version, goose
-    # --version, evo --version) plus the latentmas/deepagents HTTP probes
+    # --version) plus the latentmas/deepagents HTTP probes
     # dominate cold startup. Every service constructor in auto mode would
     # otherwise pay ~800ms per init. The key includes every field the probe
     # consults so changing e.g. latentmas_url in a new RuntimeConfig triggers
@@ -105,16 +123,55 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
     cache_key = (
         runtime_config.state_directory,
         runtime_config.integrations_config_path,
+        runtime_config.ownership_registry_path,
+        runtime_config.connector_certification_registry_path,
+        runtime_config.policy_lifecycle_manifest_path,
+        runtime_config.orchestration_topology_profile_path,
+        runtime_config.failure_mode_library_path,
+        runtime_config.threat_model_register_path,
+        runtime_config.data_classification_policy_path,
+        runtime_config.agentic_operator_source_provenance_path,
+        runtime_config.deployment_compatibility_registry_path,
+        runtime_config.procurement_security_package_path,
+        runtime_config.public_proof_package_path,
+        runtime_config.authenticated_ingress_proof_path,
+        runtime_config.design_partner_packet_path,
+        runtime_config.audit_sink_proof_path,
+        runtime_config.audit_sink_certification_path,
+        runtime_config.backup_restore_rehearsal_path,
+        runtime_config.load_concurrency_rehearsal_path,
+        runtime_config.orchestration_topology_drill_path,
+        runtime_config.feature_flag_provider_proof_path,
+        runtime_config.incident_provider_proof_path,
+        bool(runtime_config.policy_signing_key),
+        runtime_config.policy_signing_key_id,
         runtime_config.promptfoo_command,
         runtime_config.hermes_command,
         runtime_config.goose_command,
-        runtime_config.evo_command,
         runtime_config.gitnexus_sidecar_url,
+        runtime_config.readiness_profile,
+        runtime_config.operator_identity_required,
+        runtime_config.state_backend,
+        runtime_config.database_url,
+        runtime_config.force_approval_gate,
+        runtime_config.kubernetes_live_execution_enabled,
+        runtime_config.kubernetes_allowed_contexts,
+        runtime_config.kubernetes_allowed_namespaces,
+        runtime_config.otel_receiver_enabled,
+        runtime_config.otel_receiver_token,
+        runtime_config.feedback_prometheus_enabled,
+        runtime_config.prometheus_url,
+        runtime_config.live_feedback_required,
+        runtime_config.feature_flag_credentials_available,
+        runtime_config.incident_credentials_available,
+        runtime_config.audit_logging_available,
         runtime_config.latentmas_enabled,
         runtime_config.latentmas_url,
         runtime_config.latentmas_model_name,
         runtime_config.agent_fabric_mode,
         runtime_config.mesh_deepagents_model,
+        runtime_config.run_export_retention_days,
+        runtime_config.run_export_retention_reviewed,
     )
     now = time.monotonic()
     if not force:
@@ -128,21 +185,110 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         promptfoo_future = executor.submit(_command_status, "promptfoo", resolved.promptfoo_command)
         hermes_future = executor.submit(_command_status, "hermes", resolved.hermes_command)
         goose_future = executor.submit(_command_status, "goose", resolved.goose_command)
-        evo_future = executor.submit(build_evo_status, runtime_config, resolved.evo_command)
         latentmas_future = executor.submit(_latentmas_status, runtime_config)
         deepagents_future = executor.submit(_deepagents_status, runtime_config)
         promptfoo_status = promptfoo_future.result()
         hermes_status = hermes_future.result()
         goose_status = goose_future.result()
-        evo_status = evo_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+    staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
+    promptfoo_status = _staging_contract_status(
+        promptfoo_status,
+        runtime_config,
+        "Mesh-native evaluation contract is online for staging; external Promptfoo CLI is optional.",
+    )
+    hermes_status = _staging_contract_status(
+        hermes_status,
+        runtime_config,
+        "Native explanation path is online for staging; external Hermes CLI is optional.",
+    )
+    goose_status = _staging_contract_status(
+        goose_status,
+        runtime_config,
+        "Deterministic review path is online for staging; external Goose CLI is optional.",
+    )
+    latentmas_status = _staging_contract_status(
+        latentmas_status,
+        runtime_config,
+        "LatentMAS advisory contract is online for staging; sidecar inference remains optional.",
+    )
+    deepagents_status = _staging_contract_status(
+        deepagents_status,
+        runtime_config,
+        "Native proposal fabric contract is online for staging; Deep Agents runtime remains optional.",
+    )
+    promptfoo_status = _with_certification(
+        promptfoo_status,
+        "staging-ready" if promptfoo_status.ready else "mock",
+        required_before="staging",
+        posture="evaluation gate",
+    )
+    hermes_status = _with_certification(
+        hermes_status,
+        "staging-ready" if staging_contract_online else ("read-only" if hermes_status.ready else "mock"),
+        required_before="staging",
+        posture="proposal lane",
+    )
+    goose_status = _with_certification(
+        goose_status,
+        "staging-ready" if staging_contract_online else ("read-only" if goose_status.ready else "mock"),
+        required_before="staging",
+        posture="review lane",
+    )
+    latentmas_status = _with_certification(
+        latentmas_status,
+        "staging-ready" if staging_contract_online else ("proposal-only" if latentmas_status.ready else "disabled"),
+        required_before="pilot",
+        posture="model-lifecycle advisory lane",
+    )
+    deepagents_status = _with_certification(
+        deepagents_status,
+        "staging-ready" if staging_contract_online else ("proposal-only" if deepagents_status.ready else "disabled"),
+        required_before="pilot",
+        posture="sandboxed proposal fabric",
+    )
+    runtime_connector_states = _connector_certification(runtime_config, resolved)
+    runtime_connector_states.update(
+        {
+            "promptfoo": _status_connector_state(promptfoo_status),
+            "hermes": _status_connector_state(hermes_status),
+            "goose": _status_connector_state(goose_status),
+            "latentmas": _status_connector_state(latentmas_status),
+            "deepagents": _status_connector_state(deepagents_status),
+        }
+    )
+    connector_certification_packet = build_connector_certification_matrix(
+        registry_path=runtime_config.connector_certification_registry_path,
+        runtime_states=runtime_connector_states,
+    )
+    connector_certification = connector_certification_packet["connectors"]
+    orchestration_topology = build_orchestration_topology_status(
+        runtime_config.orchestration_topology_profile_path
+    )
+    profile, required_checks, optional_checks, blockers = _profile_checks(
+        runtime_config,
+        {
+            "promptfoo": promptfoo_status,
+            "hermes": hermes_status,
+            "goose": goose_status,
+            "latentmas": latentmas_status,
+            "deepagents": deepagents_status,
+        },
+        connector_certification,
+    )
     readiness = IntegrationReadiness(
         checked_at=checked_at,
+        profile=profile,
+        status="ready" if not blockers else "blocked",
+        required_checks=required_checks,
+        optional_checks=optional_checks,
+        blockers=blockers,
+        connector_certification=connector_certification,
+        orchestration_topology=orchestration_topology,
         promptfoo=promptfoo_status,
         hermes=hermes_status,
         goose=goose_status,
-        evo=evo_status,
         latentmas=latentmas_status,
         deepagents=deepagents_status,
         vault_path=runtime_config.vault_path,
@@ -152,6 +298,314 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
     with _readiness_lock:
         _readiness_cache[cache_key] = (now, readiness)
     return readiness
+
+
+def _with_certification(
+    status: IntegrationStatus,
+    certification: str,
+    *,
+    required_before: str,
+    posture: str,
+) -> IntegrationStatus:
+    return replace(
+        status,
+        certification=certification,
+        required_before=required_before,
+        posture=posture,
+    )
+
+
+def _staging_contract_status(
+    status: IntegrationStatus,
+    runtime_config: RuntimeConfig,
+    fallback_detail: str,
+) -> IntegrationStatus:
+    if status.ready or not _profile_at_least(runtime_config.readiness_profile, "staging"):
+        return status
+    return replace(status, ready=True, detail=fallback_detail)
+
+
+def _status_connector_state(status: IntegrationStatus) -> dict[str, Any]:
+    blockers = [] if status.ready else [f"{status.name}_connector_probe_not_ready"]
+    return {
+        "state": status.certification,
+        "blockers": blockers,
+    }
+
+
+def _connector_certification(
+    runtime_config: RuntimeConfig,
+    resolved: IntegrationsConfig,
+) -> dict[str, Any]:
+    kubernetes_allowlisted = bool(runtime_config.kubernetes_allowed_contexts and runtime_config.kubernetes_allowed_namespaces)
+    staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
+    kubernetes_state = (
+        "pilot-ready"
+        if runtime_config.kubernetes_live_execution_enabled and kubernetes_allowlisted
+        else ("staging-ready" if staging_contract_online else ("read-only" if kubernetes_allowlisted else "mock"))
+    )
+    otel_state = (
+        "staging-ready"
+        if staging_contract_online or (runtime_config.otel_receiver_enabled and bool(runtime_config.otel_receiver_token))
+        else ("read-only" if runtime_config.prometheus_url else "mock")
+    )
+    return {
+        "kubernetes": {
+            "state": kubernetes_state,
+            "required_before": "pilot",
+            "detail": "Live execution requires explicit context and namespace allowlists.",
+        },
+        "webhooks": {
+            "state": "staging-ready" if staging_contract_online else "read-only",
+            "required_before": "staging",
+            "detail": "Webhook sources are accepted only through registered HMAC sources.",
+        },
+        "otel": {
+            "state": otel_state,
+            "required_before": "staging",
+            "detail": "OTLP ingest requires a bearer token when enabled; Prometheus feedback is read-only.",
+        },
+        "promptfoo": {
+            "state": "staging-ready" if staging_contract_online or resolved.promptfoo_command else "mock",
+            "required_before": "staging",
+            "detail": "Compatibility bridge; Mesh-native evaluation remains authoritative.",
+        },
+        "feature_flag_adapter": {
+            "state": _provider_adapter_connector_state(
+                runtime_config,
+                credentials_available=runtime_config.feature_flag_credentials_available,
+                proof_path=runtime_config.feature_flag_provider_proof_path,
+                adapter_id="feature_flag_provider",
+            ),
+            "required_before": "pilot",
+            "detail": "Local deterministic staging adapter. Pilot mutation still requires real provider proof.",
+        },
+        "incident_adapter": {
+            "state": _provider_adapter_connector_state(
+                runtime_config,
+                credentials_available=runtime_config.incident_credentials_available,
+                proof_path=runtime_config.incident_provider_proof_path,
+                adapter_id="incident_provider",
+            ),
+            "required_before": "pilot",
+            "detail": "Local deterministic staging adapter. Pilot intake still requires real provider proof.",
+        },
+        "audit_sink": _audit_sink_connector_state(runtime_config),
+        "deepagents": {
+            "state": "staging-ready"
+            if staging_contract_online
+            else ("proposal-only" if runtime_config.agent_fabric_mode == "deepagents" else "disabled"),
+            "required_before": "pilot",
+            "detail": "Sandbox lane cannot mutate production or write repos directly.",
+        },
+    }
+
+
+def _provider_adapter_connector_state(
+    runtime_config: RuntimeConfig,
+    *,
+    credentials_available: bool,
+    proof_path: str | None,
+    adapter_id: str,
+) -> str:
+    if _profile_at_least(runtime_config.readiness_profile, "staging"):
+        if _profile_at_least(runtime_config.readiness_profile, "pilot") and credentials_available:
+            if not provider_adapter_proof_ready(proof_path, adapter_id=adapter_id):
+                return "unfinished"
+        return "staging-ready"
+    return "unfinished" if credentials_available else "disabled"
+
+
+def _profile_checks(
+    runtime_config: RuntimeConfig,
+    statuses: dict[str, IntegrationStatus],
+    connector_certification: dict[str, Any],
+) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
+    profile = runtime_config.readiness_profile
+    optional_checks = {
+        name: {
+            "ready": status.ready,
+            "certification": status.certification,
+            "detail": status.detail,
+        }
+        for name, status in statuses.items()
+    }
+    required_checks: dict[str, Any] = {
+        "state_path_configured": bool(runtime_config.state_directory),
+        "vault_path_configured": bool(runtime_config.vault_path),
+        "security_headers_enabled": runtime_config.security_headers_enabled,
+    }
+    if _profile_at_least(profile, "staging"):
+        required_checks.update(
+            {
+                "operator_identity_required": runtime_config.operator_identity_required,
+                "authenticated_ingress_deployment_verified": authenticated_ingress_deployment_ready(
+                    runtime_config.authenticated_ingress_proof_path
+                ),
+                "ownership_registry_configured": ownership_registry_ready(runtime_config.ownership_registry_path),
+                "connector_certification_registry_configured": connector_certification_registry_ready(
+                    runtime_config.connector_certification_registry_path
+                ),
+                "orchestration_topology_profile_configured": orchestration_topology_profile_ready(
+                    runtime_config.orchestration_topology_profile_path
+                ),
+                "policy_lifecycle_signed": policy_lifecycle_ready(
+                    manifest_path=runtime_config.policy_lifecycle_manifest_path,
+                    signing_key=runtime_config.policy_signing_key,
+                    signing_key_id=runtime_config.policy_signing_key_id,
+                ),
+                "failure_mode_library_configured": failure_mode_library_ready(
+                    runtime_config.failure_mode_library_path
+                ),
+                "threat_model_register_reviewed": threat_model_register_ready(
+                    runtime_config.threat_model_register_path
+                ),
+                "data_classification_policy_reviewed": data_classification_policy_ready(
+                    runtime_config.data_classification_policy_path
+                ),
+                "agentic_operator_source_provenance_recorded": agentic_operator_source_provenance_ready(
+                    runtime_config.agentic_operator_source_provenance_path
+                ),
+                "deployment_compatibility_registry_reviewed": deployment_compatibility_registry_ready(
+                    runtime_config.deployment_compatibility_registry_path
+                ),
+                "backup_restore_rehearsal_verified": backup_restore_rehearsal_ready(
+                    runtime_config.backup_restore_rehearsal_path
+                ),
+                "otel_ingest_protected": (
+                    not runtime_config.otel_receiver_enabled
+                    or bool(runtime_config.otel_receiver_token)
+                ),
+                "live_execution_allowlisted": (
+                    not runtime_config.kubernetes_live_execution_enabled
+                    or bool(
+                        runtime_config.kubernetes_allowed_contexts
+                        and runtime_config.kubernetes_allowed_namespaces
+                    )
+                ),
+                "audit_logging_available": runtime_config.audit_logging_available,
+            }
+        )
+    if _profile_at_least(profile, "pilot"):
+        live_feedback_required = runtime_config.live_feedback_required or _profile_at_least(profile, "pilot")
+        live_feedback_source_configured = bool(
+            runtime_config.feedback_prometheus_enabled
+            and runtime_config.prometheus_url
+        ) or runtime_config.kubernetes_live_execution_enabled
+        required_checks.update(
+            {
+                "state_backend_postgres": runtime_config.state_backend == "postgres",
+                "database_url_configured": bool(runtime_config.database_url),
+                "force_approval_gate": runtime_config.force_approval_gate
+                or runtime_config.default_steering_mode == "approval_gate",
+                "live_feedback_required": live_feedback_required,
+                "live_feedback_source_configured": live_feedback_source_configured,
+                "mesh_brain_artifact_uri_prefix_configured": _durable_artifact_uri_prefix_configured(
+                    runtime_config.mesh_brain_artifact_uri_prefix
+                ),
+                "mesh_brain_serving_backend_configured": bool(
+                    runtime_config.mesh_brain_serving_base_url and runtime_config.mesh_brain_serving_model
+                ),
+                "run_export_retention_reviewed": runtime_config.run_export_retention_reviewed,
+                "run_export_retention_days_positive": runtime_config.run_export_retention_days > 0,
+                "design_partner_packet_verified": design_partner_packet_ready(
+                    runtime_config.design_partner_packet_path
+                ),
+                "unfinished_feature_flag_adapter_disabled": (
+                    not runtime_config.feature_flag_credentials_available
+                    or provider_adapter_proof_ready(
+                        runtime_config.feature_flag_provider_proof_path,
+                        adapter_id="feature_flag_provider",
+                    )
+                ),
+                "unfinished_incident_adapter_disabled": (
+                    not runtime_config.incident_credentials_available
+                    or provider_adapter_proof_ready(
+                        runtime_config.incident_provider_proof_path,
+                        adapter_id="incident_provider",
+                    )
+                ),
+            }
+        )
+    if _profile_at_least(profile, "expansion"):
+        required_checks.update(
+            {
+                "postgres_required_for_multi_operator": runtime_config.state_backend == "postgres",
+                "external_audit_sink_certified": connector_certification.get("audit_sink", {}).get("state")
+                in {"pilot-ready", "production-ready"},
+                "external_audit_sink_contract_verified": audit_sink_proof_ready(
+                    runtime_config.audit_sink_proof_path
+                ),
+                "external_audit_sink_certification_verified": audit_sink_certification_ready(
+                    runtime_config.audit_sink_certification_path,
+                    proof_path=runtime_config.audit_sink_proof_path,
+                    registry_path=runtime_config.connector_certification_registry_path,
+                ),
+                "procurement_security_package_verified": procurement_security_package_ready(
+                    runtime_config.procurement_security_package_path
+                ),
+                "public_proof_package_verified": public_proof_package_ready(
+                    runtime_config.public_proof_package_path
+                ),
+                "load_concurrency_rehearsal_verified": load_concurrency_rehearsal_ready(
+                    runtime_config.load_concurrency_rehearsal_path
+                ),
+                "orchestration_topology_drill_verified": orchestration_topology_drill_ready(
+                    runtime_config.orchestration_topology_drill_path
+                ),
+            }
+        )
+    blockers = [
+        name
+        for name, passed in required_checks.items()
+        if isinstance(passed, bool) and not passed
+    ]
+    return profile, required_checks, optional_checks, blockers
+
+
+def _profile_at_least(profile: str, minimum: str) -> bool:
+    return _PROFILE_ORDER.get(profile, 0) >= _PROFILE_ORDER.get(minimum, 0)
+
+
+def _durable_artifact_uri_prefix_configured(uri_prefix: str | None) -> bool:
+    parsed = urlparse((uri_prefix or "").strip())
+    return parsed.scheme in _DURABLE_ARTIFACT_URI_SCHEMES and bool(parsed.netloc)
+
+
+def _audit_sink_connector_state(runtime_config: RuntimeConfig) -> dict[str, Any]:
+    if not runtime_config.audit_logging_available:
+        return {
+            "state": "disabled",
+            "required_before": "expansion",
+            "detail": "Audit logging is disabled.",
+            "blockers": ["audit_logging_disabled"],
+        }
+    verification = verify_audit_sink_proof(runtime_config.audit_sink_proof_path)
+    if verification["status"] == "pass":
+        return {
+            "state": "production-ready",
+            "required_before": "expansion",
+            "detail": "External audit sink append-only contract proof is present.",
+        }
+    if not _profile_at_least(runtime_config.readiness_profile, "expansion"):
+        return {
+            "state": "staging-ready",
+            "required_before": "expansion",
+            "detail": "Local audit continuity is available; external append-only sink proof is required before expansion or compliance reliance.",
+            "blockers": [],
+        }
+    blockers = ["external_audit_sink_contract_not_verified"]
+    blockers.extend(
+        f"audit_sink_contract:{name}"
+        for name, passed in verification["checks"].items()
+        if not passed
+    )
+    return {
+        "state": "mock",
+        "required_before": "pilot",
+        "detail": "Local audit seam. Mirror to durable external storage before compliance reliance.",
+        "blockers": blockers,
+    }
 
 
 def invalidate_readiness_cache() -> None:
@@ -179,17 +633,12 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
     goose_warnings = _goose_warnings(current.goose_command)
     for warning in goose_warnings:
         actions.append(f"warning: {warning}")
-    evo_detail = _describe_evo_command(current.evo_command)
-    if evo_detail:
-        actions.append(evo_detail)
-
     save_integrations_config(runtime_config.integrations_config_path, current)
 
     smoke_checks = {
         "promptfoo": _smoke_check_with_fallback(current.promptfoo_command, [["--healthcheck"], ["--version"]]),
         "hermes": _smoke_check_with_fallback(current.hermes_command, [["--healthcheck"], ["--version"]]),
         "goose": _smoke_check_with_fallback(current.goose_command, [["--healthcheck"], ["--version"]]),
-        "evo": _evo_smoke_check(current.evo_command, runtime_config.evo_command_timeout_seconds),
     }
     guidance = {
         "promptfoo": (
@@ -204,11 +653,6 @@ def bootstrap_integrations(runtime_config: RuntimeConfig, install_missing: bool 
             "Install Goose CLI from the official Block Goose distribution if missing. "
             "For automatic provider inference, set an OpenAI-compatible MiniMax endpoint via "
             "`OPENAI_BASE_URL` plus a model such as `GOOSE_MODEL=MiniMax-M2.5`."
-        ),
-        "evo": (
-            "Install `evo-hq-cli` globally or set `MESH_EVO_COMMAND` to a local command such as "
-            "`uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo`. Mesh only probes "
-            "`evo --version` in this proposal-lane integration."
         ),
     }
     return {
@@ -299,27 +743,6 @@ def _command_status(name: str, command: str | None) -> IntegrationStatus:
     else:
         ok, detail = _smoke_check_with_fallback(command, [["--healthcheck"], ["--version"]], timeout=timeout)
     return IntegrationStatus(name=name, ready=ok, detail=detail, command=command)
-
-
-def build_evo_status(runtime_config: RuntimeConfig, command: str | None = None) -> IntegrationStatus:
-    resolved_command = command if command is not None else resolve_integrations_config(runtime_config).evo_command
-    ok, detail = _evo_smoke_check(resolved_command, runtime_config.evo_command_timeout_seconds)
-    return IntegrationStatus(name="evo", ready=ok, detail=detail, command=resolved_command)
-
-
-def _evo_smoke_check(command: str | None, timeout_seconds: int | float) -> tuple[bool, str]:
-    if not command:
-        return False, "command not configured"
-    executable = shlex.split(command)[0]
-    binary = executable if os.path.isabs(executable) else shutil.which(executable)
-    if binary is None and not Path(executable).exists():
-        return False, "command not found"
-    ok, detail = _smoke_check(command, ["--version"], timeout=timeout_seconds)
-    if not ok:
-        return False, detail
-    if "evo-hq-cli" not in detail:
-        return False, f"unexpected evo package: {detail}"
-    return True, detail
 
 
 def _deepagents_env_warnings(model: str) -> list[str]:
@@ -483,12 +906,6 @@ def _resolve_goose_command(command: str | None) -> str | None:
     )
 
 
-def _resolve_evo_command(command: str | None) -> str | None:
-    if command:
-        return command
-    return shutil.which("evo")
-
-
 def _resolve_vendor_binary(command: str | None, executable_name: str) -> str | None:
     if command:
         tokens = shlex.split(command)
@@ -566,12 +983,6 @@ def _describe_hermes_command(command: str | None) -> str | None:
     if forwarded:
         return f"configured Hermes bridge for {forwarded}"
     return "configured Hermes bridge"
-
-
-def _describe_evo_command(command: str | None) -> str | None:
-    if not command:
-        return None
-    return f"configured Evo proposal lane for {command}"
 
 
 def _goose_routes(command: str | None) -> tuple[str | None, str | None]:

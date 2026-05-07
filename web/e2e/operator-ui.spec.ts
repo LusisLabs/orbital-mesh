@@ -8,7 +8,7 @@ function targetUrl(): string {
 
 async function openFixture(page: Page) {
   await page.goto(targetUrl());
-  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
   await expect(page.getByText("Connection Failed")).toHaveCount(0);
 }
 
@@ -29,11 +29,12 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(overflowing).toEqual([]);
 }
 
-test("applies the Islands Dark console kit end to end", async ({ page }) => {
+test("applies the orbital-mesh roadmap console kit end to end", async ({ page }) => {
   await openFixture(page);
 
-  await expect(page.getByText("Purna Labs OS")).toBeVisible();
-  await expect(page.getByText("Purna Labs desktop")).toBeVisible();
+  await expect(page.getByText("orbital-mesh")).toBeVisible();
+  await expect(page.getByText("Production deployment control plane")).toBeVisible();
+  await expect(page.getByText("Purna Labs OS")).toHaveCount(0);
   await expect(page.getByText(/Lusis/i)).toHaveCount(0);
 
   const tokens = await page.evaluate(() => {
@@ -63,12 +64,14 @@ test("applies the Islands Dark console kit end to end", async ({ page }) => {
   expect(tokens.primaryBorder).toBe("rgba(84, 138, 247, 0.52)");
 });
 
-test("loads the Purna console with overview as the default page", async ({ page }) => {
+test("loads the orbital-mesh console with command as the default page", async ({ page }) => {
   await openFixture(page);
 
-  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
   await expect(page.getByTestId("mesh-view-overview")).toBeVisible();
-  await expect(page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Overview" })).toHaveClass(/active/);
+  await expect(page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Command" })).toHaveClass(/active/);
+  await expect(page.getByText("Production readiness cockpit")).toBeVisible();
+  await expect(page.getByText("Tiered readiness")).toBeVisible();
   await expect(page.locator(".react-flow")).toHaveCount(0);
   await expect(page.getByText("Labyrinth")).toHaveCount(0);
   await expect(page.getByText("Journey Index")).toHaveCount(0);
@@ -80,32 +83,40 @@ test("exposes secondary control-plane, Hermes, agents, and integrations pages", 
   await openFixture(page);
 
   const nav = page.getByTestId("mesh-primary-nav");
-  await nav.getByRole("button", { name: "Control Plane" }).click();
+  await nav.getByRole("button", { name: "Readiness" }).click();
   await expect(page.getByTestId("mesh-view-control-plane")).toBeVisible();
-  await expect(page.getByText("Control plane diagnostics")).toBeVisible();
+  await expect(page.getByText("Tiered readiness")).toBeVisible();
+  await expect(page.getByText("Required Gate Matrix")).toBeVisible();
 
   await nav.getByRole("button", { name: "Hermes" }).click();
   await expect(page.getByTestId("mesh-view-hermes")).toBeVisible();
   await expect(page.getByText("Hermes Status")).toBeVisible();
 
-  await nav.getByRole("button", { name: "Agents" }).click();
+  await nav.getByRole("button", { name: "Proposal Lanes" }).click();
   await expect(page.getByTestId("agents-grid")).toBeVisible();
   await expect(page.getByText("Hermes").first()).toBeVisible();
   await expect(page.getByText("Goose").first()).toBeVisible();
   await expect(page.getByText("Custom HTTP Agent")).toBeVisible();
 
-  await nav.getByRole("button", { name: "Integrations" }).click();
+  await nav.getByRole("button", { name: "Connectors" }).click();
   await expect(page.getByTestId("integrations-grid")).toBeVisible();
   await expect(page.getByText("Web3")).toBeVisible();
   await expect(page.getByText("Web2 Production")).toBeVisible();
   await expect(page.getByText("Development")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Operations" })).toBeVisible();
+  await expect(page.getByText("Connector Certification Matrix")).toBeVisible();
+  const kubernetesRow = page.locator("tr").filter({ hasText: "Kubernetes actuator" });
+  await expect(kubernetesRow).toBeVisible();
+  await expect(kubernetesRow.getByText("live execution requires explicit context and namespace allowlists")).toBeVisible();
+  await expect(kubernetesRow.getByText("runtime-secret")).toBeVisible();
+  await expect(kubernetesRow.getByText("serviceaccount://mesh/pilot-kubernetes-actuator")).toBeVisible();
+  await expect(kubernetesRow.getByText("rollout-restart")).toBeVisible();
 });
 
 test("keeps run detail topology secondary while preserving canvas modes", async ({ page }) => {
   await openFixture(page);
 
-  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Runs" }).click();
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Evidence Runs" }).click();
   await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
   await expect(page.getByTestId("run-detail-view")).toBeVisible();
   await page.getByRole("button", { name: "Topology" }).click();
@@ -124,6 +135,25 @@ test("keeps run detail topology secondary while preserving canvas modes", async 
       await expect(unavailable).toBeDisabled();
     }
   }
+});
+
+test("exposes Darkharness packet status on the operator surface", async ({ page }) => {
+  await openFixture(page);
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Evidence Runs" }).click();
+  await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
+  await page.getByRole("button", { name: "Dark Harness" }).click();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Dark Harness Packet" })).toBeVisible();
+  await expect(page.getByText("Harness Capabilities")).toBeVisible();
+  await expect(page.getByText("Evidence capture")).toBeVisible();
+  await expect(page.getByText("Action gate exercise")).toBeVisible();
+  await expect(page.getByText("Boundary Status")).toBeVisible();
+  await expect(page.getByText("Claim Boundary")).toBeVisible();
+
+  await page.getByTestId("mesh-primary-nav").getByRole("button", { name: "Pilot Packet" }).click();
+  await expect(page.getByTestId("mesh-view-packets")).toBeVisible();
+  await expect(page.getByTestId("darkharness-packet-panel")).toBeVisible();
 });
 
 test("submits operator note and Hermes chat through steering", async ({ page }) => {
@@ -165,10 +195,10 @@ test("submits operator note and Hermes chat through steering", async ({ page }) 
   await expect((await hermesResponse).status()).toBeLessThan(500);
 });
 
-test("keeps the Purna shell usable on mobile", async ({ page }) => {
+test("keeps the orbital-mesh shell usable on mobile", async ({ page }) => {
   await openFixture(page);
 
-  await expect(page.getByRole("heading", { name: "Purna Console" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Context", exact: true })).toBeVisible();
   await expect(page.getByTestId("mesh-primary-nav")).toBeVisible();
   await expect(page.getByTestId("mesh-view-overview")).toBeVisible();

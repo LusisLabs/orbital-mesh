@@ -1,0 +1,50 @@
+{
+  "version": "policy.lifecycle.manifest.v1",
+  "policies": [
+    {
+      "path": "policies/autonomy.policy.json",
+      "owner": "platform-governance",
+      "state": "active",
+      "risk_tier": "medium",
+      "effective_from": "2026-05-01T00:00:00Z",
+      "review_expires_at": "2026-08-01T00:00:00Z",
+      "rollback_ref": "policies/rollback.policy.json"
+    },
+    {
+      "path": "policies/metric-actions.policy.json",
+      "owner": "platform-governance",
+      "state": "active",
+      "risk_tier": "high",
+      "effective_from": "2026-05-01T00:00:00Z",
+      "review_expires_at": "2026-08-01T00:00:00Z",
+      "rollback_ref": "policies/rollback.policy.json"
+    },
+    {
+      "path": "policies/protected-scope.policy.json",
+      "owner": "security",
+      "state": "active",
+      "risk_tier": "high",
+      "effective_from": "2026-05-01T00:00:00Z",
+      "review_expires_at": "2026-08-01T00:00:00Z",
+      "rollback_ref": "policies/rollback.policy.json"
+    },
+    {
+      "path": "policies/reth-node.policy.json",
+      "owner": "platform-runtime",
+      "state": "active",
+      "risk_tier": "high",
+      "effective_from": "2026-05-01T00:00:00Z",
+      "review_expires_at": "2026-08-01T00:00:00Z",
+      "rollback_ref": "policies/rollback.policy.json"
+    },
+    {
+      "path": "policies/rollback.policy.json",
+      "owner": "platform-governance",
+      "state": "active",
+      "risk_tier": "high",
+      "effective_from": "2026-05-01T00:00:00Z",
+      "review_expires_at": "2026-08-01T00:00:00Z",
+      "rollback_ref": "policies/rollback.policy.json"
+    }
+  ]
+}

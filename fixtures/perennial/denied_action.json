@@ -1,0 +1,153 @@
+{
+  "fixture_id": "perennial.denied_action.fixture.v1",
+  "description": "Denied production-impacting action without operator authority.",
+  "contracts": {
+    "agent_action_record": {
+      "contract": "perennial.agent_action_record.v1",
+      "action_record_id": "aar_denied_write_001",
+      "observed_at": "2026-05-05T14:05:00Z",
+      "actor": {
+        "actor_type": "agent",
+        "actor_id": "mesh-agent.autoremediate",
+        "display_name": "Mesh autoremediation agent",
+        "authority_source": "service_account"
+      },
+      "action": {
+        "action_class": "deny",
+        "action_type": "scale_deployment_without_approval",
+        "target": {
+          "environment": "pilot",
+          "service": "checkout-api",
+          "namespace": "payments-pilot",
+          "resource_ref": "deployment/checkout-api",
+          "reservoir_id": null
+        },
+        "production_impact": "direct"
+      },
+      "context": {
+        "run_id": "run_denied_001",
+        "run_event_id": "evt_denied_action",
+        "decision_id": "dec_denied_scale",
+        "evaluation_id": "eval_denied_scale",
+        "feedback_id": null,
+        "source_system": "orbital-mesh-control-plane"
+      },
+      "governance": {
+        "risk_tier": "high",
+        "autonomy_tier": "approval_required",
+        "policy_refs": ["policy://darkharness/pilot/production-approval-required"],
+        "evidence_refs": ["evidence://run_denied_001/missing-approval"],
+        "proof_refs": ["proof_denied_scale"],
+        "operator_authority_refs": []
+      },
+      "outcome": {
+        "status": "denied",
+        "denial_reasons": ["production-impacting action requires operator approval"],
+        "rollback_ref": null,
+        "side_effect_refs": []
+      },
+      "boundary": {
+        "tenant_id": "customer-a",
+        "data_boundary": "on_prem",
+        "reservoir_refs": []
+      }
+    },
+    "governance_commit": {
+      "contract": "perennial.governance_commit.v1",
+      "governance_commit_id": "gc_denied_scale_001",
+      "created_at": "2026-05-05T14:05:03Z",
+      "commit_type": "deny_action",
+      "subject": {
+        "run_id": "run_denied_001",
+        "trigger_id": "trg_checkout_latency",
+        "decision_id": "dec_denied_scale",
+        "evaluation_id": "eval_denied_scale",
+        "action_record_id": "aar_denied_write_001"
+      },
+      "state_refs": {
+        "epistemic_state_id": "epi_allowed_restart_001",
+        "ontological_state_id": "onto_allowed_restart_001"
+      },
+      "inputs": {
+        "evidence_refs": ["evidence://run_denied_001/missing-approval"],
+        "scenario_analysis_ref": "scenario://run_denied_001",
+        "policy_refs": ["policy://darkharness/pilot/production-approval-required"],
+        "remediation_safety_ref": null,
+        "trust_ladder_ref": "trust://checkout-api/pilot",
+        "readiness_ref": "readiness://pilot/go"
+      },
+      "authority": {
+        "operator_required": true,
+        "operator_approval_refs": [],
+        "service_owner_refs": ["owner.checkout"]
+      },
+      "action": {
+        "action_type": "scale_deployment",
+        "target_ref": "kubernetes://payments-pilot/deployment/checkout-api",
+        "production_impact": "direct",
+        "rollback_ref": null
+      },
+      "proof": {
+        "proof_envelope_id": "proof_denied_scale",
+        "merkle_root": "sha256:denied-root",
+        "signature_ref": null
+      },
+      "outcome": {
+        "gate_result": "denied",
+        "reasons": ["operator approval missing", "production action approval required"],
+        "expires_at": null
+      }
+    },
+    "proof_envelope": {
+      "contract": "perennial.proof_envelope.v1",
+      "proof_envelope_id": "proof_denied_scale",
+      "created_at": "2026-05-05T14:05:04Z",
+      "subject_refs": ["gc_denied_scale_001", "run_denied_001"],
+      "implemented_proofs": {
+        "merkle": {
+          "run_id": "run_denied_001",
+          "root_hash": "sha256:denied-root",
+          "leaf_event_ids": ["evt_denied_action"],
+          "proof_refs": ["merkle://run_denied_001/proof"],
+          "verifier": "orbital_mesh_merkle_v1"
+        }
+      },
+      "proposed_proofs": {
+        "signature": {
+          "signing_profile": "darkharness-classical-v1",
+          "algorithm": "ed25519",
+          "key_id": "proposed-key",
+          "signature": null,
+          "status": "proposed"
+        },
+        "pqc_signature": {
+          "interface": "pqc_signature_v1",
+          "algorithm": null,
+          "key_id": null,
+          "signature": null,
+          "status": "proposed"
+        },
+        "kem": {
+          "interface": "pqc_kem_v1",
+          "algorithm": null,
+          "encapsulated_key_ref": null,
+          "status": "proposed"
+        },
+        "zk": {
+          "hook": "selective_disclosure_v1",
+          "statement": "Denied action proof exposes policy result but not raw evidence.",
+          "public_inputs": {
+            "gate_result": "denied"
+          },
+          "proof_ref": null,
+          "status": "proposed"
+        }
+      },
+      "disclosure": {
+        "raw_sensitive_data_included": false,
+        "redaction_profile": "darkharness-pilot-redacted",
+        "exported_fields": ["run_id", "gate_result", "reasons", "merkle_root"]
+      }
+    }
+  }
+}

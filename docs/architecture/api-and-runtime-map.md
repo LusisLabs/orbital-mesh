@@ -51,8 +51,8 @@ Snapshot: master @ `1f0ba35` (post PRs #19 & #20).
    │  EvaluationService.evaluate                                       │
    │      (14+ blocking_reasons → recommendation: execute|review|reject)│
    │  AgentMeshService.build_tasks                                     │
-   │      (6 lanes parallel → first non-risk-flagged wins)             │
-   │  ⚑ pause point: approve / cancel / override_decision / launch_evo │
+   │      (5 lanes plus platform lanes → first non-risk-flagged wins)  │
+   │  ⚑ pause point: approve / cancel / override_decision              │
    │                                                                   │
    ├── stage: executing ──────────────────────────────────────────────┤
    │                                                                   │
@@ -273,7 +273,7 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 
 **Two modes** (`agent_fabric_mode` config):
 
-- `deepagents` — all 6 lanes via `DeepAgentsAdapter.build_lane_attempt`; each spins a sandboxed deepagents graph with 5–6 sub-subagents (root-cause-analyst, patch-proposer, reviewer, staging-validator, rollback-planner, evo-benchmark-advisor)
+- `deepagents` — proposal lanes via `DeepAgentsAdapter.build_lane_attempt`; each spins a sandboxed deepagents graph with root-cause, patch, review, staging, and rollback sub-subagents
 - `native_contract` — hand-written builders:
 
 | Lane | Role | Gate |
@@ -283,7 +283,6 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 | `codex` | repo patch | requires `allowed_paths` + `test_commands` |
 | `claudecode` | review (risk=`evaluation_failed` if not passed) | always |
 | `openclaw` | staging k8s validation | requires namespace + context |
-| `evo` | optimization advisory | requires evo CLI + workspace + `code_remediation_candidate` |
 | `latentmas` | optional 7th lane | `config.latentmas_enabled` |
 
 **Selection (current)**: first `completed && !risk_flags` wins; else first attempt is selected.
@@ -303,11 +302,13 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 
 `override_level()` forces a level without affecting stats. `record_outcome(override=True)` bypasses ladder entirely.
 
+API reads annotate each entry with `next_level`, `promotion_requirements`, `promotion_blockers`, and `autonomy_ceiling_reason`. These fields are derived at read time from the active thresholds and are not stored in `learning/trust_ladder.json`.
+
 ---
 
 ## 9. Steering (operator interventions)
 
-11 commands ([control_plane.py:77-91](../../services/control_plane.py)). Single transport: `POST /api/runs/{id}/steer`.
+10 commands ([control_plane.py](../../services/control_plane.py)). Single transport: `POST /api/runs/{id}/steer`.
 
 | Command | Allowed at stage | Notes |
 |---------|------------------|-------|
@@ -321,8 +322,6 @@ If review_reasons present and rule said `escalate` and classifier flags terminal
 | `explain_blockers` | only `evaluation_ready` (paused) | invokes Hermes summarizer |
 | `chat_with_hermes` | only `evaluation_ready` (paused) | requires non-empty `message` |
 | `attach_note` | any (incl. terminal) | append-only operator note |
-| `launch_evo` | `evaluation_ready` (paused) OR `completed` | spawns evo workspace |
-
 Pauseable stages: `{trigger_ready, decision_ready, evaluation_ready, feedback_ready}`.
 Terminal stages: `{completed, failed, cancelled, no_trigger, recovery_spawned}`.
 
@@ -544,8 +543,8 @@ When Kubernetes live execution is enabled, successful live deployment actions al
 ### Trust ladder
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/trust-ladder` | All entries |
-| GET | `/api/trust-ladder/{action_class}/{service}` | Single entry |
+| GET | `/api/trust-ladder` | All entries with computed autonomy-ceiling rationale |
+| GET | `/api/trust-ladder/{action_class}/{service}` | Single entry with computed autonomy-ceiling rationale |
 | POST | `/api/trust-ladder/override` | Operator override |
 
 ### Agent SLO / Prometheus

@@ -11,6 +11,11 @@ NAMESPACE="${NAMESPACE:-search}"
 KUBE_CONTEXT="${KUBE_CONTEXT:-k3d-mesh-e2e}"
 ENVIRONMENT="${ENVIRONMENT:-local}"
 EXPECT_MESH_EVAL_TOKENIZER_PROBE="${MESH_EXPECT_MESH_EVAL_TOKENIZER_PROBE:-0}"
+E2E_AUTO_APPROVE="${E2E_AUTO_APPROVE:-0}"
+MESH_E2E_OPERATOR_ID="${MESH_E2E_OPERATOR_ID:-mesh-e2e}"
+MESH_E2E_OPERATOR_ROLES="${MESH_E2E_OPERATOR_ROLES:-launcher,approver}"
+MESH_OPERATOR_HEADER="${MESH_OPERATOR_HEADER:-X-Mesh-Operator}"
+MESH_OPERATOR_ROLES_HEADER="${MESH_OPERATOR_ROLES_HEADER:-X-Mesh-Roles}"
 
 export BASE_URL
 export GOAL_ID
@@ -22,6 +27,11 @@ export NAMESPACE
 export KUBE_CONTEXT
 export ENVIRONMENT
 export EXPECT_MESH_EVAL_TOKENIZER_PROBE
+export E2E_AUTO_APPROVE
+export MESH_E2E_OPERATOR_ID
+export MESH_E2E_OPERATOR_ROLES
+export MESH_OPERATOR_HEADER
+export MESH_OPERATOR_ROLES_HEADER
 
 python3 - <<'PY'
 import json
@@ -38,6 +48,11 @@ def as_dict(value):
 base_url = os.environ["BASE_URL"]
 request_timeout_seconds = float(os.environ.get("E2E_RUN_REQUEST_TIMEOUT_SECONDS", "90"))
 long_running_stages = {"scenario_analysis_ready", "evaluation_ready"}
+auto_approve = os.environ.get("E2E_AUTO_APPROVE", "0").lower() in {"1", "true", "yes", "on"}
+operator_header = os.environ.get("MESH_OPERATOR_HEADER", "X-Mesh-Operator")
+operator_roles_header = os.environ.get("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles")
+operator_id = os.environ.get("MESH_E2E_OPERATOR_ID", "mesh-e2e")
+operator_roles = os.environ.get("MESH_E2E_OPERATOR_ROLES", "launcher,approver")
 payload = {
     "goal_id": os.environ["GOAL_ID"],
     "evaluation_mode": os.environ["EVALUATION_MODE"],
@@ -51,6 +66,23 @@ payload = {
         "environment": os.environ["ENVIRONMENT"],
     },
 }
+
+def json_headers():
+    return {
+        "Content-Type": "application/json",
+        operator_header: operator_id,
+        operator_roles_header: operator_roles,
+    }
+
+def post_json(url, body):
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers=json_headers(),
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 health_url = f"{base_url}/api/health"
 deadline = time.time() + 60
@@ -67,17 +99,10 @@ while True:
 
 last_error = None
 for _ in range(5):
-    request = urllib.request.Request(
-        f"{base_url}/api/runs",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
-            run = json.loads(response.read().decode("utf-8"))
-            run_id = run["run_id"]
-            break
+        run = post_json(f"{base_url}/api/runs", payload)
+        run_id = run["run_id"]
+        break
     except (URLError, RemoteDisconnected, ConnectionResetError, TimeoutError, socket.timeout) as exc:
         last_error = exc
         time.sleep(1)
@@ -96,6 +121,7 @@ last_progress_at = started
 terminal_stages = {"completed", "failed", "cancelled", "no_trigger"}
 if os.environ.get("E2E_ACCEPT_AWAITING_OPERATOR", "0").lower() in {"1", "true", "yes"}:
     terminal_stages.add("awaiting_operator")
+approval_submitted = False
 while True:
     now = time.monotonic()
     with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}", timeout=request_timeout_seconds) as response:
@@ -106,6 +132,21 @@ while True:
         last_progress_at = now
         grace = stage_grace_seconds if run.get("stage") in long_running_stages else progress_grace_seconds
         deadline = min(hard_deadline, max(deadline, now + grace))
+    if (
+        auto_approve
+        and not approval_submitted
+        and run.get("stage") == "awaiting_operator"
+        and run.get("pending_pause_stage") == "evaluation_ready"
+    ):
+        artifacts = as_dict(run.get("artifacts"))
+        evaluation = as_dict(artifacts.get("evaluation"))
+        if evaluation.get("passed") is True and evaluation.get("final_recommendation") == "execute":
+            post_json(
+                f"{base_url}/api/runs/{run_id}/steer",
+                {"command": "approve", "summary": "compose smoke approval"},
+            )
+            approval_submitted = True
+            continue
     if run["stage"] in terminal_stages:
         artifacts = as_dict(run.get("artifacts"))
         task_trace = as_dict(artifacts.get("task_trace"))

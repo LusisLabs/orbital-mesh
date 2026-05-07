@@ -1,0 +1,9 @@
+* @shaanp
+
+/.github/ @shaanp
+/docs/ @shaanp
+/policies/ @shaanp
+/shared/mesh_runtime/schemas/ @shaanp
+/shared/mesh_runtime/contracts.py @shaanp
+/services/control_plane.py @shaanp
+/control_plane_server.py @shaanp

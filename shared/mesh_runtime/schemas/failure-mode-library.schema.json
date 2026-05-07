@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/failure-mode-library.schema.json",
+  "title": "FailureModeLibrary",
+  "type": "object",
+  "required": ["schema_version", "generated_from", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mesh.failure_mode_library.registry.v1",
+      "type": "string"
+    },
+    "generated_from": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "category",
+          "risk_tier",
+          "authority_boundary",
+          "detection_refs",
+          "expected_blockers",
+          "operator_actions",
+          "replay_refs",
+          "test_refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "category": {
+            "type": "string",
+            "enum": [
+              "policy",
+              "identity",
+              "agent",
+              "audit",
+              "kubernetes",
+              "signal",
+              "feedback",
+              "dependency",
+              "queue",
+              "network"
+            ]
+          },
+          "risk_tier": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "authority_boundary": { "type": "string" },
+          "detection_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "expected_blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "operator_actions": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "replay_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "test_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

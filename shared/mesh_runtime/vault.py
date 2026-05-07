@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +19,6 @@ VAULT_DIRECTORIES = (
     "Executions",
     "Feedback",
     "Agents",
-    "Evo",
     "Merkle",
     "Notes",
     "Insights",
@@ -88,7 +89,6 @@ class VaultManager:
             f"- Execution: {self._artifact_link('Executions', session.run_id)}",
             f"- Feedback: {self._artifact_link('Feedback', session.run_id)}",
             f"- Agents: {self._artifact_link('Agents', session.run_id)}",
-            f"- Evo: {self._artifact_link('Evo', session.run_id)}",
             f"- Merkle: {self._artifact_link('Merkle', session.run_id)}",
             f"- Notes: {self._artifact_link('Notes', session.run_id)}",
             f"- Insights: {self._artifact_link('Insights', session.run_id)}",
@@ -122,10 +122,6 @@ class VaultManager:
         self._write_markdown(
             self._artifact_path("Agents", session.run_id),
             self._artifact_document("Agent Mesh", {"tasks": session.artifacts.get("agent_tasks", [])}),
-        )
-        self._write_markdown(
-            self._artifact_path("Evo", session.run_id),
-            self._artifact_document("Evo", session.artifacts.get("evo_launches")),
         )
         self._write_markdown(
             self._artifact_path("Merkle", session.run_id),
@@ -187,7 +183,27 @@ class VaultManager:
     def _write_markdown(self, relative_path: str, lines: list[str]) -> None:
         destination = self.root_path / relative_path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text("\n".join(lines).rstrip() + "\n")
+        content = "\n".join(lines).rstrip() + "\n"
+        mode = destination.stat().st_mode & 0o777 if destination.exists() else 0o644
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                delete=False,
+                dir=destination.parent,
+                encoding="utf-8",
+                prefix=f".{destination.name}.",
+                suffix=".tmp",
+            ) as handle:
+                temp_path = Path(handle.name)
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temp_path.chmod(mode)
+            temp_path.replace(destination)
+        finally:
+            if temp_path is not None and temp_path.exists():
+                temp_path.unlink()
 
     def write_memory_observation(self, observation: dict[str, Any]) -> str:
         relative_path = f"MemoryObservations/{observation['observation_id']}.md"

@@ -1,21 +1,29 @@
 import type {
+  ApprovalQueuePacket,
   GoalRecord,
+  ConnectorCertificationPacket,
+  DarkharnessPilotPacket,
   HealthSnapshot,
   IntegrationReadiness,
   EvidenceGraph,
+  KillSwitchStatus,
   MerkleProof,
   MerkleSnapshot,
+  PilotGoNoGoPacket,
+  PolicySimulationResult,
   ScenarioAnalysis,
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
   RunDetail,
+  RunExportPackage,
   RunSessionRecord,
   ScenarioRecord,
   BenchmarkRecord,
   ServiceAgentRecord,
   SimulationScenarioRecord,
   SystemSnapshot,
+  TrustLadderEntry,
   VaultTreeEntry,
   WatcherStatus,
 } from "./types";
@@ -52,6 +60,62 @@ async function request<T>(baseUrl: string, path: string, init?: RequestInit): Pr
   return (await response.json()) as T;
 }
 
+async function requestAllowingStatus<T>(
+  baseUrl: string,
+  path: string,
+  allowedStatuses: number[],
+  init?: RequestInit,
+): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  if (!response.ok && !allowedStatuses.includes(response.status)) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+      else if (body?.error) detail = body.error;
+      else if (body?.message) detail = body.message;
+    } catch {
+      /* body not JSON */
+    }
+    throw new Error(detail);
+  }
+  return (await response.json()) as T;
+}
+
+async function requestBlob(baseUrl: string, path: string, init?: RequestInit): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(`${baseUrl}${path}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+    ...init,
+  });
+  if (!response.ok) {
+    let detail = `${response.status} ${response.statusText}`;
+    try {
+      const body = await response.json();
+      if (body?.detail) detail = body.detail;
+      else if (body?.error) detail = body.error;
+      else if (body?.message) detail = body.message;
+    } catch {
+      /* body not JSON */
+    }
+    throw new Error(detail);
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  return {
+    blob: await response.blob(),
+    filename: match?.[1] ?? "mesh-run-export.zip",
+  };
+}
+
 export const api = {
   getHealth(baseUrl: string) {
     return request<HealthSnapshot>(baseUrl, "/api/health");
@@ -59,6 +123,40 @@ export const api = {
 
   getReadiness(baseUrl: string) {
     return request<IntegrationReadiness>(baseUrl, "/api/readiness");
+  },
+
+  getConnectorCertification(baseUrl: string) {
+    return request<ConnectorCertificationPacket>(baseUrl, "/api/connectors/certification");
+  },
+
+  getApprovals(baseUrl: string) {
+    return request<ApprovalQueuePacket>(baseUrl, "/api/approvals");
+  },
+
+  getKillSwitch(baseUrl: string) {
+    return request<KillSwitchStatus>(baseUrl, "/api/kill-switch");
+  },
+
+  applyKillSwitch(baseUrl: string, payload: Record<string, unknown>) {
+    return request<KillSwitchStatus>(baseUrl, "/api/kill-switch", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  simulatePolicy(baseUrl: string, payload: Record<string, unknown>) {
+    return request<PolicySimulationResult>(baseUrl, "/api/policy/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  getPilotGoNoGo(baseUrl: string) {
+    return request<PilotGoNoGoPacket>(baseUrl, "/api/pilot/go-no-go");
+  },
+
+  getTrustLadder(baseUrl: string) {
+    return request<{ entries: TrustLadderEntry[] }>(baseUrl, "/api/trust-ladder");
   },
 
   getScenarios(baseUrl: string) {
@@ -123,8 +221,104 @@ export const api = {
     });
   },
 
+  runMeshBrainModelKernelProbe(baseUrl: string, payload: { benchmark_iterations?: number } = {}) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/model-kernel-probe", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  runMeshBrainLiveServingSmoke(
+    baseUrl: string,
+    payload: {
+      base_url?: string;
+      model?: string;
+      tenant_id?: string;
+      task_type?: string;
+      hardware_tier?: string;
+      prompt?: string;
+      timeout_seconds?: number;
+      latency_budget_ms?: number;
+      max_total_tokens?: number;
+      response_eval_min_score?: number;
+      judge_enabled?: boolean;
+      judge_base_url?: string;
+      judge_model?: string;
+      deterministic_release_decision?: "block" | "manual_review" | "canary" | "promote";
+    } = {},
+  ) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/live-serving-smoke", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  runMeshBrainRollbackDrill(
+    baseUrl: string,
+    payload: {
+      tenant_id?: string;
+      task_type?: string;
+    } = {},
+  ) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/rollback-drill", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
+  runMeshBrainBackendMatrix(
+    baseUrl: string,
+    payload: {
+      base_url?: string;
+      model?: string;
+      target_name?: string;
+      tenant_id?: string;
+      task_type?: string;
+      hardware_tier?: string;
+      prompt?: string;
+      timeout_seconds?: number;
+      deterministic_release_decision?: "block" | "manual_review" | "canary" | "promote";
+      targets?: Array<{
+        name?: string;
+        base_url: string;
+        model?: string;
+        hardware_tier?: string;
+        task_type?: string;
+        enabled?: boolean;
+        metadata?: Record<string, unknown>;
+      }>;
+    } = {},
+  ) {
+    return request<RunDetail>(baseUrl, "/api/mesh-brain/backend-matrix", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+
   getRun(baseUrl: string, runId: string) {
     return request<RunDetail>(baseUrl, `/api/runs/${runId}`);
+  },
+
+  getRunExport(baseUrl: string, runId: string) {
+    return request<RunExportPackage>(baseUrl, `/api/runs/${runId}/export`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  },
+
+  getRunDarkharnessPacket(baseUrl: string, runId: string) {
+    return requestAllowingStatus<DarkharnessPilotPacket>(
+      baseUrl,
+      `/api/runs/${runId}/darkharness-packet`,
+      [409],
+    );
+  },
+
+  getRunExportArchive(baseUrl: string, runId: string) {
+    return requestBlob(baseUrl, `/api/runs/${runId}/export/archive`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
   },
 
   steerRun(baseUrl: string, runId: string, payload: Record<string, unknown>) {

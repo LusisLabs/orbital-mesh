@@ -10,14 +10,11 @@ _SUPPORTING_ACTIONS = {
     "review",
     "root_cause_review",
     "stage_validation",
-    "evo_discover_candidate",
-    "prepare_benchmark",
 }
 
 _NOISE_FLAGS = {
     "allowed_paths_missing",
     "code_write_gate_closed",
-    "evo_workspace_missing",
     "kubernetes_scope_missing",
     "non_code_task",
     "test_commands_missing",

@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/agent-action-record.schema.json",
+  "title": "AgentActionRecord",
+  "type": "object",
+  "required": [
+    "contract",
+    "action_record_id",
+    "observed_at",
+    "actor",
+    "action",
+    "context",
+    "governance",
+    "outcome",
+    "boundary"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.agent_action_record.v1"]
+    },
+    "action_record_id": { "type": "string" },
+    "observed_at": { "type": "string" },
+    "actor": {
+      "type": "object",
+      "required": ["actor_type", "actor_id", "display_name", "authority_source"],
+      "properties": {
+        "actor_type": {
+          "type": "string",
+          "enum": ["human", "agent", "service", "watcher", "model", "external_system"]
+        },
+        "actor_id": { "type": "string" },
+        "display_name": { "type": ["string", "null"] },
+        "authority_source": {
+          "type": "string",
+          "enum": ["proxy_header", "service_account", "registry", "inferred", "unknown"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "required": ["action_class", "action_type", "target", "production_impact"],
+      "properties": {
+        "action_class": {
+          "type": "string",
+          "enum": ["observe", "retrieve", "propose", "approve", "deny", "execute", "rollback", "export", "attest"]
+        },
+        "action_type": { "type": "string" },
+        "target": {
+          "type": "object",
+          "required": ["environment", "service", "namespace", "resource_ref", "reservoir_id"],
+          "properties": {
+            "environment": { "type": "string" },
+            "service": { "type": ["string", "null"] },
+            "namespace": { "type": ["string", "null"] },
+            "resource_ref": { "type": ["string", "null"] },
+            "reservoir_id": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "production_impact": {
+          "type": "string",
+          "enum": ["none", "possible", "direct"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "context": {
+      "type": "object",
+      "required": ["run_id", "run_event_id", "decision_id", "evaluation_id", "feedback_id", "source_system"],
+      "properties": {
+        "run_id": { "type": ["string", "null"] },
+        "run_event_id": { "type": ["string", "null"] },
+        "decision_id": { "type": ["string", "null"] },
+        "evaluation_id": { "type": ["string", "null"] },
+        "feedback_id": { "type": ["string", "null"] },
+        "source_system": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "governance": {
+      "type": "object",
+      "required": [
+        "risk_tier",
+        "autonomy_tier",
+        "policy_refs",
+        "evidence_refs",
+        "proof_refs",
+        "operator_authority_refs"
+      ],
+      "properties": {
+        "risk_tier": {
+          "type": "string",
+          "enum": ["minimal", "moderate", "high", "unacceptable", "unknown"]
+        },
+        "autonomy_tier": {
+          "type": "string",
+          "enum": ["no_action", "advisory", "approval_required", "autonomous", "escalated"]
+        },
+        "policy_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "proof_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "operator_authority_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["status", "denial_reasons", "rollback_ref", "side_effect_refs"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["observed", "proposed", "approved", "denied", "executed", "failed", "rolled_back", "superseded"]
+        },
+        "denial_reasons": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rollback_ref": { "type": ["string", "null"] },
+        "side_effect_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "boundary": {
+      "type": "object",
+      "required": ["tenant_id", "data_boundary", "reservoir_refs"],
+      "properties": {
+        "tenant_id": { "type": "string" },
+        "data_boundary": {
+          "type": "string",
+          "enum": ["on_prem", "approved_egress", "public_demo"]
+        },
+        "reservoir_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

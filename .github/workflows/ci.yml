@@ -5,6 +5,15 @@ on:
     branches: [main, master]
   pull_request:
 
+permissions:
+  contents: read
+
+env:
+  SYFT_VERSION: "1.44.0"
+  SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
+  GRYPE_VERSION: "0.112.0"
+  GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -13,8 +22,8 @@ jobs:
   python-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
       - name: Install ruff
@@ -24,15 +33,22 @@ jobs:
 
   python-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONFAULTHANDLER: "1"
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install Darkharness crypto dependency
+        run: python -m pip install "cryptography>=44,<47"
+      - name: Run Darkharness packet tests
+        run: python -W ignore::DeprecationWarning -m unittest tests.test_perennial_materialization tests.test_darkharness_packet tests.test_darkharness_policy tests.test_darkharness_export_path tests.test_darkharness_live_verifier -v
       - name: Run unit tests
         run: python -W ignore::DeprecationWarning -m unittest discover -s tests -v
       - name: Smoke-import RuntimeConfig
@@ -42,12 +58,12 @@ jobs:
     runs-on: ubuntu-latest
     needs: [python-lint]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
       - name: Run small randomized simulation matrix
-        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 20 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
+        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 45 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
 
   web:
     runs-on: ubuntu-latest
@@ -55,8 +71,8 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "22"
           cache: npm
@@ -72,11 +88,21 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-    needs: [python-test]
+    needs: [python-test, web]
+    env:
+      MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Build Docker image
-        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t mesh-intelligence:ci .
+        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .
+      - name: Collect release image metadata
+        run: |
+          mkdir -p dist
+          python scripts/collect_release_image_metadata.py \
+            --image-tag orbital-mesh:ci \
+            --output dist/release-image-metadata.json \
+            --github-env "$GITHUB_ENV" \
+            --base-image-args dist/base-image-digest.args
       - name: Healthcheck smoke test
         run: |
           set -euo pipefail
@@ -86,7 +112,7 @@ jobs:
             -e MESH_ENVIRONMENT=ci \
             -e MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
             -p 8787:8787 \
-            mesh-intelligence:ci
+            orbital-mesh:ci
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8787/api/health > /dev/null; then
               echo "Server healthy after ${i}s"
@@ -106,19 +132,90 @@ jobs:
       - name: Stop container
         if: always()
         run: docker stop mesh-ci || true
-
-  swarmclaw-typecheck:
-    if: ${{ hashFiles('swarmclaw/package.json') != '' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: swarmclaw
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Install release scanners
+        run: |
+          curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
+          echo "${SYFT_DEB_SHA256}  /tmp/syft.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/syft.deb
+          curl -fsSLo /tmp/grype.deb "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.deb"
+          echo "${GRYPE_DEB_SHA256}  /tmp/grype.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/grype.deb
+          syft version
+          grype version
+      - name: Generate release image assurance artifacts
+        id: release_assurance
+        continue-on-error: true
+        run: |
+          python scripts/generate_release_image_assurance.py \
+            --image-tag orbital-mesh:ci \
+            --image-digest "$MESH_IMAGE_DIGEST" \
+            --raw-output-dir dist/release-assurance-raw \
+            --output-dir dist/release-assurance \
+            --exception-policy config/release-vulnerability-exceptions.json
+      - name: Generate CI attestation
+        if: always()
+        env:
+          RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          docker_build_status=failed
+          if [ "$RELEASE_ASSURANCE_OUTCOME" = "success" ]; then
+            docker_build_status=passed
+          fi
+          python scripts/generate_ci_attestation.py \
+            --output dist/ci-attestation.json \
+            --require-github-actions \
+            --check python-test \
+            --check web \
+            --check-status "docker-build=${docker_build_status}" \
+            --image-tag orbital-mesh:ci \
+            --image-digest "${MESH_IMAGE_DIGEST:-}" \
+            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
+            "${BASE_IMAGE_ARGS[@]}"
+      - name: Generate release provenance draft
+        if: always()
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          python scripts/generate_release_provenance.py \
+            --output dist/release-provenance-draft.json \
+            --image-tag orbital-mesh:ci \
+            --ci-attestation dist/ci-attestation.json \
+            --sbom dist/release-assurance/sbom.cdx.json \
+            --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
+            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
+            --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
+            --json \
+            "${BASE_IMAGE_ARGS[@]}"
+      - name: Fail on release image assurance errors
+        if: steps.release_assurance.outcome != 'success'
+        run: exit 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
         with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: swarmclaw/package-lock.json
-      - run: npm ci
-      - run: npm run type-check
+          name: ci-attestation
+          path: dist/ci-attestation.json
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: release-assurance-artifacts
+          path: |
+            dist/release-assurance/
+            dist/release-assurance-raw/
+          retention-days: 30
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: release-provenance-draft
+          path: |
+            dist/release-image-metadata.json
+            dist/release-provenance-draft.json
+          retention-days: 30

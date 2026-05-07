@@ -1,0 +1,101 @@
+{
+  "title": "DeploymentCompatibilityRegistry",
+  "type": "object",
+  "required": ["schema_version", "generated_from", "targets"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.deployment_compatibility.registry.v1"]
+    },
+    "generated_from": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "target_id",
+          "display_name",
+          "category",
+          "level",
+          "product_stance",
+          "authority_boundary",
+          "validation_commands",
+          "required_evidence",
+          "evidence_refs",
+          "readiness_required",
+          "release_packet_required",
+          "promotion_blockers"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target_id": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "validated",
+              "supported",
+              "recipe",
+              "backlog",
+              "next_validated_target",
+              "not_planned"
+            ]
+          },
+          "product_stance": {
+            "type": "string"
+          },
+          "authority_boundary": {
+            "type": "string"
+          },
+          "validation_commands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "readiness_required": {
+            "type": "boolean"
+          },
+          "release_packet_required": {
+            "type": "boolean"
+          },
+          "promotion_blockers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

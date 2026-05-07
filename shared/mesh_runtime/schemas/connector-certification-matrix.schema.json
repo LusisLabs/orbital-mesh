@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/connector-certification-matrix.schema.json",
+  "title": "ConnectorCertificationMatrix",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "status", "registry_path", "registry_sha256", "connectors", "blockers"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mesh.connector_certification.v1",
+      "type": "string"
+    },
+    "generated_at": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "incomplete"]
+    },
+    "registry_path": { "type": ["string", "null"] },
+    "registry_sha256": { "type": ["string", "null"] },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "connector_id",
+          "display_name",
+          "domain",
+          "state",
+          "certified_state",
+          "observed_state",
+          "required_before",
+          "authority_posture",
+          "credential_policy",
+          "credential_boundary",
+          "degraded_behavior",
+          "allowed_scopes",
+          "evidence_refs",
+          "blockers"
+        ],
+        "properties": {
+          "connector_id": { "type": "string" },
+          "display_name": { "type": "string" },
+          "domain": { "type": "string" },
+          "state": { "type": "string" },
+          "certified_state": { "type": "string" },
+          "observed_state": { "type": "string" },
+          "required_before": { "type": "string" },
+          "authority_posture": { "type": "string" },
+          "credential_policy": { "type": "string" },
+          "credential_boundary": {
+            "type": "object",
+            "required": [
+              "service_account_ref",
+              "credential_mode",
+              "production_actuator_credentials_allowed",
+              "repo_write_credentials_allowed",
+              "runtime_secret_mount_required",
+              "rotation_evidence_ref",
+              "break_glass_recording_required"
+            ],
+            "properties": {
+              "service_account_ref": { "type": ["string", "null"] },
+              "credential_mode": { "type": "string" },
+              "production_actuator_credentials_allowed": { "type": "boolean" },
+              "repo_write_credentials_allowed": { "type": "boolean" },
+              "runtime_secret_mount_required": { "type": "boolean" },
+              "rotation_evidence_ref": { "type": ["string", "null"] },
+              "break_glass_recording_required": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          },
+          "degraded_behavior": { "type": "string" },
+          "allowed_scopes": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

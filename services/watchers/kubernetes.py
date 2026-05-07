@@ -138,7 +138,7 @@ class KubernetesWatcher:
             if target.cooldown_seconds is not None
             else self.default_cooldown_seconds
         )
-        if time.monotonic() - entry.last_run_time < cooldown:
+        if entry.last_run_time and time.monotonic() - entry.last_run_time < cooldown:
             return
 
         # Lazy import to avoid pulling kubectl code paths at package import time.

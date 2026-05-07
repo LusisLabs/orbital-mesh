@@ -27,7 +27,7 @@ from shared.mesh_runtime import (
     build_readiness,
     load_fixture,
 )
-from shared.mesh_runtime.agent_workers import build_agent_attempt, build_agent_task
+from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
 
 
 class DeepAgentsAgentMeshTests(unittest.TestCase):
@@ -111,17 +111,13 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
             evaluation=evaluation,
         )
         adapters = {a.agent: a.adapter for a in tasks[0].attempts}
-        self.assertEqual(
-            adapters,
-            {
-                "goose": "native_contract",
-                "hermes": "native_contract",
-                "codex": "native_contract",
-                "claudecode": "native_contract",
-                "openclaw": "native_contract",
-                "evo": "native_contract",
-            },
-        )
+        self.assertEqual(adapters["goose"], "native_contract")
+        self.assertEqual(adapters["hermes"], "native_contract")
+        self.assertEqual(adapters["codex"], "native_contract")
+        self.assertEqual(adapters["claudecode"], "native_contract")
+        self.assertEqual(adapters["openclaw"], "native_contract")
+        self.assertEqual(adapters["temporal"], "native_orchestration_contract")
+        self.assertEqual(set(adapters), set(DEFAULT_AGENT_WORKERS))
 
     def test_deepagents_fabric_uses_deepagents_adapter(self) -> None:
         self.config.agent_fabric_mode = "deepagents"
@@ -179,7 +175,7 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         elapsed = time.monotonic() - started
         self.assertLess(elapsed, 0.2)
         attempts = tasks[0].attempts
-        self.assertEqual([attempt.agent for attempt in attempts], ["goose", "hermes", "codex", "claudecode", "openclaw", "evo"])
+        self.assertEqual([attempt.agent for attempt in attempts], list(DEFAULT_AGENT_WORKERS))
         for attempt in attempts:
             self.assertEqual(attempt.status, "failed")
             self.assertEqual(attempt.risk_flags, ["agent_mesh_timeout"])
@@ -594,8 +590,9 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                     output={"diff": "", "workspace_path": "/tmp/mesh-da", "deepagents_final_message": "{}"},
                 )
 
-            with patch.object(DeepAgentsAdapter, "build_lane_attempt", stub_lane):
-                server, thread = start_server_in_thread(config, start_sidecar=False)
+            patcher = patch.object(DeepAgentsAdapter, "build_lane_attempt", stub_lane)
+            patcher.start()
+            server, thread = start_server_in_thread(config, start_sidecar=False)
             base = f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 req = Request(
@@ -631,7 +628,7 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                 )["tasks"]
                 self.assertEqual(
                     [a["adapter"] for a in api_tasks[0]["attempts"]],
-                    ["deepagents"] * 6,
+                    ["deepagents"] * len(DEFAULT_AGENT_WORKERS),
                 )
 
                 agent_note = json.loads(
@@ -647,5 +644,6 @@ class DeepAgentsControlPlaneHttpTests(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+                patcher.stop()
         finally:
             temp_dir.cleanup()

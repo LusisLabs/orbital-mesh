@@ -3,10 +3,10 @@
 Breakthrough was achieved on the direct compose chaos run ending `2026-04-30T21:19:03Z`.
 
 Primary artifact:
-`/workspace/mesh-intel/.mesh-runtime-state/compose-chaos/summary-20260430T211001Z.json`
+`/workspace/orbital-mesh/.mesh-runtime-state/compose-chaos/summary-20260430T211001Z.json`
 
 Event log:
-`/workspace/mesh-intel/.mesh-runtime-state/compose-chaos/events-20260430T211001Z.jsonl`
+`/workspace/orbital-mesh/.mesh-runtime-state/compose-chaos/events-20260430T211001Z.jsonl`
 
 Final status:
 - `breakthrough_probe.ready`: `true`
@@ -132,4 +132,3 @@ All Kubernetes targets restored cleanly:
 - `mesh-compose-baremetal`: `3/3`
 
 Working tree is currently clean.
-

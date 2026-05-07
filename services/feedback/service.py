@@ -75,9 +75,11 @@ class FeedbackService:
         self,
         observer: PrometheusFeedbackObserver | None = None,
         kubernetes_observer: KubernetesFeedbackObserver | None = None,
+        require_live_observations: bool = False,
     ) -> None:
         self.observer = observer
         self.kubernetes_observer = kubernetes_observer
+        self.require_live_observations = require_live_observations
 
     def record(
         self,
@@ -145,6 +147,13 @@ class FeedbackService:
             recommended_follow_up = "human_review"
         elif regressions_last_7d >= 3:
             recommended_follow_up = "mark_flag_for_human_owned_remediation"
+        if self.require_live_observations and execution.status == "succeeded" and not _has_live_feedback_source(observations):
+            return _live_feedback_required_record(
+                trigger=trigger,
+                decision=decision,
+                execution=execution,
+                observations=observations,
+            )
 
         feedback = FeedbackRecord(
             feedback_id=f"fb_{decision.decision_id}",
@@ -211,6 +220,13 @@ class FeedbackService:
             and restart_delta == 0
             and not new_error_signatures
         )
+        if self.require_live_observations and execution.status == "succeeded" and not _has_live_feedback_source(observations):
+            return _live_feedback_required_record(
+                trigger=trigger,
+                decision=decision,
+                execution=execution,
+                observations=observations,
+            )
         outcome = "successful" if successful else "escalated"
         recommended_follow_up = "record_rollout_recovery" if successful else "human_review"
         feedback = FeedbackRecord(
@@ -260,6 +276,13 @@ class FeedbackService:
         review_source, review = _execution_review(execution)
         incident_id = execution.external_refs.get("incident_id") if isinstance(execution.external_refs, dict) else None
         successful = execution.status == "succeeded" and bool(incident_id)
+        if self.require_live_observations and execution.status == "succeeded" and not _has_live_feedback_source(observations):
+            return _live_feedback_required_record(
+                trigger=trigger,
+                decision=decision,
+                execution=execution,
+                observations=observations,
+            )
         feedback = FeedbackRecord(
             feedback_id=f"fb_{decision.decision_id}",
             decision_id=decision.decision_id,
@@ -424,6 +447,59 @@ def _merge_observations(base: dict[str, Any], override: dict[str, Any]) -> dict[
         else:
             merged[str(key)] = value
     return merged
+
+
+def _has_live_feedback_source(observations: dict[str, Any]) -> bool:
+    if not isinstance(observations, dict):
+        return False
+    for value in observations.values():
+        if not isinstance(value, dict):
+            continue
+        source = str(value.get("source") or "")
+        if source in {"prometheus", "live_kubernetes_reharvest"}:
+            return True
+    return False
+
+
+def _live_feedback_required_record(
+    *,
+    trigger: Trigger,
+    decision: Decision,
+    execution: ExecutionRecord,
+    observations: dict[str, Any],
+) -> FeedbackRecord:
+    feedback = FeedbackRecord(
+        feedback_id=f"fb_{decision.decision_id}",
+        decision_id=decision.decision_id,
+        execution_id=execution.execution_id,
+        measured_at=datetime.now(timezone.utc).isoformat(),
+        window="30m",
+        outcome="escalated",
+        metric_comparison={
+            "live_feedback_required": True,
+            "live_feedback_source_present": False,
+            "observed_sources": sorted(
+                {
+                    str(window.get("source"))
+                    for window in observations.values()
+                    if isinstance(window, dict) and window.get("source")
+                }
+            ),
+        },
+        prediction_accuracy={
+            "expected_time_to_effect": decision.expected_outcome.get("time_to_effect"),
+            "observed_time_to_effect": "not_verified",
+        },
+        side_effects=["pilot feedback requires Prometheus or Kubernetes re-harvest"],
+        world_model_updates={
+            "service": trigger.service,
+            "feedback_gate": "live_feedback_required",
+            "action": decision.execution_plan.get("action"),
+        },
+        recommended_follow_up="human_review",
+    )
+    feedback.validate()
+    return feedback
 
 
 def _first_string(*values: object) -> str | None:

@@ -98,6 +98,8 @@ export interface AgentTask {
   memory_write_policy: Record<string, any>;
   open_questions: string[];
   agents: string[];
+  orchestration_topology: Record<string, any>;
+  lane_routing: Record<string, any>;
   attempts: AgentAttempt[];
   selected_attempt_id?: string | null;
 }
@@ -111,14 +113,23 @@ export interface IntegrationStatus {
   primary_route?: string | null;
   fallback_route?: string | null;
   warnings: string[];
+  certification: string;
+  required_before: string;
+  posture: string;
 }
 
 export interface IntegrationReadiness {
   checked_at: string;
+  profile: string;
+  status: string;
+  required_checks: Record<string, any>;
+  optional_checks: Record<string, any>;
+  blockers: string[];
+  connector_certification: Record<string, any>;
+  orchestration_topology: Record<string, any>;
   promptfoo: IntegrationStatus;
   hermes: IntegrationStatus;
   goose: IntegrationStatus;
-  evo: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
   vault_path: string;
@@ -162,6 +173,79 @@ export interface SystemSnapshot {
   active_runs: RunSessionRecord[];
 }
 // </generated-control-plane-contracts>
+
+export interface ConnectorCredentialBoundary {
+  service_account_ref?: string | null;
+  credential_mode?: string | null;
+  production_actuator_credentials_allowed?: boolean | null;
+  repo_write_credentials_allowed?: boolean | null;
+  runtime_secret_mount_required?: boolean | null;
+  rotation_evidence_ref?: string | null;
+  break_glass_recording_required?: boolean | null;
+}
+
+export interface ConnectorCertificationRecord {
+  connector_id: string;
+  display_name?: string | null;
+  domain?: string | null;
+  state?: string | null;
+  certified_state?: string | null;
+  observed_state?: string | null;
+  required_before?: string | null;
+  authority_posture?: string | null;
+  credential_policy?: string | null;
+  credential_boundary?: ConnectorCredentialBoundary | null;
+  degraded_behavior?: string | null;
+  allowed_scopes?: string[] | null;
+  evidence_refs?: string[] | null;
+  blockers?: string[] | null;
+  detail?: string | null;
+}
+
+export interface ConnectorCertificationPacket {
+  schema_version: string;
+  generated_at: string;
+  status: string;
+  registry_path?: string | null;
+  registry_sha256?: string | null;
+  blockers: string[];
+  connectors: Record<string, ConnectorCertificationRecord>;
+}
+
+export interface ApprovalQueueItem {
+  queue_id: string;
+  run_id: string;
+  created_at: string;
+  updated_at: string;
+  scenario_key?: string | null;
+  service?: string | null;
+  namespace?: string | null;
+  environment: string;
+  stage: string;
+  pending_pause_stage?: string | null;
+  steering_mode: string;
+  decision_type?: string | null;
+  risk_level?: string | null;
+  final_recommendation?: string | null;
+  approval_state: "pending" | "blocked";
+  blockers: string[];
+  requested_by?: Record<string, any> | null;
+  owner?: Record<string, any> | null;
+  approver_roles: string[];
+  allowed_commands: string[];
+  evidence_refs: string[];
+  latest_event_id?: string | null;
+}
+
+export interface ApprovalQueuePacket {
+  schema_version: string;
+  generated_at: string;
+  status: "empty" | "ready" | "blocked";
+  pending_count: number;
+  blocked_count: number;
+  source_refs: string[];
+  items: ApprovalQueueItem[];
+}
 
 export interface HealthSnapshot {
   status: string;
@@ -219,38 +303,166 @@ export interface BenchmarkRecord {
   dataset_ref?: string | null;
 }
 
+export interface PolicySimulationResult {
+  mutates: boolean;
+  source: Record<string, any>;
+  triggered: boolean;
+  trigger?: Record<string, any> | null;
+  evidence_pack?: Record<string, any> | null;
+  scenario_analysis?: Record<string, any> | null;
+  decision?: Record<string, any> | null;
+  evaluation?: Record<string, any> | null;
+  blockers: string[];
+  allowed_action?: Record<string, any> | null;
+  denied_action?: Record<string, any> | null;
+  rollback_path?: string | null;
+}
+
+export interface KillSwitchStatus {
+  watchers: WatcherStatus;
+  live_execution_enabled: boolean;
+  force_approval_gate: boolean;
+  allowed_contexts: string[];
+  allowed_namespaces: string[];
+  actions?: string[];
+  operator?: Record<string, any> | null;
+}
+
+export interface PilotGoNoGoPacket {
+  packet_version: string;
+  generated_at: string;
+  status: string;
+  checks: Record<string, boolean>;
+  missing_evidence: string[];
+  readiness: IntegrationReadiness;
+  observed: {
+    run_count: number;
+    approved_run_ids: string[];
+    live_action_run_ids: string[];
+    denied_action_run_ids: string[];
+    merkle_run_ids: string[];
+    mesh_brain_model_kernel_run_ids?: string[];
+    mesh_brain_live_canary_smoke_run_ids?: string[];
+    mesh_brain_canary_lanes?: { tenant_id: string; task_type: string }[];
+    mesh_brain_rollback_drill_run_ids?: string[];
+  };
+}
+
+export interface RunExportPackage {
+  package_version: string;
+  export_id: string;
+  generated_at: string;
+  run_id: string;
+  path: string;
+  package_sha256: string;
+  session: RunSessionRecord;
+  timeline_json: RunEventRecord[];
+  postmortem_markdown: string;
+  evidence_artifacts: Record<string, any>;
+  decision_record?: Record<string, any> | null;
+  evaluation_record?: Record<string, any> | null;
+  execution_record?: Record<string, any> | null;
+  feedback_record?: Record<string, any> | null;
+  approval_records: Array<Record<string, any>>;
+  operator_notes: string[];
+  merkle: {
+    snapshot: MerkleSnapshot;
+    latest_event_proof?: MerkleProof | null;
+  };
+  vault_documents: Array<{ path: string; content: string }>;
+  checks: Record<string, boolean>;
+  redaction: {
+    enabled: boolean;
+    secret_markers: string[];
+    replacement: string;
+  };
+  retention: {
+    retention_days: number;
+    delete_after: string;
+    reviewed: boolean;
+    review_required_before: string;
+    delete_command: string;
+  };
+  size_control: {
+    max_bytes: number;
+    initial_bytes: number;
+    final_bytes: number;
+    truncated: boolean;
+    omitted_fields: string[];
+  };
+}
+
+export interface DarkharnessPilotPacket {
+  packet: "darkharness.pilot_packet.v1";
+  status?: "blocked" | string;
+  run_id?: string;
+  packet_id?: string;
+  generated_at?: string;
+  customer_boundary?: string;
+  pilot_scope_id?: string;
+  missing_evidence?: string[];
+  checks?: Record<string, boolean>;
+  implemented_evidence?: {
+    readiness?: Record<string, any>;
+    go_no_go?: Record<string, any>;
+    run_exports?: Array<Record<string, any>>;
+    merkle_proofs?: Array<Record<string, any>>;
+    denied_action_proofs?: Array<Record<string, any>>;
+    allowed_action_proofs?: Array<Record<string, any>>;
+    postgres_restart_proof?: Record<string, any> | null;
+  };
+  perennial_records?: {
+    sensitive_reservoirs?: Array<Record<string, any>>;
+    agent_action_records?: Array<Record<string, any>>;
+    epistemic_states?: Array<Record<string, any>>;
+    ontological_states?: Array<Record<string, any>>;
+    governance_commits?: Array<Record<string, any>>;
+    proof_envelopes?: Array<Record<string, any>>;
+  };
+  boundaries: {
+    raw_reservoir_egress: string;
+    external_model_calls: string;
+    production_actions_approval_required: boolean;
+  };
+  claim_boundary: {
+    implemented: string[];
+    proposed: string[];
+    not_implemented: string[];
+  };
+}
+
+export interface TrustLadderEntry {
+  action_class: string;
+  service: string;
+  level: string;
+  previous_level: string;
+  total_runs: number;
+  successful_runs: number;
+  success_rate: number;
+  consecutive_failures: number;
+  promotion_count: number;
+  demotion_count: number;
+  override_count: number;
+  last_outcome?: string | null;
+  last_outcome_at?: string | null;
+  last_level_change_at?: string | null;
+  last_override_at?: string | null;
+  manual_override_reason?: string | null;
+  next_level?: string | null;
+  autonomy_ceiling_reason?: string | null;
+  promotion_blockers?: string[];
+  promotion_requirements?: {
+    min_runs?: number;
+    min_success_rate?: number;
+  };
+}
+
 export interface ServiceAgentRecord {
   service: string;
   scope: Record<string, string[]>;
   runbook_path?: string | null;
   preferred_lanes: string[];
   autonomy_overrides: Record<string, string>;
-}
-
-export interface EvoLaunchRecord {
-  launch_id: string;
-  action: string;
-  status: string;
-  requested_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  repo_path: string;
-  target_path: string;
-  benchmark_command?: string | null;
-  metric?: string | null;
-  instrumentation_mode?: string | null;
-  gate_command?: string | null;
-  workspace_detected: boolean;
-  dashboard_url?: string | null;
-  steps: Array<{
-    argv: string[];
-    returncode: number;
-    stdout: string;
-    stderr: string;
-    duration_seconds: number;
-  }>;
-  experiment_id?: string | null;
-  error?: string | null;
 }
 
 export interface ResearchSessionRecord {
@@ -398,7 +610,19 @@ export interface WatcherStatus {
     interval_seconds: number;
     running: boolean;
     detail?: Record<string, any>;
+    ownership?: {
+      owner?: {
+        owner_id?: string;
+        display_name?: string;
+        source_refs?: string[];
+      };
+      blockers?: string[];
+      resolved_target_count?: number;
+      target_count?: number;
+      targets?: Array<Record<string, any>>;
+    } | null;
   }>;
+  ownership?: Record<string, any>;
 }
 
 export interface VaultTreeEntry {

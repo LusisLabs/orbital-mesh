@@ -20,6 +20,13 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import RuntimeConfig
 
 _LOG = logging.getLogger("mesh.control_plane")
+TIMELINE_PROOF_ROUTE_TEMPLATE = "/api/runs/{run_id}/timeline-proof"
+
+
+class AuthorizationError(PermissionError):
+    def __init__(self, message: str, status: HTTPStatus = HTTPStatus.FORBIDDEN):
+        super().__init__(message)
+        self.status = status
 
 
 def _safe_segment(path: str, index: int) -> str | None:
@@ -33,6 +40,14 @@ def _safe_int(value: str, default: int = 0) -> int:
         return int(value)
     except (ValueError, TypeError):
         return default
+
+
+def _roles_for_steering(command: object) -> set[str]:
+    if command in {"approve", "override_decision", "override_execution_parameters"}:
+        return {"approver", "admin"}
+    if command in {"override_review", "postmortem_review"}:
+        return {"viewer", "launcher", "approver", "admin"}
+    return {"launcher", "approver", "admin"}
 
 
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -54,6 +69,20 @@ def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
         "steering_mode": run.get("steering_mode"),
         "updated_at": run.get("updated_at"),
     }
+
+
+def darkharness_packet_response(coordinator: RunCoordinator, run_id: str) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_packet(run_id)
+    if payload is None:
+        return {"error": "run not found"}, HTTPStatus.NOT_FOUND
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
+
+
+def darkharness_checkpoint_packet_response(coordinator: RunCoordinator) -> tuple[dict[str, Any], HTTPStatus]:
+    payload = coordinator.build_darkharness_pilot_checkpoint_packet()
+    status = HTTPStatus.CONFLICT if payload.get("status") == "blocked" else HTTPStatus.OK
+    return payload, status
 
 
 class MeshControlPlaneServer(ThreadingHTTPServer):
@@ -110,6 +139,36 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/readiness":
             self._send_json(self.server.coordinator.build_readiness())
+            return
+        if path == "/api/policy/lifecycle":
+            self._send_json(self.server.coordinator.build_policy_lifecycle())
+            return
+        if path == "/api/connectors/certification":
+            self._send_json(self.server.coordinator.build_connector_certification())
+            return
+        if path == "/api/deployment/compatibility":
+            self._send_json(self.server.coordinator.build_deployment_compatibility())
+            return
+        if path == "/api/failure-modes":
+            self._send_json(self.server.coordinator.build_failure_mode_library())
+            return
+        if path == "/api/approvals":
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            self._send_json(self.server.coordinator.build_approval_queue())
+            return
+        if path == "/api/kill-switch":
+            self._send_json(self.server.coordinator.kill_switch_status())
+            return
+        if path == "/api/pilot/go-no-go":
+            self._send_json(self.server.coordinator.generate_pilot_go_no_go())
+            return
+        if path == "/api/darkharness/pilot-packet":
+            payload, status = darkharness_checkpoint_packet_response(self.server.coordinator)
+            self._send_json(payload, status=status)
             return
         if path == "/api/rules/suggestions":
             # Layer 4 admin surface. Returns [] when rule_learning_enabled is
@@ -241,6 +300,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             snapshot = self.server.coordinator.state_store.get_merkle_snapshot(run_id)
             self._send_json(snapshot.to_dict())
             return
+        if path.startswith("/api/runs/") and path.endswith("/timeline-proof"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.build_timeline_proof(run_id)
+            if payload is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
         if path.startswith("/api/runs/") and path.endswith("/agent-tasks"):
             run_id = path.split("/")[3]
             try:
@@ -269,6 +339,14 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/darkharness-packet"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload, status = darkharness_packet_response(self.server.coordinator, run_id)
+            self._send_json(payload, status=status)
             return
         if "/api/runs/" in path and "/merkle/proof/" in path:
             segments = [segment for segment in path.split("/") if segment]
@@ -316,6 +394,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/watchers":
             self._send_json(self.server.coordinator.watchers_status())
+            return
+        if path == "/api/watchers/ownership":
+            self._send_json(self.server.coordinator.build_watcher_ownership())
             return
         if path.startswith("/api/watchers/") and path.count("/") == 3:
             # GET /api/watchers/{name}
@@ -467,12 +548,27 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._handle_otlp_metrics(payload)
             return
         if parsed.path == "/api/watch/start":
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             self._send_json(self.server.coordinator.watch_start())
             return
         if parsed.path == "/api/watch/stop":
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             self._send_json(self.server.coordinator.watch_stop())
             return
         if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/start"):
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             name = parsed.path[len("/api/watchers/"):-len("/start")]
             if not name:
                 self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
@@ -486,6 +582,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 )
             return
         if parsed.path.startswith("/api/watchers/") and parsed.path.endswith("/stop"):
+            try:
+                self._authorize({"admin"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             name = parsed.path[len("/api/watchers/"):-len("/stop")]
             if not name:
                 self._send_json({"error": "watcher name required"}, status=HTTPStatus.BAD_REQUEST)
@@ -493,6 +594,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.coordinator.watcher_stop(name))
             return
         if parsed.path == "/api/trust-ladder/override":
+            try:
+                payload["_operator"] = self._authorize({"admin", "approver"})
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             action_class = str(payload.get("action_class", "")).strip()
             service = str(payload.get("service", "")).strip()
             level = str(payload.get("level", "")).strip()
@@ -521,13 +627,86 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status = HTTPStatus.OK if result.get("status") == "succeeded" else HTTPStatus.SERVICE_UNAVAILABLE
             self._send_json(result, status=status)
             return
+        if parsed.path == "/api/policy/simulate":
+            try:
+                payload["_operator"] = self._authorize({"viewer", "launcher", "approver", "admin"})
+                result = self.server.coordinator.simulate_policy(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except KeyError:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(result)
+            return
+        if parsed.path == "/api/kill-switch":
+            try:
+                payload["_operator"] = self._authorize({"admin"})
+                result = self.server.coordinator.apply_kill_switch(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(result)
+            return
+        if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/export/archive"):
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+                run_id = _safe_segment(parsed.path, 2)
+                if run_id is None:
+                    self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                archive = self.server.coordinator.export_run_archive(run_id)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if archive is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_file_response(
+                Path(archive["path"]),
+                content_type=str(archive["content_type"]),
+                download_name=str(archive["filename"]),
+            )
+            return
+        if parsed.path.startswith("/api/runs/") and parsed.path.endswith("/export"):
+            try:
+                self._authorize({"viewer", "launcher", "approver", "admin"})
+                run_id = _safe_segment(parsed.path, 2)
+                if run_id is None:
+                    self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                    return
+                package = self.server.coordinator.export_run_package(run_id)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if package is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(package)
+            return
         if parsed.path == "/api/goals":
             goal = self.server.coordinator.create_goal(payload)
             self._send_json(goal, status=HTTPStatus.CREATED)
             return
         if parsed.path == "/api/runs":
             try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
                 run = self.server.coordinator.create_run(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             except ValueError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
@@ -537,6 +716,54 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     {"error": "run creation failed", "detail": str(exc)},
                     status=HTTPStatus.INTERNAL_SERVER_ERROR,
                 )
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/model-kernel-probe":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_model_kernel_probe(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/live-serving-smoke":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_live_serving_smoke(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/rollback-drill":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_rollback_drill(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
+        if parsed.path == "/api/mesh-brain/backend-matrix":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_mesh_brain_backend_matrix(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(run, status=HTTPStatus.CREATED)
             return
@@ -567,7 +794,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
                 return
             try:
+                payload["_operator"] = self._authorize(_roles_for_steering(payload.get("command")))
                 run = self.server.coordinator.steer_run(run_id, payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
             except KeyError:
                 self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
@@ -675,6 +906,41 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status=HTTPStatus.ACCEPTED,
         )
 
+    def _operator_context(self) -> dict[str, Any]:
+        identity = (
+            self.headers.get(self.server.config.operator_header_name)
+            or self.headers.get("X-Forwarded-User")
+            or self.headers.get("X-Auth-Request-Email")
+            or ""
+        ).strip()
+        raw_roles = (
+            self.headers.get(self.server.config.operator_roles_header_name)
+            or self.headers.get("X-Mesh-Role")
+            or ""
+        )
+        roles = sorted({role.strip().lower() for role in raw_roles.replace(";", ",").split(",") if role.strip()})
+        if not identity:
+            identity = "anonymous"
+        return {
+            "operator_id": identity,
+            "roles": roles,
+            "source": "proxy_header" if identity != "anonymous" else "local_anonymous",
+            "source_ip": self.client_address[0] if self.client_address else None,
+        }
+
+    def _authorize(self, allowed_roles: set[str]) -> dict[str, Any]:
+        operator = self._operator_context()
+        identity_required = self.server.config.operator_identity_required
+        if not identity_required:
+            return operator
+        if operator["operator_id"] == "anonymous":
+            raise AuthorizationError("operator identity is required", HTTPStatus.UNAUTHORIZED)
+        roles = set(operator.get("roles") or [])
+        if not roles & allowed_roles:
+            allowed = ", ".join(sorted(allowed_roles))
+            raise AuthorizationError(f"operator role required: {allowed}", HTTPStatus.FORBIDDEN)
+        return operator
+
     def log_message(self, format: str, *args: Any) -> None:
         if not self.server.config.access_log_enabled:
             return
@@ -690,7 +956,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "error": "web assets not built",
-                    "detail": "Run `npm install` and `npm run build` in mesh-intelligence/web before opening the browser.",
+                    "detail": "Run `npm --prefix web install` and `npm --prefix web run build` in orbital-mesh before opening the browser.",
                 },
                 status=HTTPStatus.SERVICE_UNAVAILABLE,
             )
@@ -800,6 +1066,23 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             return
 
+    def _send_file_response(self, path: Path, *, content_type: str, download_name: str) -> None:
+        try:
+            raw = path.read_bytes()
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self._add_security_headers()
+            self._add_cors_headers()
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Disposition", f'attachment; filename="{download_name}"')
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+        except FileNotFoundError:
+            self._send_json({"error": "file not found"}, status=HTTPStatus.NOT_FOUND)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
+
     def _request_body_within_limit(self) -> bool:
         limit = self.server.config.max_json_body_bytes
         if limit <= 0:
@@ -837,7 +1120,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
+            self.send_header(
+                "Access-Control-Allow-Headers",
+                "Content-Type, Last-Event-ID, Authorization, X-Mesh-Operator, X-Mesh-Roles, X-Mesh-Role, X-Forwarded-User, X-Auth-Request-Email",
+            )
             self.send_header("Access-Control-Max-Age", "86400")
 
     def _read_request_body(self) -> bytes:

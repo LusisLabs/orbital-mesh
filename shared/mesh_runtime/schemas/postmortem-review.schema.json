@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/postmortem-review.schema.json",
+  "title": "PostmortemReview",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_id",
+    "run_id",
+    "created_at",
+    "reviewer",
+    "launcher_operator_id",
+    "independent_reviewer",
+    "verdict",
+    "findings",
+    "action_items",
+    "reviewed_export_id",
+    "reviewed_package_sha256",
+    "related_event_id"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.postmortem_review.v1"]
+    },
+    "review_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "reviewer": {
+      "type": "object",
+      "required": ["operator_id", "roles", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "launcher_operator_id": { "type": ["string", "null"] },
+    "independent_reviewer": { "type": "boolean" },
+    "verdict": {
+      "type": "string",
+      "enum": ["accepted", "needs_followup", "rejected"]
+    },
+    "findings": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "action_items": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reviewed_export_id": { "type": ["string", "null"] },
+    "reviewed_package_sha256": { "type": ["string", "null"] },
+    "related_event_id": { "type": ["string", "null"] }
+  }
+}

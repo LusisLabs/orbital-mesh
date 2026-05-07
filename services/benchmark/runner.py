@@ -5,7 +5,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -80,7 +80,7 @@ def run_benchmark(config: BenchmarkRunConfig | None = None) -> BenchmarkRun:
     config = config or BenchmarkRunConfig()
     if config.repeat <= 0:
         raise ValueError("repeat must be >= 1")
-    run_id = datetime.now(UTC).strftime("bench_%Y%m%dT%H%M%S%fZ")
+    run_id = datetime.now(timezone.utc).strftime("bench_%Y%m%dT%H%M%S%fZ")
     output_dir = config.output_root / run_id
     output_dir.mkdir(parents=True, exist_ok=True)
 

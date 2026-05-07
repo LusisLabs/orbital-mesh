@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/governance-commit.schema.json",
+  "title": "GovernanceCommit",
+  "type": "object",
+  "required": [
+    "contract",
+    "governance_commit_id",
+    "created_at",
+    "commit_type",
+    "subject",
+    "state_refs",
+    "inputs",
+    "authority",
+    "action",
+    "proof",
+    "outcome"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.governance_commit.v1"]
+    },
+    "governance_commit_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "commit_type": {
+      "type": "string",
+      "enum": ["allow_action", "deny_action", "defer_action", "escalate", "export_attestation"]
+    },
+    "subject": {
+      "type": "object",
+      "required": ["run_id", "trigger_id", "decision_id", "evaluation_id", "action_record_id"],
+      "properties": {
+        "run_id": { "type": "string" },
+        "trigger_id": { "type": ["string", "null"] },
+        "decision_id": { "type": ["string", "null"] },
+        "evaluation_id": { "type": ["string", "null"] },
+        "action_record_id": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "state_refs": {
+      "type": "object",
+      "required": ["epistemic_state_id", "ontological_state_id"],
+      "properties": {
+        "epistemic_state_id": { "type": "string" },
+        "ontological_state_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "inputs": {
+      "type": "object",
+      "required": [
+        "evidence_refs",
+        "scenario_analysis_ref",
+        "policy_refs",
+        "remediation_safety_ref",
+        "trust_ladder_ref",
+        "readiness_ref"
+      ],
+      "properties": {
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "scenario_analysis_ref": { "type": ["string", "null"] },
+        "policy_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "remediation_safety_ref": { "type": ["string", "null"] },
+        "trust_ladder_ref": { "type": ["string", "null"] },
+        "readiness_ref": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "authority": {
+      "type": "object",
+      "required": ["operator_required", "operator_approval_refs", "service_owner_refs"],
+      "properties": {
+        "operator_required": { "type": "boolean" },
+        "operator_approval_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "service_owner_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "required": ["action_type", "target_ref", "production_impact", "rollback_ref"],
+      "properties": {
+        "action_type": { "type": ["string", "null"] },
+        "target_ref": { "type": ["string", "null"] },
+        "production_impact": {
+          "type": "string",
+          "enum": ["none", "possible", "direct"]
+        },
+        "rollback_ref": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "proof": {
+      "type": "object",
+      "required": ["proof_envelope_id", "merkle_root", "signature_ref"],
+      "properties": {
+        "proof_envelope_id": { "type": "string" },
+        "merkle_root": { "type": ["string", "null"] },
+        "signature_ref": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "outcome": {
+      "type": "object",
+      "required": ["gate_result", "reasons", "expires_at"],
+      "properties": {
+        "gate_result": {
+          "type": "string",
+          "enum": ["allowed", "denied", "deferred", "escalated"]
+        },
+        "reasons": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "expires_at": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

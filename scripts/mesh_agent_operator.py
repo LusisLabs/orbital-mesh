@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 
-DEFAULT_AGENT_PRIORITY = ("hermes", "goose", "codex", "claudecode", "openclaw", "evo", "latentmas")
+DEFAULT_AGENT_PRIORITY = ("hermes", "goose", "codex", "claudecode", "openclaw", "latentmas")
 SAFE_EXECUTION_READINESS_NOTES = {"confidence below minimum threshold"}
 SAFE_BUSINESS_NOTES = {"approval required before execution"}
 SAFE_SAFETY_HARD_STOPS = {"execution readiness failed"}
@@ -35,12 +35,22 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _operator_headers() -> dict[str, str]:
+    operator_header = os.getenv("MESH_OPERATOR_HEADER", "X-Mesh-Operator")
+    roles_header = os.getenv("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles")
+    return {
+        operator_header: os.getenv("MESH_AGENT_OPERATOR_ID", "mesh-agent-operator"),
+        roles_header: os.getenv("MESH_AGENT_OPERATOR_ROLES", "approver"),
+    }
+
+
 def _json_request(method: str, url: str, payload: dict[str, Any] | None = None, timeout: float = 10.0) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload, sort_keys=True).encode("utf-8")
+    headers = {"Content-Type": "application/json", **_operator_headers()}
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method=method,
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:

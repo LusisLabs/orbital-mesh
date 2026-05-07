@@ -49,6 +49,10 @@ def _build_kubernetes_feedback_observer(config: RuntimeConfig) -> KubernetesFeed
     return KubernetesFeedbackObserver(kubectl_command=config.kubectl_command)
 
 
+def _requires_live_feedback(config: RuntimeConfig) -> bool:
+    return config.live_feedback_required or config.readiness_profile in {"pilot", "expansion"}
+
+
 def _register_root_diagnostic_packs(root_registry: object, config: RuntimeConfig) -> None:
     """Auto-register always-on diagnostic packs onto the engine root.
 
@@ -358,6 +362,7 @@ class MeshRuntimeEngine:
         self.feedback = feedback or FeedbackService(
             observer=_build_feedback_observer(self.config),
             kubernetes_observer=_build_kubernetes_feedback_observer(self.config),
+            require_live_observations=_requires_live_feedback(self.config),
         )
         self.scenario_analysis = ScenarioAnalysisService(
             state_store=None,

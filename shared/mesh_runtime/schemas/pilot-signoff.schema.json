@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/pilot-signoff.schema.json",
+  "title": "PilotSignoff",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "operator",
+    "decision",
+    "go_no_go",
+    "release_provenance",
+    "signature"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.pilot_signoff.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "operator": {
+      "type": "object",
+      "required": ["operator_id", "roles", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "roles": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "source": { "type": "string" }
+      }
+    },
+    "decision": {
+      "type": "string",
+      "enum": ["go", "blocked"]
+    },
+    "go_no_go": {
+      "type": "object",
+      "required": [
+        "packet_version",
+        "status",
+        "packet_sha256",
+        "missing_evidence",
+        "observed_run_count"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "packet_version": {
+          "type": "string",
+          "enum": ["pilot.go_no_go.v1"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["go", "blocked"]
+        },
+        "packet_sha256": { "type": "string" },
+        "missing_evidence": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "observed_run_count": { "type": "integer" }
+      }
+    },
+    "release_provenance": {
+      "type": "object",
+      "required": ["status", "packet_sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "type": "string" },
+        "packet_sha256": { "type": ["string", "null"] }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "signature"],
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "enum": ["hmac-sha256"]
+        },
+        "key_id": { "type": "string" },
+        "signature": { "type": "string" }
+      }
+    }
+  }
+}

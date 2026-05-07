@@ -1,0 +1,202 @@
+{
+  "schema_version": "mesh.deployment_compatibility.registry.v1",
+  "generated_from": [
+    "docs/deployment-compatibility.md",
+    "docs/production-deployment-roadmap.md",
+    "docs/reference-architectures.md"
+  ],
+  "targets": [
+    {
+      "target_id": "docker_compose",
+      "display_name": "Docker Compose",
+      "category": "local and single-VM runtime",
+      "level": "validated",
+      "product_stance": "Canonical local full-stack and single-VM proof path.",
+      "authority_boundary": "Container mechanics only; Mesh ownership, policy, evidence, approval, rollback, feedback, persistence, and proof gates remain authoritative.",
+      "validation_commands": [
+        "docker compose -f docker-compose.stack.yml config --quiet",
+        "./scripts/prod_smoke.sh"
+      ],
+      "required_evidence": [
+        "health",
+        "readiness",
+        "persistence",
+        "feedback",
+        "audit",
+        "rollback",
+        "release_packet"
+      ],
+      "evidence_refs": [
+        "docker-compose.stack.yml",
+        "docker-compose.prod.yml",
+        "docs/production-hardening-records.md"
+      ],
+      "readiness_required": true,
+      "release_packet_required": true,
+      "promotion_blockers": []
+    },
+    {
+      "target_id": "docker_engine",
+      "display_name": "Docker Engine",
+      "category": "container runtime",
+      "level": "supported",
+      "product_stance": "Acceptable runtime for OCI images and Compose deployment.",
+      "authority_boundary": "OCI runtime compatibility only; no direct product authority is delegated to Docker Engine APIs.",
+      "validation_commands": [
+        "docker --version"
+      ],
+      "required_evidence": [
+        "oci_image_contract",
+        "configuration_contract",
+        "documented_caveats"
+      ],
+      "evidence_refs": [
+        "docs/deployment-compatibility.md",
+        "docs/release-provenance.md"
+      ],
+      "readiness_required": false,
+      "release_packet_required": true,
+      "promotion_blockers": []
+    },
+    {
+      "target_id": "kubernetes",
+      "display_name": "Kubernetes",
+      "category": "orchestration",
+      "level": "validated",
+      "product_stance": "Primary production platform-team target.",
+      "authority_boundary": "Live authority requires explicit context and namespace allowlists, RBAC, policy, evaluation, approval, and rollback metadata.",
+      "validation_commands": [
+        "scripts/e2e_run_mesh.sh",
+        "GET /api/readiness",
+        "GET /api/pilot/go-no-go"
+      ],
+      "required_evidence": [
+        "health",
+        "readiness",
+        "ingress",
+        "persistence",
+        "feedback",
+        "audit",
+        "rollback",
+        "release_packet"
+      ],
+      "evidence_refs": [
+        "docs/authenticated-ingress.md",
+        "docs/postgres-restart-proof.md",
+        "docs/pilot-slo-error-budget.md"
+      ],
+      "readiness_required": true,
+      "release_packet_required": true,
+      "promotion_blockers": []
+    },
+    {
+      "target_id": "ecs_fargate",
+      "display_name": "Amazon ECS / Fargate",
+      "category": "orchestration and serverless containers",
+      "level": "next_validated_target",
+      "product_stance": "First non-Kubernetes production target candidate after the Kubernetes pilot path is repeatable.",
+      "authority_boundary": "Adapter may translate deployment mechanics only; it cannot weaken identity, persistence, feedback, audit, policy, evidence, approval, rollback, or release packet gates.",
+      "validation_commands": [
+        "docker compose -f docker-compose.stack.yml config --quiet",
+        "scripts/prod_smoke.sh",
+        "target ECS/Fargate health and readiness smoke",
+        "python3 scripts/verify_ecs_fargate_promotion.py --proof <ecs-fargate-promotion-proof.json> --json"
+      ],
+      "required_evidence": [
+        "health",
+        "readiness",
+        "ingress",
+        "persistence",
+        "feedback",
+        "audit",
+        "rollback",
+        "release_packet"
+      ],
+      "evidence_refs": [
+        "docs/deployment-compatibility.md",
+        "docs/reference-architectures.md",
+        "docs/pilot-slo-error-budget.md",
+        "shared/mesh_runtime/schemas/ecs-fargate-promotion-proof.schema.json"
+      ],
+      "readiness_required": true,
+      "release_packet_required": true,
+      "promotion_blockers": [
+        "ecs_fargate_smoke_missing",
+        "ecs_fargate_release_packet_missing",
+        "ecs_fargate_feedback_and_audit_proof_missing"
+      ]
+    },
+    {
+      "target_id": "podman",
+      "display_name": "Podman",
+      "category": "container runtime",
+      "level": "recipe",
+      "product_stance": "Keep OCI and env/volume assumptions portable; document Compose and networking caveats before claiming support.",
+      "authority_boundary": "Recipe target only; deployers must prove the same Mesh authority contract in their environment.",
+      "validation_commands": [
+        "podman compose config",
+        "target health and readiness smoke"
+      ],
+      "required_evidence": [
+        "setup_notes",
+        "environment_variables",
+        "known_gaps",
+        "deployer_validation_commands"
+      ],
+      "evidence_refs": [
+        "docs/deployment-compatibility.md"
+      ],
+      "readiness_required": false,
+      "release_packet_required": true,
+      "promotion_blockers": [
+        "target_specific_smoke_missing"
+      ]
+    },
+    {
+      "target_id": "cloud_run",
+      "display_name": "Google Cloud Run",
+      "category": "serverless containers",
+      "level": "recipe",
+      "product_stance": "Good for stateless review or API deployments; authority-bearing production use needs persistence, identity, audit, and feedback evidence.",
+      "authority_boundary": "Recipe target only; stateless deployment cannot claim production authority without external state, identity, feedback, and audit proofs.",
+      "validation_commands": [
+        "target health and readiness smoke"
+      ],
+      "required_evidence": [
+        "setup_notes",
+        "environment_variables",
+        "known_gaps",
+        "deployer_validation_commands"
+      ],
+      "evidence_refs": [
+        "docs/deployment-compatibility.md"
+      ],
+      "readiness_required": false,
+      "release_packet_required": true,
+      "promotion_blockers": [
+        "target_specific_smoke_missing",
+        "durable_state_proof_missing"
+      ]
+    },
+    {
+      "target_id": "windows_containers",
+      "display_name": "Windows Containers / Hyper-V Containers",
+      "category": "Windows runtime",
+      "level": "not_planned",
+      "product_stance": "Out of scope until Windows workloads become a defined pilot target.",
+      "authority_boundary": "No runtime authority boundary is claimed for this target.",
+      "validation_commands": [],
+      "required_evidence": [
+        "explicit_out_of_scope_reason"
+      ],
+      "evidence_refs": [
+        "docs/deployment-compatibility.md"
+      ],
+      "readiness_required": false,
+      "release_packet_required": false,
+      "promotion_blockers": [
+        "not_product_surface"
+      ]
+    }
+  ]
+}

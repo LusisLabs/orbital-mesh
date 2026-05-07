@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/provider-adapter-proof.schema.json",
+  "title": "ProviderAdapterProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "adapter_id",
+    "provider_name",
+    "environment",
+    "operator_id",
+    "supported_actions",
+    "authority_boundary",
+    "service_account_ref",
+    "credential_rotation_ref",
+    "break_glass_recording_ref",
+    "audit_sink_ref",
+    "dry_run_ref",
+    "rollback_ref",
+    "degraded_behavior",
+    "production_write_enabled",
+    "proposal_lane_credentials_absent",
+    "raw_secret_material_present"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.provider_adapter_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "adapter_id": {
+      "type": "string",
+      "enum": ["feature_flag_provider", "incident_provider"]
+    },
+    "provider_name": { "type": "string" },
+    "environment": { "type": "string" },
+    "operator_id": { "type": "string" },
+    "supported_actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "authority_boundary": { "type": "string" },
+    "service_account_ref": { "type": "string" },
+    "credential_rotation_ref": { "type": "string" },
+    "break_glass_recording_ref": { "type": "string" },
+    "audit_sink_ref": { "type": "string" },
+    "dry_run_ref": { "type": "string" },
+    "rollback_ref": { "type": "string" },
+    "degraded_behavior": { "type": "string" },
+    "production_write_enabled": { "type": "boolean" },
+    "proposal_lane_credentials_absent": { "type": "boolean" },
+    "raw_secret_material_present": { "type": "boolean" }
+  },
+  "additionalProperties": false
+}

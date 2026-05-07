@@ -1,6 +1,6 @@
-# Mesh Intelligence
+# Orbital Mesh
 
-`mesh-intelligence` is a **local, policy-guided operator control plane** for **bounded** closed-loop remediation. It ingests infrastructure signals, decides on a remediation path, evaluates the decision against policy and quality gates, pauses for **operator steering** before actuation by default, executes through a bounded orchestration layer, records feedback, persists run memory into an Obsidian-compatible vault, and exposes continuous Merkle roots and proofs for the run log.
+`orbital-mesh` is a **local, policy-guided operator control plane** for **bounded** closed-loop remediation and model-lifecycle work. It ingests infrastructure signals, decides on a remediation path, evaluates the decision against policy and quality gates, pauses for **operator steering** before actuation by default, executes through a bounded orchestration layer, records feedback, persists run memory into an Obsidian-compatible vault, and exposes continuous Merkle roots and proofs for the run log.
 
 ## Positioning and scope
 
@@ -21,11 +21,8 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Dimension | Mesh behavior |
 |-----------|----------------|
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
-- Internal `MeshControl` OS companion served by the Compose `mesh-ui` sidecar
-- Browser-first Vite control plane served by `run_server.py`
-- Curses TUI served by `run_tui.py` for terminal-native inspection
-
-`MeshControl` is the primary internal operator interface. The Vite browser UI remains a migration reference while native OS coverage catches up.
+| Operator surface | Browser-first Vite control plane served by `run_server.py`; curses TUI served by `run_tui.py` for terminal-native inspection |
+| Model lifecycle | `mesh_brain` package for post-training, eval, serving, model management, and hardware-routing primitives |
 
 ## What It Does
 
@@ -41,11 +38,13 @@ These are the dimensions this codebase is built to support; they match a discipl
 - Supports two evaluation modes:
   - `native` Mesh trajectory evaluation
   - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
+- Emits a native evaluation stack manifest for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix as advisory lanes.
 - Supports three orchestration modes:
   - `native`
   - `goose`
   - `hermes`
 - Reports proposal-lane readiness for Evo and supports explicit operator-triggered Evo bootstrap/status for bounded repo patch runs.
+- Includes `mesh_brain`, the post-training and model-lifecycle plane extracted from Mesh, with data refinery, training job, eval, serving, model-management, and hardware-routing primitives.
 
 ## Runtime Model
 
@@ -81,11 +80,11 @@ Runs choose one evaluation mode and one orchestration mode.
 
 ### Evaluation: `native`
 
-Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory.
+Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory. It also emits `stage_results.evaluation_stack`, which maps Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix to Mesh-native artifacts without giving those tools execution authority. Each lane can bind to an existing account through redacted environment-backed connection state.
 
 ### Evaluation: `promptfoo`
 
-Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
+Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but Promptfoo is now one advisory lane inside the native evaluation stack. Evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
 
 ### Orchestration: `native`
 
@@ -106,7 +105,7 @@ Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--ver
 ## Repository Layout
 
 ```text
-mesh-intelligence/
+orbital-mesh/
 ├── Dockerfile                       # production image (Vite UI + Python server)
 ├── docker-compose.yml               # persisted state volume + health checks
 ├── docker-compose.stack.yml         # all-in-one local Mesh + sidecars + k3s + smoke stack
@@ -116,7 +115,7 @@ mesh-intelligence/
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
 ├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo config
-├── swarmclaw/                       # optional Next.js operator stack (separate surface)
+├── mesh_brain/                      # post-training, eval, serving, and model lifecycle plane
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
 │   ├── runtime.py                   # shared stage primitives used by pipeline + coordinator
@@ -135,8 +134,8 @@ mesh-intelligence/
 │   ├── merkle.py
 │   ├── vault.py
 │   └── state.py
-├── web/                             # React/Vite browser control plane, retained as parity reference
-├── purnaOS-main/                    # Purna Labs OS shell and native MeshControl app
+├── web/                             # React/Vite browser control plane
+├── docs/post-training/              # Mesh Brain PRD and runtime architecture imported from post-training
 ├── fixtures/
 ├── policies/
 └── tests/
@@ -152,7 +151,7 @@ Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster,
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, `mesh-ui`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API is available at `http://127.0.0.1:8787`; the internal OS companion is available at `http://127.0.0.1:3000/?app=MeshControl`.
+This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API and browser UI are available at `http://127.0.0.1:8787`.
 
 Optional lanes:
 
@@ -161,7 +160,7 @@ COMPOSE_PROFILES=latentmas MESH_STACK_ENABLE_LATENTMAS=1 docker compose -f docke
 MESH_STACK_AGENT_FABRIC_MODE=deepagents OPENAI_API_KEY=... docker compose -f docker-compose.stack.yml up --build
 ```
 
-Full runbooks: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md) and [`docs/internal-mesh-control.md`](./docs/internal-mesh-control.md).
+Full runbook: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
 
 Manual local server path:
 
@@ -183,7 +182,7 @@ This writes integration configuration to:
 .mesh-runtime-state/integrations.json
 ```
 
-The saved commands point at bridge entrypoints inside `mesh-intelligence`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Evo is resolved as a proposal-lane CLI only; use `MESH_EVO_COMMAND=evo` for a global `evo-hq-cli` install or `MESH_EVO_COMMAND="uv run --project /workspace/mesh-intelligence/evo/plugins/evo evo"` for the vendored source when `uv` is available.
+The saved commands point at bridge entrypoints inside `orbital-mesh`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Evo is resolved as a proposal-lane CLI only; use `MESH_EVO_COMMAND=evo` for a global `evo-hq-cli` install or `MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"` for the vendored source when `uv` is available.
 
 ### 2. Install the browser UI dependencies
 
@@ -633,6 +632,8 @@ Supported configuration variables:
 - `MESH_MAX_RETRY_WINDOW_SECONDS`
 - `MESH_GOOSE_TIMEOUT_SECONDS`
 - `MESH_PROMPTFOO_COMMAND`
+- `MESH_EVAL_INTEGRATION_LANES` — comma-separated advisory lanes for the native evaluation stack; unset, `all`, or `*` emits every lane.
+- `MESH_EVAL_EXPORT_ENABLED` — enables outbound export for configured evaluation accounts; off by default.
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_COMMAND`
@@ -830,7 +831,7 @@ docker compose -f docker-compose.stack.yml logs mesh-smoke
 
 The default `docker-compose.yml` stack remains the lighter developer/manual stack. It starts:
 
-1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/mesh-intelligence` so repo-patch style remediation can operate against the live checkout.
+1. **`mesh`** — browser control plane and Python backend on **8787**. The image bundles **Promptfoo** and **Goose**, writes `integrations.json` during container boot, emits structured runtime logs when enabled, and bind-mounts this repository at `/workspace/orbital-mesh` so repo-patch style remediation can operate against the live checkout.
 2. **Hermes in-image** — the same mesh container includes the Hermes CLI, with local Hermes state persisted in `hermes_home`.
 
 ```bash
@@ -840,9 +841,9 @@ docker compose up --build -d
 Developer stack persistence:
 
 - **Mesh** state: volume `mesh_runtime_state` → `/app/.mesh-runtime-state`
-- **Hermes** local state: volume `hermes_home` → `/workspace/mesh-intelligence/.hermes-local`
+- **Hermes** local state: volume `hermes_home` → `/workspace/orbital-mesh/.hermes-local`
 - **Goose** profile/config: volume `goose_config` → `/root/.config/goose`
-- **Workspace mirror**: bind mount `./` → `/workspace/mesh-intelligence`
+- **Workspace mirror**: bind mount `./` → `/workspace/orbital-mesh`
 
 Override ports if needed:
 
@@ -884,7 +885,7 @@ docker compose up --build -d
 For repo-patch and Kubernetes/code-remediation style flows, use repo paths from inside the container namespace, for example:
 
 ```text
-/workspace/mesh-intelligence/fixtures/codebases/search_service
+/workspace/orbital-mesh/fixtures/codebases/search_service
 ```
 
 Health: `GET /api/health` on mesh. `GET /api/readiness` is the integration probe and may take longer because it checks the configured CLIs.

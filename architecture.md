@@ -465,6 +465,11 @@ disagree.
   parse exported JSON, and return structured evaluation artifacts.
 - `goose` mode uses `services/orchestrator/goose_bridge.py` to run a real Goose review step,
   capture structured review metadata, and then perform bounded local actuation.
+- Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
+  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, and native
+  orchestration platform lanes for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes,
+  and n8n. These artifacts let agents and external orchestrators plug into Mesh without getting production
+  write access; Mesh still owns evaluation, tests, audit, Kubernetes actuation, and promotion gates.
 
 ### 3b. Memory layer (history that informs future runs)
 

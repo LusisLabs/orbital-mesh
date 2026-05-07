@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/failure-mode-library-packet.schema.json",
+  "title": "FailureModeLibraryPacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "library_path",
+    "library_sha256",
+    "entry_count",
+    "required_modes",
+    "covered_modes",
+    "entries",
+    "missing_modes",
+    "duplicate_ids",
+    "entries_without_ui_replay",
+    "entries_without_test_ref",
+    "checks",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "mesh.failure_mode_library.v1",
+      "type": "string"
+    },
+    "generated_at": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "incomplete"]
+    },
+    "library_path": { "type": "string" },
+    "library_sha256": { "type": ["string", "null"] },
+    "entry_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "required_modes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "covered_modes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "category",
+          "risk_tier",
+          "authority_boundary",
+          "detection_refs",
+          "expected_blockers",
+          "operator_actions",
+          "replay_refs",
+          "test_refs"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "category": { "type": "string" },
+          "risk_tier": { "type": "string" },
+          "authority_boundary": { "type": "string" },
+          "detection_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "expected_blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "operator_actions": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "replay_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "test_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "missing_modes": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "duplicate_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "entries_without_ui_replay": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "entries_without_test_ref": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

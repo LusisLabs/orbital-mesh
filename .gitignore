@@ -3,6 +3,7 @@ node_modules/
 .next/
 dist/
 build/
+target/
 *.egg-info/
 .eggs/
 
@@ -18,6 +19,7 @@ __pycache__/
 .mesh-runtime-state/
 .hermes-local/
 kurtosis/
+agentic-operator-core-main/
 
 # Secrets
 .env

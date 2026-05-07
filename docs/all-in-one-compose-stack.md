@@ -4,7 +4,7 @@
 
 Use this stack when you need to validate the whole system contract at once:
 
-- Mesh HTTP API and native `MeshControl` OS companion.
+- Mesh HTTP API and browser operator UI.
 - Promptfoo, Goose, and Hermes readiness.
 - Dedicated Hermes sidecar.
 - Embedded k3s cluster with a seeded `semantic-search` Deployment.
@@ -37,12 +37,6 @@ The Mesh API is published at:
 
 ```text
 http://127.0.0.1:8787
-```
-
-The internal OS companion is published through `mesh-ui` at:
-
-```text
-http://127.0.0.1:3000/?app=MeshControl
 ```
 
 The default stack runs `MESH_STACK_AGENT_FABRIC_MODE=deepagents` and enables the CPU LatentMAS sidecar. DeepAgents and LatentMAS stay advisory: Mesh policy, deterministic evaluation, approval gates, and Kubernetes allowlists remain authoritative.
@@ -92,7 +86,6 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 | `mesh-kube-bootstrap-vm` | One-shot bootstrap for the VM-labeled k3s cluster | none | `mesh_kubeconfig_vm` |
 | `mesh-kube-bootstrap-baremetal` | One-shot bootstrap for the bare-metal-labeled k3s cluster | none | `mesh_kubeconfig_baremetal` |
 | `mesh` | Mesh API, readiness, run execution, vault, Merkle, and Kubernetes actuation | `${MESH_PUBLISH_PORT:-8787}` | `mesh_runtime_state`, `goose_config`, all `mesh_kubeconfig*` volumes |
-| `mesh-ui` | Purna Labs OS shell with native `MeshControl` | `${MESH_UI_PUBLISH_PORT:-3000}` | none |
 | `hermes` | Dedicated Hermes runtime sidecar reached by `MESH_HERMES_COMMAND` through `docker exec` | none | `hermes_home` |
 | `mesh-agent-operator` | Non-human operator loop that resolves eligible evaluation gates through audited steering commands | none | none |
 | `mesh-smoke` | One-shot readiness and live-remediation verifier | none | `mesh_kubeconfig` |
@@ -101,16 +94,15 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 
 ## Boot Sequence
 
-1. Compose builds `mesh-intelligence-stack` and `mesh-intelligence-hermes`.
+1. Compose builds `orbital-mesh-stack` and `orbital-mesh-hermes`.
 2. `k3s`, `k3s-vm`, and `k3s-baremetal` start single-node Kubernetes APIs and write kubeconfigs to separate volumes.
 3. `postgres` starts for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
 4. The bootstrap jobs wait for k3s health, rewrite kubeconfig API endpoints to Compose-reachable service names, assign unique context/cluster/user names, create namespace `search`, and apply healthy `semantic-search` Deployments.
 5. `hermes` must report healthy before `mesh` starts.
 6. `mesh` starts with live Kubernetes execution enabled, a colon-merged `KUBECONFIG`, allowed contexts `mesh-compose,mesh-compose-vm,mesh-compose-baremetal`, and allowed namespace `search`.
-7. `mesh-ui` waits for Mesh health and serves the internal OS companion.
-8. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
-9. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
-10. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes and uncovered substrates, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON. With `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions do not stop while any known capability axis remains missing or failed unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set, do not stop while any configured substrate lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and do not stop while any multi-fault primitive lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
+7. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
+8. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
+9. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes and uncovered substrates, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON. With `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions do not stop while any known capability axis remains missing or failed unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set, do not stop while any configured substrate lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and do not stop while any multi-fault primitive lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
 
 Non-Kubernetes production-node breakthrough probes run outside the long-lived `mesh-chaos` container:
 
@@ -219,6 +211,10 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_POSTGRES_PUBLISH_PORT` | `5432` | Host port for local Postgres |
 | `MESH_STATE_BACKEND` | `file` | `file` or `postgres` runtime state backend |
 | `MESH_DATABASE_URL` | `postgresql://mesh:mesh@postgres:5432/mesh` | Postgres/Supabase connection URL |
+| `MESH_BRAIN_ARTIFACT_URI_PREFIX` | empty | Durable Mesh Brain artifact URI prefix passed through to Mesh for pilot-readiness rehearsals |
+| `MESH_BRAIN_SERVING_BASE_URL` | empty | OpenAI-compatible Mesh Brain serving backend passed through to Mesh for live-serving smoke |
+| `MESH_BRAIN_SERVING_MODEL` | empty | Mesh Brain serving model name used by live-serving smoke |
+| `MESH_RUN_EXPORT_RETENTION_REVIEWED` | `0` | Set to `1` only after export retention/deletion rules have been reviewed for the rehearsal |
 | `MESH_LATENTMAS_PUBLISH_PORT` | `8791` | Host port for optional LatentMAS |
 | `MESH_STACK_KUBE_CONTEXT` | `mesh-compose` | Normalized kube context in the shared kubeconfig |
 | `MESH_STACK_NAMESPACE` | `search` | Seeded namespace and Mesh allowlist |
@@ -242,7 +238,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
 | `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
-| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,evo,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |
+| `MESH_AGENT_MESH_AGENTS` | unset | Optional comma-separated restriction for agent-task lanes; default includes Goose, Hermes, Codex, Claude Code, OpenClaw, Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n |
 | `MESH_AGENT_OPERATOR_CONFIDENCE_FLOOR` | `0.86` | Minimum confidence stamped onto an eligible full-auto override |
 | `MESH_AGENT_OPERATOR_AUTONOMY_TIER` | `escalated` | Decision autonomy tier used by the agent operator override |
 | `MESH_AGENT_OPERATOR_EXISTING_RUN_MAX_AGE_SECONDS` | `3600` | Maximum age for existing paused runs that the operator will pick up after startup |
@@ -251,7 +248,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_REASONING_BANK_MAX_STRATEGIES` | `8` | Maximum advisory strategy memories attached to a run |
 | `MESH_REASONING_BANK_SCALING_MODE` | `sequential` | ReasoningBank retrieval/scaling mode |
 | `MESH_CORPUS_MEMORY_ENABLED` | `1` | Projects the incident corpus database into canonical runtime memory at Mesh startup |
-| `MESH_CORPUS_DATABASE_PATH` | `/workspace/mesh-intel/.mesh-runtime-state/corpus/incident_corpus.sqlite` | SQLite incident corpus imported into live memory |
+| `MESH_CORPUS_DATABASE_PATH` | `/workspace/orbital-mesh/.mesh-runtime-state/corpus/incident_corpus.sqlite` | SQLite incident corpus imported into live memory |
 | `MESH_CORPUS_MEMORY_PROJECTION_LIMIT` | `5000` | Maximum corpus rows projected on startup |
 | `MESH_VAULT_MATERIALIZE_MIN_INTERVAL_SECONDS` | `30` | Minimum interval between non-terminal vault bundle rewrites for the same run |
 | `MESH_READINESS_PROBE_TIMEOUT_SECONDS` | `15` | Per-integration CLI readiness timeout used by the Mesh API in the compose stack |
@@ -264,7 +261,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_ENABLE_LATENTMAS` | `1` | Enables Mesh readiness expectation for LatentMAS |
 | `MESH_STACK_LATENTMAS_URL` | `http://latentmas:8791` | Mesh-to-sidecar LatentMAS URL |
 | `MESH_LATENTMAS_MODEL_NAME` | `sshleifer/tiny-gpt2` | CPU-safe default for local sidecar inference; set to `Qwen/Qwen3-4B` or another HF causal LM for real advisory quality |
-| `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/mesh-intel ... mesh-intel-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
+| `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/orbital-mesh ... orbital-mesh-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
 | `MESH_STACK_GITNEXUS_URL` | empty | Optional external GitNexus sidecar URL |
 | `MESH_STACK_SMOKE_EVALUATION_MODE` | `native` | Smoke run evaluation mode |
 | `MESH_STACK_SMOKE_ORCHESTRATION_MODE` | `native` | Smoke run orchestration mode |

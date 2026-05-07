@@ -1,0 +1,60 @@
+{
+  "title": "DeploymentCompatibilityMatrix",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "registry_path",
+    "registry_sha256",
+    "target_count",
+    "validated_targets",
+    "next_validated_targets",
+    "targets",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.deployment_compatibility.v1"]
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "incomplete"]
+    },
+    "registry_path": {
+      "type": ["string", "null"]
+    },
+    "registry_sha256": {
+      "type": ["string", "null"]
+    },
+    "target_count": {
+      "type": "integer"
+    },
+    "validated_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_validated_targets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "targets": {
+      "type": "object"
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

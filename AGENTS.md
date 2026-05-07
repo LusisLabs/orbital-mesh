@@ -1,6 +1,11 @@
-# Agent & contributor guide (mesh-intelligence)
+# Agent & contributor guide (orbital-mesh)
 
 This file captures **how we build and change this repo** so humans and coding agents stay aligned. It is not a product spec; see `architecture.md` and `docs/` for architecture.
+
+Before non-trivial repo-wide work, read:
+
+- `docs/repo-truth-audit.md` for current/stale/conflicting/historical repo claims.
+- `docs/future-agent-operating-guide.md` for source-of-truth order, active runtime boundaries, validation gates, and dirty-worktree handling.
 
 ## Stack
 

@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/perennial/sensitive-reservoir.schema.json",
+  "title": "SensitiveReservoir",
+  "type": "object",
+  "required": [
+    "contract",
+    "reservoir_id",
+    "name",
+    "owner",
+    "classification",
+    "locality",
+    "access_policy",
+    "projection",
+    "crypto"
+  ],
+  "properties": {
+    "contract": {
+      "type": "string",
+      "enum": ["perennial.sensitive_reservoir.v1"]
+    },
+    "reservoir_id": { "type": "string" },
+    "name": { "type": "string" },
+    "owner": {
+      "type": "object",
+      "required": ["team", "service_owner", "data_steward"],
+      "properties": {
+        "team": { "type": "string" },
+        "service_owner": { "type": "string" },
+        "data_steward": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "classification": {
+      "type": "object",
+      "required": ["data_classes", "sensitivity", "trainable"],
+      "properties": {
+        "data_classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["operational", "security", "compliance", "customer", "source_code", "secret_adjacent", "regulated", "audit_only"]
+          },
+          "minItems": 1
+        },
+        "sensitivity": {
+          "type": "string",
+          "enum": ["public", "internal", "confidential", "restricted", "regulated"]
+        },
+        "trainable": {
+          "type": "string",
+          "enum": ["prohibited", "opt_in", "allowed_redacted"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "locality": {
+      "type": "object",
+      "required": ["boundary", "region", "storage_ref", "external_egress_default"],
+      "properties": {
+        "boundary": {
+          "type": "string",
+          "enum": ["on_prem"]
+        },
+        "region": { "type": "string" },
+        "storage_ref": { "type": "string" },
+        "external_egress_default": {
+          "type": "string",
+          "enum": ["deny"]
+        }
+      },
+      "additionalProperties": false
+    },
+    "access_policy": {
+      "type": "object",
+      "required": ["allowed_purposes", "allowed_compute_modes", "approval_required", "retention_days"],
+      "properties": {
+        "allowed_purposes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["rca", "feedback", "audit", "policy_check", "training", "export"]
+          },
+          "minItems": 1
+        },
+        "allowed_compute_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["in_place", "redacted_projection", "hash_only", "aggregate_only"]
+          },
+          "minItems": 1
+        },
+        "approval_required": { "type": "boolean" },
+        "retention_days": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "projection": {
+      "type": "object",
+      "required": ["redaction_profile", "max_snippet_chars", "hash_algorithm", "allowed_index_fields"],
+      "properties": {
+        "redaction_profile": { "type": "string" },
+        "max_snippet_chars": { "type": "integer" },
+        "hash_algorithm": { "type": "string" },
+        "allowed_index_fields": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "crypto": {
+      "type": "object",
+      "required": ["encryption_profile", "signing_profile", "pqc_profile"],
+      "properties": {
+        "encryption_profile": { "type": "string" },
+        "signing_profile": { "type": ["string", "null"] },
+        "pqc_profile": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -13,7 +13,7 @@ The default page is `Overview`. Topology and graph canvases are secondary invest
 - `Overview`: active Mesh command center for the current run thread, launch/review actions, incidents, agents, integrations, evidence, watchers, and audit continuity.
 - `Runs`: run-thread list plus detail tabs for `Timeline`, `Evidence`, `Approvals`, `Actions`, `Audit`, `Agents`, and `Topology`.
 - `Hermes`: default connected agent surface for blocker explanation, run-scoped chat, proposed action review, and evidence context.
-- `Agents`: connected and connectable workers. Hermes is primary by default; Goose, Codex, Claude Code, OpenClaw, Evo, LatentMAS, Deep Agents, and custom HTTP agents are modeled as bounded proposal workers.
+- `Agents`: connected and connectable workers. Hermes is primary by default; Goose, Codex, Claude Code, OpenClaw, LatentMAS, Deep Agents, and custom HTTP agents are modeled as bounded proposal workers.
 - `Integrations`: modular connection catalog grouped by Web3, Web2 Production, Development, and Operations.
 - `Control Plane`: secondary runtime diagnostics for readiness, storage paths, API stream state, connector inventory, and low-level health.
 

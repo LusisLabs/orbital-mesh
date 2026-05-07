@@ -19,7 +19,7 @@ class MeshStateStoreTests(unittest.TestCase):
 
     def test_file_store_preserves_run_event_snapshot_and_learning_context(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
+            store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", vault_mirror_mode="off"))
             goal = store.ensure_default_goal()
             session = store.create_run_session(
                 goal_id=goal.goal_id,

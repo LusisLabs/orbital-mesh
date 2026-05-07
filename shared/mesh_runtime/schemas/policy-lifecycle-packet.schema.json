@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/policy-lifecycle-packet.schema.json",
+  "title": "PolicyLifecyclePacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "manifest_path",
+    "manifest_sha256",
+    "policy_hashes",
+    "combined_policy_sha256",
+    "coverage",
+    "signature",
+    "missing"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "incomplete"
+      ]
+    },
+    "manifest_path": {
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "policy_hashes": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "combined_policy_sha256": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "signature": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

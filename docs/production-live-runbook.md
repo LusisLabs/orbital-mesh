@@ -4,6 +4,8 @@ This runbook describes the reproducible live Kubernetes path for Mesh Intelligen
 
 It is safe for local production-like validation. Do not expose the control plane directly to the public Internet. The server has no built-in authentication; put it behind TLS and an authenticated reverse proxy before external access.
 
+Use [`docs/production-deployment-roadmap.md`](./production-deployment-roadmap.md) as the release decision record that connects this runbook to private staging, controlled production pilots, required features, and non-negotiable launch rules.
+
 ## 1. Preconditions
 
 - Docker Desktop or Docker Engine with Compose v2.

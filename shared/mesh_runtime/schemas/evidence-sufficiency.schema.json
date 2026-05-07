@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/evidence-sufficiency.schema.json",
+  "title": "EvidenceSufficiency",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "passed",
+    "action_class",
+    "risk_tier",
+    "required_evidence_count",
+    "observed_evidence_count",
+    "evidence_refs",
+    "missing",
+    "notes"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "passed": {
+      "type": "boolean"
+    },
+    "action_class": {
+      "type": "string"
+    },
+    "risk_tier": {
+      "type": "string"
+    },
+    "required_evidence_count": {
+      "type": "integer"
+    },
+    "observed_evidence_count": {
+      "type": "integer"
+    },
+    "evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

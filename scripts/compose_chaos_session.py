@@ -72,7 +72,7 @@ def main() -> int:
         "MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH",
         "1" if coverage_first else "0",
     ).lower() not in {"0", "false", "no"}
-    output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/mesh-intel/.mesh-runtime-state/compose-chaos"))
+    output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/orbital-mesh/.mesh-runtime-state/compose-chaos"))
     output_root.mkdir(parents=True, exist_ok=True)
 
     _wait_for_mesh(base_url)

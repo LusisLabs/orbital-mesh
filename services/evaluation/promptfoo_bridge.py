@@ -166,7 +166,7 @@ def _write_promptfoo_files(temp_root: Path, trigger: Trigger, decision: Decision
     _write_assert_file(temp_root / "assert_risk.py", ASSERT_RISK)
 
     config = {
-        "description": "mesh-intelligence promptfoo bridge",
+        "description": "orbital-mesh promptfoo bridge",
         "prompts": [
             "{{contract_json}}",
         ],

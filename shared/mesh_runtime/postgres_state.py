@@ -819,6 +819,9 @@ class PostgresStateStore:
             self.vault.write_run_bundle(session, events, merkle, goal)
             self._last_vault_materialized_at[run_id] = now
 
+    def materialize_vault(self, run_id: str, *, force: bool = False) -> None:
+        self._materialize_vault(run_id, force=force)
+
     def _schedule_materialize_vault(self, run_id: str) -> None:
         if self.config.vault_mirror_mode == "off":
             return

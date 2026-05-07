@@ -66,6 +66,26 @@ class PipelineTests(unittest.TestCase):
         self.assertFalse(evaluation.passed)
         self.assertEqual(evaluation.final_recommendation, "human_review")
         self.assertTrue(any("risk level is high" in reason for reason in evaluation.blocking_reasons))
+        self.assertIn("evidence_sufficiency", evaluation.stage_results)
+
+    def test_evaluation_blocks_mutating_action_without_sufficient_evidence(self) -> None:
+        signal = load_fixture("signals", "search_latency_regression.json")
+        pipeline = FirstSlicePipeline(config=self.config)
+        trigger = pipeline.trigger.detect(pipeline.ingest.normalize_signal(signal))
+        self.assertIsNotNone(trigger)
+        decision = Decision.from_dict(load_fixture("decisions", "high_risk_decision.json"))
+        decision.risk["level"] = "medium"
+        decision.reasoning["evidence"] = []
+        decision.reasoning.pop("evidence_pack", None)
+        service = EvaluationService(config=self.config)
+
+        evaluation = service.evaluate(trigger, decision)
+
+        self.assertFalse(evaluation.passed)
+        self.assertEqual(evaluation.final_recommendation, "human_review")
+        self.assertIn("evidence sufficiency gate did not pass", evaluation.blocking_reasons)
+        self.assertFalse(evaluation.stage_results["evidence_sufficiency"]["passed"])
+        self.assertIn("minimum_evidence_count", evaluation.stage_results["evidence_sufficiency"]["missing"])
 
     def test_orchestrator_reject_path_does_not_apply_action(self) -> None:
         decision = Decision.from_dict(load_fixture("decisions", "high_risk_decision.json"))
@@ -83,6 +103,12 @@ class PipelineTests(unittest.TestCase):
                 "verifier": {"passed": True, "score": 1.0, "facts": {}},
                 "business_rules": {"passed": False, "notes": ["human review required"]},
                 "execution_readiness": {"passed": False, "notes": ["human review required"]},
+                "evidence_sufficiency": {
+                    "passed": False,
+                    "missing": ["minimum_evidence_count"],
+                    "action_class": "disable_flag",
+                    "risk_tier": "medium",
+                },
             },
             blocking_reasons=["manual review required"],
             review_route="human_review",

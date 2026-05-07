@@ -3,14 +3,15 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mesh-intelligence"
+name = "orbital-mesh"
 version = "0.1.0"
-description = "Python multi-service closed-loop platform scaffold"
+description = "Bounded operator control plane and model-lifecycle mesh."
 requires-python = ">=3.11"
 dependencies = [
+  "cryptography>=44,<47",
   "deepagents",
   "halo-engine",
-  "langchain-openai>=1.0.0,<2.0.0",
+  "langchain-openai>=1.1.14,<2.0.0",
   "psycopg[binary]>=3.2,<4",
 ]
 
@@ -47,6 +48,7 @@ packages = [
   "services.feedback",
   "services.actuators",
   "services.observer",
+  "mesh_brain",
   "simulation",
 ]
 

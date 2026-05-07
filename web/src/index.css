@@ -2149,6 +2149,16 @@ code {
   line-height: 1.4;
 }
 
+.agent-topology-panel {
+  display: grid;
+  gap: 0.7rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid rgba(232, 226, 211, 0.1);
+  border-radius: 8px;
+  background: rgba(65, 214, 177, 0.035);
+}
+
 .agent-risk-badge {
   padding: 0.16rem 0.36rem;
   border: 1px solid rgba(232, 226, 211, 0.12);
@@ -3380,6 +3390,12 @@ body {
   color: var(--mesh-text);
 }
 
+.mesh-agent-console .action-button.danger {
+  border-color: rgba(247, 84, 100, 0.42);
+  background: rgba(92, 28, 36, 0.72);
+  color: #ffd9de;
+}
+
 .mesh-agent-console .action-button:hover,
 .mesh-agent-console .tab:hover,
 .mesh-agent-console .icon-btn:hover {
@@ -3575,6 +3591,8 @@ body {
   }
 
   .mesh-agent-console .mesh-nav {
+    position: relative;
+    z-index: 45;
     display: flex;
     flex-wrap: wrap;
     gap: 0.25rem;
@@ -3944,5 +3962,377 @@ body {
   .mesh-command-dock-actions,
   .mesh-command-dock-footer {
     flex-wrap: wrap;
+  }
+}
+
+/* --- Production Roadmap Console --- */
+
+.mesh-proof-strip {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.mesh-proof-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.52rem;
+}
+
+.mesh-proof-card {
+  display: grid;
+  gap: 0.22rem;
+  min-width: 0;
+  padding: 0.62rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: var(--mesh-radius-sm);
+  background: rgba(22, 22, 25, 0.82);
+}
+
+.mesh-proof-card span,
+.mesh-proof-card small,
+.roadmap-phase-card span,
+.roadmap-surface-card span {
+  color: var(--mesh-muted);
+  font-size: 0.68rem;
+}
+
+.mesh-proof-card strong {
+  color: var(--mesh-text);
+  font-family: var(--mesh-mono);
+  font-size: 1rem;
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.authority-pipeline {
+  display: grid;
+  grid-template-columns: repeat(11, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.authority-step {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+  padding: 0.45rem 0.36rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: var(--mesh-radius-sm);
+  background: rgba(18, 18, 22, 0.78);
+  color: var(--mesh-muted);
+}
+
+.authority-step.ready {
+  border-color: rgba(115, 176, 10, 0.34);
+  color: var(--mesh-text);
+  background: rgba(31, 47, 28, 0.56);
+}
+
+.authority-step span {
+  font-family: var(--mesh-mono);
+  font-size: 0.58rem;
+}
+
+.authority-step strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+}
+
+.gate-matrix {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.gate-matrix.compact {
+  grid-template-columns: 1fr;
+}
+
+.gate-matrix-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  padding: 0.56rem 0.62rem;
+  border: 1px solid rgba(115, 176, 10, 0.22);
+  border-radius: var(--mesh-radius-sm);
+  background: rgba(22, 22, 25, 0.84);
+}
+
+.gate-matrix-row.blocked {
+  border-color: rgba(247, 84, 100, 0.34);
+}
+
+.gate-matrix-row span {
+  color: var(--mesh-text-soft);
+  font-size: 0.78rem;
+}
+
+.gate-matrix-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mesh-muted);
+  font-size: 0.74rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.darkharness-panel {
+  gap: 0.9rem;
+}
+
+.darkharness-panel.compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.darkharness-claim-group {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: var(--mesh-radius-sm);
+  background: rgba(22, 22, 25, 0.72);
+}
+
+.darkharness-claim-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.darkharness-claim-list span,
+.darkharness-claim-list small {
+  max-width: 100%;
+  padding: 0.18rem 0.42rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: 999px;
+  color: var(--mesh-text-soft);
+  font-family: var(--mesh-mono);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.mesh-section-header.compact {
+  gap: 0.5rem;
+  min-height: 0;
+  margin: 0;
+}
+
+.simulator-layout {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(320px, 0.82fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.simulator-json {
+  min-height: 220px;
+}
+
+.compact-select {
+  min-width: min(360px, 100%);
+}
+
+.simulation-card-grid,
+.trust-ladder-grid,
+.roadmap-phase-grid,
+.roadmap-surface-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.simulation-card,
+.trust-card,
+.roadmap-phase-card,
+.roadmap-surface-card {
+  display: grid;
+  gap: 0.58rem;
+  min-width: 0;
+  padding: 0.78rem;
+  border: 1px solid var(--mesh-line-soft);
+  border-radius: var(--mesh-radius);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 36%),
+    rgba(22, 22, 25, 0.86);
+}
+
+.simulation-card.selected {
+  border-color: rgba(84, 138, 247, 0.46);
+  background: rgba(37, 50, 77, 0.34);
+}
+
+.simulation-card strong,
+.trust-card strong,
+.roadmap-phase-card strong,
+.roadmap-surface-card strong {
+  overflow: hidden;
+  color: var(--mesh-text);
+  font-size: 0.86rem;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.simulation-card p,
+.roadmap-phase-card p,
+.roadmap-surface-card p {
+  margin: 0;
+  color: var(--mesh-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+}
+
+.tag-row span {
+  max-width: 100%;
+  padding: 0.16rem 0.36rem;
+  border: 1px solid var(--mesh-line);
+  border-radius: 999px;
+  color: var(--mesh-text-soft);
+  font-size: 0.66rem;
+}
+
+.trust-track {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.28rem;
+}
+
+.trust-track span {
+  min-width: 0;
+  padding: 0.28rem 0.34rem;
+  border: 1px solid var(--mesh-line);
+  border-radius: 999px;
+  color: var(--mesh-muted);
+  font-family: var(--mesh-mono);
+  font-size: 0.62rem;
+  text-align: center;
+}
+
+.trust-track span.active {
+  border-color: rgba(84, 138, 247, 0.42);
+  color: var(--mesh-text);
+  background: rgba(84, 138, 247, 0.12);
+}
+
+.trust-rationale {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.trust-blocker-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem;
+  min-width: 0;
+}
+
+.trust-blocker-list span {
+  max-width: 100%;
+  padding: 0.18rem 0.4rem;
+  border: 1px solid rgba(255, 193, 112, 0.32);
+  border-radius: 999px;
+  color: #ffd29a;
+  background: rgba(255, 193, 112, 0.08);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.roadmap-surface-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.roadmap-surface-card {
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.32rem 0.58rem;
+}
+
+.roadmap-surface-card span {
+  display: grid;
+  place-items: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  border: 1px solid var(--mesh-line);
+  border-radius: 999px;
+  font-family: var(--mesh-mono);
+}
+
+.roadmap-surface-card p {
+  grid-column: 2;
+}
+
+.mesh-status-pill.read-only,
+.mesh-status-pill.staging-ready,
+.mesh-status-pill.pilot-ready,
+.mesh-status-pill.production-ready,
+.mesh-status-pill.proposal-only {
+  border-color: rgba(84, 138, 247, 0.44);
+  color: var(--mesh-blue);
+  background: rgba(84, 138, 247, 0.09);
+}
+
+.mesh-status-pill.mock,
+.mesh-status-pill.unfinished,
+.mesh-status-pill.disabled {
+  border-color: rgba(230, 180, 80, 0.42);
+  color: var(--mesh-yellow);
+  background: rgba(230, 180, 80, 0.08);
+}
+
+.mesh-command-dock-copy h2 {
+  font-size: 1.82rem;
+}
+
+@media (max-width: 1320px) {
+  .mesh-proof-grid,
+  .authority-pipeline {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .simulation-card-grid,
+  .trust-ladder-grid,
+  .roadmap-phase-grid,
+  .roadmap-surface-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .simulator-layout,
+  .darkharness-panel.compact,
+  .gate-matrix {
+    grid-template-columns: 1fr;
+  }
+
+  .gate-matrix-row {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+}
+
+@media (max-width: 720px) {
+  .mesh-proof-grid,
+  .authority-pipeline,
+  .simulation-card-grid,
+  .trust-ladder-grid,
+  .roadmap-phase-grid,
+  .roadmap-surface-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mesh-command-dock-copy h2 {
+    font-size: 1.28rem;
   }
 }

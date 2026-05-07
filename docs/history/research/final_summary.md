@@ -125,7 +125,7 @@ This 10-hour autonomous research session explored four key domains:
 
 ## FILES CREATED
 
-All research files saved to `/workspace/mesh-intelligence/research/`:
+All research files saved to `/workspace/orbital-mesh/research/`:
 - session_log.md (session tracking)
 - cycle_1_findings.md (initial domain scan)
 - cycle_2_findings.md (ML/AI deep dive)

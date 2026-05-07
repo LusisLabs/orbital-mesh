@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/benchmark-run-artifacts-verification.schema.json",
+  "title": "BenchmarkRunArtifactsVerification",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "status",
+    "run_dir",
+    "run_id",
+    "suite",
+    "scenario_ids",
+    "expected_scenario_ids",
+    "artifacts",
+    "scorecard",
+    "checks",
+    "blockers",
+    "errors"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.benchmark_run_artifacts_verification.v1"]
+    },
+    "generated_at": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "fail"]
+    },
+    "run_dir": { "type": "string" },
+    "run_id": { "type": ["string", "null"] },
+    "suite": { "type": ["string", "null"] },
+    "scenario_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expected_scenario_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["path", "sha256", "bytes"],
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "sha256": { "type": "string" },
+          "bytes": { "type": "integer" }
+        }
+      }
+    },
+    "scorecard": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    },
+    "blockers": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

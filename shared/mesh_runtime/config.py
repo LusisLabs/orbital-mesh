@@ -12,6 +12,28 @@ DEFAULT_RESEARCH_DIRECTORY = DEFAULT_STATE_DIRECTORY / "research"
 DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
+DEFAULT_OWNERSHIP_REGISTRY_PATH = _REPO_ROOT / "config" / "ownership.registry.json"
+DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH = _REPO_ROOT / "config" / "connector-certification.registry.json"
+DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH = _REPO_ROOT / "config" / "policy-lifecycle.manifest.json"
+DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH = _REPO_ROOT / "config" / "orchestration-topology.profile.json"
+DEFAULT_FAILURE_MODE_LIBRARY_PATH = _REPO_ROOT / "config" / "failure-mode.library.json"
+DEFAULT_THREAT_MODEL_REGISTER_PATH = _REPO_ROOT / "config" / "threat-model.register.json"
+DEFAULT_DATA_CLASSIFICATION_POLICY_PATH = _REPO_ROOT / "config" / "data-classification.policy.json"
+DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH = _REPO_ROOT / "config" / "agentic-operator-source.provenance.json"
+DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH = _REPO_ROOT / "config" / "deployment-compatibility.registry.json"
+DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH = _REPO_ROOT / "config" / "procurement-security.package.json"
+DEFAULT_PUBLIC_PROOF_PACKAGE_PATH = _REPO_ROOT / "config" / "public-proof.package.json"
+DEFAULT_RELEASE_PROVENANCE_PATH = DEFAULT_STATE_DIRECTORY / "release-provenance.json"
+DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "authenticated-ingress-deployment-proof.json"
+DEFAULT_DESIGN_PARTNER_PACKET_PATH = DEFAULT_STATE_DIRECTORY / "design-partner-packet.json"
+DEFAULT_AUDIT_SINK_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-proof.json"
+DEFAULT_AUDIT_SINK_CERTIFICATION_PATH = DEFAULT_STATE_DIRECTORY / "audit-sink-certification.json"
+DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "backup-restore-rehearsal.json"
+DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH = DEFAULT_STATE_DIRECTORY / "load-concurrency-rehearsal.json"
+DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "orchestration-topology-drill.json"
+DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "feature-flag-provider-proof.json"
+DEFAULT_INCIDENT_PROVIDER_PROOF_PATH = DEFAULT_STATE_DIRECTORY / "incident-provider-proof.json"
+DEFAULT_ON_CALL_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "on-call-drill.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
 DEFAULT_CORPUS_DATABASE_PATH = DEFAULT_STATE_DIRECTORY / "corpus" / "incident_corpus.sqlite"
@@ -23,6 +45,18 @@ def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
     if p.is_absolute():
         return str(p.resolve())
     return str((_REPO_ROOT / p).resolve())
+
+
+def _read_env_or_file(raw: str | None, raw_path: str | None) -> str | None:
+    value = (raw or "").strip()
+    if value:
+        return value
+    path_value = (raw_path or "").strip()
+    if not path_value:
+        return None
+    path = Path(_env_path_anchored_to_repo(path_value, default=""))
+    return path.read_text(encoding="utf-8")
+
 
 def _parse_watch_targets(raw: str | None) -> tuple[dict[str, str], ...]:
     if not raw:
@@ -69,10 +103,49 @@ class RuntimeConfig:
     web_asset_path: str = str(DEFAULT_WEB_ASSET_PATH)
     vault_path: str = str(DEFAULT_VAULT_PATH)
     integrations_config_path: str = str(DEFAULT_INTEGRATIONS_CONFIG_PATH)
+    ownership_registry_path: str = str(DEFAULT_OWNERSHIP_REGISTRY_PATH)
+    connector_certification_registry_path: str = str(DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH)
+    policy_lifecycle_manifest_path: str = str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH)
+    orchestration_topology_profile_path: str = str(DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH)
+    failure_mode_library_path: str = str(DEFAULT_FAILURE_MODE_LIBRARY_PATH)
+    threat_model_register_path: str = str(DEFAULT_THREAT_MODEL_REGISTER_PATH)
+    data_classification_policy_path: str = str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH)
+    agentic_operator_source_provenance_path: str = str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH)
+    deployment_compatibility_registry_path: str = str(DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH)
+    procurement_security_package_path: str = str(DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH)
+    public_proof_package_path: str = str(DEFAULT_PUBLIC_PROOF_PACKAGE_PATH)
+    release_provenance_path: str = str(DEFAULT_RELEASE_PROVENANCE_PATH)
+    authenticated_ingress_proof_path: str | None = None
+    design_partner_packet_path: str | None = None
+    audit_sink_proof_path: str | None = None
+    audit_sink_certification_path: str | None = None
+    backup_restore_rehearsal_path: str | None = None
+    load_concurrency_rehearsal_path: str | None = None
+    orchestration_topology_drill_path: str | None = None
+    feature_flag_provider_proof_path: str | None = None
+    incident_provider_proof_path: str | None = None
+    on_call_drill_path: str | None = None
+    policy_signing_key: str | None = None
+    policy_signing_key_id: str = "policy-lifecycle-hmac"
+    darkharness_registry_path: str | None = None
+    darkharness_packet_persistence_mode: str = "ephemeral"
+    darkharness_signing_key: str | None = None
+    darkharness_signing_key_id: str = "darkharness-local-hmac"
+    darkharness_classical_signing_key_pem: str | None = None
+    darkharness_classical_signing_key_id: str = "darkharness-ed25519"
+    mesh_brain_artifact_uri_prefix: str | None = None
+    mesh_brain_serving_base_url: str | None = None
+    mesh_brain_serving_model: str | None = None
     default_steering_mode: str = "approval_gate"
     default_operator_pause_point: str = "evaluation_ready"
+    readiness_profile: str = "local"
+    operator_identity_required: bool = False
+    operator_header_name: str = "X-Mesh-Operator"
+    operator_roles_header_name: str = "X-Mesh-Roles"
+    force_approval_gate: bool = False
     run_worker_count: int = 4
     run_queue_size: int = 100
+    tenant_active_run_quota: int = 4
     promptfoo_command: str | None = None
     hermes_command: str | None = None
     hermes_command_timeout_seconds: int = 180
@@ -89,6 +162,9 @@ class RuntimeConfig:
     gitnexus_sidecar_command: str | None = None
     gitnexus_disable_autostart: bool = False
     max_json_body_bytes: int = 1_048_576
+    run_export_max_bytes: int = 5_242_880
+    run_export_retention_days: int = 30
+    run_export_retention_reviewed: bool = False
     access_log_enabled: bool = False
     security_headers_enabled: bool = True
     vault_ai_postprocess_enabled: bool = False
@@ -176,6 +252,7 @@ class RuntimeConfig:
     prometheus_url: str | None = None
     prometheus_query_timeout_seconds: float = 10.0
     feedback_prometheus_enabled: bool = False
+    live_feedback_required: bool = False
     feedback_prometheus_latency_query: str = 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000'
     feedback_prometheus_error_rate_query: str = 'sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}])) / clamp_min(sum(rate(http_requests_total{service="{service}"}[{window}])), 1)'
     # Layer 3: LLM-backed decision fallback for OTel signals that don't match
@@ -249,6 +326,8 @@ class RuntimeConfig:
             raise ValueError(f"run_worker_count must be > 0, got {self.run_worker_count}")
         if self.run_queue_size <= 0:
             raise ValueError(f"run_queue_size must be > 0, got {self.run_queue_size}")
+        if self.tenant_active_run_quota <= 0:
+            raise ValueError(f"tenant_active_run_quota must be > 0, got {self.tenant_active_run_quota}")
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.reasoning_bank_max_strategies < 1:
@@ -277,6 +356,9 @@ class RuntimeConfig:
             raise ValueError("reth_investigation_budget_seconds must be > 0")
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
+        self.readiness_profile = _normalize_readiness_profile(self.readiness_profile, self.environment)
+        if self.darkharness_packet_persistence_mode != "ephemeral":
+            raise ValueError("darkharness_packet_persistence_mode only supports ephemeral in this phase")
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
             self.observer_prompt_cache_mode
         )
@@ -315,10 +397,174 @@ class RuntimeConfig:
                 "MESH_INTEGRATIONS_CONFIG_PATH",
                 str(DEFAULT_INTEGRATIONS_CONFIG_PATH),
             ),
+            ownership_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_OWNERSHIP_REGISTRY_PATH"),
+                default=str(DEFAULT_OWNERSHIP_REGISTRY_PATH),
+            ),
+            connector_certification_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_CONNECTOR_CERTIFICATION_REGISTRY_PATH"),
+                default=str(DEFAULT_CONNECTOR_CERTIFICATION_REGISTRY_PATH),
+            ),
+            policy_lifecycle_manifest_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_POLICY_LIFECYCLE_MANIFEST_PATH"),
+                default=str(DEFAULT_POLICY_LIFECYCLE_MANIFEST_PATH),
+            ),
+            orchestration_topology_profile_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH"),
+                default=str(DEFAULT_ORCHESTRATION_TOPOLOGY_PROFILE_PATH),
+            ),
+            failure_mode_library_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_FAILURE_MODE_LIBRARY_PATH"),
+                default=str(DEFAULT_FAILURE_MODE_LIBRARY_PATH),
+            ),
+            threat_model_register_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_THREAT_MODEL_REGISTER_PATH"),
+                default=str(DEFAULT_THREAT_MODEL_REGISTER_PATH),
+            ),
+            data_classification_policy_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_DATA_CLASSIFICATION_POLICY_PATH"),
+                default=str(DEFAULT_DATA_CLASSIFICATION_POLICY_PATH),
+            ),
+            agentic_operator_source_provenance_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH"),
+                default=str(DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH),
+            ),
+            deployment_compatibility_registry_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH"),
+                default=str(DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH),
+            ),
+            procurement_security_package_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_PROCUREMENT_SECURITY_PACKAGE_PATH"),
+                default=str(DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH),
+            ),
+            public_proof_package_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_PUBLIC_PROOF_PACKAGE_PATH"),
+                default=str(DEFAULT_PUBLIC_PROOF_PACKAGE_PATH),
+            ),
+            release_provenance_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_RELEASE_PROVENANCE_PATH"),
+                default=str(DEFAULT_RELEASE_PROVENANCE_PATH),
+            ),
+            authenticated_ingress_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUTHENTICATED_INGRESS_PROOF_PATH"),
+                    default=str(DEFAULT_AUTHENTICATED_INGRESS_PROOF_PATH),
+                )
+                if os.getenv("MESH_AUTHENTICATED_INGRESS_PROOF_PATH")
+                else None
+            ),
+            design_partner_packet_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_DESIGN_PARTNER_PACKET_PATH"),
+                    default=str(DEFAULT_DESIGN_PARTNER_PACKET_PATH),
+                )
+                if os.getenv("MESH_DESIGN_PARTNER_PACKET_PATH")
+                else None
+            ),
+            audit_sink_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUDIT_SINK_PROOF_PATH"),
+                    default=str(DEFAULT_AUDIT_SINK_PROOF_PATH),
+                )
+                if os.getenv("MESH_AUDIT_SINK_PROOF_PATH")
+                else None
+            ),
+            audit_sink_certification_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_AUDIT_SINK_CERTIFICATION_PATH"),
+                    default=str(DEFAULT_AUDIT_SINK_CERTIFICATION_PATH),
+                )
+                if os.getenv("MESH_AUDIT_SINK_CERTIFICATION_PATH")
+                else None
+            ),
+            backup_restore_rehearsal_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH"),
+                    default=str(DEFAULT_BACKUP_RESTORE_REHEARSAL_PATH),
+                )
+                if os.getenv("MESH_BACKUP_RESTORE_REHEARSAL_PATH")
+                else None
+            ),
+            load_concurrency_rehearsal_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_LOAD_CONCURRENCY_REHEARSAL_PATH"),
+                    default=str(DEFAULT_LOAD_CONCURRENCY_REHEARSAL_PATH),
+                )
+                if os.getenv("MESH_LOAD_CONCURRENCY_REHEARSAL_PATH")
+                else None
+            ),
+            orchestration_topology_drill_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH"),
+                    default=str(DEFAULT_ORCHESTRATION_TOPOLOGY_DRILL_PATH),
+                )
+                if os.getenv("MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH")
+                else None
+            ),
+            feature_flag_provider_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH"),
+                    default=str(DEFAULT_FEATURE_FLAG_PROVIDER_PROOF_PATH),
+                )
+                if os.getenv("MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH")
+                else None
+            ),
+            incident_provider_proof_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_INCIDENT_PROVIDER_PROOF_PATH"),
+                    default=str(DEFAULT_INCIDENT_PROVIDER_PROOF_PATH),
+                )
+                if os.getenv("MESH_INCIDENT_PROVIDER_PROOF_PATH")
+                else None
+            ),
+            on_call_drill_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_ON_CALL_DRILL_PATH"),
+                    default=str(DEFAULT_ON_CALL_DRILL_PATH),
+                )
+                if os.getenv("MESH_ON_CALL_DRILL_PATH")
+                else None
+            ),
+            policy_signing_key=_read_env_or_file(
+                os.getenv("MESH_POLICY_SIGNING_KEY"),
+                os.getenv("MESH_POLICY_SIGNING_KEY_PATH"),
+            ),
+            policy_signing_key_id=os.getenv("MESH_POLICY_SIGNING_KEY_ID", "policy-lifecycle-hmac"),
+            darkharness_registry_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_DARKHARNESS_REGISTRY_PATH"), default="")
+                if os.getenv("MESH_DARKHARNESS_REGISTRY_PATH")
+                else None
+            ),
+            darkharness_packet_persistence_mode=os.getenv(
+                "MESH_DARKHARNESS_PACKET_PERSISTENCE_MODE",
+                "ephemeral",
+            ),
+            darkharness_signing_key=os.getenv("MESH_DARKHARNESS_SIGNING_KEY") or None,
+            darkharness_signing_key_id=os.getenv("MESH_DARKHARNESS_SIGNING_KEY_ID", "darkharness-local-hmac"),
+            darkharness_classical_signing_key_pem=_read_env_or_file(
+                os.getenv("MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PEM"),
+                os.getenv("MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_PATH"),
+            ),
+            darkharness_classical_signing_key_id=os.getenv(
+                "MESH_DARKHARNESS_CLASSICAL_SIGNING_KEY_ID",
+                "darkharness-ed25519",
+            ),
+            mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
+            mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
+            mesh_brain_serving_model=os.getenv("MESH_BRAIN_SERVING_MODEL") or None,
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
             default_operator_pause_point=os.getenv("MESH_DEFAULT_OPERATOR_PAUSE_POINT", "evaluation_ready"),
+            readiness_profile=_normalize_readiness_profile(
+                os.getenv("MESH_READINESS_PROFILE", ""),
+                os.getenv("MESH_ENVIRONMENT", "local"),
+            ),
+            operator_identity_required=_env_bool("MESH_OPERATOR_IDENTITY_REQUIRED", default=False),
+            operator_header_name=os.getenv("MESH_OPERATOR_HEADER", "X-Mesh-Operator"),
+            operator_roles_header_name=os.getenv("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles"),
+            force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),
             run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
             run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
+            tenant_active_run_quota=int(os.getenv("MESH_TENANT_ACTIVE_RUN_QUOTA", "4")),
             promptfoo_command=os.getenv("MESH_PROMPTFOO_COMMAND") or None,
             hermes_command=os.getenv("MESH_HERMES_COMMAND") or None,
             hermes_command_timeout_seconds=int(os.getenv("MESH_HERMES_COMMAND_TIMEOUT_SECONDS", "180")),
@@ -342,6 +588,9 @@ class RuntimeConfig:
             gitnexus_disable_autostart=os.getenv("MESH_GITNEXUS_DISABLE_AUTOSTART", "").lower()
             in ("1", "true", "yes"),
             max_json_body_bytes=int(os.getenv("MESH_MAX_JSON_BODY_BYTES", "1048576")),
+            run_export_max_bytes=int(os.getenv("MESH_RUN_EXPORT_MAX_BYTES", "5242880")),
+            run_export_retention_days=int(os.getenv("MESH_RUN_EXPORT_RETENTION_DAYS", "30")),
+            run_export_retention_reviewed=_env_bool("MESH_RUN_EXPORT_RETENTION_REVIEWED", default=False),
             access_log_enabled=os.getenv("MESH_ACCESS_LOG", "").lower() in ("1", "true", "yes"),
             security_headers_enabled=os.getenv("MESH_SECURITY_HEADERS", "true").lower()
             not in ("0", "false", "no"),
@@ -399,6 +648,7 @@ class RuntimeConfig:
             prometheus_query_timeout_seconds=float(os.getenv("MESH_PROMETHEUS_QUERY_TIMEOUT_SECONDS", "10")),
             feedback_prometheus_enabled=os.getenv("MESH_FEEDBACK_PROMETHEUS_ENABLED", "").lower()
             in ("1", "true", "yes"),
+            live_feedback_required=_env_bool("MESH_LIVE_FEEDBACK_REQUIRED", default=False),
             feedback_prometheus_latency_query=os.getenv(
                 "MESH_FEEDBACK_PROMETHEUS_LATENCY_QUERY",
                 'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000',
@@ -542,6 +792,21 @@ def _normalize_state_backend(raw: str) -> str:
     if backend not in ("file", "postgres"):
         raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
     return backend
+
+
+def _normalize_readiness_profile(raw: str, environment: str = "local") -> str:
+    profile = (raw or "").strip().lower()
+    if not profile:
+        profile = (environment or "local").strip().lower()
+    aliases = {
+        "dev": "local",
+        "development": "local",
+        "prod": "pilot",
+        "production": "pilot",
+        "phase4": "expansion",
+    }
+    profile = aliases.get(profile, profile)
+    return profile if profile in {"local", "staging", "pilot", "expansion"} else "local"
 
 
 def _normalize_prompt_cache_mode(raw: str) -> str:
