@@ -33,6 +33,11 @@ def main() -> int:
     parser.add_argument("--health-url", default="", help="Optional /api/health URL to compare with the packet commit and digest.")
     parser.add_argument("--timeout-seconds", type=float, default=10.0, help="Timeout for --health-url.")
     parser.add_argument("--env-output", default="", help="Write a dotenv file for runtime release binding.")
+    parser.add_argument(
+        "--allow-unverified-env-output",
+        action="store_true",
+        help="Allow --env-output without --image-ref or --health-url proof. Intended only for external deployment orchestration.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable result JSON.")
     args = parser.parse_args()
 
@@ -48,6 +53,11 @@ def main() -> int:
             timeout_seconds=args.timeout_seconds,
         )
 
+    if args.env_output and result["status"] == "pass" and not _env_output_has_binding_evidence(args):
+        result["checks"]["env_output_binding_evidence"] = False
+        result["missing"].append("env_output_binding_evidence")
+        result = _finalize(result)
+
     if args.env_output and result["status"] == "pass":
         _write_env_output(Path(args.env_output), result["runtime_env"])
 
@@ -56,6 +66,10 @@ def main() -> int:
     else:
         print(f"{result['status']}: {', '.join(result['missing']) or 'release runtime binding verified'}")
     return 0 if result["status"] == "pass" else 1
+
+
+def _env_output_has_binding_evidence(args: argparse.Namespace) -> bool:
+    return bool(args.image_ref or args.health_url or args.allow_unverified_env_output)
 
 
 def verify_release_runtime_binding(

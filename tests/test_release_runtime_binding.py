@@ -52,7 +52,7 @@ def release_packet(
 
 
 class ReleaseRuntimeBindingTests(unittest.TestCase):
-    def test_generates_runtime_env_from_complete_packet(self) -> None:
+    def test_rejects_runtime_env_without_binding_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             packet_path = Path(tmp) / "release-provenance.json"
             env_path = Path(tmp) / "release-runtime.env"
@@ -75,6 +75,48 @@ class ReleaseRuntimeBindingTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
+
+            self.assertEqual(result.returncode, 1, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "fail")
+            self.assertIn("env_output_binding_evidence", payload["missing"])
+            self.assertFalse(env_path.exists())
+
+    def test_generates_runtime_env_after_health_binding_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            packet_path = Path(tmp) / "release-provenance.json"
+            env_path = Path(tmp) / "release-runtime.env"
+            packet_path.write_text(json.dumps(release_packet()) + "\n", encoding="utf-8")
+            server = _start_health_server(
+                {
+                    "status": "ok",
+                    "commit": RELEASE_COMMIT,
+                    "image_digest": RELEASE_DIGEST,
+                }
+            )
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        SCRIPT,
+                        "--release-provenance",
+                        str(packet_path),
+                        "--runtime-release-provenance-path",
+                        "/app/.mesh-runtime-state/release-provenance.json",
+                        "--health-url",
+                        f"http://127.0.0.1:{server.server_address[1]}/api/health",
+                        "--env-output",
+                        str(env_path),
+                        "--json",
+                    ],
+                    cwd=REPO_ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            finally:
+                server.shutdown()
+                server.server_close()
 
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             payload = json.loads(result.stdout)
