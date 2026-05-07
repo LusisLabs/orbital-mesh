@@ -28,8 +28,8 @@ Latest imported hydrogen-mesh audit:
 | UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
 | Production-like smoke | `./scripts/prod_smoke.sh` | PASS | Reran on 2026-05-06 against `http://127.0.0.1:8787` with approved localhost HTTP access; health returned `status=ok`, readiness returned `state_path=/app/.mesh-runtime-state`, `goose.ready=true`, and the script printed `prod smoke passed`. |
-| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED, RUNTIME IMAGE BINDING ONLY | Reran on 2026-05-07 against the running compose stack after mounting the current complete release packet. `/api/health` returned `status=ok` at `2026-05-07T21:29:57Z` with `commit: "unknown"` and `image_digest: null`. `/api/readiness` returned `profile=pilot`, `status=ready`, `blockers=[]` at `2026-05-07T21:29:57Z`. `/api/pilot/go-no-go` generated at `2026-05-07T21:33:02.986144+00:00` remains `blocked`; the only missing evidence is `release_provenance_complete`. The mounted packet points at commit `76b6fd740955fffaa57f75dbb6f745012d936a9e` and image digest `sha256:b15798a9ba7dd671058ee155653b4166630352ef42b0ad6cc96cae2db914ff80`, but runtime binding is missing `runtime_build_commit` and `runtime_image_digest`. |
-| Release provenance / CI artifacts | CI run `25522238068` plus `mesh.release_provenance.v1` completion and runtime-binding checks | PACKET COMPLETE, DEPLOYMENT BINDING BLOCKED | Live CI passed on 2026-05-07 UTC at branch commit `76b6fd740955fffaa57f75dbb6f745012d936a9e`. Docker health smoke asserted the same commit and image digest `sha256:b15798a9ba7dd671058ee155653b4166630352ef42b0ad6cc96cae2db914ff80`. Downloaded artifacts are under `/tmp/orbital-mesh-ci-25522238068-76b6fd7/`. Combining the CI attestation, SBOM, vulnerability scan, signed policy lifecycle, and local migration proof produced `/tmp/orbital-mesh-ci-25522238068-76b6fd7/release-provenance-complete.json` with `status=complete`, `missing=[]`, and packet SHA `3c44cbd8d192434abc15d253a525aa4459972fd0a93a347c0d7b8c94fe15d200`. Runtime verification against `--health-url http://127.0.0.1:8787/api/health` failed because the running control plane reports no runtime commit or image digest. Verification against `--image-ref orbital-mesh-stack:dev` failed because the local image ID is `sha256:00c155b9d73bee677ead21086124f91826cd397c5aa060f5e385f3e22dd5f487`, not the CI packet digest. Independent local image rebuilds are not a valid activation path unless their digest matches the CI packet digest. |
+| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED, RUNTIME IMAGE BINDING ONLY | Reran on 2026-05-07 against the running compose stack after mounting the latest complete packet available from a successful CI image build. `/api/health` returned `status=ok` at `2026-05-07T23:21:06Z` with `commit: "unknown"` and `image_digest: null`. `/api/readiness` returned `profile=pilot`, `status=ready`, `blockers=[]` at `2026-05-07T23:21:06Z`. `/api/pilot/go-no-go` generated at `2026-05-07T23:21:24.162617+00:00` remains `blocked`; the only missing evidence is `release_provenance_complete`. The mounted packet points at commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`, but runtime binding is missing `runtime_build_commit` and `runtime_image_digest`. |
+| Release provenance / CI artifacts | CI run `25525840560` plus `mesh.release_provenance.v1` completion and runtime-binding checks | PACKET COMPLETE, DEPLOYMENT BINDING BLOCKED | Live CI passed on 2026-05-07 UTC at branch commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`. Downloaded artifacts are under `/tmp/orbital-mesh-ci-25525840560-803b13e/`. Combining the CI attestation, SBOM, vulnerability scan, signed policy lifecycle, and local migration proof produced `/tmp/orbital-mesh-ci-25525840560-803b13e/release-provenance-complete.json` with `status=complete`, `missing=[]`, image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`, and packet SHA `07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6`. Runtime verification remains blocked because the running control plane reports no runtime commit or image digest. Verification against `--image-ref orbital-mesh-stack:dev` failed in the current audit because the local image digest candidate was `sha256:00c155b9d73bee677ead21086124f91826cd397c5aa060f5e385f3e22dd5f487`, not the CI packet digest. Later commits `6895d9d4bda6977ec2c44da493adc19703bf082b` and `74de068f1fcb895b6a28d4fc555321425a2c6279` do not have current-head release image artifacts: CI run `25527111846` passed source jobs but failed `docker-build` because GitHub refused the job for account billing or spending-limit reasons, and CI run `25527534711` plus Security Audit run `25527534719` failed before any steps ran for the same platform reason. Independent local image rebuilds are not a valid activation path unless their digest matches the CI packet digest. |
 | Reth/Kurtosis historical smoke | archived only | REMOVED FROM RELEASE GATES | Reth/Kurtosis evidence remains historical research provenance under `docs/history/research/`; the old bootstrap script is no longer a controlled-production-pilot release gate. Current pilot readiness is carried by Docker Compose, Kubernetes bounded-action proof, authenticated ingress, persistence, audit, and go/no-go packets. |
 
 ## Historical Live Evidence
@@ -73,11 +73,11 @@ service container and succeeded.
   0.2174`, and `5` passed axes out of `23` known axes. This is useful risk
   evidence, but it is not the compose stack smoke gate.
 - `.mesh-runtime-state/release-provenance.json` is an ignored local packet
-  mounted by the running stack at the 2026-05-07T21:33:02Z go/no-go check. It
-  was generated for commit `76b6fd740955fffaa57f75dbb6f745012d936a9e` and image
-  digest `sha256:b15798a9ba7dd671058ee155653b4166630352ef42b0ad6cc96cae2db914ff80`.
+  mounted by the running stack at the 2026-05-07T23:21:24Z go/no-go check. It
+  was generated for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image
+  digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`.
   The packet itself is complete with packet SHA
-  `3c44cbd8d192434abc15d253a525aa4459972fd0a93a347c0d7b8c94fe15d200`, but it
+  `07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6`, but it
   does not clear the live go/no-go gate because the running control plane
   reports no runtime commit or image digest.
 - `.mesh-runtime-state/`, `.venv/`, `web/dist/`, and `web/test-results/` are
@@ -97,12 +97,16 @@ service container and succeeded.
 
 - Full strict mypy remains partial until the `files` scope is expanded beyond
   `services/decision/hypothesis_engine.py`.
-- Release provenance packet generation is complete for CI run `25522238068`,
+- Release provenance packet generation is complete for CI run `25525840560`,
   but live deployment binding remains blocked. The running stack must use the
   exact release packet and report matching `MESH_BUILD_COMMIT` and
   `MESH_BUILD_IMAGE_DIGEST` from the deployed image. Independent local images
   are not valid substitutes unless their digest matches the CI packet digest.
-  The normal CI workflow does not publish a pullable release image. A manual
+  Current-head CI is also blocked by GitHub account billing or spending-limit
+  enforcement, so no current-head release image artifact exists for commits
+  `6895d9d4bda6977ec2c44da493adc19703bf082b` or
+  `74de068f1fcb895b6a28d4fc555321425a2c6279`. The normal CI workflow does not
+  publish a pullable release image. A manual
   `.github/workflows/release-image-handoff.yml` path now exists for explicit
   operator-approved exports only; it requires `confirm_export=EXPORT_RELEASE_IMAGE`
   and uploads a runnable image artifact plus `mesh.release_image_handoff.v1`.
