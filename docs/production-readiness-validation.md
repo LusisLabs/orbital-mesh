@@ -28,8 +28,8 @@ Latest imported hydrogen-mesh audit:
 | UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
 | Production-like smoke | `./scripts/prod_smoke.sh` | PASS | Reran on 2026-05-06 against `http://127.0.0.1:8787` with approved localhost HTTP access; health returned `status=ok`, readiness returned `state_path=/app/.mesh-runtime-state`, `goose.ready=true`, and the script printed `prod smoke passed`. |
-| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED | Reran on 2026-05-06 against the running compose stack. `/api/health` returned `status=ok` at `2026-05-06T23:06:13Z`, but readiness profile `pilot` remained `blocked` with blockers `authenticated_ingress_deployment_verified`, `policy_lifecycle_signed`, `agentic_operator_source_provenance_recorded`, `backup_restore_rehearsal_verified`, `mesh_brain_artifact_uri_prefix_configured`, `mesh_brain_serving_backend_configured`, `run_export_retention_reviewed`, and `design_partner_packet_verified`. `/api/pilot/go-no-go` generated at `2026-05-06T23:06:20.392779+00:00` remains `blocked`; missing evidence is `readiness_green`, Mesh Brain model/live/canary/rollback gates, `release_provenance_complete`, and `on_call_drill_verified`. |
-| Release provenance / CI artifacts | CI run `25471541739` plus `mesh.release_provenance.v1` draft inspection | BLOCKED, EVIDENCE PRESERVED | Live CI reran on 2026-05-07 UTC at branch commit `7ac8a6e`; the GitHub Actions attestation was generated from PR merge SHA `a1fecfa056f4b203cc70d2bee813e45cf5080460`. It uploaded `ci-attestation` artifact `6845651971`, `release-assurance-artifacts` artifact `6845652269`, and `release-provenance-draft` artifact `6845652461`; local copies are under `/tmp/orbital-mesh-ci-25471541739/`. Python lint, web, simulation, and Python `3.11`/`3.12`/`3.13` test jobs passed. Docker built image digest `sha256:38d940295c891434ccb29734829e9c55c64f519977f7fc266de310ba7fd0ea56` and passed healthcheck, but failed the release-image assurance gate because the Grype artifact recorded `116` findings with `18` high/critical blockers. The SBOM is digest-matched and valid with `4799` components; the draft provenance packet remains incomplete with missing `policy_lifecycle_signed`, `migration_rehearsal`, `vulnerability_scan_path`, and `ci_attestation`. |
+| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED, RELEASE PROVENANCE ONLY | Reran on 2026-05-07 against the running compose stack. `/api/health` returned `status=ok` at `2026-05-07T20:35:52Z` with `commit: "unknown"` and `image_digest: null`. `/api/readiness` returned `profile=pilot`, `status=ready`, `blockers=[]` at `2026-05-07T20:36:15Z`. `/api/pilot/go-no-go` generated at `2026-05-07T20:36:33.954427+00:00` remains `blocked`; the only missing evidence is `release_provenance_complete`. The mounted packet is internally complete, but runtime binding is missing `runtime_build_commit` and `runtime_image_digest`. |
+| Release provenance / CI artifacts | CI run `25519350728` plus `mesh.release_provenance.v1` completion and runtime-binding checks | PACKET COMPLETE, DEPLOYMENT BINDING BLOCKED | Live CI passed on 2026-05-07 UTC at branch commit `e58bfa22d6d41c026cf9b03e36f601f4c08d212c`. Docker health smoke returned the same commit and image digest `sha256:939179b6944ad61d04eafa158ca3967e597f2f8e2cbd72cbc776e69a6867297a`. Downloaded artifacts are under `/tmp/orbital-mesh-ci-25519350728-e58bfa2/`. Combining the CI attestation, SBOM, vulnerability scan, signed policy lifecycle, and local migration proof produced `/tmp/orbital-mesh-ci-25519350728-e58bfa2/release-provenance-complete.json` with `status=complete`, `missing=[]`, and packet SHA `bb7039a19eb073c572dbbe6f881a4cb75d32b6baa6440e2a50b1d1d2b15ff722`. `scripts/verify_release_runtime_binding.py --env-output` passed for that packet, but `--health-url http://127.0.0.1:8787/api/health` failed because the running control plane reports no runtime commit or image digest. `--image-ref orbital-mesh-stack:dev` also failed because the local image ID is `sha256:00c155b9d73bee677ead21086124f91826cd397c5aa060f5e385f3e22dd5f487`, not the CI packet image digest. |
 | Reth/Kurtosis historical smoke | archived only | REMOVED FROM RELEASE GATES | Reth/Kurtosis evidence remains historical research provenance under `docs/history/research/`; the old bootstrap script is no longer a controlled-production-pilot release gate. Current pilot readiness is carried by Docker Compose, Kubernetes bounded-action proof, authenticated ingress, persistence, audit, and go/no-go packets. |
 
 ## Historical Live Evidence
@@ -72,11 +72,14 @@ service container and succeeded.
   `ready: false`, `status: below_threshold`, `capability_axis_pass_rate:
   0.2174`, and `5` passed axes out of `23` known axes. This is useful risk
   evidence, but it is not the compose stack smoke gate.
-- `.mesh-runtime-state/release-provenance.json` is an ignored historical packet
-  generated at `2026-05-06T00:32:43Z` for commit
-  `0056fd18c052c07fe98ac65395a60733e698d621`. It is incomplete and has no
-  SBOM, vulnerability scan, CI attestation, or migration rehearsal artifact
-  path, so it does not clear the current release provenance gate.
+- `.mesh-runtime-state/release-provenance.json` is an ignored local packet
+  generated at `2026-05-07T19:25:58Z` for commit
+  `af409496617d770d57e375fc73c7fa753e97d266` and image digest
+  `sha256:e195d6da1f435af4f5bd7a261fe7ead956b967564f7e47d34442c54b421da0fb`.
+  The packet itself is complete with packet SHA
+  `cf12b3d7fe813fe42874bb800d3f08cebc659970a47791445908cc2229c81319`,
+  but it does not clear the live go/no-go gate because the running control
+  plane reports no runtime commit or image digest.
 - `.mesh-runtime-state/`, `.venv/`, `web/dist/`, and `web/test-results/` are
   ignored local artifacts and must not be treated as committed release proof.
 
@@ -94,18 +97,17 @@ service container and succeeded.
 
 - Full strict mypy remains partial until the `files` scope is expanded beyond
   `services/decision/hypothesis_engine.py`.
-- Release provenance remains incomplete until the release image has zero
-  blocking vulnerability findings and a real GitHub Actions attestation with
-  workflow, job, run id, commit SHA, and passed `python-test`, `web`, and
-  `docker-build` checks. The latest pull-test scan is still blocked by Python
-  `3.13.13`, glibc `2.41-12+deb13u2`, ncurses `6.5+20250216-2`, and libcap2
-  `1:2.75-10+b8` findings from the runtime base image. Direct Grype scans of
-  `python:3.13-slim-bookworm`, `python:3.12-slim-bookworm`, and
-  `python:3.13-slim-bullseye` reported `30`, `31`, and `56` blockers
-  respectively, so a simple Debian tag swap does not close the image gate.
-- Pilot readiness remains blocked until the target environment supplies
-  authenticated ingress, backup/restore, signed policy, Mesh Brain, retention,
-  design-partner, and related deployment-specific evidence packets.
+- Release provenance packet generation is complete for CI run `25519350728`,
+  but live deployment binding remains blocked. The running stack must use the
+  exact release packet and report matching `MESH_BUILD_COMMIT` and
+  `MESH_BUILD_IMAGE_DIGEST` from the deployed image. The current workflow does
+  not publish a pullable release image; enabling registry publication or
+  uploading a runnable image artifact would export a built private-repo image
+  to GitHub storage and needs explicit operator approval before it becomes an
+  active release path.
+- Pilot readiness is currently green in the running compose stack. Pilot
+  go/no-go remains blocked only by `release_provenance_complete`, caused by
+  missing runtime commit and image-digest binding.
 - Compose and UI gates depend on local Docker/browser availability and must be
   recorded with exact command output before merge. Reth/Kurtosis remains
   historical research provenance, not a controlled-production-pilot release
