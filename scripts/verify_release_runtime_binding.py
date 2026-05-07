@@ -203,7 +203,10 @@ def _docker_image_inspect(
     result = runner(["docker", "image", "inspect", image_ref])
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"docker image inspect failed for {image_ref}")
-    payload = json.loads(result.stdout)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"docker image inspect returned invalid JSON for {image_ref}") from exc
     if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
         raise RuntimeError(f"docker image inspect returned invalid payload for {image_ref}")
     return payload[0]

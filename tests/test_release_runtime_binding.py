@@ -7,12 +7,19 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib import util
 from pathlib import Path
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = "scripts/verify_release_runtime_binding.py"
+RUNTIME_BINDING_PATH = REPO_ROOT / SCRIPT
+RUNTIME_BINDING_SPEC = util.spec_from_file_location("verify_release_runtime_binding", RUNTIME_BINDING_PATH)
+assert RUNTIME_BINDING_SPEC is not None
+verify_release_runtime_binding = util.module_from_spec(RUNTIME_BINDING_SPEC)
+assert RUNTIME_BINDING_SPEC.loader is not None
+RUNTIME_BINDING_SPEC.loader.exec_module(verify_release_runtime_binding)
 RELEASE_COMMIT = "a" * 40
 RELEASE_DIGEST = f"sha256:{'b' * 64}"
 
@@ -196,6 +203,25 @@ class ReleaseRuntimeBindingTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertIn("runtime_image_digest_match", payload["missing"])
             self.assertNotIn("runtime_build_commit_match", payload["missing"])
+
+    def test_image_ref_reports_invalid_docker_inspect_json_as_failed_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            packet_path = Path(tmp) / "release-provenance.json"
+            packet_path.write_text(json.dumps(release_packet()) + "\n", encoding="utf-8")
+
+            def fake_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
+                return subprocess.CompletedProcess(args, 0, stdout="{", stderr="")
+
+            payload = verify_release_runtime_binding.verify_release_runtime_binding(
+                release_provenance=packet_path,
+                runtime_release_provenance_path="/app/.mesh-runtime-state/release-provenance.json",
+                image_ref="orbital-mesh:release",
+                runner=fake_runner,
+            )
+
+            self.assertEqual(payload["status"], "fail")
+            self.assertIn("image_ref_digest_match", payload["missing"])
+            self.assertIn("invalid JSON", payload["image_ref"]["error"])
 
 
 def _start_health_server(payload: dict[str, Any]) -> ThreadingHTTPServer:
