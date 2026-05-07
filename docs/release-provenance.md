@@ -57,6 +57,17 @@ scripts/verify_release_runtime_binding.py \
 
 The command writes `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` only after the packet is complete and the env write has binding evidence. Supply `--image-ref` before deployment so the local image must match the packet digest, or `--health-url` after deployment so the live control plane must report the packet commit and image digest. `--allow-unverified-env-output` exists only for external deployment orchestrators that verify image identity elsewhere; do not use it as pilot-release evidence. After deployment, run the same verifier with `--health-url https://<mesh-host>/api/health` to confirm the live control plane reports the bound commit and image digest before capturing `/api/pilot/go-no-go`.
 
+Run the final pilot-clearance audit only after deployment binding is in place:
+
+```bash
+scripts/verify_pilot_clearance.py \
+  --base-url https://<mesh-host> \
+  --timeout-seconds 30 \
+  --json
+```
+
+The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, and runtime commit/image-digest binding all pass together.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:

@@ -57,6 +57,7 @@ REQUIRED_SCRIPTS = (
     "scripts/generate_release_image_assurance.py",
     "scripts/normalize_release_assurance_artifacts.py",
     "scripts/verify_release_runtime_binding.py",
+    "scripts/verify_pilot_clearance.py",
     "scripts/verify_authenticated_ingress.py",
     "scripts/verify_authenticated_ingress_deployment.py",
     "scripts/verify_failure_mode_library.py",
@@ -303,6 +304,15 @@ REQUIRED_MARKERS = {
         "--health-url",
         "--image-ref",
         "release_provenance_complete",
+        "runtime_image_digest_match",
+    ),
+    "scripts/verify_pilot_clearance.py": (
+        "mesh.pilot_clearance_audit.v1",
+        "/api/health",
+        "/api/readiness",
+        "/api/pilot/go-no-go",
+        "release_provenance_complete",
+        "runtime_build_commit_match",
         "runtime_image_digest_match",
     ),
     "docs/release-provenance.md": (
