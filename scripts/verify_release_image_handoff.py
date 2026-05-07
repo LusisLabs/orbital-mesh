@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 CONFIRMATION = "EXPORT_RELEASE_IMAGE"
@@ -18,6 +19,22 @@ def main() -> int:
     parser.add_argument("--manifest", required=True, help="Path to release-image-handoff.json.")
     parser.add_argument("--image-archive", default="", help="Override image archive path after artifact download.")
     parser.add_argument("--artifact-root", default="", help="Root directory for referenced handoff artifacts.")
+    parser.add_argument("--image-ref", default="", help="Optional loaded Docker image ref to compare with the handoff digest.")
+    parser.add_argument(
+        "--complete-release-provenance",
+        default="",
+        help="Optional final complete release provenance packet to compare with the handoff digest and commit.",
+    )
+    parser.add_argument(
+        "--runtime-release-provenance-path",
+        default="",
+        help="Container-readable MESH_RELEASE_PROVENANCE_PATH to write into --env-output.",
+    )
+    parser.add_argument(
+        "--env-output",
+        default="",
+        help="Write runtime dotenv only after handoff, image-ref, and complete release provenance checks pass.",
+    )
     parser.add_argument(
         "--require-artifacts",
         action="store_true",
@@ -30,6 +47,12 @@ def main() -> int:
         manifest_path=Path(args.manifest),
         image_archive_override=args.image_archive,
         artifact_root=Path(args.artifact_root) if args.artifact_root else None,
+        image_ref=args.image_ref,
+        complete_release_provenance=Path(args.complete_release_provenance)
+        if args.complete_release_provenance
+        else None,
+        runtime_release_provenance_path=args.runtime_release_provenance_path,
+        env_output=Path(args.env_output) if args.env_output else None,
         require_artifacts=args.require_artifacts,
     )
     if args.json:
@@ -44,7 +67,12 @@ def verify_handoff(
     manifest_path: Path,
     image_archive_override: str = "",
     artifact_root: Path | None = None,
+    image_ref: str = "",
+    complete_release_provenance: Path | None = None,
+    runtime_release_provenance_path: str = "",
+    env_output: Path | None = None,
     require_artifacts: bool = False,
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None = None,
 ) -> dict[str, Any]:
     result = {
         "schema_version": "mesh.release_image_handoff_verification.v1",
@@ -53,6 +81,7 @@ def verify_handoff(
         "checks": {},
         "missing": [],
         "resolved_paths": {},
+        "runtime_env": {},
     }
     packet = _load_json(manifest_path)
     if packet is None:
@@ -90,7 +119,49 @@ def verify_handoff(
     result["resolved_paths"]["artifacts"] = artifacts["resolved_paths"]
     checks.update(artifacts["checks"])
 
-    return _finalize(result, [name for name, passed in checks.items() if not passed])
+    if image_ref:
+        image = _image_ref_record(
+            image_ref=image_ref,
+            expected_digest=_nested(packet, "image", "digest"),
+            runner=runner or _run,
+        )
+        result["image_ref"] = image
+        checks["image_ref_digest_match"] = image["digest_match"]
+    elif env_output is not None:
+        checks["env_output_image_ref"] = False
+
+    if complete_release_provenance is not None:
+        complete = _complete_release_provenance_record(
+            path=complete_release_provenance,
+            packet=packet,
+        )
+        result["complete_release_provenance"] = complete
+        result["resolved_paths"]["complete_release_provenance"] = str(complete_release_provenance)
+        checks.update(complete["checks"])
+        result["runtime_env"] = _runtime_env(
+            packet=packet,
+            complete_release_provenance=complete_release_provenance,
+            runtime_release_provenance_path=runtime_release_provenance_path,
+        )
+    elif env_output is not None:
+        result["resolved_paths"]["complete_release_provenance"] = None
+        checks["complete_release_provenance_present"] = False
+
+    if env_output is not None:
+        if not require_artifacts:
+            checks["env_output_artifacts_required"] = False
+        checks["env_output_binding_evidence"] = bool(
+            checks.get("image_ref_digest_match")
+            and checks.get("complete_release_provenance_complete")
+            and checks.get("complete_release_provenance_commit_match")
+            and checks.get("complete_release_provenance_image_digest_match")
+        )
+
+    finalized = _finalize(result, [name for name, passed in checks.items() if not passed])
+    if env_output is not None and finalized["status"] == "pass":
+        _write_env_output(env_output, finalized["runtime_env"])
+        finalized["resolved_paths"]["env_output"] = str(env_output)
+    return finalized
 
 
 def _embedded_checks_pass(packet: dict[str, Any]) -> bool:
@@ -187,6 +258,119 @@ def _artifact_checks(
     return {"checks": checks, "resolved_paths": resolved}
 
 
+def _image_ref_record(
+    *,
+    image_ref: str,
+    expected_digest: Any,
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> dict[str, Any]:
+    try:
+        payload = _docker_image_inspect(image_ref, runner=runner)
+    except RuntimeError as exc:
+        return {
+            "image_ref": image_ref,
+            "error": str(exc),
+            "digest_candidates": [],
+            "digest_match": False,
+        }
+    expected = _normalized_digest(expected_digest)
+    candidates = _image_digest_candidates(payload)
+    return {
+        "image_ref": image_ref,
+        "image_id": _normalized_digest(payload.get("Id")),
+        "repo_digests": [item for item in payload.get("RepoDigests", []) if isinstance(item, str)],
+        "digest_candidates": candidates,
+        "digest_match": bool(expected and expected in candidates),
+    }
+
+
+def _docker_image_inspect(
+    image_ref: str,
+    *,
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
+) -> dict[str, Any]:
+    result = runner(["docker", "image", "inspect", image_ref])
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"docker image inspect failed for {image_ref}")
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"docker image inspect returned invalid JSON for {image_ref}") from exc
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], dict):
+        raise RuntimeError(f"docker image inspect returned invalid payload for {image_ref}")
+    return payload[0]
+
+
+def _image_digest_candidates(payload: dict[str, Any]) -> list[str]:
+    candidates: list[str] = []
+    image_id = _normalized_digest(payload.get("Id"))
+    if image_id:
+        candidates.append(image_id)
+    repo_digests = payload.get("RepoDigests")
+    if isinstance(repo_digests, list):
+        for item in repo_digests:
+            if not isinstance(item, str) or "@sha256:" not in item:
+                continue
+            digest = _normalized_digest(item.split("@", 1)[1])
+            if digest:
+                candidates.append(digest)
+    return _dedupe(candidates)
+
+
+def _complete_release_provenance_record(*, path: Path, packet: dict[str, Any]) -> dict[str, Any]:
+    checks: dict[str, bool] = {"complete_release_provenance_present": path.is_file()}
+    payload = _load_json(path) if path.is_file() else None
+    checks["complete_release_provenance_json"] = isinstance(payload, dict)
+    if not isinstance(payload, dict):
+        return {"path": str(path), "checks": checks}
+
+    checks["complete_release_provenance_schema_version"] = (
+        payload.get("schema_version") == "mesh.release_provenance.v1"
+    )
+    checks["complete_release_provenance_complete"] = payload.get("status") == "complete"
+    checks["complete_release_provenance_missing_empty"] = payload.get("missing") == []
+    checks["complete_release_provenance_checks_passed"] = _embedded_checks_pass(payload)
+    checks["complete_release_provenance_commit_match"] = (
+        _nested(payload, "git", "commit") == _nested(packet, "git", "commit")
+    )
+    checks["complete_release_provenance_image_digest_match"] = (
+        _nested(payload, "image", "digest") == _nested(packet, "image", "digest")
+    )
+    checks["complete_release_provenance_ci_sha_matches_git_commit"] = _ci_sha_matches_git_commit(payload)
+    return {
+        "path": str(path),
+        "packet_sha256": payload.get("packet_sha256"),
+        "git_commit": _nested(payload, "git", "commit"),
+        "image_digest": _nested(payload, "image", "digest"),
+        "checks": checks,
+    }
+
+
+def _ci_sha_matches_git_commit(payload: dict[str, Any]) -> bool:
+    direct = _nested(payload, "ci_attestation", "sha_matches_git_commit")
+    nested = _nested(payload, "ci", "attestation", "sha_matches_git_commit")
+    return direct is True or nested is True
+
+
+def _runtime_env(
+    *,
+    packet: dict[str, Any],
+    complete_release_provenance: Path,
+    runtime_release_provenance_path: str,
+) -> dict[str, str]:
+    return {
+        "MESH_RELEASE_PROVENANCE_PATH": runtime_release_provenance_path or str(complete_release_provenance),
+        "MESH_BUILD_COMMIT": str(_nested(packet, "git", "commit") or ""),
+        "MESH_BUILD_IMAGE_DIGEST": str(_nested(packet, "image", "digest") or ""),
+    }
+
+
+def _write_env_output(path: Path, runtime_env: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [f"{key}={value}" for key, value in runtime_env.items() if isinstance(value, str) and value]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def _resolve_recorded_path(raw: str, *, manifest_path: Path, artifact_root: Path | None) -> Path | None:
     value = raw.strip()
     if not value:
@@ -235,6 +419,20 @@ def _valid_digest(value: Any) -> bool:
         return False
     tail = value[len("sha256:") :]
     return len(tail) == 64 and all(char in "0123456789abcdefABCDEF" for char in tail)
+
+
+def _normalized_digest(value: Any) -> str | None:
+    candidate = value.strip() if isinstance(value, str) else ""
+    if not candidate.startswith("sha256:"):
+        return None
+    tail = candidate[len("sha256:") :]
+    if len(tail) != 64 or any(char not in "0123456789abcdefABCDEF" for char in tail):
+        return None
+    return "sha256:" + tail.lower()
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, check=False, capture_output=True, text=True)
 
 
 def _valid_sha256(value: str) -> bool:

@@ -157,15 +157,19 @@ scripts/verify_release_image_handoff.py \
 
 docker load -i release-image-handoff/orbital-mesh-handoff-image.tar.gz
 
-scripts/verify_release_runtime_binding.py \
-  --release-provenance dist/release-provenance-complete.json \
+scripts/verify_release_image_handoff.py \
+  --manifest release-image-handoff/release-image-handoff.json \
+  --image-archive release-image-handoff/orbital-mesh-handoff-image.tar.gz \
+  --artifact-root . \
+  --require-artifacts \
   --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
   --image-ref "$HANDOFF_IMAGE_TAG" \
+  --complete-release-provenance dist/release-provenance-complete.json \
   --env-output dist/release-runtime.env \
   --json
 ```
 
-Generate the final `mesh.release_provenance.v1` packet from the handoff workflow's CI attestation, SBOM, vulnerability scan, release image digest, and the operator-controlled migration rehearsal proof. Then deploy the loaded image with the generated runtime env and rerun:
+Generate the final `mesh.release_provenance.v1` packet from the handoff workflow's CI attestation, SBOM, vulnerability scan, release image digest, and the operator-controlled migration rehearsal proof before writing `dist/release-runtime.env`. The second handoff verification fails unless the loaded Docker image digest, final complete release packet commit, and final complete release packet image digest all match the handoff manifest. Then deploy the loaded image with the generated runtime env and rerun:
 
 ```bash
 scripts/verify_release_runtime_binding.py \
@@ -175,7 +179,7 @@ scripts/verify_release_runtime_binding.py \
   --json
 ```
 
-`scripts/verify_release_image_handoff.py` checks the handoff manifest hash, explicit operator confirmation marker, archive byte count and SHA-256, referenced JSON artifacts, CI attestation commit and image digest, and release provenance commit and image digest. Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
+`scripts/verify_release_image_handoff.py` checks the handoff manifest hash, explicit operator confirmation marker, archive byte count and SHA-256, referenced JSON artifacts, CI attestation commit and image digest, and release provenance commit and image digest. With `--require-artifacts`, `--image-ref`, `--complete-release-provenance`, and `--env-output`, it also verifies the downloaded artifact set, loaded image, and final complete release packet before writing runtime binding env. Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
 
 Generate the CI attestation artifact inside the CI job that owns the release image:
 
