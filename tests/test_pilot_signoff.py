@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from shared.mesh_runtime import (
     build_pilot_signoff_packet,
@@ -77,6 +78,20 @@ class PilotSignoffTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertFalse(result["checks"]["expected_release_provenance_sha_matches"])
 
+    def test_pilot_signoff_blocks_release_provenance_without_ci_sha_binding(self) -> None:
+        go_no_go = _go_no_go_packet()
+        go_no_go["release_provenance"]["ci_attestation"]["sha_matches_git_commit"] = False
+        packet = build_pilot_signoff_packet(
+            go_no_go=go_no_go,
+            operator={"operator_id": "ops@example.com", "roles": ["approver"], "source": "trusted_proxy"},
+            signing_key=SIGNING_KEY,
+        )
+
+        result = verify_pilot_signoff_packet(packet=packet, signing_key=SIGNING_KEY, go_no_go=go_no_go)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["release_provenance_ci_sha_matches_git_commit"])
+
     def test_pilot_signoff_blocks_tampered_signature_and_viewer_role(self) -> None:
         go_no_go = _go_no_go_packet()
         packet = build_pilot_signoff_packet(
@@ -143,7 +158,7 @@ class PilotSignoffTests(unittest.TestCase):
         self.assertTrue(result["checks"]["go_no_go_packet_hash_matches"])
 
 
-def _go_no_go_packet(*, status: str = "go", missing_evidence: list[str] | None = None) -> dict:
+def _go_no_go_packet(*, status: str = "go", missing_evidence: list[str] | None = None) -> dict[str, Any]:
     return {
         "packet_version": "pilot.go_no_go.v1",
         "generated_at": "2026-05-05T00:00:00Z",
@@ -172,6 +187,20 @@ def _go_no_go_packet(*, status: str = "go", missing_evidence: list[str] | None =
             "status": "complete",
             "packet_sha256": RELEASE_SHA,
             "missing": [],
+            "checks": {
+                "git_commit": True,
+                "clean_git_tree": True,
+                "image_digest": True,
+                "base_image_digests": True,
+                "ci_attestation": True,
+            },
+            "ci_attestation": {
+                "provider": "github-actions",
+                "run_id": "ci-run-1",
+                "sha": "a" * 40,
+                "expected_sha": "a" * 40,
+                "sha_matches_git_commit": True,
+            },
             "schema_version": "mesh.release_provenance.v1",
         },
     }

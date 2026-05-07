@@ -44,7 +44,7 @@ DEFAULT_GITNEXUS_PORT = 4747
 _READINESS_TTL_SECONDS = 10.0
 _DEFAULT_READINESS_PROBE_TIMEOUT_SECONDS = 5.0
 _readiness_lock = threading.Lock()
-_readiness_cache: dict[tuple, tuple[float, IntegrationReadiness]] = {}
+_readiness_cache: dict[tuple[Any, ...], tuple[float, IntegrationReadiness]] = {}
 # GitNexus exposes `/api/heartbeat` as SSE (long-lived); use `/api/info` for probes.
 GITNEXUS_LIVENESS_PATH = "/api/info"
 PROMPTFOO_BRIDGE_MODULE = "services.evaluation.promptfoo_bridge"
@@ -509,7 +509,8 @@ def _profile_checks(
                 "run_export_retention_reviewed": runtime_config.run_export_retention_reviewed,
                 "run_export_retention_days_positive": runtime_config.run_export_retention_days > 0,
                 "design_partner_packet_verified": design_partner_packet_ready(
-                    runtime_config.design_partner_packet_path
+                    runtime_config.design_partner_packet_path,
+                    require_go_evidence=False,
                 ),
                 "unfinished_feature_flag_adapter_disabled": (
                     not runtime_config.feature_flag_credentials_available
@@ -1078,7 +1079,8 @@ def _configured_goose_profile() -> tuple[str | None, str | None, str | None, str
 def _url_responds(url: str) -> bool:
     try:
         with urlopen(url, timeout=2) as response:
-            return 200 <= response.status < 300
+            status = int(response.status)
+            return 200 <= status < 300
     except (URLError, ValueError, TimeoutError, OSError):
         return False
 

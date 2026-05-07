@@ -40,7 +40,9 @@ For pilot and expansion readiness, mount the completed packet where the running 
 MESH_RELEASE_PROVENANCE_PATH=dist/release-provenance.json
 ```
 
-`GET /api/pilot/go-no-go` blocks with `release_provenance_complete` until `MESH_RELEASE_PROVENANCE_PATH` points to a readable `mesh.release_provenance.v1` packet with `status: "complete"`.
+`GET /api/pilot/go-no-go` blocks with `release_provenance_complete` until `MESH_RELEASE_PROVENANCE_PATH` points to a readable `mesh.release_provenance.v1` packet with `status: "complete"`, an empty `missing` list, passing embedded release checks, and CI attestation metadata that confirms `sha_matches_git_commit`.
+
+For pilot and expansion profiles, the running control plane also binds the packet to the deployed runtime. `MESH_BUILD_COMMIT` must be the exact git commit in the packet, and `MESH_BUILD_IMAGE_DIGEST` must be the exact release image digest in the packet. Missing packet or runtime metadata, or mismatched runtime metadata, keeps `release_provenance_complete` blocked with `release_git_commit`, `release_image_digest`, `runtime_build_commit`, `runtime_build_commit_match`, `runtime_image_digest`, or `runtime_image_digest_match`.
 
 ## Pilot Completeness Gate
 
@@ -138,7 +140,7 @@ Use `--check` only for checks that passed. Use `--check-status NAME=failed` when
 
 Pass `dist/ci-attestation.json` back into the release provenance command with `--ci-attestation "$MESH_CI_ATTESTATION_PATH"`. When the release command does not receive explicit `--image-digest`, `--build-command`, or `--base-image-digest` values, it uses the attested `image.digest`, `build.command`, and `build.base_images[]` fields from `mesh.ci_attestation.v1`.
 
-The CI attestation artifact must use `mesh.ci_attestation.v1`, include a matching `attestation_sha256`, identify `provider: "github-actions"`, include non-empty `workflow`, `job`, `run_id`, and `sha` metadata, and show passed `python-test`, `web`, and `docker-build` checks. Release provenance ignores attested image digest, build command, and base-image digest fields unless the attestation is valid.
+The CI attestation artifact must use `mesh.ci_attestation.v1`, include a matching `attestation_sha256`, identify `provider: "github-actions"`, include non-empty `workflow`, `job`, `run_id`, and `sha` metadata, bind `sha` to the release packet's git commit, and show passed `python-test`, `web`, and `docker-build` checks. Release provenance ignores attested image digest, build command, and base-image digest fields unless the attestation is valid for the same commit.
 
 ## Policy Lifecycle Hashes
 

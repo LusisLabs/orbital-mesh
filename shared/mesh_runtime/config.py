@@ -170,6 +170,7 @@ class RuntimeConfig:
     vault_ai_postprocess_enabled: bool = False
     build_version: str = "dev"
     build_commit: str = "unknown"
+    build_image_digest: str = ""
     latentmas_enabled: bool = False
     latentmas_url: str | None = None
     latentmas_timeout_seconds: float = 60.0
@@ -598,6 +599,10 @@ class RuntimeConfig:
             in ("1", "true", "yes"),
             build_version=os.getenv("MESH_BUILD_VERSION") or os.getenv("MESH_IMAGE_TAG") or "dev",
             build_commit=os.getenv("MESH_BUILD_COMMIT") or os.getenv("GIT_COMMIT") or "unknown",
+            build_image_digest=os.getenv("MESH_BUILD_IMAGE_DIGEST")
+            or os.getenv("MESH_IMAGE_DIGEST")
+            or os.getenv("MESH_STACK_IMAGE_DIGEST")
+            or "",
             latentmas_enabled=os.getenv("MESH_LATENTMAS_ENABLED", "").lower() in ("1", "true", "yes"),
             latentmas_url=os.getenv("MESH_LATENTMAS_URL") or None,
             latentmas_timeout_seconds=float(os.getenv("MESH_LATENTMAS_TIMEOUT_SECONDS", "60")),

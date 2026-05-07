@@ -4,7 +4,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .schema_validation import SchemaValidationError, validate_payload
 
@@ -24,14 +24,14 @@ def load_design_partner_packet(path: str | Path | None) -> dict[str, Any] | None
         return None
     payload = json.loads(packet_path.read_text(encoding="utf-8"))
     validate_payload(DESIGN_PARTNER_PACKET_SCHEMA, payload)
-    return payload
+    return cast(dict[str, Any], payload)
 
 
-def design_partner_packet_ready(path: str | Path | None) -> bool:
-    return verify_design_partner_packet(path)["status"] == "pass"
+def design_partner_packet_ready(path: str | Path | None, *, require_go_evidence: bool = True) -> bool:
+    return str(verify_design_partner_packet(path, require_go_evidence=require_go_evidence).get("status")) == "pass"
 
 
-def verify_design_partner_packet(path: str | Path | None) -> dict[str, Any]:
+def verify_design_partner_packet(path: str | Path | None, *, require_go_evidence: bool = True) -> dict[str, Any]:
     packet_path = Path(path) if path else None
     load_error: str | None = None
     try:
@@ -45,13 +45,23 @@ def verify_design_partner_packet(path: str | Path | None) -> dict[str, Any]:
         checks["packet_present"] = False
     if load_error:
         checks["schema_valid"] = False
+    required_checks = set(checks)
+    advisory_checks: set[str] = set()
+    if not require_go_evidence:
+        required_checks.discard("evidence_summary_go")
+        advisory_checks.add("evidence_summary_go")
+    missing = sorted(name for name in required_checks if not checks.get(name))
     return {
         "schema_version": DESIGN_PARTNER_VERIFICATION_VERSION,
         "generated_at": _timestamp(),
-        "status": "pass" if all(checks.values()) else "fail",
+        "status": "pass" if not missing else "fail",
         "packet_path": str(packet_path) if packet_path else None,
         "packet_id": packet.get("packet_id") if packet else None,
         "partner_id": _field(packet, "partner", "partner_id"),
+        "require_go_evidence": require_go_evidence,
+        "required_checks": sorted(required_checks),
+        "advisory_checks": sorted(advisory_checks),
+        "missing": missing,
         "checks": checks,
         "error": load_error,
     }

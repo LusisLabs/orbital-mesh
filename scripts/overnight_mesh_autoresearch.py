@@ -19,6 +19,8 @@ Environment (optional, same names as overnight_autoresearch_loop.sh):
   OVERNIGHT_HTTP_FULL_MATRIX (default 0) — when HTTP holistic: each cycle hits live K8s + both scenario_keys × all
     mode pairs (12 POSTs). When 0, one rotated payload × four mode pairs (4 POSTs/cycle).
   OVERNIGHT_HTTP_PER_RUN_TIMEOUT_SECONDS (default 300) — terminal wait per control-plane run in holistic HTTP mode
+  MESH_OPERATOR_HEADER, MESH_OPERATOR_ROLES_HEADER, MESH_E2E_OPERATOR_ID, MESH_E2E_OPERATOR_ROLES — headers used
+    for HTTP control-plane requests when operator identity is required.
   OVERNIGHT_EVOLVE_PRIOR_MAX_CHARS (default 8000) — cap merged prior text after stripping
   OVERNIGHT_MINIMAX_CHAT_TIMEOUT_SECONDS — if set, overrides MINIMAX_CHAT_TIMEOUT_SECONDS for this process before MiniMax;
     otherwise bumps weak defaults to 1200s for evolved + holistic prompts
@@ -479,8 +481,17 @@ def _double_archive_path_tree(src: Path, archive_root: Path, *, cycle: int, labe
     return dest_a, dest_b
 
 
+def _operator_headers() -> dict[str, str]:
+    operator_header = os.environ.get("MESH_OPERATOR_HEADER", "X-Mesh-Operator")
+    roles_header = os.environ.get("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles")
+    return {
+        operator_header: os.environ.get("MESH_E2E_OPERATOR_ID", "mesh-overnight-autoresearch"),
+        roles_header: os.environ.get("MESH_E2E_OPERATOR_ROLES", "launcher,approver"),
+    }
+
+
 def _http_get_json(url: str, *, timeout: int = 30) -> dict[str, Any]:
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(url, headers=_operator_headers(), method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
@@ -490,7 +501,7 @@ def _http_post_json(url: str, payload: dict[str, Any], *, timeout: int = 60) -> 
     req = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **_operator_headers()},
         method="POST",
     )
     try:
@@ -507,7 +518,7 @@ def _http_wait_control_plane_health(base_url: str, *, deadline_s: float = 60) ->
     deadline = time.time() + deadline_s
     while time.time() < deadline:
         try:
-            req = urllib.request.Request(health, method="GET")
+            req = urllib.request.Request(health, headers=_operator_headers(), method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 if resp.status == 200:
                     return

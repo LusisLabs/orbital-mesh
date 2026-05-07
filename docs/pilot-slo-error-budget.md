@@ -18,7 +18,7 @@ Primary sources:
 - `scripts/verify_run_export_retrieval.py --package <path> --archive <path> --json` for saved run export audit retrieval;
 - `scripts/verify_run_export_upload.py --package <path> --archive <path> --proof <path> --json` for durable run export upload and restore-test proof;
 - `scripts/verify_pilot_signoff.py --go-no-go <path> --build-output <path> --operator-id <id> --role approver --json` for generating signed operator signoff over the captured pilot go/no-go packet;
-- `scripts/verify_pilot_signoff.py --signoff <path> --go-no-go <path> --expected-release-provenance-sha <sha> --json` for signed operator signoff over the pilot go/no-go packet;
+- `scripts/verify_pilot_signoff.py --signoff <path> --go-no-go <path> --expected-release-provenance-sha <sha> --json` for signed operator signoff over the pilot go/no-go packet, including the release-provenance missing list, embedded checks, and CI SHA binding;
 - `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json` for the design-partner scope, consent, support, rollback, go/no-go, and release-provenance packet;
 - `scripts/generate_release_provenance.py --require-complete --json` for release-packet completeness.
 - `scripts/verify_audit_sink_contract.py --proof "$MESH_AUDIT_SINK_PROOF_PATH" --json` for external audit-sink append-only proof before expansion or compliance reliance.
@@ -51,7 +51,7 @@ These are not budgeted. Any occurrence stops the pilot until fixed or explicitly
 - event persistence, Merkle proof, or Postgres restore proof fails;
 - run export packages lack retrieval proof, redaction, retention metadata, Merkle proof, timeline proof, or vault document archive coverage;
 - run export package or archive upload proof is missing, hash-mismatched, local-only, or lacks restore-test evidence;
-- pilot review lacks a signed `mesh.pilot_signoff.v1` packet from an `approver` or `admin` role that verifies against the captured `pilot.go_no_go.v1` packet and complete release-provenance hash;
+- pilot review lacks a signed `mesh.pilot_signoff.v1` packet from an `approver` or `admin` role that verifies against the captured `pilot.go_no_go.v1` packet, complete release-provenance hash, empty release-provenance missing list, passing release-provenance checks, and CI attestation SHA binding;
 - kill switch cannot disable live execution or force approval gates;
 - release provenance lacks image digest, base-image digest, SBOM, vulnerability scan, policy hashes, migration hashes, builder identity, or clean git tree for the deployed image.
 - threat-model findings are open, expired, ownerless, or missing compensating controls before external staging or pilot exposure.

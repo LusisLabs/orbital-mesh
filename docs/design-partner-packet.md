@@ -25,7 +25,7 @@ Required references:
 - Postgres restart proof: `scripts/verify_postgres_restart_proof.py`;
 - design-partner packet verifier: `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json`.
 
-Pilot readiness requires `MESH_DESIGN_PARTNER_PACKET_PATH` to point at a passing `mesh.design_partner_packet.v1` packet. The packet is the machine-readable version of this document and must bind the scope, success metrics, data handling terms, support model, rollback plan, real-user experiment consent, go/no-go packet hash, release provenance hash, run export ref, and readiness ref.
+Pilot readiness requires `MESH_DESIGN_PARTNER_PACKET_PATH` to point at a `mesh.design_partner_packet.v1` packet whose partner scope, success metrics, data handling terms, support model, rollback plan, and real-user experiment consent pass verification. The runtime treats the final go/no-go hash, release provenance hash, run export ref, and readiness ref as advisory during readiness evaluation so first-time pilot capture is not circular. The full verifier still requires those final bindings before pilot signoff.
 
 ## Success Metrics
 
@@ -92,10 +92,10 @@ The pilot moves forward only when `GET /api/pilot/go-no-go` is generated from ob
 
 Intent does not satisfy the standard. Missing evidence remains blocking until a run, smoke, proof, or packet records it.
 
-Verify the packet before pilot signoff:
+Verify the full packet before pilot signoff:
 
 ```bash
 scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json
 ```
 
-The verifier rejects packets that expand beyond one environment, one Kubernetes context, one namespace, and two service classes; omit consent for real-user-impacting experiments; allow proposal-lane credentials; omit rollback or kill-switch references; retain data longer than the agreed 30-day pilot window; or fail to bind the packet to a `go` pilot go/no-go hash and complete release-provenance hash.
+The full verifier rejects packets that expand beyond one environment, one Kubernetes context, one namespace, and two service classes; omit consent for real-user-impacting experiments; allow proposal-lane credentials; omit rollback or kill-switch references; retain data longer than the agreed 30-day pilot window; or fail to bind the packet to a `go` pilot go/no-go hash and complete release-provenance hash.

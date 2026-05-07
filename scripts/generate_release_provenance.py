@@ -96,12 +96,16 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
     from shared.mesh_runtime.policy_lifecycle import build_policy_lifecycle_packet
 
+    git = _git_snapshot()
     ci_attestation_payload = _json_artifact_payload(args.ci_attestation)
-    ci_attestation = _ci_attestation_record(args.ci_attestation, ci_attestation_payload)
+    ci_attestation = _ci_attestation_record(
+        args.ci_attestation,
+        ci_attestation_payload,
+        expected_git_commit=str(git.get("commit") or ""),
+    )
     trusted_ci_attestation_payload = ci_attestation_payload if ci_attestation.get("valid") else {}
     base_digest_overrides = _parse_base_digest_overrides(args.base_image_digest)
     base_digest_overrides.update(_attested_base_image_digests(trusted_ci_attestation_payload))
-    git = _git_snapshot()
     base_images = _base_images(base_digest_overrides)
     policies = _hash_directory("policies", "*.json")
     policy_lifecycle = build_policy_lifecycle_packet(
@@ -389,7 +393,12 @@ def _artifact_record(raw_path: str) -> dict[str, Any]:
     }
 
 
-def _ci_attestation_record(raw_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _ci_attestation_record(
+    raw_path: str,
+    payload: dict[str, Any],
+    *,
+    expected_git_commit: str,
+) -> dict[str, Any]:
     record = _artifact_record(raw_path)
     schema_valid = payload.get("schema_version") == "mesh.ci_attestation.v1"
     attestation_hash = payload.get("attestation_sha256") if isinstance(payload.get("attestation_sha256"), str) else ""
@@ -398,6 +407,9 @@ def _ci_attestation_record(raw_path: str, payload: dict[str, Any]) -> dict[str, 
     missing_checks = sorted(REQUIRED_CI_CHECKS.difference(passed_checks))
     provider = _string_field(payload, "provider")
     provider_valid = provider == REQUIRED_CI_ATTESTATION_PROVIDER
+    sha = _string_field(payload, "sha")
+    expected_sha = expected_git_commit.strip()
+    sha_matches_git_commit = bool(sha and expected_sha and sha == expected_sha)
     missing_metadata = [
         field
         for field in REQUIRED_CI_ATTESTATION_FIELDS
@@ -408,6 +420,7 @@ def _ci_attestation_record(raw_path: str, payload: dict[str, Any]) -> dict[str, 
         and schema_valid
         and hash_valid
         and provider_valid
+        and sha_matches_git_commit
         and not missing_metadata
         and not missing_checks
     )
@@ -419,8 +432,10 @@ def _ci_attestation_record(raw_path: str, payload: dict[str, Any]) -> dict[str, 
             "workflow": _string_field(payload, "workflow"),
             "job": _string_field(payload, "job"),
             "run_id": _string_field(payload, "run_id"),
-            "sha": _string_field(payload, "sha"),
+            "sha": sha,
+            "expected_sha": expected_sha or None,
             "hash_valid": hash_valid,
+            "sha_matches_git_commit": sha_matches_git_commit,
             "passed_checks": sorted(passed_checks),
             "missing_checks": missing_checks,
             "missing": [] if valid else _missing_ci_attestation_fields(
@@ -428,6 +443,7 @@ def _ci_attestation_record(raw_path: str, payload: dict[str, Any]) -> dict[str, 
                 schema_valid,
                 hash_valid,
                 provider_valid,
+                sha_matches_git_commit,
                 missing_metadata,
                 missing_checks,
             ),
@@ -464,6 +480,7 @@ def _missing_ci_attestation_fields(
     schema_valid: bool,
     hash_valid: bool,
     provider_valid: bool,
+    sha_matches_git_commit: bool,
     missing_metadata: list[str],
     missing_checks: list[str],
 ) -> list[str]:
@@ -477,6 +494,8 @@ def _missing_ci_attestation_fields(
     if not provider_valid:
         missing.append(REQUIRED_CI_ATTESTATION_PROVIDER_REASON)
     missing.extend(missing_metadata)
+    if "sha" not in missing_metadata and not sha_matches_git_commit:
+        missing.append("sha_matches_git_commit")
     missing.extend(f"check:{name}" for name in missing_checks)
     return missing
 
@@ -518,8 +537,10 @@ def _artifact_image_digest(payload: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value.strip():
             return value.strip()
     image = payload.get("image")
-    if isinstance(image, dict) and isinstance(image.get("digest"), str) and image["digest"].strip():
-        return image["digest"].strip()
+    if isinstance(image, dict):
+        digest = image.get("digest")
+        if isinstance(digest, str) and digest.strip():
+            return digest.strip()
     metadata = payload.get("metadata")
     if isinstance(metadata, dict):
         properties = metadata.get("properties")
@@ -664,8 +685,10 @@ def _finding_severity(finding: dict[str, Any]) -> str:
     ratings = finding.get("ratings")
     if isinstance(ratings, list):
         for rating in ratings:
-            if isinstance(rating, dict) and isinstance(rating.get("severity"), str):
-                return rating["severity"]
+            if isinstance(rating, dict):
+                rating_severity = rating.get("severity")
+                if isinstance(rating_severity, str):
+                    return rating_severity
     return ""
 
 

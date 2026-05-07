@@ -44,7 +44,7 @@ def write_ci_attestation(
     workflow: str = "CI",
     job: str = "docker-build",
     run_id: str = "run-1",
-    sha: str = "abc123",
+    sha: str | None = None,
     image_digest: str | None = None,
     build_command: str | None = None,
     base_images: list[dict[str, str]] | None = None,
@@ -60,7 +60,7 @@ def write_ci_attestation(
         "run_id": run_id,
         "repository": "example/orbital-mesh",
         "ref": "refs/heads/main",
-        "sha": sha,
+        "sha": sha or current_git_commit(),
         "server_url": "https://github.com",
         "image": {"tag": "orbital-mesh:ci", "digest": image_digest},
         "build": {
@@ -76,6 +76,17 @@ def write_ci_attestation(
     }
     packet["attestation_sha256"] = payload_hash(packet)
     path.write_text(json.dumps(packet) + "\n", encoding="utf-8")
+
+
+def current_git_commit() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def payload_hash(payload: dict[str, object]) -> str:
@@ -412,6 +423,71 @@ class ReleaseProvenanceTests(unittest.TestCase):
             self.assertFalse(packet["ci"]["attestation"]["valid"])
             self.assertTrue(packet["ci"]["attestation"]["hash_valid"])
             self.assertEqual(packet["ci"]["attestation"]["missing"], ["provider:github-actions"])
+
+    def test_require_complete_rejects_stale_ci_attestation_sha(self) -> None:
+        discovery = subprocess.run(
+            [sys.executable, SCRIPT, "--json"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        discovered = json.loads(discovery.stdout)
+        base_args: list[str] = []
+        for index, item in enumerate(discovered["base_images"], start=1):
+            image = item["image"]
+            digest = f"sha256:{index:064x}"[-71:]
+            base_args.extend(["--base-image-digest", f"{image}={digest}"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sbom = Path(tmp) / "sbom.json"
+            vuln = Path(tmp) / "vulnerability-scan.json"
+            ci_attestation = Path(tmp) / "ci-attestation.json"
+            migration_rehearsal = Path(tmp) / "migration-rehearsal.json"
+            image_digest = f"sha256:{'a' * 64}"
+            sbom.write_text(sbom_json(image_digest), encoding="utf-8")
+            vuln.write_text(vulnerability_scan_json(image_digest), encoding="utf-8")
+            migration_rehearsal.write_text(migration_rehearsal_json(discovered), encoding="utf-8")
+            write_ci_attestation(ci_attestation, sha="0" * 40)
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--json",
+                    "--require-complete",
+                    "--allow-dirty",
+                    "--image-digest",
+                    image_digest,
+                    "--sbom",
+                    str(sbom),
+                    "--vulnerability-scan",
+                    str(vuln),
+                    "--ci-attestation",
+                    str(ci_attestation),
+                    "--migration-rehearsal",
+                    str(migration_rehearsal),
+                    "--build-command",
+                    "docker buildx build --provenance=true",
+                    "--builder-identity",
+                    "ci:test",
+                    "--policy-signing-key",
+                    "test-policy-signing-key",
+                    *base_args,
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            packet = json.loads(result.stdout)
+            self.assertIn("ci_attestation", packet["missing"])
+            self.assertFalse(packet["ci"]["attestation"]["valid"])
+            self.assertTrue(packet["ci"]["attestation"]["hash_valid"])
+            self.assertFalse(packet["ci"]["attestation"]["sha_matches_git_commit"])
+            self.assertEqual(packet["ci"]["attestation"]["expected_sha"], current_git_commit())
+            self.assertEqual(packet["ci"]["attestation"]["missing"], ["sha_matches_git_commit"])
 
     def test_release_provenance_rejects_failed_required_ci_check(self) -> None:
         discovery = subprocess.run(

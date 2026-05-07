@@ -6,7 +6,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .schema_validation import SchemaValidationError, validate_payload
 
@@ -48,7 +48,7 @@ def load_pilot_signoff_packet(path: str | Path | None) -> dict[str, Any] | None:
         return None
     payload = json.loads(signoff_path.read_text(encoding="utf-8"))
     validate_payload(PILOT_SIGNOFF_SCHEMA, payload)
-    return payload
+    return cast(dict[str, Any], payload)
 
 
 def verify_pilot_signoff_packet(
@@ -100,11 +100,14 @@ def _checks(
     expected_release_provenance_sha: str | None,
     go_no_go: dict[str, Any] | None,
 ) -> dict[str, bool]:
-    signoff_go_no_go = packet.get("go_no_go") if isinstance(packet.get("go_no_go"), dict) else {}
+    raw_signoff_go_no_go = packet.get("go_no_go")
+    signoff_go_no_go = cast(dict[str, Any], raw_signoff_go_no_go) if isinstance(raw_signoff_go_no_go, dict) else {}
+    raw_release_provenance = packet.get("release_provenance")
     release_provenance = (
-        packet.get("release_provenance") if isinstance(packet.get("release_provenance"), dict) else {}
+        cast(dict[str, Any], raw_release_provenance) if isinstance(raw_release_provenance, dict) else {}
     )
-    operator = packet.get("operator") if isinstance(packet.get("operator"), dict) else {}
+    raw_operator = packet.get("operator")
+    operator = cast(dict[str, Any], raw_operator) if isinstance(raw_operator, dict) else {}
     expected_release_sha = (expected_release_provenance_sha or "").strip()
     source_match = _go_no_go_source_matches(signoff_go_no_go, release_provenance, go_no_go)
     return {
@@ -117,6 +120,11 @@ def _checks(
         "go_no_go_packet_hash_matches": source_match["hash_matches"],
         "go_no_go_payload_status_matches": source_match["status_matches"],
         "release_provenance_complete": release_provenance.get("status") == "complete",
+        "release_provenance_no_missing": release_provenance.get("missing") == [],
+        "release_provenance_checks_passed": _all_true_bool_map(release_provenance.get("checks")),
+        "release_provenance_ci_sha_matches_git_commit": (
+            _field(release_provenance, "ci_attestation", "sha_matches_git_commit") is True
+        ),
         "release_provenance_sha_valid": _valid_sha256(release_provenance.get("packet_sha256")),
         "expected_release_provenance_sha_matches": not expected_release_sha
         or release_provenance.get("packet_sha256") == expected_release_sha,
@@ -135,7 +143,8 @@ def _go_no_go_source_matches(
 ) -> dict[str, bool]:
     if go_no_go is None:
         return {"hash_matches": True, "status_matches": True}
-    source_release = go_no_go.get("release_provenance") if isinstance(go_no_go.get("release_provenance"), dict) else {}
+    raw_source_release = go_no_go.get("release_provenance")
+    source_release = cast(dict[str, Any], raw_source_release) if isinstance(raw_source_release, dict) else {}
     return {
         "hash_matches": signoff_go_no_go.get("packet_sha256") == canonical_payload_sha256(go_no_go),
         "status_matches": (
@@ -144,6 +153,9 @@ def _go_no_go_source_matches(
             and signoff_go_no_go.get("missing_evidence") == go_no_go.get("missing_evidence")
             and release_provenance.get("status") == source_release.get("status")
             and release_provenance.get("packet_sha256") == source_release.get("packet_sha256")
+            and release_provenance.get("missing") == source_release.get("missing")
+            and release_provenance.get("checks") == source_release.get("checks")
+            and release_provenance.get("ci_attestation") == source_release.get("ci_attestation")
         ),
     }
 
@@ -157,7 +169,8 @@ def _operator_record(operator: dict[str, Any]) -> dict[str, Any]:
 
 
 def _go_no_go_record(go_no_go: dict[str, Any]) -> dict[str, Any]:
-    observed = go_no_go.get("observed") if isinstance(go_no_go.get("observed"), dict) else {}
+    raw_observed = go_no_go.get("observed")
+    observed = cast(dict[str, Any], raw_observed) if isinstance(raw_observed, dict) else {}
     return {
         "packet_version": str(go_no_go.get("packet_version") or ""),
         "status": str(go_no_go.get("status") or ""),
@@ -168,10 +181,28 @@ def _go_no_go_record(go_no_go: dict[str, Any]) -> dict[str, Any]:
 
 
 def _release_provenance_record(go_no_go: dict[str, Any]) -> dict[str, Any]:
-    release = go_no_go.get("release_provenance") if isinstance(go_no_go.get("release_provenance"), dict) else {}
+    raw_release = go_no_go.get("release_provenance")
+    release = cast(dict[str, Any], raw_release) if isinstance(raw_release, dict) else {}
+    missing = release.get("missing")
+    checks = release.get("checks")
+    ci_attestation = release.get("ci_attestation")
     return {
         "status": str(release.get("status") or ""),
         "packet_sha256": release.get("packet_sha256") if isinstance(release.get("packet_sha256"), str) else None,
+        "missing": [str(item) for item in missing] if isinstance(missing, list) else [],
+        "checks": {
+            str(name): value is True
+            for name, value in checks.items()
+        }
+        if isinstance(checks, dict)
+        else {},
+        "ci_attestation": {
+            "provider": _string_or_none(ci_attestation, "provider"),
+            "run_id": _string_or_none(ci_attestation, "run_id"),
+            "sha": _string_or_none(ci_attestation, "sha"),
+            "expected_sha": _string_or_none(ci_attestation, "expected_sha"),
+            "sha_matches_git_commit": _field(ci_attestation, "sha_matches_git_commit") is True,
+        },
     }
 
 
@@ -194,7 +225,8 @@ def _sign_payload(payload: dict[str, Any], *, signing_key: str, signing_key_id: 
 
 def _signature_valid(packet: dict[str, Any], *, signing_key: str | None) -> bool:
     key = (signing_key or "").strip()
-    signature = packet.get("signature") if isinstance(packet.get("signature"), dict) else {}
+    raw_signature = packet.get("signature")
+    signature = cast(dict[str, Any], raw_signature) if isinstance(raw_signature, dict) else {}
     expected = str(signature.get("signature") or "")
     if not key or not expected:
         return False
@@ -207,6 +239,17 @@ def _signature_valid(packet: dict[str, Any], *, signing_key: str | None) -> bool
     return hmac.compare_digest(expected, actual)
 
 
+def _all_true_bool_map(value: Any) -> bool:
+    return isinstance(value, dict) and bool(value) and all(item is True for item in value.values())
+
+
+def _string_or_none(payload: Any, name: str) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get(name)
+    return value if isinstance(value, str) else None
+
+
 def _canonical_json(payload: dict[str, Any]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -215,8 +258,10 @@ def _valid_sha256(value: Any) -> bool:
     return isinstance(value, str) and bool(_SHA256_RE.match(value))
 
 
-def _field(payload: dict[str, Any] | None, section: str, name: str) -> Any:
+def _field(payload: Any, section: str, name: str | None = None) -> Any:
     section_value = payload.get(section) if isinstance(payload, dict) else None
+    if name is None:
+        return section_value
     if not isinstance(section_value, dict):
         return None
     return section_value.get(name)
