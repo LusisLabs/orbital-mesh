@@ -119,7 +119,7 @@ python3 scripts/generate_ci_attestation.py \
   --require-github-actions \
   --check python-test \
   --check web \
-  --check docker-build \
+  --check-status "docker-build=passed" \
   --image-tag "$MESH_STACK_IMAGE" \
   --image-digest "$MESH_IMAGE_DIGEST" \
   --base-image-digest "python:3.12-slim-bookworm=sha256:<digest>" \
@@ -129,6 +129,8 @@ python3 scripts/generate_ci_attestation.py \
   --base-image-digest "debian:12-slim=sha256:<digest>" \
   --build-command "$MESH_BUILD_COMMAND"
 ```
+
+Use `--check` only for checks that passed. Use `--check-status NAME=failed` when the release-image job reaches the attestation step but a required gate fails. The live CI workflow uploads that failed-status attestation for review, then fails the job; it is evidence of the run, not pilot-signing proof.
 
 Pass `dist/ci-attestation.json` back into the release provenance command with `--ci-attestation "$MESH_CI_ATTESTATION_PATH"`. When the release command does not receive explicit `--image-digest`, `--build-command`, or `--base-image-digest` values, it uses the attested `image.digest`, `build.command`, and `build.base_images[]` fields from `mesh.ci_attestation.v1`.
 

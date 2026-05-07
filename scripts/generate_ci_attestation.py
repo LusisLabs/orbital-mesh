@@ -12,12 +12,20 @@ from typing import Any
 
 
 REQUIRED_GITHUB_ACTIONS_ENV = ("GITHUB_WORKFLOW", "GITHUB_JOB", "GITHUB_RUN_ID", "GITHUB_SHA")
+ALLOWED_CHECK_STATUSES = frozenset({"passed", "failed", "skipped", "cancelled"})
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a CI attestation packet for release provenance.")
     parser.add_argument("--output", required=True, help="Write the attestation JSON to this path.")
-    parser.add_argument("--check", action="append", default=[], help="Record a CI check or job name. Repeatable.")
+    parser.add_argument("--check", action="append", default=[], help="Record a passed CI check or job name. Repeatable.")
+    parser.add_argument(
+        "--check-status",
+        action="append",
+        default=[],
+        metavar="NAME=STATUS",
+        help="Record an explicit CI check status. Status must be passed, failed, skipped, or cancelled. Repeatable.",
+    )
     parser.add_argument("--image-tag", default=os.getenv("MESH_STACK_IMAGE") or os.getenv("MESH_IMAGE") or "")
     parser.add_argument("--image-digest", default=os.getenv("MESH_IMAGE_DIGEST") or os.getenv("MESH_STACK_IMAGE_DIGEST") or "")
     parser.add_argument("--build-command", default=os.getenv("MESH_BUILD_COMMAND") or "")
@@ -74,10 +82,7 @@ def build_attestation(args: argparse.Namespace) -> dict[str, Any]:
             "command": args.build_command or None,
             "base_images": _parse_base_image_digests(args.base_image_digest),
         },
-        "checks": [
-            {"name": str(name), "status": "passed"}
-            for name in args.check
-        ],
+        "checks": _ci_checks(args.check, args.check_status),
     }
     packet["attestation_sha256"] = _payload_hash(packet)
     return packet
@@ -99,6 +104,40 @@ def _env_value(name: str) -> str:
 def _payload_hash(payload: dict[str, Any]) -> str:
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _ci_checks(passed_names: list[str], status_items: list[str]) -> list[dict[str, str]]:
+    records: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+
+    def add(raw_name: str, raw_status: str, source: str) -> None:
+        name = raw_name.strip()
+        status = raw_status.strip().lower()
+        if not name:
+            raise SystemExit(f"invalid {source}: check name cannot be empty")
+        if status not in ALLOWED_CHECK_STATUSES:
+            allowed = ", ".join(sorted(ALLOWED_CHECK_STATUSES))
+            raise SystemExit(f"invalid {source} for {name!r}: status must be one of {allowed}")
+        existing = seen.get(name)
+        if existing is not None:
+            if existing != status:
+                raise SystemExit(
+                    f"conflicting CI status for {name!r}: {existing!r} and {status!r}"
+                )
+            return
+        seen[name] = status
+        records.append({"name": name, "status": status})
+
+    for name in passed_names:
+        add(str(name), "passed", "--check")
+
+    for item in status_items:
+        if "=" not in item:
+            raise SystemExit(f"invalid --check-status {item!r}; expected NAME=STATUS")
+        name, status = item.split("=", 1)
+        add(name, status, "--check-status")
+
+    return records
 
 
 def _parse_base_image_digests(raw_items: list[str]) -> list[dict[str, str]]:

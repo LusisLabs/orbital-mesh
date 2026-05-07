@@ -143,6 +143,8 @@ jobs:
           syft version
           grype version
       - name: Generate release image assurance artifacts
+        id: release_assurance
+        continue-on-error: true
         run: |
           python scripts/generate_release_image_assurance.py \
             --image-tag orbital-mesh:ci \
@@ -150,16 +152,27 @@ jobs:
             --raw-output-dir dist/release-assurance-raw \
             --output-dir dist/release-assurance
       - name: Generate CI attestation
+        if: always()
+        env:
+          RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
         run: |
-          mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          docker_build_status=failed
+          if [ "$RELEASE_ASSURANCE_OUTCOME" = "success" ]; then
+            docker_build_status=passed
+          fi
           python scripts/generate_ci_attestation.py \
             --output dist/ci-attestation.json \
             --require-github-actions \
             --check python-test \
             --check web \
-            --check docker-build \
+            --check-status "docker-build=${docker_build_status}" \
             --image-tag orbital-mesh:ci \
-            --image-digest "$MESH_IMAGE_DIGEST" \
+            --image-digest "${MESH_IMAGE_DIGEST:-}" \
             --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
@@ -171,6 +184,9 @@ jobs:
             --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
             --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
             --json
+      - name: Fail on release image assurance errors
+        if: steps.release_assurance.outcome != 'success'
+        run: exit 1
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

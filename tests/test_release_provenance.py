@@ -49,6 +49,7 @@ def write_ci_attestation(
     build_command: str | None = None,
     base_images: list[dict[str, str]] | None = None,
     checks: list[str] | None = None,
+    check_records: list[dict[str, str]] | None = None,
 ) -> None:
     packet: dict[str, object] = {
         "schema_version": "mesh.ci_attestation.v1",
@@ -66,7 +67,9 @@ def write_ci_attestation(
             "command": build_command,
             "base_images": base_images or [],
         },
-        "checks": [
+        "checks": check_records
+        if check_records is not None
+        else [
             {"name": name, "status": "passed"}
             for name in (checks or ["python-test", "web", "docker-build"])
         ],
@@ -161,6 +164,48 @@ class ReleaseProvenanceTests(unittest.TestCase):
                 [{"image": "python:3.12-slim-bookworm", "digest": f"sha256:{'d' * 64}"}],
             )
             self.assertEqual([item["name"] for item in packet["checks"]], ["python-test", "docker-build"])
+            self.assertRegex(packet["attestation_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_ci_attestation_generator_records_explicit_check_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "ci-attestation.json"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/generate_ci_attestation.py",
+                    "--output",
+                    str(output),
+                    "--check",
+                    "python-test",
+                    "--check-status",
+                    "web=passed",
+                    "--check-status",
+                    "docker-build=failed",
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "GITHUB_ACTIONS": "true",
+                    "GITHUB_WORKFLOW": "CI",
+                    "GITHUB_JOB": "docker-build",
+                    "GITHUB_RUN_ID": "123",
+                    "GITHUB_SHA": "abc123",
+                },
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            packet = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(
+                packet["checks"],
+                [
+                    {"name": "python-test", "status": "passed"},
+                    {"name": "web", "status": "passed"},
+                    {"name": "docker-build", "status": "failed"},
+                ],
+            )
             self.assertRegex(packet["attestation_sha256"], r"^[0-9a-f]{64}$")
 
     def test_ci_attestation_generator_requires_github_actions_context_when_requested(self) -> None:
@@ -367,6 +412,77 @@ class ReleaseProvenanceTests(unittest.TestCase):
             self.assertFalse(packet["ci"]["attestation"]["valid"])
             self.assertTrue(packet["ci"]["attestation"]["hash_valid"])
             self.assertEqual(packet["ci"]["attestation"]["missing"], ["provider:github-actions"])
+
+    def test_release_provenance_rejects_failed_required_ci_check(self) -> None:
+        discovery = subprocess.run(
+            [sys.executable, SCRIPT, "--json"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        discovered = json.loads(discovery.stdout)
+        base_args: list[str] = []
+        for index, item in enumerate(discovered["base_images"], start=1):
+            image = item["image"]
+            digest = f"sha256:{index:064x}"[-71:]
+            base_args.extend(["--base-image-digest", f"{image}={digest}"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sbom = Path(tmp) / "sbom.json"
+            vuln = Path(tmp) / "vulnerability-scan.json"
+            ci_attestation = Path(tmp) / "ci-attestation.json"
+            migration_rehearsal = Path(tmp) / "migration-rehearsal.json"
+            image_digest = f"sha256:{'a' * 64}"
+            sbom.write_text(sbom_json(image_digest), encoding="utf-8")
+            vuln.write_text(vulnerability_scan_json(image_digest), encoding="utf-8")
+            migration_rehearsal.write_text(migration_rehearsal_json(discovered), encoding="utf-8")
+            write_ci_attestation(
+                ci_attestation,
+                check_records=[
+                    {"name": "python-test", "status": "passed"},
+                    {"name": "web", "status": "passed"},
+                    {"name": "docker-build", "status": "failed"},
+                ],
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--json",
+                    "--require-complete",
+                    "--allow-dirty",
+                    "--image-digest",
+                    image_digest,
+                    "--sbom",
+                    str(sbom),
+                    "--vulnerability-scan",
+                    str(vuln),
+                    "--ci-attestation",
+                    str(ci_attestation),
+                    "--migration-rehearsal",
+                    str(migration_rehearsal),
+                    "--build-command",
+                    "docker buildx build --provenance=true",
+                    "--builder-identity",
+                    "ci:test",
+                    "--policy-signing-key",
+                    "test-policy-signing-key",
+                    *base_args,
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            packet = json.loads(result.stdout)
+            self.assertIn("ci_attestation", packet["missing"])
+            self.assertFalse(packet["ci"]["attestation"]["valid"])
+            self.assertEqual(packet["ci"]["attestation"]["passed_checks"], ["python-test", "web"])
+            self.assertEqual(packet["ci"]["attestation"]["missing_checks"], ["docker-build"])
+            self.assertEqual(packet["ci"]["attestation"]["missing"], ["check:docker-build"])
 
     def test_require_complete_passes_with_release_artifacts_and_base_digests(self) -> None:
         discovery = subprocess.run(
