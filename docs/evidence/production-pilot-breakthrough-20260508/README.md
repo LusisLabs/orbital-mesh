@@ -46,6 +46,10 @@ docker compose -f docker-compose.stack.yml exec -T mesh sh -lc 'cd /workspace/or
 PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session' --validation-command 'ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py'
 ```
 
+```bash
+scripts/generate_pilot_breakthrough_packet.py --base-url http://127.0.0.1:8787 --run-id run_20260508T033245_ad9bd5ac --chaos-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --node-summary .mesh-runtime-state/node-breakthrough/summary-20260505T205538Z.json --output-dir .mesh-runtime-state/pilot-packets/production-pilot-breakthrough-latest --json
+```
+
 ## Operating Model
 
 - Approvers: operator identities carrying `approver` and `launcher` roles.

@@ -21,6 +21,7 @@ The immediate milestone is not complete until the PR lands and the breakthrough 
 | Record node breakthrough summary | `node-summary.json` | Complete |
 | Record closed-loop run export/postmortem for `run_20260508T033245_ad9bd5ac` | `closed-loop-run-summary.json` | Complete |
 | Record exact commands used | `packet.json`, README command section | Complete |
+| Regenerate packet without conversation history | `scripts/generate_pilot_breakthrough_packet.py` writes the packet files from live endpoints, proof bundle, chaos summary, node summary, and run export | Complete for post-merge operator use |
 | Run one bounded design-partner pilot drill | `closed-loop-run-summary.json` records `live_kubernetes:search/semantic-search`, namespace `search`, service class Kubernetes deployment, action `rollback_deployment`, operator roles `admin`, `approver`, `launcher` | Complete for one drill |
 | Do not expand drill scope | README pilot scope and `packet.json` pilot scope constrain workload, namespace, service class, and action class | Complete |
 | Add named replay release gate | `.github/workflows/ci.yml` job `breakthrough-proof-replay` | Complete |
