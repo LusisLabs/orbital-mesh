@@ -37,7 +37,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Protocol
 
-from .harness import (
+from ..harness import (
     RawToolOutput,
     ToolDefinition,
     ToolRegistry,
@@ -72,7 +72,7 @@ class MCPClientProtocol(Protocol):
     def call_tool(self, name: str, args: dict[str, Any]) -> Any: ...
 
 
-def register_mcp_tools(
+def register(
     registry: ToolRegistry,
     *,
     client: MCPClientProtocol,
@@ -218,7 +218,7 @@ def _map_json_schema_type(json_type: str) -> str:
 # ---------------------------------------------------------------------
 
 
-def maybe_register_mcp_at_root(
+def maybe_register_at_root(
     registry: ToolRegistry,
     *,
     client_factory: Callable[[str], MCPClientProtocol] | None = None,
@@ -257,6 +257,6 @@ def maybe_register_mcp_at_root(
                 "mcp client_factory failed for server %s", server_id,
             )
             continue
-        registered = register_mcp_tools(registry, client=client, server_id=server_id)
+        registered = register(registry, client=client, server_id=server_id)
         total += len(registered)
     return total

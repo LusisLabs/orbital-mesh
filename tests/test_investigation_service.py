@@ -291,9 +291,9 @@ def _harness_from_stub(stub: _StubToolProvider, trigger: Trigger):
     pack + native probe selector), so behavior under test matches the
     real path that runs under ``run_sync``.
     """
-    from services.investigation.cloudops_tools import (
-        CLOUDOPS_DOMAIN,
-        CLOUDOPS_TOOL_DEFINITIONS,
+    from services.investigation.tools.cloudops import (
+        DOMAIN as CLOUDOPS_DOMAIN,
+        TOOL_DEFINITIONS as CLOUDOPS_TOOL_DEFINITIONS,
         CloudOpsRulePack,
     )
     from services.investigation.harness import (

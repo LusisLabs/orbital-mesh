@@ -26,7 +26,7 @@ from services.evidence.reth_probe_registry import (
     snapshot_for_probe,
 )
 
-from .harness import (
+from ..harness import (
     InvestigationLoopState,
     LoopDecision,
     NativeProbeSelector,
@@ -39,7 +39,7 @@ from .harness import (
 )
 
 
-RETH_DOMAIN = "reth"
+DOMAIN = "reth"
 
 
 _TOOLS: tuple[tuple[str, str, str], ...] = (
@@ -51,13 +51,13 @@ _TOOLS: tuple[tuple[str, str, str], ...] = (
 )
 
 
-def reth_tool_definitions() -> list[ToolDefinition]:
+def _build_definitions() -> list[ToolDefinition]:
     """Return the Reth peer-starvation tool definitions."""
     args_schema = {"snapshot": {"type": "dict", "required": False}}
     return [
         ToolDefinition(
             name=name,
-            domain=RETH_DOMAIN,
+            domain=DOMAIN,
             description=description,
             args_schema=dict(args_schema),
             mutation_class="read_only",
@@ -69,11 +69,11 @@ def reth_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-RETH_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(reth_tool_definitions())
-RETH_TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in RETH_TOOL_DEFINITIONS)
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_definitions())
+TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in TOOL_DEFINITIONS)
 
 
-def register_reth_tools(registry: ToolRegistry, signal_payload: dict[str, Any]) -> None:
+def register(registry: ToolRegistry, signal_payload: dict[str, Any]) -> None:
     """Register Reth peer-starvation tools backed by ``signal_payload``.
 
     The signal payload is the audited node snapshot passed through the
@@ -82,7 +82,7 @@ def register_reth_tools(registry: ToolRegistry, signal_payload: dict[str, Any]) 
     secret material.
     """
     for harness_name, probe_name, _description in _TOOLS:
-        definition = next(d for d in RETH_TOOL_DEFINITIONS if d.name == harness_name)
+        definition = next(d for d in TOOL_DEFINITIONS if d.name == harness_name)
         registry.register(definition, _make_reth_invoker(probe_name, signal_payload))
 
 
@@ -115,8 +115,8 @@ def _summarize_probe_data(probe_name: str, data: dict[str, Any]) -> str:
 class RethRulePack:
     """Reth native selector rules for the peer-starvation slice."""
 
-    domain: str = RETH_DOMAIN
-    tool_definitions: tuple[ToolDefinition, ...] = RETH_TOOL_DEFINITIONS
+    domain: str = DOMAIN
+    tool_definitions: tuple[ToolDefinition, ...] = TOOL_DEFINITIONS
     root_cause_ranker = None
     sufficient_stop_reason: str = "root_cause_candidate_found"
     exhausted_stop_reason: str = "evidence_value_exhausted"
@@ -185,7 +185,7 @@ class RethRulePack:
 class RethLoopPlanner:
     """Compatibility wrapper around ``NativeProbeSelector``."""
 
-    domain: str = RETH_DOMAIN
+    domain: str = DOMAIN
 
     def __init__(self, *, peer_floor: int = 1) -> None:
         self._selector = NativeProbeSelector(RethRulePack(peer_floor=peer_floor))

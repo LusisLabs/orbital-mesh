@@ -2,7 +2,7 @@
 
 This module is the first proof that the harness contracts generalize:
 
-* ``register_cloudops_tools(registry, snapshot_tools)`` registers the
+* ``register(registry, snapshot_tools)`` registers the
   eight Cloud-OpsBench diagnostic tools as ``ToolDefinition``s, all
   read-only, all backed by the snapshot tool cache.
 * ``CloudOpsRulePack`` describes typed native probe-selection rules.
@@ -20,8 +20,8 @@ from typing import Any
 
 from shared.mesh_runtime import Trigger
 
-from .cloudops_ontology import rank_root_causes
-from .harness import (
+from ..cloudops_ontology import rank_root_causes
+from ..harness import (
     InvestigationLoopState,
     LoopDecision,
     LoopPlanner,
@@ -32,7 +32,7 @@ from .harness import (
     ToolDefinition,
     ToolRegistry,
 )
-from .harness.native_selector import RootCauseCandidate, RootCauseRanker
+from ..harness.native_selector import RootCauseCandidate, RootCauseRanker
 
 
 _RESOURCE_LINE_RE = re.compile(
@@ -40,7 +40,7 @@ _RESOURCE_LINE_RE = re.compile(
 )
 _HEX_SUFFIX_RE = re.compile(r"[a-f0-9]{4,}")
 
-CLOUDOPS_DOMAIN = "cloudops"
+DOMAIN = "cloudops"
 _OUTPUT_SUMMARY_LIMIT = 4000
 
 
@@ -57,6 +57,12 @@ def _build_tool_definitions() -> list[ToolDefinition]:
         "name": {"type": "str", "required": False},
         "app_name": {"type": "str", "required": False},
         "namespace": {"type": "str", "required": False, "nullable": True},
+        # GetServiceDependencies / CheckNodeServiceStatus extras —
+        # included on all defs so the critic doesn't reject them as
+        # unknown args when unused. Keeps the schema permissive for
+        # the snapshot-cache lookup which ignores extras.
+        "service_name": {"type": "str", "required": False},
+        "node_name": {"type": "str", "required": False},
     }
     descriptions = {
         "GetResources": "List Kubernetes resources of a given kind in a namespace.",
@@ -67,11 +73,14 @@ def _build_tool_definitions() -> list[ToolDefinition]:
         "CheckServiceConnectivity": "Check service-to-service connectivity (DNS, port).",
         "GetClusterConfiguration": "Read cluster-level configuration (apiserver, controller).",
         "GetRecentLogs": "Read recent (non-error-filtered) logs from a workload.",
+        # Newly mirrored from the official Cloud-OpsBench tool list:
+        "GetServiceDependencies": "Return upstream/downstream service dependency topology for a service.",
+        "CheckNodeServiceStatus": "Read the kubelet / kube-proxy / containerd status on a specific node.",
     }
     return [
         ToolDefinition(
             name=name,
-            domain=CLOUDOPS_DOMAIN,
+            domain=DOMAIN,
             description=description,
             args_schema=dict(common_args),
             mutation_class="read_only",
@@ -83,11 +92,11 @@ def _build_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-CLOUDOPS_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_tool_definitions())
-CLOUDOPS_TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in CLOUDOPS_TOOL_DEFINITIONS)
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_tool_definitions())
+TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in TOOL_DEFINITIONS)
 
 
-def register_cloudops_tools(registry: ToolRegistry, snapshot_tools: Any) -> None:
+def register(registry: ToolRegistry, snapshot_tools: Any) -> None:
     """Register CloudOps tool definitions, backed by ``snapshot_tools``.
 
     Each tool's invoke function calls ``snapshot_tools.invoke(name, args)``
@@ -102,11 +111,14 @@ def register_cloudops_tools(registry: ToolRegistry, snapshot_tools: Any) -> None
     the cloudops ontology, addressing the failure modes documented in
     ``cloudops_analyzers.py``.
     """
-    for definition in CLOUDOPS_TOOL_DEFINITIONS:
+    for definition in TOOL_DEFINITIONS:
         registry.register(definition, _make_cloudops_invoker(definition.name, snapshot_tools))
     # Imported here to avoid a circular import at module load — analyzers
-    # depend on the registry types this module exports.
-    from .cloudops_analyzers import register_cloudops_analyzers
+    # depend on the registry types this module exports. The analyzer
+    # module lives at the investigation package root (one level up from
+    # ``tools/``), not inside ``tools/`` — it's cross-cutting RCA logic,
+    # not a domain pack.
+    from ..cloudops_analyzers import register_cloudops_analyzers
 
     register_cloudops_analyzers(registry, snapshot_tools)
 
@@ -133,8 +145,8 @@ def _make_cloudops_invoker(tool_name: str, snapshot_tools: Any):
 class CloudOpsRulePack:
     """CloudOps native selector rules over Kubernetes-style observations."""
 
-    domain: str = CLOUDOPS_DOMAIN
-    tool_definitions: tuple[ToolDefinition, ...] = CLOUDOPS_TOOL_DEFINITIONS
+    domain: str = DOMAIN
+    tool_definitions: tuple[ToolDefinition, ...] = TOOL_DEFINITIONS
     sufficient_stop_reason: str = "root_cause_candidate_found"
     exhausted_stop_reason: str = "evidence_value_exhausted"
 
@@ -373,7 +385,7 @@ class CloudOpsRulePack:
 class CloudOpsLoopPlanner:
     """Compatibility wrapper around ``NativeProbeSelector``."""
 
-    domain: str = CLOUDOPS_DOMAIN
+    domain: str = DOMAIN
 
     def __init__(self, trigger: Trigger) -> None:
         self._selector = NativeProbeSelector(CloudOpsRulePack(trigger))
@@ -535,4 +547,4 @@ def _arg_summary(args: dict[str, Any]) -> str:
 
 
 def is_cloudops_planner(planner: LoopPlanner) -> bool:
-    return getattr(planner, "domain", "") == CLOUDOPS_DOMAIN
+    return getattr(planner, "domain", "") == DOMAIN

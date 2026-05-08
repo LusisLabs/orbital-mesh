@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
 from services.investigation.harness import ToolRegistry
+from services.investigation.tools.cloudops import CloudOpsLoopPlanner
+from services.investigation.tools.cloudops import register as register_cloudops_tools
 from services.runtime import MeshRuntimeEngine
 from shared.mesh_runtime.config import RuntimeConfig
 
