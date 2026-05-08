@@ -105,6 +105,7 @@ jobs:
     if: github.event.repository.private == false || vars.CODEQL_ON_PRIVATE == 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       security-events: write
     strategy:
@@ -122,8 +123,13 @@ jobs:
     if: github.event.repository.private == false || vars.OPENSSF_SCORECARD_ON_PRIVATE == 'true'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      checks: read
       contents: read
+      issues: read
+      pull-requests: read
       security-events: write
+      statuses: read
       id-token: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -131,6 +137,7 @@ jobs:
           persist-credentials: false
       - uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a
         with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
           results_file: scorecard-results.sarif
           results_format: sarif
           publish_results: false

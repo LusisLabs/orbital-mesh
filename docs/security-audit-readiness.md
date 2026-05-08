@@ -11,7 +11,7 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, pip, root Cargo, and LatentMAS Cargo dependencies. |
 | Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes when the repository is public or `GHAS_DEPENDENCY_REVIEW_ON_PRIVATE=true` confirms private-repository support. |
 | Known vulnerabilities | The security workflow scans lockfiles with a pinned OSV scanner image, uploads `osv-lockfile-scan.json`, runs `npm audit --audit-level=high`, and uploads `npm-audit.json` for release-candidate evidence. |
-| Token permissions | GitHub workflows use `contents: read` by default, with scoped write permissions only for SARIF upload jobs. |
+| Token permissions | GitHub workflows use `contents: read` by default; private-repository CodeQL and Scorecard jobs add the read scopes needed for workflow-run, check, issue, status, and pull-request metadata plus scoped `security-events: write` for SARIF upload. Scorecard receives `GITHUB_TOKEN` explicitly for private-repository GraphQL queries. |
 | Pinned workflow dependencies | First-party workflows pin external GitHub Actions to full commit SHAs. |
 | Code review ownership | `.github/CODEOWNERS` names owners for critical runtime, schema, policy, docs, and workflow paths. |
 | Secret handling | `.gitignore`, `SECURITY.md`, production docs, run-export redaction, and the scheduled Gitleaks CLI secret scan cover committed and exported secret material. |
