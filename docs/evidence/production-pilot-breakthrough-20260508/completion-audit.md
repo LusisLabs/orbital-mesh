@@ -12,7 +12,7 @@ The immediate milestone is not complete until the PR lands and the breakthrough 
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Reproduce proof on current branch tip | `.mesh-runtime-state/proofs/breakthrough-proof-20260508T062115Z.json`, SHA `f8df89669f44544eef7d524714d54b955c59c8b58d167ef159c12f4aedad5481`, `git.commit=9983d94ae4fc7787f31f5664d905d367a29b5dfe`, `git.dirty=false`, `breakthrough_proof.ready=true` | Branch-tip replay pass |
+| Reproduce proof on current branch tip | Rerun the replay command in README/`packet.json` on the checked-out commit and require `git.dirty=false`, `breakthrough_proof.ready=true`, and all embedded replay/validation checks to pass | Procedure complete; latest local run must be recorded after each branch-tip change |
 | Produce same `go` result for branch tip after PR lands | PR #22 remains open; no merged-current-HEAD proof exists | Missing |
 | Record proof bundle path and SHA | `breakthrough-proof-summary.json`, `packet.json`, README command section | Complete for branch-tip replay |
 | Record go/no-go JSON output | `pilot-clearance.json` | Complete for release-bound runtime |
@@ -39,7 +39,7 @@ The immediate milestone is not complete until the PR lands and the breakthrough 
 
 ## Validation Evidence
 
-- `PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py ...`: passed on branch tip `9983d94ae4fc7787f31f5664d905d367a29b5dfe` and wrote ready proof SHA `f8df89669f44544eef7d524714d54b955c59c8b58d167ef159c12f4aedad5481`.
+- `PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py ...`: replay command passed locally. Because every packet commit changes the branch tip, the latest branch-tip proof path/SHA must be captured immediately after the final commit under review.
 - `npm run lint`: passed locally after the packet correction.
 - `python3 -c 'import json, pathlib; [json.load(open(p)) for p in pathlib.Path("docs/evidence/production-pilot-breakthrough-20260508").glob("*.json")]'`: passed.
 - `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ci.yml")'`: passed.
