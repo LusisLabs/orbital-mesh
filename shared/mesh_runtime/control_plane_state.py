@@ -161,9 +161,28 @@ class FileStateStore:
     def list_run_sessions(self, limit: int = 50) -> list[RunSession]:
         if not self._run_sessions_path.exists():
             return []
+        records: list[dict[str, Any]] = []
         with LockedJsonFile(self._run_sessions_path) as payload:
             sessions = payload.get("runs", [])
-            return [RunSession(**record) for record in sessions[:limit] if isinstance(record, dict)]
+            records.extend(record for record in sessions if isinstance(record, dict))
+        if len(records) < limit and self._run_sessions_archive_path.exists():
+            with self._run_sessions_archive_path.open(encoding="utf-8") as archive:
+                for line in archive:
+                    if not line.strip():
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(record, dict):
+                        records.append(record)
+        deduped: dict[str, dict[str, Any]] = {}
+        for record in records:
+            run_id = record.get("run_id")
+            if isinstance(run_id, str) and run_id not in deduped:
+                deduped[run_id] = record
+        ordered = sorted(deduped.values(), key=lambda record: str(record.get("created_at", "")), reverse=True)
+        return [RunSession(**record) for record in ordered[:limit]]
 
     def list_runs(self, filters: RunFilters | None = None) -> list[RunSession]:
         filters = filters or RunFilters()

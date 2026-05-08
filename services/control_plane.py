@@ -165,6 +165,7 @@ _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_executio
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
 _AGENT_TASK_TERMINAL_SETTLE_SECONDS = 1.0
+_PILOT_GO_NO_GO_EVIDENCE_LIMIT = int(os.getenv("MESH_PILOT_GO_NO_GO_EVIDENCE_LIMIT", "500"))
 _LOG = logging.getLogger("mesh.control_plane")
 
 
@@ -850,7 +851,7 @@ class RunCoordinator:
         readiness = self.build_readiness()
         release_provenance = self._release_provenance_record(readiness)
         on_call_drill = self._on_call_drill_record(readiness)
-        runs = self.state_store.list_run_sessions(limit=100)
+        runs = self.state_store.list_run_sessions(limit=max(_PILOT_GO_NO_GO_EVIDENCE_LIMIT, 100))
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
         approved_run_id_set = set(
             self.state_store.list_run_ids_with_event_payload(

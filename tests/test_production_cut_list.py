@@ -188,6 +188,15 @@ def _record_completed_probe(coordinator: RunCoordinator, scenario_key: str, arti
     coordinator.state_store.save_run_session(current)
 
 
+def _record_filler_runs(coordinator: RunCoordinator, count: int) -> None:
+    for index in range(count):
+        _record_completed_probe(
+            coordinator,
+            f"filler_probe_{index:03d}",
+            {"filler": {"index": index}},
+        )
+
+
 def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
     return {
         key: {
@@ -783,6 +792,44 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertEqual(len(packet["observed"]["mesh_brain_model_kernel_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_rollback_drill_run_ids"]), 1)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_keeps_retained_evidence_outside_hot_session_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64))
+                    + "\n",
+                    encoding="utf-8",
+                )
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                _record_filler_runs(coordinator, 125)
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "go")
+                self.assertEqual(packet["missing_evidence"], [])
+                self.assertGreater(packet["observed"]["run_count"], 100)
+                self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
+                self.assertEqual(packet["observed"]["mesh_brain_canary_lanes"], [{"tenant_id": "tenant_a", "task_type": "crops"}])
             finally:
                 coordinator.stop_background_workers()
 
