@@ -1053,12 +1053,18 @@ REQUIRED_MARKERS = {
         "mesh.backup_restore_rehearsal.v1",
         "mesh.backup_restore_verification.v1",
         "verify_backup_restore_rehearsal",
+        "expected_environment",
+        "expected_state_backend",
+        "environment_matches_expected",
+        "state_backend_matches_expected",
         "BACKUP_RESTORE_COMPONENTS",
         "backup-restore-rehearsal.schema.json",
     ),
     "scripts/verify_backup_restore_rehearsal.py": (
         "mesh.backup_restore_verification.v1",
         "--proof",
+        "--expected-environment",
+        "--expected-state-backend",
         "verify_backup_restore_rehearsal",
     ),
     "shared/mesh_runtime/migration_rehearsal.py": (

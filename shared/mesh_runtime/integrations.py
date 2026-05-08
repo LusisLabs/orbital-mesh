@@ -470,7 +470,9 @@ def _profile_checks(
                     runtime_config.deployment_compatibility_registry_path
                 ),
                 "backup_restore_rehearsal_verified": backup_restore_rehearsal_ready(
-                    runtime_config.backup_restore_rehearsal_path
+                    runtime_config.backup_restore_rehearsal_path,
+                    expected_environment=profile,
+                    expected_state_backend=runtime_config.state_backend,
                 ),
                 "otel_ingest_protected": (
                     not runtime_config.otel_receiver_enabled

@@ -22,10 +22,21 @@ EXPECTED_BACKUP_RESTORE_VERIFICATION_SCHEMA = "mesh.backup_restore_verification.
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a Mesh backup and restore rehearsal proof packet.")
     parser.add_argument("--proof", required=True, help="Path to a mesh.backup_restore_rehearsal.v1 packet.")
+    parser.add_argument("--expected-environment", default="", help="Require the proof environment to match this value.")
+    parser.add_argument(
+        "--expected-state-backend",
+        default="",
+        choices=("", "file", "postgres"),
+        help="Require the proof state backend to match this value.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
-    payload = verify_backup_restore_rehearsal(args.proof)
+    payload = verify_backup_restore_rehearsal(
+        args.proof,
+        expected_environment=args.expected_environment,
+        expected_state_backend=args.expected_state_backend,
+    )
     if (
         payload.get("schema_version") != BACKUP_RESTORE_VERIFICATION_VERSION
         or payload.get("schema_version") != EXPECTED_BACKUP_RESTORE_VERIFICATION_SCHEMA

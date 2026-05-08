@@ -78,11 +78,6 @@ class FailureModeLibraryTests(unittest.TestCase):
 
 def _config(tmp: str, **overrides) -> RuntimeConfig:
     backup_restore_rehearsal_path = Path(tmp) / "backup-restore-rehearsal.json"
-    if not backup_restore_rehearsal_path.exists():
-        backup_restore_rehearsal_path.write_text(
-            json.dumps(_backup_restore_rehearsal(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
     authenticated_ingress_proof_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
     if not authenticated_ingress_proof_path.exists():
         authenticated_ingress_proof_path.write_text(
@@ -104,18 +99,31 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
         "authenticated_ingress_proof_path": str(authenticated_ingress_proof_path),
     }
     values.update(overrides)
+    if not backup_restore_rehearsal_path.exists():
+        backup_restore_rehearsal_path.write_text(
+            json.dumps(
+                _backup_restore_rehearsal(
+                    environment=str(values.get("readiness_profile") or "local"),
+                    state_backend=str(values.get("state_backend") or "file"),
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     return RuntimeConfig(**values)
 
 
-def _backup_restore_rehearsal() -> dict:
+def _backup_restore_rehearsal(*, environment: str = "staging", state_backend: str = "postgres") -> dict:
     digest = "a" * 64
     return {
         "schema_version": "mesh.backup_restore_rehearsal.v1",
         "rehearsal_id": "restore_rehearsal_test",
         "generated_at": "2026-05-05T23:00:00Z",
-        "environment": "staging",
+        "environment": environment,
         "operator_id": "platform@example.com",
-        "state_backend": "postgres",
+        "state_backend": state_backend,
         "backup_ref": "backup://orbital-mesh/staging/test",
         "restore_ref": "restore://orbital-mesh/staging/test",
         "rpo_seconds": 300,

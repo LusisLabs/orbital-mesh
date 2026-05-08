@@ -24,11 +24,38 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
             validate_payload("backup-restore-rehearsal.schema.json", proof)
             proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-            result = verify_backup_restore_rehearsal(proof_path)
+            result = verify_backup_restore_rehearsal(
+                proof_path,
+                expected_environment="staging",
+                expected_state_backend="postgres",
+            )
 
         self.assertEqual(result["schema_version"], "mesh.backup_restore_verification.v1")
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
+
+    def test_backup_restore_rehearsal_blocks_wrong_expected_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "backup-restore-rehearsal.json"
+            proof_path.write_text(json.dumps(_proof(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            result = verify_backup_restore_rehearsal(proof_path, expected_environment="pilot")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["environment_matches_expected"])
+
+    def test_backup_restore_rehearsal_blocks_wrong_expected_state_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "backup-restore-rehearsal.json"
+            proof_path.write_text(
+                json.dumps(_proof(state_backend="file"), indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            result = verify_backup_restore_rehearsal(proof_path, expected_state_backend="postgres")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["state_backend_matches_expected"])
 
     def test_backup_restore_rehearsal_blocks_missing_component_and_slow_restore(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,11 +85,22 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
                 _config(tmp, backup_restore_rehearsal_path=str(proof_path)),
                 force=True,
             ).to_dict()
+            wrong_environment_path = Path(tmp) / "wrong-environment-backup-restore-rehearsal.json"
+            wrong_environment_path.write_text(
+                json.dumps(_proof(environment="local"), indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            wrong_environment = build_readiness(
+                _config(tmp, backup_restore_rehearsal_path=str(wrong_environment_path)),
+                force=True,
+            ).to_dict()
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertIn("backup_restore_rehearsal_verified", blocked["blockers"])
         self.assertEqual(ready["status"], "ready")
         self.assertTrue(ready["required_checks"]["backup_restore_rehearsal_verified"])
+        self.assertEqual(wrong_environment["status"], "blocked")
+        self.assertIn("backup_restore_rehearsal_verified", wrong_environment["blockers"])
 
     def test_verify_backup_restore_rehearsal_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -75,6 +113,10 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
                     "scripts/verify_backup_restore_rehearsal.py",
                     "--proof",
                     str(proof_path),
+                    "--expected-environment",
+                    "staging",
+                    "--expected-state-backend",
+                    "postgres",
                     "--json",
                 ],
                 check=True,
@@ -99,6 +141,7 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
         "vault_path": str(Path(tmp) / "vault"),
         "integrations_config_path": str(Path(tmp) / "integrations.json"),
         "readiness_profile": "staging",
+        "state_backend": "postgres",
         "operator_identity_required": True,
         "policy_signing_key": "test-policy-signing-key",
         "promptfoo_command": "/missing/promptfoo",
@@ -111,15 +154,15 @@ def _config(tmp: str, **overrides) -> RuntimeConfig:
     return RuntimeConfig(**values)
 
 
-def _proof() -> dict:
+def _proof(*, environment: str = "staging", state_backend: str = "postgres") -> dict:
     digest = "a" * 64
     return {
         "schema_version": "mesh.backup_restore_rehearsal.v1",
         "rehearsal_id": "restore_rehearsal_20260505",
         "generated_at": "2026-05-05T23:00:00Z",
-        "environment": "staging",
+        "environment": environment,
         "operator_id": "platform@example.com",
-        "state_backend": "postgres",
+        "state_backend": state_backend,
         "backup_ref": "backup://orbital-mesh/staging/2026-05-05",
         "restore_ref": "restore://orbital-mesh/staging/2026-05-05",
         "rpo_seconds": 300,

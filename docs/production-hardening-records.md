@@ -105,9 +105,9 @@ The runtime materializes each review as `mesh.override_review.v1`, stores it und
 
 ## Backup Restore Rehearsal Evidence
 
-`scripts/verify_backup_restore_rehearsal.py --proof <backup-restore-rehearsal.json> --json` verifies a `mesh.backup_restore_rehearsal.v1` packet for private staging and later pilot operations.
+`scripts/verify_backup_restore_rehearsal.py --proof <backup-restore-rehearsal.json> --expected-environment <profile> --expected-state-backend <file|postgres> --json` verifies a `mesh.backup_restore_rehearsal.v1` packet for private staging and later pilot operations.
 
-The proof must identify the operator, backup ref, restore ref, RPO/RTO targets, measured restore duration, state backend, and restored components for state store, vault, Merkle proofs, integrations config, and research artifacts. Each component must carry a backup URI, matching before/after SHA-256 values, restored status, and record count. Staging readiness now reports `backup_restore_rehearsal_verified`; production Compose requires `MESH_BACKUP_RESTORE_REHEARSAL_PATH` so a deployment cannot claim private-staging readiness from the runbook alone.
+The proof must identify the operator, environment, backup ref, restore ref, RPO/RTO targets, measured restore duration, state backend, and restored components for state store, vault, Merkle proofs, integrations config, and research artifacts. Each component must carry a backup URI, matching before/after SHA-256 values, restored status, and record count. Staging and pilot readiness now require the packet environment and state backend to match the active readiness profile and runtime backend; production Compose requires `MESH_BACKUP_RESTORE_REHEARSAL_PATH` so a deployment cannot claim private-staging readiness from the runbook alone.
 
 ## Migration Rehearsal Evidence
 
