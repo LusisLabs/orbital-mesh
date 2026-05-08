@@ -451,6 +451,50 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertTrue(warnings)
         self.assertIn("ANTHROPIC_API_KEY", warnings[0])
 
+    def test_observer_disabled_kills_credential_fallback(self) -> None:
+        # Regression: a deployment that sets ``observer_enabled=False``
+        # to temporarily disable the observer (while keeping the key
+        # configured) must not see deepagents silently inherit those
+        # credentials. The previous implementation had a redundant
+        # ``observer_enabled or observer_api_key`` clause that made
+        # ``observer_enabled`` dead code; fixed in
+        # ``_observer_can_back``.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            mesh_deepagents_model="anthropic:claude-3-5-sonnet-20241022",
+            observer_enabled=False,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant-fallback",
+            observer_base_url="https://api.anthropic.com",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": ""}, clear=False):
+            api_key, base_url = deepagents_adapter_module._resolve_deepagents_credentials(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+            warnings = deepagents_adapter_module._model_env_warnings(
+                "anthropic:claude-3-5-sonnet-20241022", cfg,
+            )
+        self.assertEqual(api_key, "")
+        self.assertEqual(base_url, "")
+        self.assertTrue(warnings)
+
+    def test_observer_disabled_kills_model_inheritance(self) -> None:
+        # Same kill-switch applies to model inheritance — operator
+        # turning the observer off must stop deepagents from picking
+        # up ``{observer_provider}:{observer_model}`` automatically.
+        cfg = RuntimeConfig(
+            state_directory="/tmp",
+            observer_enabled=False,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        with patch.dict("os.environ", {"MESH_DEEPAGENTS_MODEL": ""}, clear=False):
+            model = deepagents_adapter_module._resolve_deepagents_model_string(cfg)
+        # Field default, not the observer-derived string.
+        self.assertEqual(model, cfg.mesh_deepagents_model)
+
     def test_resolve_deepagents_model_string_inherits_observer_when_no_explicit_env(self) -> None:
         # Default field value, no MESH_DEEPAGENTS_MODEL env, observer
         # configured for anthropic → effective model should be derived

@@ -35,14 +35,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from .harness import (
+from ..harness import (
     RawToolOutput,
     ToolDefinition,
     ToolRegistry,
 )
 
 
-AWS_DOMAIN = "aws"
+DOMAIN = "aws"
 
 
 _READ_ONLY_VERB_PREFIXES: tuple[str, ...] = ("describe_", "get_", "list_", "search_", "lookup_")
@@ -52,11 +52,11 @@ _READ_ONLY_VERB_PREFIXES: tuple[str, ...] = ("describe_", "get_", "list_", "sear
 _READ_ONLY_CAMEL_PREFIXES: tuple[str, ...] = ("Describe", "Get", "List", "Search", "Lookup")
 
 
-def aws_tool_definitions() -> list[ToolDefinition]:
+def _build_definitions() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name="execute_aws_operation",
-            domain=AWS_DOMAIN,
+            domain=DOMAIN,
             description=(
                 "Execute a single read-only AWS SDK operation. "
                 "Service + operation must resolve to a boto3 client "
@@ -76,21 +76,38 @@ def aws_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-AWS_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(aws_tool_definitions())
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_definitions())
 
 
-def register_aws_tools(registry: ToolRegistry, *, default_region: str | None = None) -> None:
+def register(registry: ToolRegistry, *, default_region: str | None = None) -> None:
     """Register the AWS execute_aws_operation tool.
 
     No client is constructed until the tool is invoked — boto3 is a
     soft dependency (imported lazily) so this registration succeeds on
     boto3-free deployments.
     """
-    for definition in AWS_TOOL_DEFINITIONS:
-        registry.register(definition, _make_aws_invoker(default_region))
+    for definition in TOOL_DEFINITIONS:
+        registry.register(definition, _make_invoker(default_region))
 
 
-def _make_aws_invoker(default_region: str | None):
+def maybe_register_at_root(registry: ToolRegistry) -> bool:
+    """Register iff ``MESH_AWS_TOOLS_ENABLED=1``. Returns whether registration fired.
+
+    Gated on env (not config) to keep AWS opt-in: most Mesh deployments
+    don't run on AWS and shouldn't pay the boto3 import cost. Region
+    defaults to ``MESH_AWS_DEFAULT_REGION`` then ``AWS_DEFAULT_REGION``.
+    """
+    import os
+
+    enabled = os.environ.get("MESH_AWS_TOOLS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return False
+    region = os.environ.get("MESH_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+    register(registry, default_region=region)
+    return True
+
+
+def _make_invoker(default_region: str | None):
     def invoke(args: dict[str, Any]) -> RawToolOutput:
         service = str(args.get("service") or "").strip()
         operation = str(args.get("operation") or "").strip()

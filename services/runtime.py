@@ -52,75 +52,19 @@ def _build_kubernetes_feedback_observer(config: RuntimeConfig) -> KubernetesFeed
 def _register_root_diagnostic_packs(root_registry: object, config: RuntimeConfig) -> None:
     """Auto-register always-on diagnostic packs onto the engine root.
 
-    Each pack is gated on its own config/env signal. Failures are
-    logged but never raised — a misconfigured Prometheus URL must not
-    keep the engine from starting; the registry simply stays empty
-    for that domain. The ``maybe_register_*`` helpers each return a
-    bool indicating whether they fired, used here only for telemetry.
+    Single entrypoint into ``services.investigation.tools`` —
+    ``register_root_packs`` walks every always-on pack
+    (Prometheus, AWS, kubectl, GitHub, Loki, Jaeger, Postgres) and
+    registers each one whose backing config/env signal is present.
 
-    Order is intentional: cheap-and-local first (Prometheus needs
-    only a URL, kubectl needs only a kubeconfig), then heavier auth
-    surfaces (GitHub `gh auth status`, AWS env-gated, MCP).
+    Failures inside any single pack are logged and swallowed: one
+    misconfigured Prometheus URL must never keep the engine from
+    starting. The registry simply stays empty for that domain and
+    the planner never sees its tools.
     """
-    import logging
+    from services.investigation.tools import register_root_packs
 
-    log = logging.getLogger("mesh.runtime")
-
-    try:
-        prometheus_url = getattr(config, "prometheus_url", None)
-        if prometheus_url:
-            from services.investigation.prometheus_tools import register_prometheus_tools
-
-            client = PrometheusClient(
-                prometheus_url,
-                timeout_seconds=getattr(config, "prometheus_query_timeout_seconds", 10.0),
-            )
-            register_prometheus_tools(root_registry, client)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: prometheus pack failed (non-fatal)")
-
-    try:
-        from services.investigation.kubectl_tools import maybe_register_kubectl_at_root
-
-        maybe_register_kubectl_at_root(root_registry)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: kubectl pack failed (non-fatal)")
-
-    try:
-        from services.investigation.github_tools import maybe_register_github_at_root
-
-        maybe_register_github_at_root(root_registry)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: github pack failed (non-fatal)")
-
-    try:
-        from services.investigation.loki_jaeger_tools import (
-            maybe_register_jaeger_at_root,
-            maybe_register_loki_at_root,
-        )
-
-        maybe_register_loki_at_root(root_registry)  # type: ignore[arg-type]
-        maybe_register_jaeger_at_root(root_registry)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: loki/jaeger pack failed (non-fatal)")
-
-    try:
-        from services.investigation.db_tools import maybe_register_pg_at_root
-
-        maybe_register_pg_at_root(root_registry)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: postgres pack failed (non-fatal)")
-
-    try:
-        import os
-
-        if os.environ.get("MESH_AWS_TOOLS_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}:
-            from services.investigation.aws_tools import register_aws_tools
-
-            region = os.environ.get("MESH_AWS_DEFAULT_REGION") or os.environ.get("AWS_DEFAULT_REGION")
-            register_aws_tools(root_registry, default_region=region)  # type: ignore[arg-type]
-    except Exception:
-        log.exception("root tool registration: aws pack failed (non-fatal)")
+    register_root_packs(root_registry, config)  # type: ignore[arg-type]
 
 
 def _overlay_root_registry(per_run_registry: object, root_registry: object | None) -> object:
@@ -154,60 +98,53 @@ def _auto_wire_investigation_harness(
     *,
     root_registry: object | None = None,
 ) -> tuple[object | None, object | None]:
-    """When the caller doesn't supply a harness, auto-wire one from the signal.
+    """Auto-wire harness for **every** trigger, not just CloudOpsBench.
 
-    The single biggest gap on CloudOpsBench: ``MeshBackend.run_scenario``
-    invoked ``run_sync`` without ``registry``/``planner``, so the
-    investigation tool-loop short-circuited on every scenario (0/521 used
-    any tool). The machinery existed; only the wiring was missing.
+    Mesh's agentic surface should fire on every production incident —
+    otel metric regression, feature-flag perf, kubernetes deployment
+    health, webhook alert, Reth degraded — not only on the
+    ``cloudopsbench_snapshot`` benchmark marker. Three paths in
+    priority order:
 
-    Two planner shapes are produced depending on config:
+    1. **CloudOpsBench snapshot present** — register snapshot tools +
+       ``CloudOpsRulePack``. Production benchmark path; preserves
+       deterministic behavior when the LLM observer is unconfigured.
+    2. **Reth node trigger** (``trigger_type == "reth_node_degraded"``) —
+       register Reth tools from the audited signal payload + ``RethRulePack``.
+       The peer-starvation rule pack runs deterministically; LLM
+       overlay if observer is configured.
+    3. **Generic** — any other trigger gets the harness when the LLM
+       observer is configured AND root-registered tools exist.
+       ``GenericRulePack`` carries no rules; the LLM is the only
+       decider, choosing from every read-only tool in the registry
+       (Prometheus, AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP).
+       Returns ``(None, None)`` when LLM is off OR root has no tools —
+       the legacy deterministic investigation continues unchanged in
+       that case so this never silently degrades existing deployments.
 
-    * If ``MESH_OBSERVER_ENABLED=1`` and a key is configured, an
-      ``LlmProbeSelector`` is built. Each harness iteration calls the
-      observer LLM with the current observation state and asks for the
-      next tool to invoke. The LLM cannot pick mutating tools (the
-      registry rejects them) and cannot crash the loop (failures
-      collapse to ``stop``).
-    * Otherwise the rule-based ``CloudOpsLoopPlanner`` is used — pattern
-      matching over the snapshot. This is the deterministic safety floor.
-
-    Returns ``(registry, planner)`` if a domain match is found, or
-    ``(None, None)`` to leave the harness disabled.
+    The LLM never gets to call mutating tools — the critic enforces
+    read-only at registration AND ``LlmProbeSelector`` filters to
+    ``read_only`` definitions before the LLM ever sees the menu.
     """
+    from services.investigation.harness.native_selector import LlmProbeSelector
+    from services.investigation.harness.registry import ToolRegistry
+    from services.investigation.llm_planner import build_llm_decision_provider
+
+    decision_provider = build_llm_decision_provider(config) if config is not None else None
+    trigger_type = str(getattr(trigger, "trigger_type", "") or "")
+
+    # Path 1: CloudOpsBench snapshot — most-specific match wins.
     snapshot = raw_signal.get("cloudopsbench_snapshot") if isinstance(raw_signal, dict) else None
     if isinstance(snapshot, dict):
         from services.benchmark.cloudopsbench import CloudOpsSnapshotTools
-        from services.investigation.cloudops_tools import (
-            CloudOpsLoopPlanner,
-            CloudOpsRulePack,
-            register_cloudops_tools,
-        )
-        from services.investigation.harness.native_selector import LlmProbeSelector
-        from services.investigation.harness.registry import ToolRegistry
-        from services.investigation.llm_planner import build_llm_decision_provider
+        from services.investigation.tools import cloudops as cloudops_pack
 
         registry = ToolRegistry()
-        register_cloudops_tools(registry, CloudOpsSnapshotTools(snapshot))
-        # Overlay always-on root diagnostic packs (Prometheus, AWS,
-        # kubectl, GitHub, Loki, Jaeger, Postgres, MCP) so the
-        # planner — especially the LLM planner — can mix CloudOps
-        # snapshot tools with live observability sources in the same
-        # loop. Per-run CloudOps tools win on name conflicts.
+        cloudops_pack.register(registry, CloudOpsSnapshotTools(snapshot))
         _overlay_root_registry(registry, root_registry)
 
-        decision_provider = build_llm_decision_provider(config) if config is not None else None
         if decision_provider is not None:
-            rule_pack = CloudOpsRulePack(trigger)
-            # Hand the LLM planner every read-only tool the registry
-            # currently exposes — CloudOps snapshot tools plus all
-            # always-on root packs that auto-registered (Prometheus,
-            # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP).
-            # The LLM picks tools by qualified name, so a CloudOps
-            # investigation can branch into "what changed in GitHub
-            # 30 minutes ago" or "what does Prometheus show for this
-            # service right now" without leaving the same loop.
-            # Critic + per-tool runtime checks remain the safety floor.
+            rule_pack = cloudops_pack.CloudOpsRulePack(trigger)
             llm_tool_definitions = registry.list_definitions(mutation_class="read_only")
             planner = LlmProbeSelector(
                 rule_pack,
@@ -216,9 +153,57 @@ def _auto_wire_investigation_harness(
                 enabled=True,
             )
         else:
-            planner = CloudOpsLoopPlanner(trigger)
+            planner = cloudops_pack.CloudOpsLoopPlanner(trigger)
         return registry, planner
-    return None, None
+
+    # Path 2: Reth degraded — domain-specific rule pack with the audited node payload.
+    if trigger_type == "reth_node_degraded" and isinstance(raw_signal, dict):
+        from services.investigation.tools import reth as reth_pack
+
+        registry = ToolRegistry()
+        reth_pack.register(registry, raw_signal)
+        _overlay_root_registry(registry, root_registry)
+
+        if decision_provider is not None:
+            rule_pack = reth_pack.RethRulePack()
+            llm_tool_definitions = registry.list_definitions(mutation_class="read_only")
+            planner = LlmProbeSelector(
+                rule_pack,
+                tool_definitions=llm_tool_definitions,
+                decision_provider=decision_provider,
+                enabled=True,
+            )
+        else:
+            planner = reth_pack.RethLoopPlanner()
+        return registry, planner
+
+    # Path 3: Generic — any trigger gets the harness when the LLM is
+    # configured and the root has at least one tool. This is what
+    # makes Mesh agentic on production triggers (otel regression,
+    # feature flag perf, k8s alert, webhook) instead of only on
+    # CloudOpsBench scenarios. Without an LLM there's no chooser, so
+    # we fall through to the legacy deterministic path.
+    if decision_provider is None:
+        return None, None
+    registry = ToolRegistry()
+    _overlay_root_registry(registry, root_registry)
+    if not registry.list_definitions(mutation_class="read_only"):
+        # No diagnostic packs configured at root — nothing to invoke.
+        # Returning (None, None) keeps the legacy deterministic
+        # investigation as the safety floor for ops-light deployments.
+        return None, None
+
+    from services.investigation.harness.native_selector import GenericRulePack
+
+    rule_pack = GenericRulePack()
+    llm_tool_definitions = registry.list_definitions(mutation_class="read_only")
+    planner = LlmProbeSelector(
+        rule_pack,
+        tool_definitions=llm_tool_definitions,
+        decision_provider=decision_provider,
+        enabled=True,
+    )
+    return registry, planner
 
 
 class MeshRuntimeEngine:

@@ -308,28 +308,42 @@ The harness itself is not a policy engine. It carries the agent's *eyes*. Decisi
 
 ```
 services/investigation/
-  harness/
-    __init__.py        — public exports
-    contracts.py       — ToolDefinition, ToolCall, ToolResult, InvestigationLoopState, LoopDecision, LoopRejection
-    registry.py        — ToolRegistry, RawToolOutput, make_call
-    critic.py          — LoopCritic, _validate_args
-    loop.py            — run_investigation_loop
-    planner.py         — LoopPlanner Protocol
-    native_selector.py — NativeProbeSelector, ObservationIndex, ProbeRule, RootCauseCandidate, LlmProbeSelector, ShadowProbeSelector
-  cloudops_ontology.py  — text-pattern → canonical Cloud-OpsBench root-cause table
-  cloudops_tools.py     — cloudops domain pack + CloudOpsRulePack + CloudOpsLoopPlanner (compat)
-  reth_tools.py         — reth domain pack + RethRulePack + RethLoopPlanner (compat)
-  prometheus_tools.py   — prometheus domain pack          (root)
-  aws_tools.py          — aws domain pack (verb enforcement, redaction)  (root)
-  kubectl_tools.py      — kubectl domain pack (subprocess)  (root)
-  github_tools.py       — github domain pack (subprocess `gh api`)  (root)
-  loki_jaeger_tools.py  — loki + jaeger domain packs (HTTP)  (root)
-  db_tools.py           — postgres domain pack (subprocess psql, identifier validation, DML scan)  (root)
-  mcp_tools.py          — MCP bridge (dynamic registration, opaque transport)  (root)
-  service.py            — InvestigationService.investigate orchestrates deterministic + harness modes
-  llm_planner.py        — build_llm_decision_provider for LlmProbeSelector
-  rca.py                — build_rca_report
-  reth_planner.py       — legacy Reth planner (drives evidence_pack assembly)
+  harness/                # primitives — domain-agnostic
+    __init__.py           — public exports
+    contracts.py          — ToolDefinition, ToolCall, ToolResult, InvestigationLoopState, LoopDecision, LoopRejection
+    registry.py           — ToolRegistry, RawToolOutput, make_call
+    critic.py             — LoopCritic, _validate_args
+    loop.py               — run_investigation_loop
+    planner.py            — LoopPlanner Protocol
+    native_selector.py    — NativeProbeSelector, ObservationIndex, ProbeRule, RootCauseCandidate, GenericRulePack, LlmProbeSelector, ShadowProbeSelector
+  tools/                  # domain packs — uniform API per file
+    __init__.py           — register_root_packs(registry, config) — single entrypoint for engine startup
+    _http.py              — shared urllib helpers used by loki + jaeger
+    cloudops.py           — TOOL_DEFINITIONS + register() + CloudOpsRulePack + CloudOpsLoopPlanner (per-run, snapshot-bound)
+    reth.py               — TOOL_DEFINITIONS + register() + RethRulePack + RethLoopPlanner (per-run, signal-bound)
+    prometheus.py         — TOOL_DEFINITIONS + register() + maybe_register_at_root()  (root)
+    aws.py                — TOOL_DEFINITIONS + register() + maybe_register_at_root() — verb enforcement, redaction  (root)
+    kubectl.py            — TOOL_DEFINITIONS + register() + maybe_register_at_root() — subprocess  (root)
+    github.py             — TOOL_DEFINITIONS + register() + maybe_register_at_root() — subprocess `gh api`  (root)
+    loki.py               — TOOL_DEFINITIONS + register() + maybe_register_at_root() — pure HTTP  (root)
+    jaeger.py             — TOOL_DEFINITIONS + register() + maybe_register_at_root() — pure HTTP  (root)
+    postgres.py           — TOOL_DEFINITIONS + register() + maybe_register_at_root() — subprocess psql, identifier validation, DML scan  (root)
+    mcp.py                — register() + MCPClientProtocol + MCPToolMeta — dynamic registration, opaque transport
+  cloudops_ontology.py    — text-pattern → canonical RCA labels (used cross-cutting by GenericRulePack + CloudOpsRulePack)
+  service.py              — InvestigationService.investigate — orchestrates deterministic + harness modes
+  llm_planner.py          — build_llm_decision_provider for LlmProbeSelector
+  rca.py                  — build_rca_report
+  reth_planner.py         — legacy Reth planner (drives evidence_pack assembly)
 ```
+
+### Per-file pack API (cleaner to recall)
+
+Every file in ``tools/`` exposes a uniform trio:
+
+* ``TOOL_DEFINITIONS`` — immutable tuple of the pack's ``ToolDefinition``s.
+* ``register(registry, ...)`` — per-run entrypoint with whatever context the pack needs (snapshot, client, payload).
+* ``maybe_register_at_root(registry)`` — for always-on packs only. Reads config/env, registers iff backing signal is present. Returns ``True`` if registration fired.
+
+The unified ``tools.register_root_packs(registry, config)`` walks every always-on pack's ``maybe_register_at_root`` in one call. ``MeshRuntimeEngine.__init__`` uses it; new packs only need a one-line addition there to land at root.
 
 Tests in `tests/test_investigation_harness.py` cover registry / critic / loop primitives, the CloudOps and Reth rule packs end-to-end, every root pack, and the MCP bridge with a stub client.

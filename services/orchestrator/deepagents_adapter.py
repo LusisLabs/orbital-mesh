@@ -327,17 +327,28 @@ def _openai_api_key_for_model(model: str) -> str:
 def _observer_can_back(provider: str, config: RuntimeConfig | None) -> bool:
     """True iff the configured observer credentials can authenticate ``provider``.
 
-    The observer's provider must match (we don't proxy OpenAI calls
-    through an Anthropic key). When this returns True the deepagents
-    adapter will pass ``config.observer_api_key`` and
-    ``config.observer_base_url`` into the LangChain client.
+    Three conditions must all hold:
+
+    1. ``observer_provider`` matches the model's provider — we never
+       proxy OpenAI calls through an Anthropic key.
+    2. ``observer_api_key`` is set — there's something to authenticate
+       with.
+    3. ``observer_enabled`` is True — the operator deliberately turned
+       the observer on. This must be a real check; deployments that set
+       ``observer_enabled=False`` to temporarily disable the observer
+       (while keeping the key configured) need that switch to actually
+       cut off the credential fallback path. The previous expression
+       collapsed (1)-and-(2)-and-(2) into (1)-and-(2), making (3) dead
+       code — fixed here so the kill-switch is real.
     """
     if config is None:
         return False
     observer_provider = str(getattr(config, "observer_provider", "") or "").lower()
     if observer_provider != provider.lower():
         return False
-    return bool(getattr(config, "observer_api_key", "")) and bool(getattr(config, "observer_enabled", False) or getattr(config, "observer_api_key", ""))
+    if not bool(getattr(config, "observer_enabled", False)):
+        return False
+    return bool(getattr(config, "observer_api_key", ""))
 
 
 def _resolve_deepagents_credentials(
@@ -379,14 +390,20 @@ def _resolve_deepagents_model_string(config: RuntimeConfig) -> str:
     """Return the effective model string for deepagents.
 
     When the user hasn't explicitly set ``MESH_DEEPAGENTS_MODEL`` AND
-    the observer is configured with both an api_key and a model, prefer
-    the observer-derived ``{provider}:{model}`` so deepagents inherits
-    the same LLM the observer already speaks to. This is the
-    "use one key, get one model everywhere" path that lets a deployment
-    configure the observer once and pick up deepagents for free.
+    the observer is *enabled* and configured with both an api_key and
+    a model, prefer the observer-derived ``{provider}:{model}`` so
+    deepagents inherits the same LLM the observer already speaks to.
+
+    Respects ``observer_enabled``: if the operator turned the observer
+    off, deepagents falls back to its own field default rather than
+    silently piggybacking on stored credentials. The kill-switch
+    applies symmetrically to both the credential fallback (in
+    ``_observer_can_back``) and the model inheritance here.
     """
     explicit_env = (os.getenv("MESH_DEEPAGENTS_MODEL") or "").strip()
     if explicit_env:
+        return config.mesh_deepagents_model
+    if not bool(getattr(config, "observer_enabled", False)):
         return config.mesh_deepagents_model
     observer_provider = str(getattr(config, "observer_provider", "") or "").lower()
     observer_model = (getattr(config, "observer_model", "") or "").strip()

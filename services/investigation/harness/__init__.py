@@ -37,6 +37,7 @@ from .contracts import (
 from .critic import LoopCritic
 from .loop import run_investigation_loop
 from .native_selector import (
+    GenericRulePack,
     LlmProbeSelector,
     NativeProbeSelector,
     ObservationIndex,
@@ -48,6 +49,7 @@ from .planner import LoopPlanner
 from .registry import RawToolOutput, ToolRegistry, make_call
 
 __all__ = [
+    "GenericRulePack",
     "InvestigationLoopState",
     "LoopCritic",
     "LoopDecision",

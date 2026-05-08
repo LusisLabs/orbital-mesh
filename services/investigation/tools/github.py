@@ -40,18 +40,18 @@ import shutil
 import subprocess
 from typing import Any
 
-from .harness import (
+from ..harness import (
     RawToolOutput,
     ToolDefinition,
     ToolRegistry,
 )
 
 
-GITHUB_DOMAIN = "github"
+DOMAIN = "github"
 MAX_OUTPUT_BYTES = 96 * 1024
 
 
-def github_tool_definitions() -> list[ToolDefinition]:
+def _build_definitions() -> list[ToolDefinition]:
     repo_args = {"repo": {"type": "str", "required": True}}
     schemas = {
         "github_recent_commits": {
@@ -83,7 +83,7 @@ def github_tool_definitions() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name=name,
-            domain=GITHUB_DOMAIN,
+            domain=DOMAIN,
             description=description,
             args_schema=dict(schemas[name]),
             mutation_class="read_only",
@@ -95,13 +95,13 @@ def github_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-GITHUB_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(github_tool_definitions())
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_definitions())
 
 
 _NO_GH_PATH_PROVIDED = object()
 
 
-def register_github_tools(
+def register(
     registry: ToolRegistry,
     *,
     gh_path: str | None = _NO_GH_PATH_PROVIDED,  # type: ignore[assignment]
@@ -111,7 +111,7 @@ def register_github_tools(
         resolved = shutil.which("gh")
     else:
         resolved = gh_path or None
-    for definition in GITHUB_TOOL_DEFINITIONS:
+    for definition in TOOL_DEFINITIONS:
         registry.register(definition, _make_github_invoker(definition.name, resolved))
 
 
@@ -230,7 +230,7 @@ def _failure(tool_name: str, message: str, *, argv: list[str] | None = None) -> 
     )
 
 
-def maybe_register_github_at_root(registry: ToolRegistry) -> bool:
+def maybe_register_at_root(registry: ToolRegistry) -> bool:
     """Register GitHub tools iff ``gh`` is on PATH and authenticated."""
     if shutil.which("gh") is None:
         return False
@@ -247,5 +247,5 @@ def maybe_register_github_at_root(registry: ToolRegistry) -> bool:
     if result.returncode != 0:
         # Not authenticated. Don't fail engine startup; just skip.
         return False
-    register_github_tools(registry)
+    register(registry)
     return True
