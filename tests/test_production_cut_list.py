@@ -50,7 +50,7 @@ def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
         "design_partner_packet_path": str(design_partner_packet_path),
     }
     values.update(overrides)
-    if not backup_restore_rehearsal_path.exists():
+    if not backup_restore_rehearsal_path.exists() or values.get("readiness_profile"):
         backup_restore_rehearsal_path.write_text(
             json.dumps(
                 _backup_restore_rehearsal(
@@ -63,7 +63,7 @@ def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
             + "\n",
             encoding="utf-8",
         )
-    if not authenticated_ingress_proof_path.exists():
+    if not authenticated_ingress_proof_path.exists() or values.get("readiness_profile"):
         authenticated_ingress_proof_path.write_text(
             json.dumps(
                 _authenticated_ingress_deployment_proof(

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/incident-coverage-proof.schema.json",
+  "title": "IncidentCoverageProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "environment",
+    "coverage"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.incident_coverage_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "coverage": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "incident_class",
+          "evidence_level",
+          "signal_refs",
+          "decision_refs",
+          "policy_refs",
+          "test_refs",
+          "artifact_refs",
+          "expected_behavior",
+          "false_positive_control",
+          "run_ids",
+          "live_proof_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "incident_class": {
+            "type": "string",
+            "enum": [
+              "crash_loop",
+              "bad_deploy_image",
+              "readiness_degradation",
+              "config_drift",
+              "feature_flag_regression",
+              "telemetry_degradation",
+              "queue_resource_pressure",
+              "external_provider_failure",
+              "partial_outage",
+              "false_positive_controls"
+            ]
+          },
+          "evidence_level": {
+            "type": "string",
+            "enum": ["fixture", "live"]
+          },
+          "signal_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "decision_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "policy_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "test_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "artifact_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "expected_behavior": {
+            "type": "string",
+            "enum": ["execute", "approval_required", "human_review", "no_action", "blocked"]
+          },
+          "false_positive_control": { "type": "boolean" },
+          "false_positive_run_count": { "type": "integer", "minimum": 0 },
+          "run_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "live_proof_ref": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

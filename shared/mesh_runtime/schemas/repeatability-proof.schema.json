@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/repeatability-proof.schema.json",
+  "title": "RepeatabilityProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "repo_head",
+    "working_tree_clean",
+    "clean_env_recreated",
+    "manual_env_surgery",
+    "fresh_image_built",
+    "image_digest",
+    "release_packet_ref",
+    "release_packet_head",
+    "release_packet_generated_at",
+    "stale_packet_reused",
+    "commands",
+    "runs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.repeatability_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "repo_head": { "type": "string" },
+    "working_tree_clean": { "type": "boolean" },
+    "clean_env_recreated": { "type": "boolean" },
+    "manual_env_surgery": { "type": "boolean" },
+    "fresh_image_built": { "type": "boolean" },
+    "image_digest": { "type": "string" },
+    "release_packet_ref": { "type": "string" },
+    "release_packet_head": { "type": "string" },
+    "release_packet_generated_at": { "type": "string" },
+    "stale_packet_reused": { "type": "boolean" },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["command", "started_at", "completed_at", "status", "artifact_refs"],
+        "additionalProperties": false,
+        "properties": {
+          "command": { "type": "string" },
+          "started_at": { "type": "string" },
+          "completed_at": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail"]
+          },
+          "artifact_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["run_id", "started_at", "completed_at", "status", "artifact_refs"],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": { "type": "string" },
+          "started_at": { "type": "string" },
+          "completed_at": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail"]
+          },
+          "artifact_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

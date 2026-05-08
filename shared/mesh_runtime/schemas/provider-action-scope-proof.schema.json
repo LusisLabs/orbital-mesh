@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/provider-action-scope-proof.schema.json",
+  "title": "ProviderActionScopeProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "environment",
+    "evidence_level",
+    "connector_registry_ref",
+    "action_scopes"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.provider_action_scope_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "evidence_level": {
+      "type": "string",
+      "enum": ["fixture", "live"]
+    },
+    "connector_registry_ref": { "type": "string" },
+    "action_scopes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "action_id",
+          "incident_class",
+          "connector_id",
+          "requested_scope",
+          "policy_tier",
+          "approval_required",
+          "approval_behavior_ref",
+          "evidence_refs",
+          "rollback_ref",
+          "run_export_ref",
+          "degraded_behavior_ref",
+          "credential_rotation_ref",
+          "break_glass_ref",
+          "secret_material_exposed",
+          "live_proof_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action_id": { "type": "string" },
+          "incident_class": { "type": "string" },
+          "connector_id": { "type": "string" },
+          "requested_scope": { "type": "string" },
+          "policy_tier": {
+            "type": "string",
+            "enum": ["fully_autonomous", "approval_required", "advisory_only", "denied_always"]
+          },
+          "approval_required": { "type": "boolean" },
+          "approval_behavior_ref": { "type": ["string", "null"] },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "rollback_ref": { "type": ["string", "null"] },
+          "run_export_ref": { "type": ["string", "null"] },
+          "degraded_behavior_ref": { "type": "string" },
+          "credential_rotation_ref": { "type": ["string", "null"] },
+          "break_glass_ref": { "type": ["string", "null"] },
+          "secret_material_exposed": { "type": "boolean" },
+          "live_proof_ref": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

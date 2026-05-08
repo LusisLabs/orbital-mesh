@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/production-target-proof.schema.json",
+  "title": "ProductionTargetProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "environment",
+    "evidence_level",
+    "target_ref",
+    "ingress",
+    "identity",
+    "telemetry",
+    "secrets",
+    "rollback",
+    "approval",
+    "run",
+    "governance",
+    "audit",
+    "live_artifact_refs"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.production_target_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "evidence_level": {
+      "type": "string",
+      "enum": ["fixture", "live"]
+    },
+    "target_ref": { "type": "string" },
+    "ingress": {
+      "type": "object",
+      "required": [
+        "proof_ref",
+        "ingress_url",
+        "authenticated",
+        "tls_terminated",
+        "identity_enforced"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "proof_ref": { "type": "string" },
+        "ingress_url": { "type": "string" },
+        "authenticated": { "type": "boolean" },
+        "tls_terminated": { "type": "boolean" },
+        "identity_enforced": { "type": "boolean" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": [
+        "operator_id",
+        "source_identity_ref",
+        "mutation_identity_recorded",
+        "evidence_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "source_identity_ref": { "type": "string" },
+        "mutation_identity_recorded": { "type": "boolean" },
+        "evidence_ref": { "type": "string" }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "required": [
+        "signal_source_ref",
+        "metrics_ref",
+        "feedback_source_ref",
+        "target_feedback_verified"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "signal_source_ref": { "type": "string" },
+        "metrics_ref": { "type": "string" },
+        "feedback_source_ref": { "type": "string" },
+        "target_feedback_verified": { "type": "boolean" }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "required": [
+        "runtime_secret_refs",
+        "credential_rotation_ref",
+        "raw_secret_material_present",
+        "secret_redaction_verified"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "runtime_secret_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "credential_rotation_ref": { "type": "string" },
+        "raw_secret_material_present": { "type": "boolean" },
+        "secret_redaction_verified": { "type": "boolean" }
+      }
+    },
+    "rollback": {
+      "type": "object",
+      "required": ["rollback_ref", "rollback_rehearsed", "rollback_artifact_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "rollback_ref": { "type": "string" },
+        "rollback_rehearsed": { "type": "boolean" },
+        "rollback_artifact_ref": { "type": "string" }
+      }
+    },
+    "approval": {
+      "type": "object",
+      "required": [
+        "approval_required",
+        "approval_ref",
+        "approver_identity_ref",
+        "approval_audit_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "approval_required": { "type": "boolean" },
+        "approval_ref": { "type": "string" },
+        "approver_identity_ref": { "type": "string" },
+        "approval_audit_ref": { "type": "string" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "decision_ref",
+        "evaluation_ref",
+        "execution_ref",
+        "feedback_ref",
+        "run_export_ref",
+        "postmortem_export_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "run_id": { "type": "string" },
+        "decision_ref": { "type": "string" },
+        "evaluation_ref": { "type": "string" },
+        "execution_ref": { "type": "string" },
+        "feedback_ref": { "type": "string" },
+        "run_export_ref": { "type": "string" },
+        "postmortem_export_ref": { "type": "string" }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "required": [
+        "on_call_ref",
+        "escalation_ref",
+        "break_glass_ref",
+        "incident_review_ref",
+        "retention_ref",
+        "deletion_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "on_call_ref": { "type": "string" },
+        "escalation_ref": { "type": "string" },
+        "break_glass_ref": { "type": "string" },
+        "incident_review_ref": { "type": "string" },
+        "retention_ref": { "type": "string" },
+        "deletion_ref": { "type": "string" }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "required": [
+        "timeline_ref",
+        "merkle_ref",
+        "policy_refs",
+        "evidence_refs",
+        "decision_reason_ref",
+        "change_record_ref",
+        "recovery_result_ref",
+        "secret_redaction_verified",
+        "third_party_replay_ref"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "timeline_ref": { "type": "string" },
+        "merkle_ref": { "type": "string" },
+        "policy_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "decision_reason_ref": { "type": "string" },
+        "change_record_ref": { "type": "string" },
+        "recovery_result_ref": { "type": "string" },
+        "secret_redaction_verified": { "type": "boolean" },
+        "third_party_replay_ref": { "type": "string" }
+      }
+    },
+    "live_artifact_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
