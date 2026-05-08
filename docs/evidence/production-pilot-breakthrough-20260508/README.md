@@ -47,7 +47,7 @@ PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --out
 ```
 
 ```bash
-scripts/generate_pilot_breakthrough_packet.py --base-url http://127.0.0.1:8787 --run-id run_20260508T033245_ad9bd5ac --chaos-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --node-summary .mesh-runtime-state/node-breakthrough/summary-20260505T205538Z.json --output-dir .mesh-runtime-state/pilot-packets/production-pilot-breakthrough-latest --json
+scripts/generate_pilot_breakthrough_packet.py --base-url http://127.0.0.1:8787 --run-id run_20260508T033245_ad9bd5ac --expected-head "$(git rev-parse HEAD)" --chaos-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --node-summary .mesh-runtime-state/node-breakthrough/summary-20260505T205538Z.json --output-dir .mesh-runtime-state/pilot-packets/production-pilot-breakthrough-latest --json
 ```
 
 ## Operating Model

@@ -55,6 +55,7 @@ def main() -> int:
     parser.add_argument("--proof-bundle", default="", help="Breakthrough proof bundle. Defaults to latest ready proof.")
     parser.add_argument("--chaos-summary", default="", help="Compose chaos summary. Defaults to latest summary.")
     parser.add_argument("--node-summary", default="", help="Node breakthrough summary. Defaults to latest summary.")
+    parser.add_argument("--expected-head", default="", help="Expected git commit. Defaults to `git rev-parse HEAD`.")
     parser.add_argument(
         "--output-dir",
         default=".mesh-runtime-state/pilot-packets/production-pilot-breakthrough-latest",
@@ -78,6 +79,7 @@ def main() -> int:
         chaos_summary=Path(args.chaos_summary) if args.chaos_summary else None,
         node_summary=Path(args.node_summary) if args.node_summary else None,
         require_runtime_head=not args.allow_release_bound_runtime,
+        current_head=args.expected_head.strip() or None,
     )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
