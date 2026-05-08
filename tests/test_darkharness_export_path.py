@@ -561,7 +561,11 @@ def _seed_run(
             "evaluation": evaluation,
             "scenario_analysis": _scenario_analysis(),
             "approvals": approval_records,
-            **({"execution": {"external_refs": {"live_execution": True}}} if pilot_go_no_go_evidence else {}),
+            **(
+                {"execution": {"status": "succeeded", "external_refs": {"live_execution": True}}}
+                if pilot_go_no_go_evidence
+                else {}
+            ),
         },
     )
     if pilot_go_no_go_evidence:
