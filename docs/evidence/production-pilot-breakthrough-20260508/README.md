@@ -11,7 +11,7 @@ This is not a claim of broad production autonomy. The release clearance is bound
 ## Evidence Index
 
 - `packet.json`: top-level packet, claim boundary, pilot scope, expansion order, commands, and file hashes.
-- `pilot-clearance.json`: container-local `scripts/verify_pilot_clearance.py` pass against `http://127.0.0.1:8787`.
+- `pilot-clearance.json`: historical container-local `scripts/verify_pilot_clearance.py` pass against release-bound runtime `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`.
 - `health-binding.json`: `/api/health` runtime binding capture with commit and image digest checks.
 - `breakthrough-proof-summary.json`: current-HEAD replay-ready proof bundle summary and validation command hashes.
 - `chaos-summary.json`: compose chaos breakthrough metrics, substrate coverage, multi-fault coverage, and source hashes.
@@ -20,6 +20,8 @@ This is not a claim of broad production autonomy. The release clearance is bound
 - `completion-audit.md`: prompt-to-artifact checklist and remaining post-merge blockers.
 
 Raw `.mesh-runtime-state` logs and full run exports are intentionally not committed here. The committed files capture stable hashes, bounded status fields, metrics, action facts, and Merkle proof identifiers.
+
+Latest branch-tip replay proof: `.mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json` with bundle SHA `720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d`, generated from clean commit `2f9b909fb146865af6898fadb141da9091b56ff8`.
 
 ## Pilot Drill Scope
 
@@ -43,7 +45,7 @@ docker compose -f docker-compose.stack.yml exec -T mesh sh -lc 'cd /workspace/or
 ```
 
 ```bash
-PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session' --validation-command 'ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py'
+PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session tests.test_pilot_breakthrough_packet tests.test_production_cut_list.PilotGoNoGoMeshBrainGateTests tests.test_pilot_clearance_audit' --validation-command 'env RUFF_CACHE_DIR=/tmp/ruff-cache ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py'
 ```
 
 ```bash

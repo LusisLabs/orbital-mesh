@@ -3,9 +3,9 @@
     "ready": true,
     "status": "regression_protected_breakthrough"
   },
-  "bundle_sha256": "9864f7ecc2fe386125f0a17d7480e2fbe4d2411b31a077e2d1a119aa70e4d5c4",
+  "bundle_sha256": "720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d",
   "git": {
-    "commit": "a37a14b285e814bb3ee7373b321a849e95b7fce9",
+    "commit": "2f9b909fb146865af6898fadb141da9091b56ff8",
     "dirty": false
   },
   "replay_passed": true,
@@ -28,8 +28,8 @@
     }
   ],
   "schema_version": "mesh.breakthrough_proof_summary.v1",
-  "source_path": ".mesh-runtime-state/proofs/breakthrough-proof-20260508T061042Z.json",
-  "source_sha256": "7bd8965ca181e61a58a1585c736df63d05fa4048d8ce296cffbfcdbc8a516853",
+  "source_path": ".mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json",
+  "source_sha256": "c1a8e8e1897fb794cf85ad923ca4fad6a083decc09c586fd04c76aa2d3e02d29",
   "summary_checks": [
     {
       "coverage_checks": {
@@ -39,12 +39,29 @@
         "substrates_without_pass": []
       },
       "kind": "compose",
-      "ready": true
+      "metrics": {
+        "capability_axis_pass_rate": 1.0,
+        "correct_decision_rate": 1.0,
+        "detection_rate": 1.0,
+        "false_positive_rate": 0.1,
+        "pipeline_availability": 1.0
+      },
+      "ready": true,
+      "schema_version": "mesh.compose_chaos_summary.v1",
+      "status": "breakthrough_signal",
+      "summary_path": "/Users/shaanp/Documents/GitHub/orbital-mesh/.mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json"
     },
     {
       "coverage_checks": {},
       "kind": "node",
-      "ready": true
+      "metrics": {
+        "capability_axis_pass_rate": 1.0,
+        "correct_decision_rate": 1.0
+      },
+      "ready": true,
+      "schema_version": "mesh.production_node_breakthrough_summary.v1",
+      "status": "breakthrough_signal",
+      "summary_path": "/Users/shaanp/Documents/GitHub/orbital-mesh/.mesh-runtime-state/node-breakthrough/summary-20260505T205538Z.json"
     }
   ],
   "validation_commands": [
@@ -55,22 +72,35 @@
         "unittest",
         "tests.test_breakthrough_evidence_bundle",
         "tests.test_production_node_breakthrough_session",
-        "tests.test_compose_chaos_session"
+        "tests.test_compose_chaos_session",
+        "tests.test_pilot_breakthrough_packet",
+        "tests.test_production_cut_list.PilotGoNoGoMeshBrainGateTests",
+        "tests.test_pilot_clearance_audit"
       ],
       "exit_code": 0,
-      "output_sha256": "1bcb3ffe60043f60f5d43f3f209aeb683a0d7d4b912f41c366978dcafa7da069",
+      "output_sha256": "a9f91cec34a772be8ea7d44cbe99e41af3973bc497ccde59b085cbdf30cd25e3",
       "passed": true
     },
     {
       "command": [
+        "env",
+        "RUFF_CACHE_DIR=/tmp/ruff-cache",
         "ruff",
         "check",
         "scripts/breakthrough_evidence_bundle.py",
         "scripts/production_node_breakthrough_session.py",
         "scripts/compose_chaos_session.py",
+        "scripts/generate_pilot_breakthrough_packet.py",
+        "services/control_plane.py",
+        "shared/mesh_runtime/control_plane_state.py",
+        "shared/mesh_runtime/mesh_state_store.py",
+        "shared/mesh_runtime/postgres_state.py",
         "tests/test_breakthrough_evidence_bundle.py",
         "tests/test_production_node_breakthrough_session.py",
-        "tests/test_compose_chaos_session.py"
+        "tests/test_compose_chaos_session.py",
+        "tests/test_pilot_breakthrough_packet.py",
+        "tests/test_production_cut_list.py",
+        "tests/test_pilot_clearance_audit.py"
       ],
       "exit_code": 0,
       "output_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
@@ -84,9 +114,17 @@
         "scripts/breakthrough_evidence_bundle.py",
         "scripts/production_node_breakthrough_session.py",
         "scripts/compose_chaos_session.py",
+        "scripts/generate_pilot_breakthrough_packet.py",
+        "services/control_plane.py",
+        "shared/mesh_runtime/control_plane_state.py",
+        "shared/mesh_runtime/mesh_state_store.py",
+        "shared/mesh_runtime/postgres_state.py",
         "tests/test_breakthrough_evidence_bundle.py",
         "tests/test_production_node_breakthrough_session.py",
-        "tests/test_compose_chaos_session.py"
+        "tests/test_compose_chaos_session.py",
+        "tests/test_pilot_breakthrough_packet.py",
+        "tests/test_production_cut_list.py",
+        "tests/test_pilot_clearance_audit.py"
       ],
       "exit_code": 0,
       "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

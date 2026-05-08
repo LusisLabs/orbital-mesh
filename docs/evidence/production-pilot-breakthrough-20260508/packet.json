@@ -7,7 +7,7 @@
   "commands": {
     "closed_loop_export_summary_source": "GET /api/runs/run_20260508T033245_ad9bd5ac/export with X-Mesh-Operator: mesh-compose-chaos and X-Mesh-Roles: viewer,launcher",
     "container_pilot_clearance": "docker compose -f docker-compose.stack.yml exec -T mesh sh -lc 'cd /workspace/orbital-mesh && PYTHONPATH=. python3 scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json'",
-    "current_head_replay_proof": "PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session' --validation-command 'ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py'",
+    "current_head_replay_proof": "PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session tests.test_pilot_breakthrough_packet tests.test_production_cut_list.PilotGoNoGoMeshBrainGateTests tests.test_pilot_clearance_audit' --validation-command 'env RUFF_CACHE_DIR=/tmp/ruff-cache ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py'",
     "host_health_probe": "curl -sS http://127.0.0.1:8787/api/health",
     "live_gate_before_pilot_promotion": "scripts/run_breakthrough_proof.sh && scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json"
   },
@@ -23,9 +23,9 @@
       "sha256": "6e6b7d2ae803669fd3d46dc4ffb085a23b33b35dcbfd21db5f1940fb0090a288"
     },
     {
-      "bytes": 2717,
+      "bytes": 4516,
       "path": "docs/evidence/production-pilot-breakthrough-20260508/breakthrough-proof-summary.json",
-      "sha256": "4327a00b0e5a210d062db3d0f8929343b5f63e36bef1d3d497d37e0a4ede78c8"
+      "sha256": "9c8d95ef4d1fd45c89f05524d39d202ac4c73ab68402404df78365b60e3f92bf"
     },
     {
       "bytes": 2128,
@@ -52,7 +52,7 @@
     "longer-running watch mode",
     "production SLO/error-budget reporting"
   ],
-  "generated_at": "2026-05-08T06:15:29.734541Z",
+  "generated_at": "2026-05-08T13:17:25Z",
   "pilot_scope": {
     "allowed_action_class_for_drill": "rollback_deployment on one allowlisted deployment with rollback metadata and recovery feedback",
     "kubernetes_context": "mesh-compose",
@@ -69,7 +69,7 @@
   },
   "repo": {
     "branch": "codex/breakthrough-proof-release-posture",
-    "head": "a37a14b285e814bb3ee7373b321a849e95b7fce9",
+    "head": "2f9b909fb146865af6898fadb141da9091b56ff8",
     "post_merge_current_head_rerun_required": true,
     "release_artifact_commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
     "release_artifact_commit_is_ancestor_of_head": true,
