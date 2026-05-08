@@ -83,17 +83,24 @@ def _checks(
 ) -> dict[str, bool]:
     package_upload = _upload(proof, "package")
     archive_upload = _upload(proof, "archive")
+    provider = str(proof.get("provider") or "").strip() if proof is not None else ""
     return {
         "retrieval_verified": retrieval.get("status") == "pass",
         "proof_present": proof is not None,
         "proof_schema_valid": proof is not None,
         "run_id_matches": proof is not None and package is not None and proof.get("run_id") == package.get("run_id"),
         "export_id_matches": proof is not None and package is not None and proof.get("export_id") == package.get("export_id"),
-        "provider_present": proof is not None and bool(str(proof.get("provider") or "").strip()),
+        "provider_present": proof is not None and bool(provider),
         "restore_tested": proof is not None and proof.get("restore_tested") is True,
         "restore_ref_present": proof is not None and bool(str(proof.get("restore_ref") or "").strip()),
         "package_upload_present": package_upload is not None,
         "archive_upload_present": archive_upload is not None,
+        "package_provider_matches": bool(provider)
+        and package_upload is not None
+        and str(package_upload.get("provider") or "").strip() == provider,
+        "archive_provider_matches": bool(provider)
+        and archive_upload is not None
+        and str(archive_upload.get("provider") or "").strip() == provider,
         "package_uri_durable": _durable_uri(str(package_upload.get("blob_uri") or "")) if package_upload else False,
         "archive_uri_durable": _durable_uri(str(archive_upload.get("blob_uri") or "")) if archive_upload else False,
         "package_sha256_matches": _upload_matches_file(package_upload, package_file),

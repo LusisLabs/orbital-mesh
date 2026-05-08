@@ -1031,6 +1031,8 @@ REQUIRED_MARKERS = {
         "mesh.run_export_upload_verification.v1",
         "verify_run_export_upload_proof",
         "DURABLE_RUN_EXPORT_URI_SCHEMES",
+        "package_provider_matches",
+        "archive_provider_matches",
         "restore_tested",
         "run-export-upload-proof.schema.json",
     ),

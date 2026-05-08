@@ -87,6 +87,24 @@ class RunExportUploadTests(unittest.TestCase):
         self.assertFalse(result["checks"]["package_uri_durable"])
         self.assertFalse(result["checks"]["restore_tested"])
 
+    def test_run_export_upload_proof_blocks_mismatched_upload_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package, archive = _export_run(tmp)
+            proof_path = Path(tmp) / "run-export-upload-proof.json"
+            proof = _proof(package=package, archive=archive)
+            proof["uploads"][0]["provider"] = "gs"
+            proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            result = verify_run_export_upload_proof(
+                package_path=package["path"],
+                archive_path=archive["path"],
+                proof_path=proof_path,
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["package_provider_matches"])
+        self.assertTrue(result["checks"]["archive_provider_matches"])
+
 
 def _export_run(tmp: str) -> tuple[dict, dict]:
     coordinator = RunCoordinator(_config(tmp))
