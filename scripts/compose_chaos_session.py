@@ -646,6 +646,10 @@ def _pod_ready(pod: dict[str, Any]) -> bool:
 
 
 def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
+    headers = {
+        "Content-Type": "application/json",
+        **_operator_headers(),
+    }
     payload = {
         "goal_id": "goal_default",
         "chaos_probe": True,
@@ -663,7 +667,7 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
     request = urllib.request.Request(
         f"{base_url}/api/runs",
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     request_timeout_seconds = float(os.environ.get("MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS", "90"))
@@ -686,7 +690,12 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
     while True:
         now = time.monotonic()
         try:
-            with urllib.request.urlopen(f"{base_url}/api/runs/{run_id}", timeout=request_timeout_seconds) as response:
+            poll_request = urllib.request.Request(
+                f"{base_url}/api/runs/{run_id}",
+                headers=_operator_headers(),
+                method="GET",
+            )
+            with urllib.request.urlopen(poll_request, timeout=request_timeout_seconds) as response:
                 current = json.loads(response.read().decode("utf-8"))
         except (TimeoutError, socket.timeout):
             request_timeouts += 1
@@ -731,6 +740,23 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
                 "timed_out": True,
             }
         time.sleep(2)
+
+
+def _operator_headers() -> dict[str, str]:
+    operator_header = os.environ.get("MESH_OPERATOR_HEADER", "X-Mesh-Operator")
+    roles_header = os.environ.get("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles")
+    operator_id = os.environ.get(
+        "MESH_STACK_CHAOS_OPERATOR_ID",
+        os.environ.get("MESH_E2E_OPERATOR_ID", "mesh-compose-chaos"),
+    )
+    operator_roles = os.environ.get(
+        "MESH_STACK_CHAOS_OPERATOR_ROLES",
+        os.environ.get("MESH_E2E_OPERATOR_ROLES", "launcher,viewer"),
+    )
+    return {
+        operator_header: operator_id,
+        roles_header: operator_roles,
+    }
 
 
 def _wait_for_mesh(base_url: str) -> None:

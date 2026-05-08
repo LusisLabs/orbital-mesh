@@ -236,6 +236,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_RUN_STAGE_GRACE_SECONDS` | `600` | Extra wait granted after `scenario_analysis_ready` or `evaluation_ready`, where native analysis and evaluation can stay busy longer |
 | `MESH_STACK_CHAOS_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one post-injection Mesh run wait, even when progress is observed |
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
+| `MESH_STACK_CHAOS_OPERATOR_ID` | `mesh-compose-chaos` | Operator id stamped onto Mesh run launch and polling requests from the compose chaos harness |
+| `MESH_STACK_CHAOS_OPERATOR_ROLES` | `launcher,viewer` | Operator roles stamped onto Mesh run launch and polling requests from the compose chaos harness |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
 | `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
 | `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |

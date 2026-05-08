@@ -89,6 +89,41 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertFalse(result["timed_out"])
         self.assertEqual(result["decision_type"], "rollback_deployment")
 
+    def test_run_launch_and_poll_use_operator_headers(self) -> None:
+        target = compose_chaos_session.Target(
+            context="mesh-compose",
+            namespace="search",
+            deployment="semantic-search",
+            substrate="container",
+        )
+        requests: list[Any] = []
+
+        def fake_urlopen(request: Any, timeout: float) -> _Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return _Response({"run_id": "run-1"}, status=201)
+            return _Response({
+                "stage": "completed",
+                "status": "completed",
+                "artifacts": {"decision": {"decision_type": "restart_deployment"}},
+            })
+
+        env = {
+            "MESH_STACK_CHAOS_OPERATOR_ID": "chaos-launcher@example.com",
+            "MESH_STACK_CHAOS_OPERATOR_ROLES": "launcher,viewer",
+            "MESH_STACK_CHAOS_RUN_WAIT_SECONDS": "5",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with mock.patch.object(compose_chaos_session.urllib.request, "urlopen", side_effect=fake_urlopen):
+                with mock.patch.object(compose_chaos_session.time, "monotonic", side_effect=[0.0, 0.0]):
+                    result = compose_chaos_session._launch_mesh_run("http://mesh:8787", target)
+
+        self.assertEqual(result["run_id"], "run-1")
+        self.assertEqual(len(requests), 2)
+        for request in requests:
+            self.assertEqual(request.get_header("X-mesh-operator"), "chaos-launcher@example.com")
+            self.assertEqual(request.get_header("X-mesh-roles"), "launcher,viewer")
+
     def test_session_summary_reports_breakthrough_probe_and_capability_gaps(self) -> None:
         path = compose_chaos_session.Path("/tmp/events.jsonl")
         events = [
