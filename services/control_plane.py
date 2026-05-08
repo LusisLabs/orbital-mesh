@@ -752,7 +752,7 @@ class RunCoordinator:
                 return self._readiness_cache[1]
         readiness = build_readiness(self.config).to_dict()
         with self._readiness_lock:
-            self._readiness_cache = (now, readiness)
+            self._readiness_cache = (time.monotonic(), readiness)
         return readiness
 
     def build_policy_lifecycle(self) -> dict[str, Any]:

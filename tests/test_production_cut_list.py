@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from typing import Any, Callable, cast
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -704,6 +705,28 @@ class ProductionComposeContractTests(unittest.TestCase):
 
 
 class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
+    def test_readiness_cache_timestamp_is_recorded_after_slow_probe(self) -> None:
+        class SlowReadiness:
+            def to_dict(self) -> dict[str, Any]:
+                return {"status": "ready", "profile": "pilot", "blockers": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            monotonic_values = iter([100.0, 115.0, 116.0])
+            try:
+                with (
+                    patch("services.control_plane.time.monotonic", side_effect=lambda: next(monotonic_values)),
+                    patch("services.control_plane.build_readiness", return_value=SlowReadiness()) as readiness_probe,
+                ):
+                    first = coordinator.build_readiness()
+                    second = coordinator.build_readiness()
+
+                self.assertEqual(first, {"status": "ready", "profile": "pilot", "blockers": []})
+                self.assertIs(second, first)
+                self.assertEqual(readiness_probe.call_count, 1)
+            finally:
+                coordinator.stop_background_workers()
+
     def test_pilot_go_no_go_requires_mesh_brain_kernel_live_canary_and_rollback_drill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release_provenance = Path(tmp) / "release-provenance.json"
