@@ -852,17 +852,17 @@ class RunCoordinator:
         on_call_drill = self._on_call_drill_record(readiness)
         runs = self.state_store.list_run_sessions(limit=100)
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
-        event_sets = {
-            session.run_id: self.state_store.list_run_events(session.run_id)
-            for session in observed_runs
-        }
+        approved_run_id_set = set(
+            self.state_store.list_run_ids_with_event_payload(
+                [session.run_id for session in observed_runs],
+                STEERING_COMMAND,
+                "command_type",
+                "approve",
+            )
+        )
         approved_runs = [
             session for session in observed_runs
-            if any(
-                event.event_type == STEERING_COMMAND
-                and event.payload.get("command_type") == "approve"
-                for event in event_sets.get(session.run_id, [])
-            )
+            if session.run_id in approved_run_id_set
         ]
         live_action_runs = [
             session for session in observed_runs

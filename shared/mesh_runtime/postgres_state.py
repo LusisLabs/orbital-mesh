@@ -259,6 +259,30 @@ class PostgresStateStore:
     def list_events(self, run_id: str) -> list[RunEvent]:
         return self.list_run_events(run_id)
 
+    def list_run_ids_with_event_payload(
+        self,
+        run_ids: list[str],
+        event_type: str,
+        payload_key: str,
+        payload_value: str,
+    ) -> list[str]:
+        if not run_ids:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT e.run_id, r.created_at
+                FROM run_events e
+                JOIN runs r ON r.run_id = e.run_id
+                WHERE e.run_id = ANY(%s)
+                  AND e.event_type = %s
+                  AND e.payload->>%s = %s
+                ORDER BY r.created_at DESC
+                """,
+                (run_ids, event_type, payload_key, payload_value),
+            ).fetchall()
+        return [str(row[0]) for row in rows]
+
     def get_merkle_snapshot(self, run_id: str):
         return build_merkle_snapshot(run_id, self.list_run_events(run_id))
 

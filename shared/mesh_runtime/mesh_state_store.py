@@ -68,6 +68,14 @@ class MeshStateStore(Protocol):
 
     def list_events(self, run_id: str) -> list[RunEvent]: ...
 
+    def list_run_ids_with_event_payload(
+        self,
+        run_ids: list[str],
+        event_type: str,
+        payload_key: str,
+        payload_value: str,
+    ) -> list[str]: ...
+
     def get_merkle_snapshot(self, run_id: str) -> MerkleSnapshot: ...
 
     def get_merkle_proof(self, run_id: str, event_id: str) -> MerkleProof | None: ...

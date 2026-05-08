@@ -349,6 +349,23 @@ class FileStateStore:
     def list_events(self, run_id: str) -> list[RunEvent]:
         return self.list_run_events(run_id)
 
+    def list_run_ids_with_event_payload(
+        self,
+        run_ids: list[str],
+        event_type: str,
+        payload_key: str,
+        payload_value: str,
+    ) -> list[str]:
+        matched: list[str] = []
+        for run_id in run_ids:
+            if any(
+                event.event_type == event_type
+                and event.payload.get(payload_key) == payload_value
+                for event in self.list_run_events(run_id)
+            ):
+                matched.append(run_id)
+        return matched
+
     def get_merkle_snapshot(self, run_id: str):
         events = self._load_run_events_from_disk(run_id)
         return build_merkle_snapshot(run_id, events)
