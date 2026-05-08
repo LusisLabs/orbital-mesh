@@ -241,6 +241,8 @@ REQUIRED_MARKERS = {
         "--image-ref",
         "--complete-release-provenance",
         "--env-output",
+        "MESH_IMAGE",
+        "MESH_STACK_IMAGE",
         "image_archive_sha256_match",
         "image_ref_digest_match",
         "env_output_artifacts_required",

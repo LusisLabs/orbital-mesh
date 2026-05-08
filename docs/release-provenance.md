@@ -182,6 +182,8 @@ scripts/verify_release_image_handoff.py \
 
 Generate the final `mesh.release_provenance.v1` packet from the handoff workflow's CI attestation, SBOM, vulnerability scan, release image digest, and the operator-controlled migration rehearsal proof before writing `dist/release-runtime.env`. The second handoff verification fails unless the loaded Docker image digest, final complete release packet commit, and final complete release packet image digest all match the handoff manifest. Then deploy the loaded image with the generated runtime env and rerun:
 
+The generated runtime env includes `MESH_IMAGE` and `MESH_STACK_IMAGE` set to the verified `--image-ref`, plus `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST`. Use that env file as a unit with the loaded image; do not copy only the commit and digest variables into a default-image deployment.
+
 ```bash
 scripts/verify_release_runtime_binding.py \
   --release-provenance dist/release-provenance-complete.json \

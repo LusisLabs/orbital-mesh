@@ -142,6 +142,7 @@ def verify_handoff(
             packet=packet,
             complete_release_provenance=complete_release_provenance,
             runtime_release_provenance_path=runtime_release_provenance_path,
+            image_ref=image_ref,
         )
     elif env_output is not None:
         result["resolved_paths"]["complete_release_provenance"] = None
@@ -357,8 +358,12 @@ def _runtime_env(
     packet: dict[str, Any],
     complete_release_provenance: Path,
     runtime_release_provenance_path: str,
+    image_ref: str,
 ) -> dict[str, str]:
+    verified_image_ref = image_ref.strip()
     return {
+        "MESH_IMAGE": verified_image_ref,
+        "MESH_STACK_IMAGE": verified_image_ref,
         "MESH_RELEASE_PROVENANCE_PATH": runtime_release_provenance_path or str(complete_release_provenance),
         "MESH_BUILD_COMMIT": str(_nested(packet, "git", "commit") or ""),
         "MESH_BUILD_IMAGE_DIGEST": str(_nested(packet, "image", "digest") or ""),

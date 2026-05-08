@@ -316,6 +316,8 @@ class ReleaseImageHandoffTests(unittest.TestCase):
                 env_output.read_text(encoding="utf-8"),
                 "\n".join(
                     [
+                        "MESH_IMAGE=orbital-mesh:handoff",
+                        "MESH_STACK_IMAGE=orbital-mesh:handoff",
                         "MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json",
                         f"MESH_BUILD_COMMIT={git_commit}",
                         f"MESH_BUILD_IMAGE_DIGEST={image_digest}",
