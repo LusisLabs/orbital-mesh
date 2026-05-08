@@ -102,6 +102,9 @@ def verify_release_runtime_binding(
         result["checks"]["image_ref_digest_match"] = image["digest_match"]
         if not image["digest_match"]:
             result["missing"].append("image_ref_digest_match")
+        else:
+            result["runtime_env"]["MESH_IMAGE"] = image_ref.strip()
+            result["runtime_env"]["MESH_STACK_IMAGE"] = image_ref.strip()
 
     if health_url:
         health = _health_record(

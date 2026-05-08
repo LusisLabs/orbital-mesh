@@ -300,6 +300,8 @@ REQUIRED_MARKERS = {
     ),
     "scripts/verify_release_runtime_binding.py": (
         "mesh.release_runtime_binding.v1",
+        "MESH_IMAGE",
+        "MESH_STACK_IMAGE",
         "MESH_BUILD_COMMIT",
         "MESH_BUILD_IMAGE_DIGEST",
         "--env-output",

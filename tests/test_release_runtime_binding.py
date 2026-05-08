@@ -137,6 +137,33 @@ class ReleaseRuntimeBindingTests(unittest.TestCase):
                 ],
             )
 
+    def test_generates_runtime_env_with_verified_image_ref(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            packet_path = Path(tmp) / "release-provenance.json"
+            packet_path.write_text(json.dumps(release_packet()) + "\n", encoding="utf-8")
+
+            def fake_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
+                payload = [
+                    {
+                        "Id": RELEASE_DIGEST,
+                        "RepoDigests": [f"registry.example/orbital-mesh@{RELEASE_DIGEST}"],
+                    }
+                ]
+                return subprocess.CompletedProcess(args, 0, stdout=json.dumps(payload), stderr="")
+
+            payload = verify_release_runtime_binding.verify_release_runtime_binding(
+                release_provenance=packet_path,
+                runtime_release_provenance_path="/app/.mesh-runtime-state/release-provenance.json",
+                image_ref="orbital-mesh:release",
+                runner=fake_runner,
+            )
+
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["runtime_env"]["MESH_IMAGE"], "orbital-mesh:release")
+            self.assertEqual(payload["runtime_env"]["MESH_STACK_IMAGE"], "orbital-mesh:release")
+            self.assertEqual(payload["runtime_env"]["MESH_BUILD_COMMIT"], RELEASE_COMMIT)
+            self.assertEqual(payload["runtime_env"]["MESH_BUILD_IMAGE_DIGEST"], RELEASE_DIGEST)
+
     def test_rejects_incomplete_packet_without_writing_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             packet_path = Path(tmp) / "release-provenance.json"
