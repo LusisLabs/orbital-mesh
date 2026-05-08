@@ -21,10 +21,14 @@ VERIFICATION_SCHEMA_VERSION = "mesh.authenticated_ingress_deployment_verificatio
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify deployed authenticated ingress proof for staging or pilot readiness.")
     parser.add_argument("--proof", required=True, help="Path to a mesh.authenticated_ingress_deployment_proof.v1 packet.")
+    parser.add_argument("--expected-environment", default="", help="Require the proof environment to match this value.")
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
-    payload = verify_authenticated_ingress_deployment_proof(args.proof)
+    payload = verify_authenticated_ingress_deployment_proof(
+        args.proof,
+        expected_environment=args.expected_environment,
+    )
     if (
         payload.get("schema_version") != AUTHENTICATED_INGRESS_DEPLOYMENT_VERIFICATION_VERSION
         or payload.get("schema_version") != VERIFICATION_SCHEMA_VERSION

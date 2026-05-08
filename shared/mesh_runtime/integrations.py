@@ -440,7 +440,8 @@ def _profile_checks(
             {
                 "operator_identity_required": runtime_config.operator_identity_required,
                 "authenticated_ingress_deployment_verified": authenticated_ingress_deployment_ready(
-                    runtime_config.authenticated_ingress_proof_path
+                    runtime_config.authenticated_ingress_proof_path,
+                    expected_environment=profile,
                 ),
                 "ownership_registry_configured": ownership_registry_ready(runtime_config.ownership_registry_path),
                 "connector_certification_registry_configured": connector_certification_registry_ready(

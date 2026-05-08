@@ -363,6 +363,7 @@ REQUIRED_MARKERS = {
     "scripts/verify_authenticated_ingress_deployment.py": (
         "mesh.authenticated_ingress_deployment_verification.v1",
         "--proof",
+        "--expected-environment",
         "verify_authenticated_ingress_deployment_proof",
     ),
     "docs/authenticated-ingress.md": (
@@ -1047,6 +1048,8 @@ REQUIRED_MARKERS = {
         "mesh.authenticated_ingress_deployment_proof.v1",
         "mesh.authenticated_ingress_deployment_verification.v1",
         "authenticated_ingress_deployment_ready",
+        "expected_environment",
+        "environment_matches_expected",
         "authenticated-ingress-deployment-proof.schema.json",
     ),
     "shared/mesh_runtime/backup_restore.py": (

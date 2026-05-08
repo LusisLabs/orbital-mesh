@@ -29,11 +29,22 @@ def load_authenticated_ingress_deployment_proof(path: str | Path | None) -> dict
     return payload
 
 
-def authenticated_ingress_deployment_ready(path: str | Path | None) -> bool:
-    return verify_authenticated_ingress_deployment_proof(path)["status"] == "pass"
+def authenticated_ingress_deployment_ready(
+    path: str | Path | None,
+    *,
+    expected_environment: str | None = None,
+) -> bool:
+    return (
+        verify_authenticated_ingress_deployment_proof(path, expected_environment=expected_environment)["status"]
+        == "pass"
+    )
 
 
-def verify_authenticated_ingress_deployment_proof(path: str | Path | None) -> dict[str, Any]:
+def verify_authenticated_ingress_deployment_proof(
+    path: str | Path | None,
+    *,
+    expected_environment: str | None = None,
+) -> dict[str, Any]:
     proof_path = Path(path) if path else None
     load_error: str | None = None
     try:
@@ -42,7 +53,7 @@ def verify_authenticated_ingress_deployment_proof(path: str | Path | None) -> di
         proof = None
         load_error = str(exc)
 
-    checks = _proof_checks(proof)
+    checks = _proof_checks(proof, expected_environment=expected_environment)
     if proof is None:
         checks["proof_present"] = False
     if load_error:
@@ -60,9 +71,10 @@ def verify_authenticated_ingress_deployment_proof(path: str | Path | None) -> di
     }
 
 
-def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
+def _proof_checks(proof: dict[str, Any] | None, *, expected_environment: str | None = None) -> dict[str, bool]:
+    expected_environment = (expected_environment or "").strip()
     if proof is None:
-        return {
+        checks = {
             "proof_present": False,
             "schema_valid": False,
             "nonlocal_environment": False,
@@ -77,10 +89,14 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
             "audit_identity_recorded": False,
             "no_raw_secret_material": False,
         }
-    return {
+        if expected_environment:
+            checks["environment_matches_expected"] = False
+        return checks
+    environment = str(proof.get("environment") or "").strip()
+    checks = {
         "proof_present": True,
         "schema_valid": True,
-        "nonlocal_environment": str(proof.get("environment") or "").strip() in _NONLOCAL_ENVIRONMENTS,
+        "nonlocal_environment": environment in _NONLOCAL_ENVIRONMENTS,
         "operator_present": bool(str(proof.get("operator_id") or "").strip()),
         "ingress_url_https": _https_url(str(proof.get("ingress_url") or "")),
         "tls_terminated": _tls_terminated(_section(proof, "tls")),
@@ -92,6 +108,9 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
         "audit_identity_recorded": _audit_identity_recorded(_section(proof, "audit")),
         "no_raw_secret_material": proof.get("raw_secret_material_present") is False,
     }
+    if expected_environment:
+        checks["environment_matches_expected"] = environment == expected_environment
+    return checks
 
 
 def _section(proof: dict[str, Any], name: str) -> dict[str, Any]:

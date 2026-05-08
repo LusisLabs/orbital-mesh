@@ -102,11 +102,21 @@ class AuthenticatedIngressDeploymentTests(unittest.TestCase):
             validate_payload("authenticated-ingress-deployment-proof.schema.json", payload)
             path.write_text(json.dumps(payload), encoding="utf-8")
 
-            result = verify_authenticated_ingress_deployment_proof(path)
+            result = verify_authenticated_ingress_deployment_proof(path, expected_environment="staging")
 
         self.assertEqual(result["schema_version"], "mesh.authenticated_ingress_deployment_verification.v1")
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
+
+    def test_authenticated_ingress_deployment_blocks_wrong_expected_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
+            path.write_text(json.dumps(_proof()), encoding="utf-8")
+
+            result = verify_authenticated_ingress_deployment_proof(path, expected_environment="pilot")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["environment_matches_expected"])
 
     def test_public_raw_service_blocks_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -137,10 +147,18 @@ class AuthenticatedIngressDeploymentTests(unittest.TestCase):
                 force=True,
             ).to_dict()
             ready = build_readiness(_runtime_config(tmp, proof_path=str(proof_path)), force=True).to_dict()
+            wrong_environment_path = Path(tmp) / "wrong-environment-ingress-proof.json"
+            wrong_environment_path.write_text(json.dumps(_proof(environment="pilot")), encoding="utf-8")
+            wrong_environment = build_readiness(
+                _runtime_config(tmp, proof_path=str(wrong_environment_path)),
+                force=True,
+            ).to_dict()
 
         self.assertEqual(blocked["status"], "blocked")
         self.assertIn("authenticated_ingress_deployment_verified", blocked["blockers"])
         self.assertTrue(ready["required_checks"]["authenticated_ingress_deployment_verified"])
+        self.assertEqual(wrong_environment["status"], "blocked")
+        self.assertIn("authenticated_ingress_deployment_verified", wrong_environment["blockers"])
 
     def test_cli_verifies_deployment_proof(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,6 +171,8 @@ class AuthenticatedIngressDeploymentTests(unittest.TestCase):
                     "scripts/verify_authenticated_ingress_deployment.py",
                     "--proof",
                     str(path),
+                    "--expected-environment",
+                    "staging",
                     "--json",
                 ],
                 check=True,

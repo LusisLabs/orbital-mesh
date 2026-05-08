@@ -30,11 +30,6 @@ RELEASE_IMAGE_DIGEST = f"sha256:{'c' * 64}"
 def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
     backup_restore_rehearsal_path = Path(tmp) / "backup-restore-rehearsal.json"
     authenticated_ingress_proof_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
-    if not authenticated_ingress_proof_path.exists():
-        authenticated_ingress_proof_path.write_text(
-            json.dumps(_authenticated_ingress_deployment_proof(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
     design_partner_packet_path = Path(tmp) / "design-partner-packet.json"
     if not design_partner_packet_path.exists():
         design_partner_packet_path.write_text(
@@ -61,6 +56,18 @@ def _config(tmp: str, **overrides: Any) -> RuntimeConfig:
                 _backup_restore_rehearsal(
                     environment=str(values.get("readiness_profile") or "local"),
                     state_backend=str(values.get("state_backend") or "file"),
+                ),
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    if not authenticated_ingress_proof_path.exists():
+        authenticated_ingress_proof_path.write_text(
+            json.dumps(
+                _authenticated_ingress_deployment_proof(
+                    environment=str(values.get("readiness_profile") or "local"),
                 ),
                 indent=2,
                 sort_keys=True,
@@ -250,12 +257,12 @@ def _backup_restore_rehearsal(*, environment: str = "staging", state_backend: st
     }
 
 
-def _authenticated_ingress_deployment_proof() -> dict[str, Any]:
+def _authenticated_ingress_deployment_proof(*, environment: str = "staging") -> dict[str, Any]:
     return {
         "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
         "proof_id": "authenticated_ingress_deployment_test",
         "generated_at": "2026-05-06T04:10:00Z",
-        "environment": "staging",
+        "environment": environment,
         "operator_id": "platform@example.com",
         "ingress_url": "https://mesh.staging.example.com",
         "tls": {
