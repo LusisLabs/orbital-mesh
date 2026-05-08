@@ -70,6 +70,7 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
                 "status": "awaiting_operator",
                 "artifacts": {"decision": {"decision_type": "rollback_deployment"}},
             }),
+            _Response({"stage": "cancelled", "status": "cancelled"}),
         ]
         env = {
             "MESH_STACK_CHAOS_RUN_WAIT_SECONDS": "1",
@@ -88,6 +89,44 @@ class ComposeChaosRunPollingTests(unittest.TestCase):
         self.assertEqual(result["status"], "awaiting_operator")
         self.assertFalse(result["timed_out"])
         self.assertEqual(result["decision_type"], "rollback_deployment")
+        self.assertTrue(result["released_after_score"])
+
+    def test_awaiting_operator_probe_run_is_cancelled_after_scoring(self) -> None:
+        target = compose_chaos_session.Target(
+            context="mesh-compose",
+            namespace="search",
+            deployment="semantic-search",
+            substrate="container",
+        )
+        requests: list[Any] = []
+
+        def fake_urlopen(request: Any, timeout: float) -> _Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return _Response({"run_id": "run-1"}, status=201)
+            if len(requests) == 2:
+                return _Response({
+                    "stage": "awaiting_operator",
+                    "status": "awaiting_operator",
+                    "artifacts": {"decision": {"decision_type": "rollback_deployment"}},
+                })
+            return _Response({"stage": "cancelled", "status": "cancelled"})
+
+        env = {
+            "MESH_STACK_CHAOS_OPERATOR_ID": "chaos-launcher@example.com",
+            "MESH_STACK_CHAOS_OPERATOR_ROLES": "launcher,viewer",
+            "MESH_STACK_CHAOS_RUN_WAIT_SECONDS": "5",
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with mock.patch.object(compose_chaos_session.urllib.request, "urlopen", side_effect=fake_urlopen):
+                with mock.patch.object(compose_chaos_session.time, "monotonic", side_effect=[0.0, 0.0]):
+                    result = compose_chaos_session._launch_mesh_run("http://mesh:8787", target)
+
+        self.assertEqual(result["decision_type"], "rollback_deployment")
+        self.assertTrue(result["released_after_score"])
+        self.assertEqual(requests[-1].full_url, "http://mesh:8787/api/runs/run-1/steer")
+        self.assertEqual(requests[-1].get_header("X-mesh-operator"), "chaos-launcher@example.com")
+        self.assertEqual(requests[-1].get_header("X-mesh-roles"), "launcher,viewer")
 
     def test_run_launch_and_poll_use_operator_headers(self) -> None:
         target = compose_chaos_session.Target(

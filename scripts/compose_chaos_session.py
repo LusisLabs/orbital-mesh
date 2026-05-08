@@ -720,11 +720,16 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
             deadline = min(hard_deadline, max(deadline, now + grace))
         if current.get("stage") in terminal:
             artifacts = current.get("artifacts") or {}
+            decision_type = (artifacts.get("decision") or {}).get("decision_type")
+            released = False
+            if current.get("stage") == "awaiting_operator":
+                released = _cancel_scored_probe_run(base_url, run_id, request_timeout_seconds)
             return {
                 "run_id": run_id,
                 "stage": current.get("stage"),
                 "status": current.get("status"),
-                "decision_type": (artifacts.get("decision") or {}).get("decision_type"),
+                "decision_type": decision_type,
+                "released_after_score": released,
                 "wait_elapsed_seconds": round(now - started, 3),
                 "request_timeouts": request_timeouts,
                 "timed_out": False,
@@ -740,6 +745,25 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
                 "timed_out": True,
             }
         time.sleep(2)
+
+
+def _cancel_scored_probe_run(base_url: str, run_id: str, request_timeout_seconds: float) -> bool:
+    payload = {"command": "cancel", "reason": "compose_chaos_probe_scored"}
+    request = urllib.request.Request(
+        f"{base_url}/api/runs/{run_id}/steer",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            **_operator_headers(),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=request_timeout_seconds) as response:
+            run = json.loads(response.read().decode("utf-8"))
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return False
+    return run.get("stage") in {"cancelled", "awaiting_operator"}
 
 
 def _operator_headers() -> dict[str, str]:

@@ -2779,6 +2779,8 @@ class RunCoordinator:
             return self.get_run(run_id) or session.to_dict()
         if command_type == "handoff":
             self._record_operator_handoff(run_id, session, command_payload, operator, command_event.event_id)
+        if command_type == "cancel":
+            self._release_run_admission(run_id)
         with control.condition:
             control.commands.append(command)
             control.condition.notify_all()
