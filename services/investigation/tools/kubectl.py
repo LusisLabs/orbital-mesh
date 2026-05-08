@@ -39,14 +39,14 @@ import shutil
 import subprocess
 from typing import Any
 
-from .harness import (
+from ..harness import (
     RawToolOutput,
     ToolDefinition,
     ToolRegistry,
 )
 
 
-KUBECTL_DOMAIN = "kubectl"
+DOMAIN = "kubectl"
 
 MAX_OUTPUT_BYTES = 64 * 1024  # 64 KiB per tool call
 
@@ -56,7 +56,7 @@ _BASE_ARGS_SCHEMA: dict[str, Any] = {
 }
 
 
-def kubectl_tool_definitions() -> list[ToolDefinition]:
+def _build_definitions() -> list[ToolDefinition]:
     get_args = {
         **_BASE_ARGS_SCHEMA,
         "resource_type": {"type": "str", "required": True},
@@ -91,7 +91,7 @@ def kubectl_tool_definitions() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name=name,
-            domain=KUBECTL_DOMAIN,
+            domain=DOMAIN,
             description=description,
             args_schema=dict(schemas[name]),
             mutation_class="read_only",
@@ -103,14 +103,14 @@ def kubectl_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-KUBECTL_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(kubectl_tool_definitions())
-KUBECTL_TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in KUBECTL_TOOL_DEFINITIONS)
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_definitions())
+TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in TOOL_DEFINITIONS)
 
 
 _NO_KUBECTL_PATH_PROVIDED = object()
 
 
-def register_kubectl_tools(
+def register(
     registry: ToolRegistry,
     *,
     kubectl_path: str | None = _NO_KUBECTL_PATH_PROVIDED,  # type: ignore[assignment]
@@ -130,7 +130,7 @@ def register_kubectl_tools(
         resolved_path = shutil.which("kubectl")
     else:
         resolved_path = kubectl_path or None
-    for definition in KUBECTL_TOOL_DEFINITIONS:
+    for definition in TOOL_DEFINITIONS:
         registry.register(
             definition,
             _make_kubectl_invoker(
@@ -258,7 +258,7 @@ def _failure(tool_name: str, message: str, *, argv: list[str] | None = None) -> 
     )
 
 
-def maybe_register_kubectl_at_root(registry: ToolRegistry) -> bool:
+def maybe_register_at_root(registry: ToolRegistry) -> bool:
     """Register kubectl tools at the engine root iff a kubeconfig is in scope.
 
     Returns True if registration happened. Used by the runtime engine
@@ -270,7 +270,7 @@ def maybe_register_kubectl_at_root(registry: ToolRegistry) -> bool:
         return False
     if shutil.which("kubectl") is None:
         return False
-    register_kubectl_tools(
+    register(
         registry,
         default_context=os.environ.get("MESH_KUBECTL_CONTEXT") or None,
         default_namespace=os.environ.get("MESH_KUBECTL_NAMESPACE") or None,

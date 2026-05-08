@@ -1,0 +1,127 @@
+{
+  "artifacts": {
+    "go_no_go": {
+      "checks_passed": true,
+      "error": null,
+      "generated_at": "2026-05-08T06:07:14.292512+00:00",
+      "missing_empty": true,
+      "missing_evidence": [],
+      "packet_version": "pilot.go_no_go.v1",
+      "packet_version_valid": true,
+      "status": "go",
+      "status_go": true,
+      "url": "/api/pilot/go-no-go"
+    },
+    "health": {
+      "commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+      "error": null,
+      "image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+      "status": "ok",
+      "status_ok": true,
+      "timestamp": "2026-05-08T06:06:40Z",
+      "url": "/api/health"
+    },
+    "readiness": {
+      "blockers": [],
+      "blockers_empty": true,
+      "checked_at": "2026-05-08T06:06:40Z",
+      "error": null,
+      "profile": "pilot",
+      "profile_pilot": true,
+      "ready": true,
+      "status": "ready",
+      "url": "/api/readiness"
+    },
+    "release_provenance": {
+      "complete": true,
+      "git_commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+      "image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+      "missing": [],
+      "packet_sha256": "07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6",
+      "path": "/workspace/orbital-mesh/.mesh-runtime-state/release-provenance.json",
+      "schema_version": "mesh.release_provenance.v1",
+      "status": "complete"
+    },
+    "runtime_binding": {
+      "build_commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+      "build_commit_match": true,
+      "expected_build_commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+      "expected_image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+      "image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+      "image_digest_match": true
+    }
+  },
+  "base_url": "http://127.0.0.1:8787",
+  "checklist": [
+    {
+      "artifact": "/api/health",
+      "checks": [
+        "health_status_ok"
+      ],
+      "requirement": "live control plane health",
+      "status": "pass"
+    },
+    {
+      "artifact": "/api/readiness",
+      "checks": [
+        "readiness_profile_pilot",
+        "readiness_ready",
+        "readiness_blockers_empty"
+      ],
+      "requirement": "pilot readiness profile",
+      "status": "pass"
+    },
+    {
+      "artifact": "/api/pilot/go-no-go",
+      "checks": [
+        "go_no_go_packet_version",
+        "go_no_go_status_go",
+        "go_no_go_missing_empty",
+        "go_no_go_checks_passed"
+      ],
+      "requirement": "pilot go/no-go packet",
+      "status": "pass"
+    },
+    {
+      "artifact": "/api/pilot/go-no-go.release_provenance",
+      "checks": [
+        "release_provenance_complete",
+        "release_git_commit",
+        "release_image_digest"
+      ],
+      "requirement": "release provenance packet",
+      "status": "pass"
+    },
+    {
+      "artifact": "/api/health + release_provenance",
+      "checks": [
+        "runtime_build_commit",
+        "runtime_image_digest",
+        "runtime_build_commit_match",
+        "runtime_image_digest_match"
+      ],
+      "requirement": "deployed runtime binding",
+      "status": "pass"
+    }
+  ],
+  "checks": {
+    "go_no_go_checks_passed": true,
+    "go_no_go_missing_empty": true,
+    "go_no_go_packet_version": true,
+    "go_no_go_status_go": true,
+    "health_status_ok": true,
+    "readiness_blockers_empty": true,
+    "readiness_profile_pilot": true,
+    "readiness_ready": true,
+    "release_git_commit": true,
+    "release_image_digest": true,
+    "release_provenance_complete": true,
+    "runtime_build_commit": true,
+    "runtime_build_commit_match": true,
+    "runtime_image_digest": true,
+    "runtime_image_digest_match": true
+  },
+  "missing": [],
+  "schema_version": "mesh.pilot_clearance_audit.v1",
+  "status": "pass"
+}

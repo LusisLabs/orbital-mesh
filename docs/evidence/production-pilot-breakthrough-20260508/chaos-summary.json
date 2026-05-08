@@ -1,0 +1,79 @@
+{
+  "breakthrough_probe": {
+    "ready": true,
+    "schema_version": "mesh.chaos_breakthrough_probe.v1",
+    "status": "breakthrough_signal",
+    "thresholds": {
+      "capability_axis_pass_rate": 0.85,
+      "correct_decision_rate": 0.85,
+      "detection_rate": 0.9,
+      "false_positive_rate_max": 0.1,
+      "pipeline_availability": 0.99
+    }
+  },
+  "capability_axis_counts": {
+    "failed_or_unproven": 0,
+    "known": 23,
+    "missing": 0,
+    "passed": 23
+  },
+  "events_path": ".mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl",
+  "events_sha256": "a36b41ec1c522001074cee76a7799f6b1dfa36734fb5e6328754f012b0aa3c9b",
+  "experiments_passed": 33,
+  "experiments_total": 36,
+  "generated_at": "2026-05-08T05:08:33.368402Z",
+  "metrics": {
+    "capability_axis_pass_rate": 1.0,
+    "correct_decision_rate": 1.0,
+    "detection_rate": 1.0,
+    "false_positive_rate": 0.1,
+    "pipeline_availability": 1.0
+  },
+  "multi_fault_coverage": {
+    "attempted": 4,
+    "experiments": [
+      "bad_image_untrusted_metric",
+      "memory_pressure_pod_churn",
+      "readiness_config_drift",
+      "zero_ready_after_churn"
+    ],
+    "known_experiments": [
+      "bad_image_untrusted_metric",
+      "memory_pressure_pod_churn",
+      "readiness_config_drift",
+      "zero_ready_after_churn"
+    ],
+    "missing_experiments": [],
+    "passed": 4
+  },
+  "schema_version": "mesh.chaos_breakthrough_evidence_summary.v1",
+  "source_path": ".mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json",
+  "source_sha256": "cbca52ebda6ed3ed0ab2460a0ef5a30bb0ebfb15d01451658f65403f0e17c262",
+  "substrate_coverage": {
+    "baremetal": {
+      "attempted": 7,
+      "experiments": [
+        "crash_loop",
+        "readiness_config_drift",
+        "scale_to_zero",
+        "zero_ready_after_churn"
+      ],
+      "passed": 4
+    },
+    "container": {
+      "attempted": 28,
+      "experiments": [
+        "bad_image_untrusted_metric",
+        "pod_kill_one"
+      ],
+      "passed": 28
+    },
+    "vm": {
+      "attempted": 1,
+      "experiments": [
+        "memory_pressure_pod_churn"
+      ],
+      "passed": 1
+    }
+  }
+}

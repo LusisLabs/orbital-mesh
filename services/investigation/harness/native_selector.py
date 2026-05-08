@@ -139,6 +139,56 @@ class ProbeRulePack(Protocol):
     def sufficient_root_cause(self, index: ObservationIndex) -> RootCauseCandidate | None: ...
 
 
+class GenericRulePack:
+    """Catch-all rule pack for triggers without a domain-specific pack.
+
+    The harness loop should fire on every production incident, not
+    just CloudOpsBench scenarios. This pack provides a baseline shape
+    for trigger types Mesh has no bespoke rules for yet
+    (otel_metric_regression, feature_flag_performance_regression,
+    kubernetes_deployment_unhealthy, webhook_alert_firing). It carries
+    no native rules — the LLM planner is the only chooser — but
+    plugs the CloudOps RCA ontology in as a default ranker so
+    matched-pattern stop conditions still fire when an LLM-driven
+    investigation surfaces canonical Kubernetes / DB / runtime fault
+    signatures.
+
+    Without this pack, the native selector would have nothing to
+    plan and the LLM selector would fall back to its rule_pack's
+    declared domain — which previously meant "no harness for non-
+    CloudOps triggers." With it, the harness is auto-wired across
+    every trigger type.
+    """
+
+    domain: str = "generic"
+    tool_definitions: Sequence[ToolDefinition] = ()
+    rules: Sequence["ProbeRule"] = ()
+    sufficient_stop_reason: str = "generic_root_cause_candidate_found"
+    exhausted_stop_reason: str = "generic_no_rules"
+
+    def __init__(self) -> None:
+        # CloudOps ontology is general k8s / runtime / DB / network
+        # patterns that appear in production logs and tool outputs
+        # regardless of trigger source. Plugging it in as the default
+        # ranker means generic triggers still get canonical
+        # ``RootCauseCandidate``s when matched.
+        from services.investigation.cloudops_ontology import rank_root_causes
+
+        self.root_cause_ranker: RootCauseRanker | None = rank_root_causes
+
+    def sufficient_root_cause(self, index: ObservationIndex) -> RootCauseCandidate | None:
+        # Stop early when the ontology is highly confident — the LLM
+        # has gathered enough evidence and a canonical label is a
+        # better anchor for downstream HypothesisEngine ranking than
+        # more redundant tool calls.
+        if not index.root_cause_candidates:
+            return None
+        top = index.root_cause_candidates[0]
+        if top.confidence >= 0.85:
+            return top
+        return None
+
+
 class NativeProbeSelector:
     """LoopPlanner implementation backed by typed probe rules."""
 

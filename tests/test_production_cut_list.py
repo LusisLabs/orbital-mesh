@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from typing import Any, Callable, cast
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -94,7 +95,7 @@ def _record_generic_pilot_evidence(coordinator: RunCoordinator) -> None:
         artifacts={
             "decision": {"execution_plan": {"rollback_plan": "roll back deployment revision"}},
             "evaluation": {"blocking_reasons": ["approval required before execution"]},
-            "execution": {"external_refs": {"live_execution": True}},
+            "execution": {"status": "succeeded", "external_refs": {"live_execution": True}},
         },
     )
     coordinator.state_store.append_run_event(
@@ -185,6 +186,15 @@ def _record_completed_probe(coordinator: RunCoordinator, scenario_key: str, arti
     current.stage = "completed"
     current.status = "completed"
     coordinator.state_store.save_run_session(current)
+
+
+def _record_filler_runs(coordinator: RunCoordinator, count: int) -> None:
+    for index in range(count):
+        _record_completed_probe(
+            coordinator,
+            f"filler_probe_{index:03d}",
+            {"filler": {"index": index}},
+        )
 
 
 def _hashed_refs(key: str) -> dict[str, dict[str, str]]:
@@ -704,6 +714,28 @@ class ProductionComposeContractTests(unittest.TestCase):
 
 
 class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
+    def test_readiness_cache_timestamp_is_recorded_after_slow_probe(self) -> None:
+        class SlowReadiness:
+            def to_dict(self) -> dict[str, Any]:
+                return {"status": "ready", "profile": "pilot", "blockers": []}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            monotonic_values = iter([100.0, 115.0, 116.0])
+            try:
+                with (
+                    patch("services.control_plane.time.monotonic", side_effect=lambda: next(monotonic_values)),
+                    patch("services.control_plane.build_readiness", return_value=SlowReadiness()) as readiness_probe,
+                ):
+                    first = coordinator.build_readiness()
+                    second = coordinator.build_readiness()
+
+                self.assertEqual(first, {"status": "ready", "profile": "pilot", "blockers": []})
+                self.assertIs(second, first)
+                self.assertEqual(readiness_probe.call_count, 1)
+            finally:
+                coordinator.stop_background_workers()
+
     def test_pilot_go_no_go_requires_mesh_brain_kernel_live_canary_and_rollback_drill(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             release_provenance = Path(tmp) / "release-provenance.json"
@@ -760,6 +792,87 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertEqual(len(packet["observed"]["mesh_brain_model_kernel_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_rollback_drill_run_ids"]), 1)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_failed_live_action_as_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                runs = coordinator.state_store.list_run_sessions()
+                generic = next(run for run in runs if run.scenario_key == "search_latency_regression")
+                generic.artifacts["execution"] = {
+                    "status": "failed",
+                    "external_refs": {"live_execution": True},
+                    "failure": {"reason": "kubernetes_live_execution_failed"},
+                }
+                coordinator.state_store.save_run_session(generic)
+                _record_mesh_brain_gate_evidence(coordinator)
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64))
+                    + "\n",
+                    encoding="utf-8",
+                )
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("live_action_proof_observed", packet["missing_evidence"])
+                self.assertEqual(packet["observed"]["live_action_run_ids"], [])
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_keeps_retained_evidence_outside_hot_session_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64))
+                    + "\n",
+                    encoding="utf-8",
+                )
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                _record_filler_runs(coordinator, 125)
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "go")
+                self.assertEqual(packet["missing_evidence"], [])
+                self.assertGreater(packet["observed"]["run_count"], 100)
+                self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
+                self.assertEqual(packet["observed"]["mesh_brain_canary_lanes"], [{"tenant_id": "tenant_a", "task_type": "crops"}])
             finally:
                 coordinator.stop_background_workers()
 

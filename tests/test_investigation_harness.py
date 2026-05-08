@@ -221,7 +221,7 @@ class HarnessLoopTests(unittest.TestCase):
 
 class CloudOpsNativeSelectorTests(unittest.TestCase):
     def test_selector_follows_observed_crashloop_signal_and_records_reasons(self) -> None:
-        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+        from services.investigation.tools.cloudops import CloudOpsLoopPlanner, register as register_cloudops_tools
 
         snapshot = _CloudOpsSnapshot(
             {
@@ -249,7 +249,7 @@ class CloudOpsNativeSelectorTests(unittest.TestCase):
         self.assertEqual(state.stop_reason, "root_cause_candidate_found")
 
     def test_selector_stops_when_evidence_value_is_exhausted(self) -> None:
-        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+        from services.investigation.tools.cloudops import CloudOpsLoopPlanner, register as register_cloudops_tools
 
         snapshot = _CloudOpsSnapshot({"GetResources": "frontend 1/1 Running"})
         registry = ToolRegistry()
@@ -268,7 +268,7 @@ class CloudOpsNativeSelectorTests(unittest.TestCase):
         self.assertEqual(state.stop_reason, "evidence_value_exhausted")
 
     def test_selector_stops_on_sufficient_rca_confidence(self) -> None:
-        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, register_cloudops_tools
+        from services.investigation.tools.cloudops import CloudOpsLoopPlanner, register as register_cloudops_tools
 
         snapshot = _CloudOpsSnapshot(
             {
@@ -294,7 +294,7 @@ class CloudOpsNativeSelectorTests(unittest.TestCase):
         self.assertEqual(state.planner_decisions[-1]["debug"]["top_root_cause"]["root_cause"], "incorrect_image_reference")
 
     def test_llm_selector_is_gated_and_shadowed_behind_native_selector(self) -> None:
-        from services.investigation.cloudops_tools import CloudOpsLoopPlanner, CloudOpsRulePack
+        from services.investigation.tools.cloudops import CloudOpsLoopPlanner, CloudOpsRulePack
 
         rule_pack = CloudOpsRulePack(_cloudops_trigger())
         disabled = LlmProbeSelector(rule_pack)
@@ -323,7 +323,7 @@ class CloudOpsNativeSelectorTests(unittest.TestCase):
 
 class RethPeerStarvationPortTests(unittest.TestCase):
     def test_planner_branches_on_peer_count_and_stops_after_logs(self) -> None:
-        from services.investigation.reth_tools import register_reth_tools, RethLoopPlanner
+        from services.investigation.tools.reth import register as register_reth_tools, RethLoopPlanner
 
         signal = {
             "execution": {"peer_count": 0, "min_peer_count": 1, "syncing": True, "block_lag": 7},
@@ -366,7 +366,7 @@ class LlmProbeSelectorCrossDomainTests(unittest.TestCase):
     """
 
     def _cloudops_pack_with_extras(self) -> tuple[Any, list[ToolDefinition]]:
-        from services.investigation.cloudops_tools import CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
+        from services.investigation.tools.cloudops import TOOL_DEFINITIONS as CLOUDOPS_TOOL_DEFINITIONS, CloudOpsRulePack
 
         rule_pack = CloudOpsRulePack(_cloudops_trigger())
         prometheus_def = ToolDefinition(
@@ -491,6 +491,248 @@ class LlmProbeSelectorCrossDomainTests(unittest.TestCase):
         self.assertNotIn("cloudops:dangerous", selector._tool_definitions)
 
 
+class AutoWireHarnessTests(unittest.TestCase):
+    """Mesh's agentic surface fires on every production trigger, not
+    just CloudOpsBench scenarios. ``_auto_wire_investigation_harness``
+    has three paths — these tests pin which path fires for which
+    trigger and confirm the production-default safety floor: when no
+    LLM is configured, non-CloudOps triggers fall through to the
+    legacy deterministic path.
+    """
+
+    def _config(self, **overrides: Any) -> Any:
+        from shared.mesh_runtime.config import RuntimeConfig
+
+        defaults = {
+            "state_directory": "/tmp",
+            "evaluation_mode": "native",
+            "orchestration_mode": "native",
+        }
+        defaults.update(overrides)
+        return RuntimeConfig(**defaults)
+
+    def _trigger(self, trigger_type: str, **overrides: Any) -> Trigger:
+        defaults = {
+            "trigger_id": f"trg_{trigger_type}",
+            "trigger_type": trigger_type,
+            "triggered_at": "2026-05-08T00:00:00Z",
+            "environment": "prod",
+            "service": "frontend",
+            "endpoint": "/",
+            "flag_key": None,
+            "current_rollout_pct": None,
+            "comparison_window": None,
+            "segment": {},
+            "metrics": {},
+            "related_context": {},
+        }
+        defaults.update(overrides)
+        return Trigger(**defaults)
+
+    def _root_with_kubectl_stub(self) -> ToolRegistry:
+        # Simulate a deployment where kubectl auto-registered at root.
+        root = ToolRegistry()
+        root.register(
+            ToolDefinition(
+                name="kubectl_get",
+                domain="kubectl",
+                description="stub",
+                args_schema={},
+                mutation_class="read_only",
+            ),
+            lambda _a: RawToolOutput(output_summary="ok", valid=True),
+        )
+        return root
+
+    def test_cloudopsbench_path_fires_for_snapshot_signal(self) -> None:
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config()
+        trigger = self._trigger("otel_metric_regression")
+        raw_signal = {"cloudopsbench_snapshot": {"some_key": "x"}}
+        registry, planner = _auto_wire_investigation_harness(
+            raw_signal, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNotNone(registry)
+        self.assertIsNotNone(planner)
+        # Path 1 builds CloudOps planner (deterministic, no LLM configured)
+        self.assertEqual(planner.domain, "cloudops")
+
+    def test_reth_path_fires_for_reth_node_degraded_trigger(self) -> None:
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config()
+        trigger = self._trigger("reth_node_degraded")
+        raw_signal = {
+            "execution": {"peer_count": 0, "min_peer_count": 1, "syncing": True},
+            "consensus": {"engine_api_reachable": False, "client_kind": "lighthouse"},
+            "logs": {"error_signatures": ["consensus_disconnected"]},
+            "rpc": {"http_reachable": True},
+        }
+        registry, planner = _auto_wire_investigation_harness(
+            raw_signal, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNotNone(registry)
+        self.assertIsNotNone(planner)
+        # Path 2: Reth domain pack registered (deterministic without LLM)
+        self.assertEqual(planner.domain, "reth")
+        # Root tools are overlaid alongside Reth tools
+        self.assertIsNotNone(registry.get("kubectl", "kubectl_get"))
+        self.assertIsNotNone(registry.get("reth", "read_peer_sync"))
+
+    def test_generic_path_with_llm_observer_fires_for_otel_regression(self) -> None:
+        # Production path: LLM observer configured + non-CloudOps,
+        # non-Reth trigger → harness should auto-wire with the
+        # generic rule pack, giving the LLM the full read-only
+        # tool surface.
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config(
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-test",
+            observer_model="gpt-4-turbo",
+            observer_base_url="https://api.openai.com/v1",
+        )
+        trigger = self._trigger("otel_metric_regression")
+        registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+
+        self.assertIsNotNone(registry)
+        self.assertIsNotNone(planner)
+        self.assertEqual(planner.domain, "generic")
+        # The LLM planner can see every read-only tool in the merged registry
+        self.assertIn("kubectl:kubectl_get", planner._tool_definitions)
+
+    def test_generic_path_with_llm_observer_fires_for_feature_flag_regression(self) -> None:
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config(
+            observer_enabled=True,
+            observer_provider="anthropic",
+            observer_api_key="sk-ant-test",
+            observer_model="claude-haiku-4-5-20251001",
+        )
+        trigger = self._trigger("feature_flag_performance_regression", flag_key="search_v2", current_rollout_pct=50)
+        registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNotNone(planner)
+        self.assertEqual(planner.domain, "generic")
+
+    def test_generic_path_with_llm_observer_fires_for_kubernetes_unhealthy(self) -> None:
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config(
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-test",
+            observer_model="gpt-4",
+        )
+        trigger = self._trigger("kubernetes_deployment_unhealthy")
+        _registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNotNone(planner)
+        self.assertEqual(planner.domain, "generic")
+
+    def test_generic_path_with_llm_observer_fires_for_webhook_alert(self) -> None:
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config(
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-test",
+            observer_model="gpt-4",
+        )
+        trigger = self._trigger("webhook_alert_firing")
+        _registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNotNone(planner)
+        self.assertEqual(planner.domain, "generic")
+
+    def test_generic_path_disabled_when_no_llm(self) -> None:
+        # Safety floor: without an LLM observer configured, non-domain
+        # triggers fall through to the legacy deterministic path. We
+        # never spin up a harness with no chooser — that would just
+        # return ``stop`` on the first iteration and waste a probe budget.
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config()  # no observer_enabled
+        trigger = self._trigger("otel_metric_regression")
+        registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=self._root_with_kubectl_stub()
+        )
+        self.assertIsNone(registry)
+        self.assertIsNone(planner)
+
+    def test_generic_path_disabled_when_root_has_no_tools(self) -> None:
+        # If a deployment doesn't configure any diagnostic packs
+        # (no kubectl, no Prometheus, no GitHub, no anything), the
+        # LLM has nothing to call — return None so the legacy path
+        # remains the safety floor.
+        from services.runtime import _auto_wire_investigation_harness
+
+        cfg = self._config(
+            observer_enabled=True,
+            observer_provider="openai",
+            observer_api_key="sk-test",
+            observer_model="gpt-4",
+        )
+        empty_root = ToolRegistry()
+        trigger = self._trigger("otel_metric_regression")
+        registry, planner = _auto_wire_investigation_harness(
+            {}, trigger, cfg, root_registry=empty_root
+        )
+        self.assertIsNone(registry)
+        self.assertIsNone(planner)
+
+
+class GenericRulePackTests(unittest.TestCase):
+    def test_generic_pack_has_no_rules_and_no_domain_tools(self) -> None:
+        from services.investigation.harness import GenericRulePack
+
+        pack = GenericRulePack()
+        self.assertEqual(pack.domain, "generic")
+        self.assertEqual(tuple(pack.rules), ())
+        self.assertEqual(tuple(pack.tool_definitions), ())
+
+    def test_generic_pack_stops_when_ranker_emits_high_confidence_candidate(self) -> None:
+        from services.investigation.harness import GenericRulePack
+        from services.investigation.harness.native_selector import ObservationIndex
+
+        pack = GenericRulePack()
+        index = ObservationIndex.from_state(
+            state=InvestigationLoopState(
+                trigger_id="t",
+                observed_text=["frontend 0/1 ImagePullBackOff", "Reason: ErrImagePull manifest unknown"],
+            ),
+            trigger_context={},
+            root_cause_ranker=pack.root_cause_ranker,
+        )
+        candidate = pack.sufficient_root_cause(index)
+        self.assertIsNotNone(candidate)
+        assert candidate is not None
+        self.assertEqual(candidate.root_cause, "incorrect_image_reference")
+
+    def test_generic_pack_does_not_stop_on_weak_signal(self) -> None:
+        from services.investigation.harness import GenericRulePack
+        from services.investigation.harness.native_selector import ObservationIndex
+
+        pack = GenericRulePack()
+        index = ObservationIndex.from_state(
+            state=InvestigationLoopState(
+                trigger_id="t",
+                observed_text=["nothing useful here"],
+            ),
+            trigger_context={},
+            root_cause_ranker=pack.root_cause_ranker,
+        )
+        self.assertIsNone(pack.sufficient_root_cause(index))
+
+
 class _CloudOpsSnapshotCall:
     def __init__(self, *, valid: bool) -> None:
         self.valid = valid
@@ -537,9 +779,9 @@ class PrometheusToolPackTests(unittest.TestCase):
     """
 
     def test_instant_query_produces_valid_tool_result(self) -> None:
-        from services.investigation.prometheus_tools import (
-            PrometheusInstantPlanner,
-            register_prometheus_tools,
+        from services.investigation.tools.prometheus import (
+            InstantPlanner as PrometheusInstantPlanner,
+            register as register_prometheus_tools,
         )
 
         class StubClient:
@@ -567,9 +809,9 @@ class PrometheusToolPackTests(unittest.TestCase):
         self.assertIn("0.42", state.tool_results[0].output_summary)
 
     def test_instant_query_with_no_data_marks_result_invalid(self) -> None:
-        from services.investigation.prometheus_tools import (
-            PrometheusInstantPlanner,
-            register_prometheus_tools,
+        from services.investigation.tools.prometheus import (
+            InstantPlanner as PrometheusInstantPlanner,
+            register as register_prometheus_tools,
         )
 
         class EmptyClient:
@@ -600,7 +842,7 @@ class AwsToolPackTests(unittest.TestCase):
     """
 
     def test_read_only_verb_check_accepts_snake_and_camel(self) -> None:
-        from services.investigation.aws_tools import _is_read_only_operation
+        from services.investigation.tools.aws import _is_read_only_operation
 
         for ok in ("describe_instances", "get_role", "list_buckets", "ListBuckets", "DescribeInstances", "GetRole", "search_resources"):
             self.assertTrue(_is_read_only_operation(ok), ok)
@@ -612,7 +854,7 @@ class AwsToolPackTests(unittest.TestCase):
         # credential/private gets its value blanket-redacted, even if
         # the value is a dict. Conservative-by-default — over-redaction
         # is a safer error than leaking a single nested secret.
-        from services.investigation.aws_tools import _redact_aws_response
+        from services.investigation.tools.aws import _redact_aws_response
 
         payload = {
             "Region": "us-east-1",
@@ -628,7 +870,7 @@ class AwsToolPackTests(unittest.TestCase):
         self.assertEqual(redacted["Items"][0]["Name"], "ok")
 
     def test_invocation_with_mutating_verb_is_rejected(self) -> None:
-        from services.investigation.aws_tools import AWS_TOOL_DEFINITIONS, register_aws_tools
+        from services.investigation.tools.aws import TOOL_DEFINITIONS as AWS_TOOL_DEFINITIONS, register as register_aws_tools
 
         registry = ToolRegistry()
         register_aws_tools(registry)
@@ -676,7 +918,7 @@ class KubectlToolPackTests(unittest.TestCase):
     def test_kubectl_get_builds_correct_argv(self) -> None:
         import tempfile
 
-        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+        from services.investigation.tools.kubectl import TOOL_DEFINITIONS as KUBECTL_TOOL_DEFINITIONS, register as register_kubectl_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_kubectl(tmp, stdout="frontend 1/1 Running")
@@ -699,7 +941,7 @@ class KubectlToolPackTests(unittest.TestCase):
     def test_kubectl_describe_requires_name(self) -> None:
         import tempfile
 
-        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+        from services.investigation.tools.kubectl import TOOL_DEFINITIONS as KUBECTL_TOOL_DEFINITIONS, register as register_kubectl_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_kubectl(tmp, stdout="ok")
@@ -714,7 +956,7 @@ class KubectlToolPackTests(unittest.TestCase):
     def test_kubectl_logs_uses_default_tail_when_unspecified(self) -> None:
         import tempfile
 
-        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+        from services.investigation.tools.kubectl import TOOL_DEFINITIONS as KUBECTL_TOOL_DEFINITIONS, register as register_kubectl_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_kubectl(tmp, stdout="log line")
@@ -729,7 +971,7 @@ class KubectlToolPackTests(unittest.TestCase):
             self.assertEqual(argvs[0][tail_idx + 1], "200")
 
     def test_kubectl_missing_binary_returns_clean_failure(self) -> None:
-        from services.investigation.kubectl_tools import KUBECTL_TOOL_DEFINITIONS, register_kubectl_tools
+        from services.investigation.tools.kubectl import TOOL_DEFINITIONS as KUBECTL_TOOL_DEFINITIONS, register as register_kubectl_tools
 
         registry = ToolRegistry()
         register_kubectl_tools(registry, kubectl_path="")
@@ -774,7 +1016,7 @@ class GithubToolPackTests(unittest.TestCase):
     def test_recent_commits_builds_get_argv(self) -> None:
         import tempfile
 
-        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+        from services.investigation.tools.github import TOOL_DEFINITIONS as GITHUB_TOOL_DEFINITIONS, register as register_github_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_gh(tmp, stdout='[{"sha":"abc"}]')
@@ -799,7 +1041,7 @@ class GithubToolPackTests(unittest.TestCase):
     def test_pr_diff_uses_diff_accept_header(self) -> None:
         import tempfile
 
-        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+        from services.investigation.tools.github import TOOL_DEFINITIONS as GITHUB_TOOL_DEFINITIONS, register as register_github_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_gh(tmp, stdout="diff --git a/x b/x\n")
@@ -817,7 +1059,7 @@ class GithubToolPackTests(unittest.TestCase):
     def test_search_code_repo_qualifier_added_to_query(self) -> None:
         import tempfile
 
-        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+        from services.investigation.tools.github import TOOL_DEFINITIONS as GITHUB_TOOL_DEFINITIONS, register as register_github_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_gh(tmp, stdout='{"total_count":0,"items":[]}')
@@ -832,7 +1074,7 @@ class GithubToolPackTests(unittest.TestCase):
             self.assertIn("TODO", url)
 
     def test_invalid_repo_returns_failure(self) -> None:
-        from services.investigation.github_tools import GITHUB_TOOL_DEFINITIONS, register_github_tools
+        from services.investigation.tools.github import TOOL_DEFINITIONS as GITHUB_TOOL_DEFINITIONS, register as register_github_tools
 
         registry = ToolRegistry()
         register_github_tools(registry, gh_path="/no/such/binary")
@@ -881,7 +1123,7 @@ class LokiJaegerToolPackTests(unittest.TestCase):
         self._thread.join(timeout=1.0)
 
     def test_loki_query_range_uses_nanosecond_timestamps(self) -> None:
-        from services.investigation.loki_jaeger_tools import LOKI_TOOL_DEFINITIONS, register_loki_tools
+        from services.investigation.tools.loki import TOOL_DEFINITIONS as LOKI_TOOL_DEFINITIONS, register as register_loki_tools
 
         registry = ToolRegistry()
         register_loki_tools(registry, base_url=self.base_url)
@@ -899,7 +1141,7 @@ class LokiJaegerToolPackTests(unittest.TestCase):
         self.assertGreater(int(query["end"][0]), 10**15)
 
     def test_jaeger_get_traces_passes_microsecond_window(self) -> None:
-        from services.investigation.loki_jaeger_tools import JAEGER_TOOL_DEFINITIONS, register_jaeger_tools
+        from services.investigation.tools.jaeger import TOOL_DEFINITIONS as JAEGER_TOOL_DEFINITIONS, register as register_jaeger_tools
 
         registry = ToolRegistry()
         register_jaeger_tools(registry, base_url=self.base_url)
@@ -916,7 +1158,7 @@ class LokiJaegerToolPackTests(unittest.TestCase):
         self.assertGreater(int(query["start"][0]), 10**12)
 
     def test_loki_invalid_query_short_circuits(self) -> None:
-        from services.investigation.loki_jaeger_tools import LOKI_TOOL_DEFINITIONS, register_loki_tools
+        from services.investigation.tools.loki import TOOL_DEFINITIONS as LOKI_TOOL_DEFINITIONS, register as register_loki_tools
 
         registry = ToolRegistry()
         register_loki_tools(registry, base_url=self.base_url)
@@ -961,7 +1203,7 @@ class PostgresToolPackTests(unittest.TestCase):
     def test_describe_table_passes_backslash_d_to_psql(self) -> None:
         import tempfile
 
-        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+        from services.investigation.tools.postgres import TOOL_DEFINITIONS as PG_TOOL_DEFINITIONS, register as register_pg_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_psql(tmp, stdout="Column | Type")
@@ -977,7 +1219,7 @@ class PostgresToolPackTests(unittest.TestCase):
             self.assertIn("public.users", joined)
 
     def test_describe_table_rejects_injection_attempt(self) -> None:
-        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+        from services.investigation.tools.postgres import TOOL_DEFINITIONS as PG_TOOL_DEFINITIONS, register as register_pg_tools
 
         registry = ToolRegistry()
         register_pg_tools(registry, dsn="postgres://x@y/z", psql_path="/no/binary")
@@ -989,7 +1231,7 @@ class PostgresToolPackTests(unittest.TestCase):
             self.assertEqual(result.status, "failed", malicious)
 
     def test_explain_rejects_dml_verbs(self) -> None:
-        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+        from services.investigation.tools.postgres import TOOL_DEFINITIONS as PG_TOOL_DEFINITIONS, register as register_pg_tools
 
         registry = ToolRegistry()
         register_pg_tools(registry, dsn="postgres://x@y/z", psql_path="/no/binary")
@@ -1003,7 +1245,7 @@ class PostgresToolPackTests(unittest.TestCase):
     def test_explain_accepts_select(self) -> None:
         import tempfile
 
-        from services.investigation.db_tools import PG_TOOL_DEFINITIONS, register_pg_tools
+        from services.investigation.tools.postgres import TOOL_DEFINITIONS as PG_TOOL_DEFINITIONS, register as register_pg_tools
 
         with tempfile.TemporaryDirectory() as tmp:
             fake = self._make_fake_psql(tmp, stdout="Seq Scan on foo")
@@ -1032,7 +1274,7 @@ class MCPBridgeTests(unittest.TestCase):
         raise_on_list: bool = False,
         raise_on_call: bool = False,
     ) -> Any:
-        from services.investigation.mcp_tools import MCPToolMeta
+        from services.investigation.tools.mcp import MCPToolMeta
 
         class StubMCPClient:
             def __init__(self) -> None:
@@ -1052,7 +1294,7 @@ class MCPBridgeTests(unittest.TestCase):
         return StubMCPClient()
 
     def test_advertised_tools_become_registered_tool_definitions(self) -> None:
-        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+        from services.investigation.tools.mcp import MCPToolMeta, register as register_mcp_tools
 
         tools = [
             MCPToolMeta(
@@ -1076,7 +1318,7 @@ class MCPBridgeTests(unittest.TestCase):
         self.assertEqual(defn.args_schema["query"], {"type": "str", "required": True})
 
     def test_invocation_routes_through_client_and_records_result(self) -> None:
-        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+        from services.investigation.tools.mcp import MCPToolMeta, register as register_mcp_tools
 
         tools = [
             MCPToolMeta(
@@ -1099,7 +1341,7 @@ class MCPBridgeTests(unittest.TestCase):
         self.assertIn("log line 1", result.output_summary)
 
     def test_allowlist_filters_advertised_tools(self) -> None:
-        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+        from services.investigation.tools.mcp import MCPToolMeta, register as register_mcp_tools
 
         tools = [
             MCPToolMeta(name=f"tool_{i}", description="x", input_schema={"type": "object", "properties": {}})
@@ -1116,7 +1358,7 @@ class MCPBridgeTests(unittest.TestCase):
         # Critical safety property: an MCP server can advertise anything,
         # but the bridge must default to read-only. Operators must
         # explicitly opt in mutating tools.
-        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+        from services.investigation.tools.mcp import MCPToolMeta, register as register_mcp_tools
 
         tools = [
             MCPToolMeta(name="read_thing", description="x", input_schema={"type": "object", "properties": {}}),
@@ -1134,7 +1376,7 @@ class MCPBridgeTests(unittest.TestCase):
         self.assertEqual(registered, ["mcp:x__read_thing"])
 
     def test_list_tools_failure_returns_empty_not_exception(self) -> None:
-        from services.investigation.mcp_tools import register_mcp_tools
+        from services.investigation.tools.mcp import register as register_mcp_tools
 
         client = self._make_stub_client([], raise_on_list=True)
         registry = ToolRegistry()
@@ -1142,7 +1384,7 @@ class MCPBridgeTests(unittest.TestCase):
         self.assertEqual(registered, [])
 
     def test_call_failure_produces_failed_result_not_exception(self) -> None:
-        from services.investigation.mcp_tools import MCPToolMeta, register_mcp_tools
+        from services.investigation.tools.mcp import MCPToolMeta, register as register_mcp_tools
 
         tools = [MCPToolMeta(name="t", description="x", input_schema={"type": "object", "properties": {}})]
         client = self._make_stub_client(tools, raise_on_call=True)

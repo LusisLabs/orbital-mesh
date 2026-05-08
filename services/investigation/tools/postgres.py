@@ -39,14 +39,14 @@ import shutil
 import subprocess
 from typing import Any
 
-from .harness import (
+from ..harness import (
     RawToolOutput,
     ToolDefinition,
     ToolRegistry,
 )
 
 
-PG_DOMAIN = "postgres"
+DOMAIN = "postgres"
 MAX_OUTPUT_BYTES = 32 * 1024
 
 
@@ -56,7 +56,7 @@ MAX_OUTPUT_BYTES = 32 * 1024
 _PG_IDENT_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$")
 
 
-def pg_tool_definitions() -> list[ToolDefinition]:
+def _build_definitions() -> list[ToolDefinition]:
     schemas = {
         "pg_describe_table": {
             "table_name": {"type": "str", "required": True},
@@ -77,7 +77,7 @@ def pg_tool_definitions() -> list[ToolDefinition]:
     return [
         ToolDefinition(
             name=name,
-            domain=PG_DOMAIN,
+            domain=DOMAIN,
             description=description,
             args_schema=dict(schemas[name]),
             mutation_class="read_only",
@@ -89,13 +89,13 @@ def pg_tool_definitions() -> list[ToolDefinition]:
     ]
 
 
-PG_TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(pg_tool_definitions())
+TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_definitions())
 
 
 _NO_PSQL_PATH_PROVIDED = object()
 
 
-def register_pg_tools(
+def register(
     registry: ToolRegistry,
     *,
     dsn: str,
@@ -111,7 +111,7 @@ def register_pg_tools(
         resolved = shutil.which("psql")
     else:
         resolved = psql_path or None
-    for definition in PG_TOOL_DEFINITIONS:
+    for definition in TOOL_DEFINITIONS:
         registry.register(definition, _make_pg_invoker(definition.name, dsn, resolved))
 
 
@@ -202,11 +202,11 @@ def _failure(tool_name: str, message: str) -> RawToolOutput:
     )
 
 
-def maybe_register_pg_at_root(registry: ToolRegistry) -> bool:
+def maybe_register_at_root(registry: ToolRegistry) -> bool:
     dsn = os.environ.get("MESH_PG_DSN")
     if not dsn:
         return False
     if shutil.which("psql") is None:
         return False
-    register_pg_tools(registry, dsn=dsn)
+    register(registry, dsn=dsn)
     return True

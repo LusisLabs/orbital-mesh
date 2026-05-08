@@ -165,6 +165,7 @@ _STEERING_DECISION_COMMANDS = frozenset({"override_decision", "override_executio
 _STEERING_EARLY_STAGES = frozenset({"ingesting", "trigger_ready"})
 _STEERING_PAYLOAD_CAP_BYTES = int(os.getenv("MESH_MAX_STEERING_PAYLOAD_BYTES", "65536"))
 _AGENT_TASK_TERMINAL_SETTLE_SECONDS = 1.0
+_PILOT_GO_NO_GO_EVIDENCE_LIMIT = int(os.getenv("MESH_PILOT_GO_NO_GO_EVIDENCE_LIMIT", "500"))
 _LOG = logging.getLogger("mesh.control_plane")
 
 
@@ -752,7 +753,7 @@ class RunCoordinator:
                 return self._readiness_cache[1]
         readiness = build_readiness(self.config).to_dict()
         with self._readiness_lock:
-            self._readiness_cache = (now, readiness)
+            self._readiness_cache = (time.monotonic(), readiness)
         return readiness
 
     def build_policy_lifecycle(self) -> dict[str, Any]:
@@ -850,25 +851,23 @@ class RunCoordinator:
         readiness = self.build_readiness()
         release_provenance = self._release_provenance_record(readiness)
         on_call_drill = self._on_call_drill_record(readiness)
-        runs = self.state_store.list_run_sessions(limit=100)
+        runs = self.state_store.list_run_sessions(limit=max(_PILOT_GO_NO_GO_EVIDENCE_LIMIT, 100))
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
-        event_sets = {
-            session.run_id: self.state_store.list_run_events(session.run_id)
-            for session in observed_runs
-        }
+        approved_run_id_set = set(
+            self.state_store.list_run_ids_with_event_payload(
+                [session.run_id for session in observed_runs],
+                STEERING_COMMAND,
+                "command_type",
+                "approve",
+            )
+        )
         approved_runs = [
             session for session in observed_runs
-            if any(
-                event.event_type == STEERING_COMMAND
-                and event.payload.get("command_type") == "approve"
-                for event in event_sets.get(session.run_id, [])
-            )
+            if session.run_id in approved_run_id_set
         ]
         live_action_runs = [
             session for session in observed_runs
-            if isinstance(session.artifacts.get("execution"), dict)
-            and isinstance(session.artifacts["execution"].get("external_refs"), dict)
-            and session.artifacts["execution"]["external_refs"].get("live_execution") is True
+            if self._live_action_proof_passed(session.artifacts.get("execution"))
         ]
         denied_action_runs = [
             session for session in observed_runs
@@ -1080,6 +1079,15 @@ class RunCoordinator:
             and record.get("final_release_decision") == "pass"
             and RunCoordinator._artifact_refs_have_hashes(record)
         )
+
+    @staticmethod
+    def _live_action_proof_passed(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        refs = record.get("external_refs")
+        if not isinstance(refs, dict) or refs.get("live_execution") is not True:
+            return False
+        return record.get("status") == "succeeded" and not isinstance(record.get("failure"), dict)
 
     @staticmethod
     def _mesh_brain_live_canary_smoke_passed(record: Any) -> bool:
@@ -2779,6 +2787,8 @@ class RunCoordinator:
             return self.get_run(run_id) or session.to_dict()
         if command_type == "handoff":
             self._record_operator_handoff(run_id, session, command_payload, operator, command_event.event_id)
+        if command_type == "cancel":
+            self._release_run_admission(run_id)
         with control.condition:
             control.commands.append(command)
             control.condition.notify_all()

@@ -1,0 +1,80 @@
+{
+  "claim_boundaries": [
+    "This packet does not claim broad production autonomy.",
+    "The live release clearance is bound to the release artifact commit and image digest recorded in the release provenance packet.",
+    "The committed packet records captured evidence; branch-tip proof is established by rerunning the replay gate on the checked-out commit, and after merge the release image/provenance plus live breakthrough proof must be rerun on the merged commit before pilot promotion."
+  ],
+  "commands": {
+    "closed_loop_export_summary_source": "GET /api/runs/run_20260508T033245_ad9bd5ac/export with X-Mesh-Operator: mesh-compose-chaos and X-Mesh-Roles: viewer,launcher",
+    "container_pilot_clearance": "docker compose -f docker-compose.stack.yml exec -T mesh sh -lc 'cd /workspace/orbital-mesh && PYTHONPATH=. python3 scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json'",
+    "current_head_replay_proof": "PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --output-dir .mesh-runtime-state/proofs --compose-summary .mesh-runtime-state/compose-chaos/summary-20260508T042643Z.json --compose-events .mesh-runtime-state/compose-chaos/events-20260508T042643Z.jsonl --validation-command 'python3 -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session tests.test_pilot_breakthrough_packet tests.test_production_cut_list.PilotGoNoGoMeshBrainGateTests tests.test_pilot_clearance_audit' --validation-command 'env RUFF_CACHE_DIR=/tmp/ruff-cache ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py' --validation-command 'python3 -m py_compile scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py services/control_plane.py shared/mesh_runtime/control_plane_state.py shared/mesh_runtime/mesh_state_store.py shared/mesh_runtime/postgres_state.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py tests/test_production_cut_list.py tests/test_pilot_clearance_audit.py'",
+    "host_health_probe": "curl -sS http://127.0.0.1:8787/api/health",
+    "live_gate_before_pilot_promotion": "scripts/run_breakthrough_proof.sh && scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json"
+  },
+  "evidence_files": [
+    {
+      "bytes": 693,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/health-binding.json",
+      "sha256": "2e939731f5a20f5760874379d06cc7fd140be7fca87922d9361ac844ad7fd3f1"
+    },
+    {
+      "bytes": 3887,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/pilot-clearance.json",
+      "sha256": "6e6b7d2ae803669fd3d46dc4ffb085a23b33b35dcbfd21db5f1940fb0090a288"
+    },
+    {
+      "bytes": 4516,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/breakthrough-proof-summary.json",
+      "sha256": "9c8d95ef4d1fd45c89f05524d39d202ac4c73ab68402404df78365b60e3f92bf"
+    },
+    {
+      "bytes": 2128,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/chaos-summary.json",
+      "sha256": "9cc4ca3e7ce5d0638ec7c5370d8511fbe7ee60e35267d6f41ab7de3454428f90"
+    },
+    {
+      "bytes": 998,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/node-summary.json",
+      "sha256": "4d955837a9eda2f8e70801215fdba44d47d74c1ce45d588e0bb1d0057fcf09e9"
+    },
+    {
+      "bytes": 5291,
+      "path": "docs/evidence/production-pilot-breakthrough-20260508/closed-loop-run-summary.json",
+      "sha256": "7fc23f5320cc01ee596fa5649aec50025359f3a0219e1e1249855e680bf77e61"
+    }
+  ],
+  "expansion_order": [
+    "second service class",
+    "real external incident provider",
+    "real feature flag provider",
+    "external audit sink",
+    "multi-operator pilot",
+    "longer-running watch mode",
+    "production SLO/error-budget reporting"
+  ],
+  "generated_at": "2026-05-08T13:17:25Z",
+  "pilot_scope": {
+    "allowed_action_class_for_drill": "rollback_deployment on one allowlisted deployment with rollback metadata and recovery feedback",
+    "kubernetes_context": "mesh-compose",
+    "namespace": "search",
+    "operator_approval_path": "operator identity with approver/launcher roles; Mesh policy/evaluation/admission gates before bounded live action",
+    "service_class": "Kubernetes deployment",
+    "workload": "search/semantic-search"
+  },
+  "product_claim": "Mesh can execute a controlled production-pilot remediation loop with evidence-backed policy, bounded action, recovery feedback, Merkle/audit proof, and release-bound go/no-go clearance.",
+  "regression_guard": {
+    "ci_job": "breakthrough-proof-replay",
+    "ci_scope": "focused replay tests, focused ruff, and syntax compilation for breakthrough proof surfaces",
+    "live_gate": "live breakthrough proof plus pilot clearance before promotion"
+  },
+  "repo": {
+    "branch": "codex/breakthrough-proof-release-posture",
+    "head": "2f9b909fb146865af6898fadb141da9091b56ff8",
+    "post_merge_current_head_rerun_required": true,
+    "release_artifact_commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+    "release_artifact_commit_is_ancestor_of_head": true,
+    "release_artifact_image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+    "release_provenance_sha256": "07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6"
+  },
+  "schema_version": "mesh.production_pilot_breakthrough_packet.v1"
+}
