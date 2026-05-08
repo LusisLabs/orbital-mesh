@@ -104,6 +104,11 @@ def _build(args: argparse.Namespace) -> dict[str, Any]:
             },
             signing_key=signing_key,
         )
+        verification = verify_pilot_signoff_packet(packet=packet, signing_key=signing_key, go_no_go=go_no_go)
+        if verification["status"] != "pass":
+            # Keep build mode aligned with verification mode: a signoff file is pilot evidence only after decision_go.
+            failed_checks = [name for name, passed in verification["checks"].items() if not passed]
+            return _failed_payload([*errors, *failed_checks])
         Path(args.build_output).write_text(json.dumps(packet, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return packet
     except (OSError, json.JSONDecodeError, ValueError) as exc:

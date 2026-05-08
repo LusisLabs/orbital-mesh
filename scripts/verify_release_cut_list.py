@@ -538,6 +538,7 @@ REQUIRED_MARKERS = {
         "--go-no-go",
         "--operator-id",
         "--signoff",
+        "decision_go",
     ),
     "shared/mesh_runtime/design_partner.py": (
         "mesh.design_partner_packet.v1",

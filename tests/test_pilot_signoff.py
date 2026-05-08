@@ -157,6 +157,41 @@ class PilotSignoffTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(result["checks"]["go_no_go_packet_hash_matches"])
 
+    def test_verify_pilot_signoff_cli_refuses_to_build_blocked_signoff(self) -> None:
+        go_no_go = _go_no_go_packet(status="blocked", missing_evidence=["release_provenance_complete"])
+        with tempfile.TemporaryDirectory() as tmp:
+            signoff_path = Path(tmp) / "pilot-signoff.json"
+            go_no_go_path = Path(tmp) / "go-no-go.json"
+            go_no_go_path.write_text(json.dumps(go_no_go, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/verify_pilot_signoff.py",
+                    "--go-no-go",
+                    str(go_no_go_path),
+                    "--build-output",
+                    str(signoff_path),
+                    "--operator-id",
+                    "ops@example.com",
+                    "--role",
+                    "approver",
+                    "--signing-key",
+                    SIGNING_KEY,
+                    "--json",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertEqual(completed.returncode, 1, completed.stdout)
+        result = json.loads(completed.stdout)
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("decision_go", result["errors"])
+        self.assertIn("go_no_go_status_go", result["errors"])
+        self.assertFalse(signoff_path.exists())
+
 
 def _go_no_go_packet(*, status: str = "go", missing_evidence: list[str] | None = None) -> dict[str, Any]:
     return {

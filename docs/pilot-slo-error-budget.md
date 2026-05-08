@@ -17,7 +17,7 @@ Primary sources:
 - `scripts/verify_postgres_restart_proof.py` for state, memory, event, and Merkle restore proof;
 - `scripts/verify_run_export_retrieval.py --package <path> --archive <path> --json` for saved run export audit retrieval;
 - `scripts/verify_run_export_upload.py --package <path> --archive <path> --proof <path> --json` for durable run export upload and restore-test proof;
-- `scripts/verify_pilot_signoff.py --go-no-go <path> --build-output <path> --operator-id <id> --role approver --json` for generating signed operator signoff over the captured pilot go/no-go packet;
+- `scripts/verify_pilot_signoff.py --go-no-go <path> --build-output <path> --operator-id <id> --role approver --json` for generating signed operator signoff over the captured pilot go/no-go packet; build mode refuses blocked packets and does not write a signoff file until the packet verifies as `go`;
 - `scripts/verify_pilot_signoff.py --signoff <path> --go-no-go <path> --expected-release-provenance-sha <sha> --json` for signed operator signoff over the pilot go/no-go packet, including the release-provenance missing list, embedded checks, and CI SHA binding;
 - `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json` for the design-partner scope, consent, support, rollback, go/no-go, and release-provenance packet;
 - `scripts/generate_release_provenance.py --require-complete --json` for release-packet completeness.
@@ -121,7 +121,7 @@ Before pilot:
 19. For public proof or expansion claims, run `scripts/verify_public_proof_package.py --json` and confirm `public_proof_package_verified` is green in `/api/readiness`.
 20. Before production expansion, run `scripts/verify_load_concurrency_rehearsal.py --proof "$MESH_LOAD_CONCURRENCY_REHEARSAL_PATH" --json` and confirm `load_concurrency_rehearsal_verified` is green in `/api/readiness`.
 21. Before enabling feature-flag or incident-provider credentials, run `scripts/verify_provider_adapter_proof.py --proof <proof.json> --adapter-id feature_flag_provider --json` or `--adapter-id incident_provider --json`.
-22. Run `scripts/verify_pilot_signoff.py --go-no-go <captured-go-no-go.json> --build-output <pilot-signoff.json> --operator-id <id> --role approver --json` with the signoff key injected from the platform secret store.
+22. Run `scripts/verify_pilot_signoff.py --go-no-go <captured-go-no-go.json> --build-output <pilot-signoff.json> --operator-id <id> --role approver --json` with the signoff key injected from the platform secret store. This command exits nonzero and writes no signoff file while the captured go/no-go packet is blocked.
 23. Run `scripts/verify_pilot_signoff.py --signoff <pilot-signoff.json> --go-no-go <captured-go-no-go.json> --expected-release-provenance-sha <sha> --json` against the signed operator signoff packet.
 
 During pilot:
