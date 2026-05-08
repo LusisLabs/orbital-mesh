@@ -158,6 +158,22 @@ class DesignPartnerPacketTests(unittest.TestCase):
         self.assertFalse(result["checks"]["consent_documented"])
         self.assertFalse(design_partner_packet_ready(path))
 
+    def test_design_partner_packet_blocks_wrong_expected_hashes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "design-partner-packet.json"
+            packet = _packet()
+            path.write_text(json.dumps(packet), encoding="utf-8")
+
+            result = verify_design_partner_packet(
+                path,
+                expected_go_no_go_sha="c" * 64,
+                expected_release_provenance_sha="d" * 64,
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["expected_go_no_go_sha_matches"])
+        self.assertFalse(result["checks"]["expected_release_provenance_sha_matches"])
+
     def test_readiness_accepts_design_partner_scope_before_final_go_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ingress_path = Path(tmp) / "authenticated-ingress-deployment-proof.json"
@@ -216,6 +232,10 @@ class DesignPartnerPacketTests(unittest.TestCase):
                     "scripts/verify_design_partner_packet.py",
                     "--packet",
                     str(path),
+                    "--expected-go-no-go-sha",
+                    "a" * 64,
+                    "--expected-release-provenance-sha",
+                    "b" * 64,
                     "--json",
                 ],
                 check=True,

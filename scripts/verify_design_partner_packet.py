@@ -19,10 +19,20 @@ EXPECTED_DESIGN_PARTNER_VERIFICATION_SCHEMA = "mesh.design_partner_packet_verifi
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a Mesh design-partner pilot packet.")
     parser.add_argument("--packet", required=True, help="Path to a mesh.design_partner_packet.v1 JSON packet.")
+    parser.add_argument("--expected-go-no-go-sha", default="", help="Expected captured pilot go/no-go packet SHA-256.")
+    parser.add_argument(
+        "--expected-release-provenance-sha",
+        default="",
+        help="Expected captured release-provenance packet SHA-256.",
+    )
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
-    payload = verify_design_partner_packet(args.packet)
+    payload = verify_design_partner_packet(
+        args.packet,
+        expected_go_no_go_sha=args.expected_go_no_go_sha,
+        expected_release_provenance_sha=args.expected_release_provenance_sha,
+    )
     if (
         payload.get("schema_version") != DESIGN_PARTNER_VERIFICATION_VERSION
         or payload.get("schema_version") != EXPECTED_DESIGN_PARTNER_VERIFICATION_SCHEMA

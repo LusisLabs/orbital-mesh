@@ -19,7 +19,7 @@ Primary sources:
 - `scripts/verify_run_export_upload.py --package <path> --archive <path> --proof <path> --json` for durable run export upload and restore-test proof;
 - `scripts/verify_pilot_signoff.py --go-no-go <path> --build-output <path> --operator-id <id> --role approver --json` for generating signed operator signoff over the captured pilot go/no-go packet; build mode refuses blocked packets and does not write a signoff file until the packet verifies as `go`;
 - `scripts/verify_pilot_signoff.py --signoff <path> --go-no-go <path> --expected-release-provenance-sha <sha> --json` for signed operator signoff over the pilot go/no-go packet, including the release-provenance missing list, embedded checks, and CI SHA binding;
-- `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json` for the design-partner scope, consent, support, rollback, go/no-go, and release-provenance packet;
+- `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --expected-go-no-go-sha <sha> --expected-release-provenance-sha <sha> --json` for the design-partner scope, consent, support, rollback, go/no-go, and release-provenance packet;
 - `scripts/generate_release_provenance.py --require-complete --json` for release-packet completeness.
 - `scripts/verify_audit_sink_contract.py --proof "$MESH_AUDIT_SINK_PROOF_PATH" --json` for external audit-sink append-only proof before expansion or compliance reliance.
 - `scripts/verify_credential_rotation.py --connector-id <id> --proof <path> --json` for service-account and provider-key rotation evidence.
@@ -117,7 +117,7 @@ Before pilot:
 15. Run `scripts/verify_on_call_drill.py --proof "$MESH_ON_CALL_DRILL_PATH" --expected-environment pilot --json` after the staffed drill proves kill switch, watcher pause, bad-target revocation, stuck-run recovery, failed-dependency handling, provider-key rotation, and restore.
 16. Capture `GET /api/readiness`, `GET /api/agent/slo`, `GET /metrics`, and `GET /api/pilot/go-no-go`.
 17. Capture `GET /api/approvals` and confirm every pending production-impacting item has owner, approver roles, blockers, allowed commands, and evidence refs before approval.
-18. Run `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json` against the partner-specific packet bound to the captured go/no-go and release provenance hashes.
+18. Run `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --expected-go-no-go-sha <captured-go-no-go-sha> --expected-release-provenance-sha <release-provenance-sha> --json` against the partner-specific packet bound to the captured go/no-go and release provenance hashes.
 19. For public proof or expansion claims, run `scripts/verify_public_proof_package.py --json` and confirm `public_proof_package_verified` is green in `/api/readiness`.
 20. Before production expansion, run `scripts/verify_load_concurrency_rehearsal.py --proof "$MESH_LOAD_CONCURRENCY_REHEARSAL_PATH" --json` and confirm `load_concurrency_rehearsal_verified` is green in `/api/readiness`.
 21. Before enabling feature-flag or incident-provider credentials, run `scripts/verify_provider_adapter_proof.py --proof <proof.json> --adapter-id feature_flag_provider --json` or `--adapter-id incident_provider --json`.

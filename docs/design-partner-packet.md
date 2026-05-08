@@ -95,7 +95,11 @@ Intent does not satisfy the standard. Missing evidence remains blocking until a 
 Verify the full packet before pilot signoff:
 
 ```bash
-scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json
+scripts/verify_design_partner_packet.py \
+  --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" \
+  --expected-go-no-go-sha "$MESH_PILOT_GO_NO_GO_SHA" \
+  --expected-release-provenance-sha "$MESH_RELEASE_PROVENANCE_SHA" \
+  --json
 ```
 
 The full verifier rejects packets that expand beyond one environment, one Kubernetes context, one namespace, and two service classes; omit consent for real-user-impacting experiments; allow proposal-lane credentials; omit rollback or kill-switch references; retain data longer than the agreed 30-day pilot window; or fail to bind the packet to a `go` pilot go/no-go hash and complete release-provenance hash.

@@ -549,6 +549,8 @@ REQUIRED_MARKERS = {
     "scripts/verify_design_partner_packet.py": (
         "mesh.design_partner_packet_verification.v1",
         "--packet",
+        "--expected-go-no-go-sha",
+        "--expected-release-provenance-sha",
         "verify_design_partner_packet",
     ),
     "shared/mesh_runtime/operator_handoff.py": (

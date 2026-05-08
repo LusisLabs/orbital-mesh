@@ -31,7 +31,13 @@ def design_partner_packet_ready(path: str | Path | None, *, require_go_evidence:
     return str(verify_design_partner_packet(path, require_go_evidence=require_go_evidence).get("status")) == "pass"
 
 
-def verify_design_partner_packet(path: str | Path | None, *, require_go_evidence: bool = True) -> dict[str, Any]:
+def verify_design_partner_packet(
+    path: str | Path | None,
+    *,
+    require_go_evidence: bool = True,
+    expected_go_no_go_sha: str | None = None,
+    expected_release_provenance_sha: str | None = None,
+) -> dict[str, Any]:
     packet_path = Path(path) if path else None
     load_error: str | None = None
     try:
@@ -40,7 +46,11 @@ def verify_design_partner_packet(path: str | Path | None, *, require_go_evidence
         packet = None
         load_error = str(exc)
 
-    checks = _packet_checks(packet)
+    checks = _packet_checks(
+        packet,
+        expected_go_no_go_sha=expected_go_no_go_sha,
+        expected_release_provenance_sha=expected_release_provenance_sha,
+    )
     if packet is None:
         checks["packet_present"] = False
     if load_error:
@@ -67,9 +77,16 @@ def verify_design_partner_packet(path: str | Path | None, *, require_go_evidence
     }
 
 
-def _packet_checks(packet: dict[str, Any] | None) -> dict[str, bool]:
+def _packet_checks(
+    packet: dict[str, Any] | None,
+    *,
+    expected_go_no_go_sha: str | None = None,
+    expected_release_provenance_sha: str | None = None,
+) -> dict[str, bool]:
+    expected_go_no_go_sha = (expected_go_no_go_sha or "").strip()
+    expected_release_provenance_sha = (expected_release_provenance_sha or "").strip()
     if packet is None:
-        return {
+        checks = {
             "packet_present": False,
             "schema_valid": False,
             "partner_recorded": False,
@@ -82,7 +99,13 @@ def _packet_checks(packet: dict[str, Any] | None) -> dict[str, bool]:
             "evidence_summary_go": False,
             "no_raw_secret_material": False,
         }
-    return {
+        if expected_go_no_go_sha:
+            checks["expected_go_no_go_sha_matches"] = False
+        if expected_release_provenance_sha:
+            checks["expected_release_provenance_sha_matches"] = False
+        return checks
+    evidence_summary = _section(packet, "evidence_summary")
+    checks = {
         "packet_present": True,
         "schema_valid": True,
         "partner_recorded": _partner_recorded(_section(packet, "partner")),
@@ -92,9 +115,16 @@ def _packet_checks(packet: dict[str, Any] | None) -> dict[str, bool]:
         "support_model_complete": _support_model_complete(_section(packet, "support_model")),
         "rollback_plan_complete": _rollback_plan_complete(_section(packet, "rollback_plan")),
         "consent_documented": _consent_documented(_section(packet, "consent")),
-        "evidence_summary_go": _evidence_summary_go(_section(packet, "evidence_summary")),
+        "evidence_summary_go": _evidence_summary_go(evidence_summary),
         "no_raw_secret_material": packet.get("raw_secret_material_present") is False,
     }
+    if expected_go_no_go_sha:
+        checks["expected_go_no_go_sha_matches"] = evidence_summary.get("go_no_go_packet_sha256") == expected_go_no_go_sha
+    if expected_release_provenance_sha:
+        checks["expected_release_provenance_sha_matches"] = (
+            evidence_summary.get("release_provenance_sha256") == expected_release_provenance_sha
+        )
+    return checks
 
 
 def _partner_recorded(record: dict[str, Any]) -> bool:
