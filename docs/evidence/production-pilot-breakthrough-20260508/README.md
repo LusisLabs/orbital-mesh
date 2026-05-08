@@ -17,6 +17,7 @@ This is not a claim of broad production autonomy. The release clearance is bound
 - `chaos-summary.json`: compose chaos breakthrough metrics, substrate coverage, multi-fault coverage, and source hashes.
 - `node-summary.json`: production node breakthrough metrics and source hashes.
 - `closed-loop-run-summary.json`: normalized postmortem/export summary for `run_20260508T033245_ad9bd5ac`.
+- `completion-audit.md`: prompt-to-artifact checklist and remaining post-merge blockers.
 
 Raw `.mesh-runtime-state` logs and full run exports are intentionally not committed here. The committed files capture stable hashes, bounded status fields, metrics, action facts, and Merkle proof identifiers.
 
