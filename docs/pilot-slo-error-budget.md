@@ -23,7 +23,7 @@ Primary sources:
 - `scripts/generate_release_provenance.py --require-complete --json` for release-packet completeness.
 - `scripts/verify_audit_sink_contract.py --proof "$MESH_AUDIT_SINK_PROOF_PATH" --json` for external audit-sink append-only proof before expansion or compliance reliance.
 - `scripts/verify_credential_rotation.py --connector-id <id> --proof <path> --json` for service-account and provider-key rotation evidence.
-- `scripts/verify_on_call_drill.py --proof "$MESH_ON_CALL_DRILL_PATH" --json` for the production on-call drill packet required by pilot go/no-go.
+- `scripts/verify_on_call_drill.py --proof "$MESH_ON_CALL_DRILL_PATH" --expected-environment pilot --json` for the production on-call drill packet required by pilot go/no-go.
 - `scripts/verify_failure_mode_library.py --json` for private-staging failure-mode catalog coverage before relying on the replay library.
 - `scripts/verify_threat_model_register.py --json` for owner, decision, expiry, and compensating-control coverage before external staging exposure.
 - `scripts/verify_data_classification_policy.py --json` for data-class owner, retention, redaction, storage-location, deletion-control, and evidence-ref coverage before external staging exposure.
@@ -114,7 +114,7 @@ Before pilot:
 12. Run `scripts/verify_data_classification_policy.py --json` and review deletion controls for deployment log and trace systems.
 13. Run `scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json` and `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json`.
 14. Run the packet's benchmark command and verify the resulting directory with `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --json`.
-15. Run `scripts/verify_on_call_drill.py --proof "$MESH_ON_CALL_DRILL_PATH" --json` after the staffed drill proves kill switch, watcher pause, bad-target revocation, stuck-run recovery, failed-dependency handling, provider-key rotation, and restore.
+15. Run `scripts/verify_on_call_drill.py --proof "$MESH_ON_CALL_DRILL_PATH" --expected-environment pilot --json` after the staffed drill proves kill switch, watcher pause, bad-target revocation, stuck-run recovery, failed-dependency handling, provider-key rotation, and restore.
 16. Capture `GET /api/readiness`, `GET /api/agent/slo`, `GET /metrics`, and `GET /api/pilot/go-no-go`.
 17. Capture `GET /api/approvals` and confirm every pending production-impacting item has owner, approver roles, blockers, allowed commands, and evidence refs before approval.
 18. Run `scripts/verify_design_partner_packet.py --packet "$MESH_DESIGN_PARTNER_PACKET_PATH" --json` against the partner-specific packet bound to the captured go/no-go and release provenance hashes.

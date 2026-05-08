@@ -24,7 +24,7 @@ def load_on_call_drill(path: str | Path | None) -> dict[str, Any] | None:
     return payload
 
 
-def verify_on_call_drill(path: str | Path | None) -> dict[str, Any]:
+def verify_on_call_drill(path: str | Path | None, *, expected_environment: str | None = None) -> dict[str, Any]:
     proof_path = Path(path) if path else None
     load_error: str | None = None
     try:
@@ -33,7 +33,7 @@ def verify_on_call_drill(path: str | Path | None) -> dict[str, Any]:
         proof = None
         load_error = str(exc)
 
-    checks = _proof_checks(proof)
+    checks = _proof_checks(proof, expected_environment=expected_environment)
     if proof is None:
         checks["proof_present"] = False
     if load_error:
@@ -50,12 +50,14 @@ def verify_on_call_drill(path: str | Path | None) -> dict[str, Any]:
     }
 
 
-def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
+def _proof_checks(proof: dict[str, Any] | None, *, expected_environment: str | None = None) -> dict[str, bool]:
+    expected_environment = (expected_environment or "").strip()
     if proof is None:
-        return {
+        checks = {
             "proof_present": False,
             "schema_valid": False,
             "operator_present": False,
+            "environment_present": False,
             "recovery_target_positive": False,
             "recovery_within_target": False,
             "kill_switch_stopped_live_execution": False,
@@ -69,16 +71,21 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
             "provider_key_break_glass_recorded": False,
             "state_restore_verified": False,
         }
+        if expected_environment:
+            checks["environment_matches_expected"] = False
+        return checks
+    environment = str(proof.get("environment") or "").strip()
     kill_switch = _object(proof.get("kill_switch"))
     bad_target = _object(proof.get("bad_target_revocation"))
     stuck_run = _object(proof.get("stuck_run_recovery"))
     failed_dependency = _object(proof.get("failed_dependency"))
     provider_key_rotation = _object(proof.get("provider_key_rotation"))
     state_restore = _object(proof.get("state_restore"))
-    return {
+    checks = {
         "proof_present": True,
         "schema_valid": True,
         "operator_present": bool(str(proof.get("operator_id") or "").strip()),
+        "environment_present": bool(environment),
         "recovery_target_positive": _positive_number(proof.get("recovery_target_seconds")),
         "recovery_within_target": _within_recovery_target(proof),
         "kill_switch_stopped_live_execution": kill_switch.get("live_execution_disabled") is True
@@ -101,6 +108,9 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
         and bool(str(state_restore.get("verification_ref") or "").strip())
         and bool(str(state_restore.get("restore_ref") or "").strip()),
     }
+    if expected_environment:
+        checks["environment_matches_expected"] = environment == expected_environment
+    return checks
 
 
 def _object(raw: Any) -> dict[str, Any]:

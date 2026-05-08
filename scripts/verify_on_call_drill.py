@@ -19,10 +19,11 @@ EXPECTED_ON_CALL_DRILL_VERIFICATION_SCHEMA = "mesh.on_call_drill_verification.v1
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify a Mesh production on-call drill proof packet.")
     parser.add_argument("--proof", required=True, help="Path to a mesh.on_call_drill.v1 packet.")
+    parser.add_argument("--expected-environment", default="", help="Require the proof environment to match this value.")
     parser.add_argument("--json", action="store_true", help="Emit JSON.")
     args = parser.parse_args()
 
-    payload = verify_on_call_drill(args.proof)
+    payload = verify_on_call_drill(args.proof, expected_environment=args.expected_environment)
     if payload.get("schema_version") != ON_CALL_DRILL_VERIFICATION_VERSION:
         payload = {**payload, "status": "fail", "error": "unexpected_schema_version"}
     if payload.get("schema_version") != EXPECTED_ON_CALL_DRILL_VERIFICATION_SCHEMA:

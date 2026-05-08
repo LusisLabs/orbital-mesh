@@ -45,6 +45,19 @@ class OnCallDrillTests(unittest.TestCase):
         self.assertFalse(result["checks"]["kill_switch_paused_watchers"])
         self.assertFalse(result["checks"]["provider_key_rotation_verified"])
 
+    def test_on_call_drill_blocks_wrong_expected_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "on-call-drill.json"
+            proof = _proof()
+            proof["environment"] = "staging"
+            proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+            result = verify_on_call_drill(proof_path, expected_environment="pilot")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertFalse(result["checks"]["environment_matches_expected"])
+        self.assertTrue(result["checks"]["environment_present"])
+
     def test_verify_on_call_drill_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             proof_path = Path(tmp) / "on-call-drill.json"
@@ -56,6 +69,8 @@ class OnCallDrillTests(unittest.TestCase):
                     "scripts/verify_on_call_drill.py",
                     "--proof",
                     str(proof_path),
+                    "--expected-environment",
+                    "pilot",
                     "--json",
                 ],
                 check=True,

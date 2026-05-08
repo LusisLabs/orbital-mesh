@@ -1090,6 +1090,7 @@ REQUIRED_MARKERS = {
     "scripts/verify_on_call_drill.py": (
         "mesh.on_call_drill_verification.v1",
         "--proof",
+        "--expected-environment",
         "verify_on_call_drill",
     ),
     "SECURITY.md": (

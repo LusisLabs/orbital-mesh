@@ -1053,7 +1053,7 @@ class RunCoordinator:
         if not raw_path:
             record["missing"] = ["on_call_drill_path"]
             return record
-        verification = verify_on_call_drill(raw_path)
+        verification = verify_on_call_drill(raw_path, expected_environment=profile)
         record.update(
             {
                 "status": verification.get("status") if isinstance(verification.get("status"), str) else "fail",
