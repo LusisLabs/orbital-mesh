@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-05-08T06:06:40Z",
+  "checks": {
+    "commit_match": true,
+    "image_digest_match": true,
+    "status_ok": true
+  },
+  "expected": {
+    "commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+    "image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f"
+  },
+  "health": {
+    "commit": "803b13e51f984a27f4bf42d0014ebb8d50cdd26a",
+    "environment": "production",
+    "image_digest": "sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f",
+    "status": "ok",
+    "timestamp": "2026-05-08T06:06:40Z",
+    "version": "dev"
+  },
+  "schema_version": "mesh.health_binding_capture.v1",
+  "source_endpoint": "/api/health"
+}

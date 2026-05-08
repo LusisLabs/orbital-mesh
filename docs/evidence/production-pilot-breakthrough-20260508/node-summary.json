@@ -1,0 +1,29 @@
+{
+  "breakthrough_probe": {
+    "ready": true,
+    "schema_version": "mesh.production_node_breakthrough_probe.v1",
+    "status": "breakthrough_signal",
+    "thresholds": {
+      "capability_axis_pass_rate": 0.85,
+      "correct_decision_rate": 0.9
+    }
+  },
+  "capability_axis_counts": {
+    "failed_or_unproven": 0,
+    "known": 26,
+    "missing": 0,
+    "passed": 26
+  },
+  "events_path": ".mesh-runtime-state/node-breakthrough/events-20260505T205538Z.jsonl",
+  "events_sha256": "59c34e5218afd05da6a5c10e7ec7f93c0870c8b517186f314a711a704ec54ee0",
+  "experiments_passed": 21,
+  "experiments_total": 21,
+  "generated_at": "2026-05-05T20:55:39.607494Z",
+  "metrics": {
+    "capability_axis_pass_rate": 1.0,
+    "correct_decision_rate": 1.0
+  },
+  "schema_version": "mesh.production_node_breakthrough_evidence_summary.v1",
+  "source_path": ".mesh-runtime-state/node-breakthrough/summary-20260505T205538Z.json",
+  "source_sha256": "7494d59d7ad945151e0763b6ae76078a2dbab58e976eecaccab45637f13b2a77"
+}

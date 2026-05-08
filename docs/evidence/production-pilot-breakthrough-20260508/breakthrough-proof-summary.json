@@ -1,0 +1,96 @@
+{
+  "breakthrough_proof": {
+    "ready": true,
+    "status": "regression_protected_breakthrough"
+  },
+  "bundle_sha256": "9864f7ecc2fe386125f0a17d7480e2fbe4d2411b31a077e2d1a119aa70e4d5c4",
+  "git": {
+    "commit": "a37a14b285e814bb3ee7373b321a849e95b7fce9",
+    "dirty": false
+  },
+  "replay_passed": true,
+  "replay_reports": [
+    {
+      "kind": "compose_chaos_score_replay",
+      "passed": true
+    },
+    {
+      "kind": "compose_summary_replay",
+      "passed": true
+    },
+    {
+      "kind": "config_drift_score_replay",
+      "passed": true
+    },
+    {
+      "kind": "production_node_pipeline_replay",
+      "passed": true
+    }
+  ],
+  "schema_version": "mesh.breakthrough_proof_summary.v1",
+  "source_path": ".mesh-runtime-state/proofs/breakthrough-proof-20260508T061042Z.json",
+  "source_sha256": "7bd8965ca181e61a58a1585c736df63d05fa4048d8ce296cffbfcdbc8a516853",
+  "summary_checks": [
+    {
+      "coverage_checks": {
+        "failed_or_unproven_axes": [],
+        "missing_axes": [],
+        "missing_multi_fault_experiments": [],
+        "substrates_without_pass": []
+      },
+      "kind": "compose",
+      "ready": true
+    },
+    {
+      "coverage_checks": {},
+      "kind": "node",
+      "ready": true
+    }
+  ],
+  "validation_commands": [
+    {
+      "command": [
+        "python3",
+        "-m",
+        "unittest",
+        "tests.test_breakthrough_evidence_bundle",
+        "tests.test_production_node_breakthrough_session",
+        "tests.test_compose_chaos_session"
+      ],
+      "exit_code": 0,
+      "output_sha256": "1bcb3ffe60043f60f5d43f3f209aeb683a0d7d4b912f41c366978dcafa7da069",
+      "passed": true
+    },
+    {
+      "command": [
+        "ruff",
+        "check",
+        "scripts/breakthrough_evidence_bundle.py",
+        "scripts/production_node_breakthrough_session.py",
+        "scripts/compose_chaos_session.py",
+        "tests/test_breakthrough_evidence_bundle.py",
+        "tests/test_production_node_breakthrough_session.py",
+        "tests/test_compose_chaos_session.py"
+      ],
+      "exit_code": 0,
+      "output_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "passed": true
+    },
+    {
+      "command": [
+        "python3",
+        "-m",
+        "py_compile",
+        "scripts/breakthrough_evidence_bundle.py",
+        "scripts/production_node_breakthrough_session.py",
+        "scripts/compose_chaos_session.py",
+        "tests/test_breakthrough_evidence_bundle.py",
+        "tests/test_production_node_breakthrough_session.py",
+        "tests/test_compose_chaos_session.py"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "passed": true
+    }
+  ]
+}

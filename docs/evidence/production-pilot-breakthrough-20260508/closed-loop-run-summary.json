@@ -1,0 +1,171 @@
+{
+  "artifact_keys": [
+    "agent_tasks",
+    "decision",
+    "evaluation",
+    "evidence_graph",
+    "evidence_pack",
+    "execution",
+    "feedback",
+    "goose_review",
+    "input_signal",
+    "integration_readiness",
+    "investigation_report",
+    "lane_routing",
+    "memory_compaction",
+    "memory_crystallization",
+    "normalized_event",
+    "operator",
+    "ownership_boundary",
+    "phoenix_spans",
+    "ranked_hypotheses",
+    "reasoning_bank",
+    "reasoning_bank_packet",
+    "reconciliation",
+    "run_admission",
+    "scenario_analysis",
+    "service_agent",
+    "task_trace",
+    "trajectory_score",
+    "trigger",
+    "verifier_output"
+  ],
+  "auto_mode": true,
+  "created_at": "2026-05-08T03:32:45.674758+00:00",
+  "decision": {
+    "autonomy_tier": "escalated",
+    "confidence": 0.86,
+    "decision_id": "dec_trg_sig_k8s_search_semantic-search_20260508T033245Z",
+    "decision_type": "rollback_deployment",
+    "execution_plan": {
+      "action": "rollback_deployment",
+      "parameters": {
+        "cluster": "mesh-compose",
+        "deployment_name": "semantic-search",
+        "kube_context": "mesh-compose",
+        "namespace": "search",
+        "revision": "2"
+      },
+      "rollback_plan": "reapply the unhealthy revision only after human review confirms the rollback was incorrect",
+      "system": "kubernetes_service"
+    },
+    "risk": {
+      "blast_radius": "single_deployment",
+      "customer_impact_if_wrong": "temporary deployment churn or additional recovery time",
+      "level": "medium"
+    }
+  },
+  "evaluation": {
+    "blocking_reasons": [],
+    "evaluation_id": "eval_dec_trg_sig_k8s_search_semantic-search_20260508T033245Z",
+    "final_recommendation": "execute",
+    "passed": true
+  },
+  "event_count": 59,
+  "events_truncated": false,
+  "execution": {
+    "applied_action": {
+      "action": "rollback_deployment",
+      "parameters": {
+        "cluster": "mesh-compose",
+        "deployment_name": "semantic-search",
+        "kube_context": "mesh-compose",
+        "namespace": "search",
+        "revision": "2"
+      },
+      "system": "kubernetes_service"
+    },
+    "completed_at": "2026-05-08T03:33:28.247184+00:00",
+    "execution_id": "exe_dec_trg_sig_k8s_search_semantic-search_20260508T033245Z",
+    "executor": "native",
+    "external_refs": {
+      "audit_log_id": "audit_dec_trg_sig_k8s_search_semantic-search_20260508T033245Z",
+      "deployment_name": "semantic-search",
+      "goose_review": {
+        "approved": true,
+        "mode": "native",
+        "risk_flags": [],
+        "summary": "native bounded execution path approved locally"
+      },
+      "kube_context": "mesh-compose",
+      "live_execution": true,
+      "rollout_action": "rollback_deployment"
+    },
+    "failure": null,
+    "idempotency_key": "dec_trg_sig_k8s_search_semantic-search_20260508T033245Z:rollback_deployment",
+    "started_at": "2026-05-08T03:33:21.207656+00:00",
+    "status": "succeeded"
+  },
+  "feedback": {
+    "feedback_id": "fb_dec_trg_sig_k8s_search_semantic-search_20260508T033245Z",
+    "metric_comparison": {
+      "desired_replicas": 3,
+      "ready_replicas": 3,
+      "restart_delta": 0,
+      "rollout_status": "healthy"
+    },
+    "outcome": "successful",
+    "prediction_accuracy": {
+      "expected_time_to_effect": "15m",
+      "observed_time_to_effect": "immediate"
+    },
+    "recommended_follow_up": "record_rollout_recovery",
+    "world_model_updates": {
+      "cluster_recovery_pattern": "deployment_rollback_restores_health",
+      "deployment_name": "semantic-search",
+      "integration_signals": {
+        "executor": "native",
+        "review_source": "goose_review",
+        "review_summary": "native bounded execution path approved locally"
+      },
+      "namespace": "search"
+    }
+  },
+  "latest_event_id": "evt_0059_22b6d19c",
+  "latest_event_sequence": 59,
+  "latest_merkle_root": "9e3f0e0ea8ce651dac53f0426adf7d39216df39cef00555a1a419e1b077e7014",
+  "merkle": {
+    "latest_event_id": "evt_0059_22b6d19c",
+    "leaf_count": 59,
+    "root_hash": "9e3f0e0ea8ce651dac53f0426adf7d39216df39cef00555a1a419e1b077e7014",
+    "run_id": "run_20260508T033245_ad9bd5ac"
+  },
+  "operator": {
+    "operator_id": "local-admin",
+    "roles": [
+      "admin",
+      "approver",
+      "launcher"
+    ]
+  },
+  "reasoning_bank": {
+    "enabled": true,
+    "lesson_count": 1,
+    "lesson_titles": [
+      "Reuse rollback_deployment for kubernetes_deployment_unhealthy"
+    ]
+  },
+  "run_admission": {
+    "blockers": [],
+    "decision": "admitted",
+    "schema_version": "mesh.run_admission.v1",
+    "target_lock_key": "unknown:local:semantic-search"
+  },
+  "run_id": "run_20260508T033245_ad9bd5ac",
+  "scenario_key": "live_kubernetes:search/semantic-search",
+  "schema_version": "mesh.closed_loop_run_summary.v1",
+  "source_endpoint": "/api/runs/run_20260508T033245_ad9bd5ac/export",
+  "source_fetch_headers": {
+    "X-Mesh-Operator": "mesh-compose-chaos",
+    "X-Mesh-Roles": "viewer,launcher"
+  },
+  "stage": "completed",
+  "status": "completed",
+  "steering_mode": "interruptible_auto",
+  "trigger": {
+    "service": "semantic-search",
+    "trigger_id": "trg_sig_k8s_search_semantic-search_20260508T033245Z",
+    "trigger_type": "kubernetes_deployment_unhealthy"
+  },
+  "updated_at": "2026-05-08T03:33:31.412404+00:00"
+}
