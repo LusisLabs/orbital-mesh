@@ -57,7 +57,7 @@ scripts/generate_pilot_breakthrough_packet.py --base-url http://127.0.0.1:8787 -
 - Approvers: operator identities carrying `approver` and `launcher` roles.
 - Allowed action: one reviewed rollback on one allowlisted deployment.
 - Evidence before action: trigger, evidence pack, scenario analysis, decision, policy/evaluation pass, admission, and operator identity.
-- Pause conditions: missing release provenance, runtime binding mismatch, readiness blockers, nonempty go/no-go missing evidence, evaluation blockers, action outside namespace/context/action class, missing rollback metadata, failed feedback, or ambiguous recovery.
+- Pause conditions: missing release provenance, runtime binding mismatch, readiness blockers, nonempty go/no-go missing evidence, evaluation blockers, failed live action execution, action outside namespace/context/action class, missing rollback metadata, failed feedback, or ambiguous recovery.
 - Rollback verification: feedback must confirm rollout health and target replica recovery before the run can support pilot clearance.
 - Secrets/provider isolation: proposal lanes stay advisory; no raw secrets, kubeconfig contents, private keys, unrestricted production logs, or production actuator credentials enter the packet.
 

@@ -95,7 +95,7 @@ def _record_generic_pilot_evidence(coordinator: RunCoordinator) -> None:
         artifacts={
             "decision": {"execution_plan": {"rollback_plan": "roll back deployment revision"}},
             "evaluation": {"blocking_reasons": ["approval required before execution"]},
-            "execution": {"external_refs": {"live_execution": True}},
+            "execution": {"status": "succeeded", "external_refs": {"live_execution": True}},
         },
     )
     coordinator.state_store.append_run_event(
@@ -792,6 +792,49 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertEqual(len(packet["observed"]["mesh_brain_model_kernel_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_rollback_drill_run_ids"]), 1)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_rejects_failed_live_action_as_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                runs = coordinator.state_store.list_run_sessions()
+                generic = next(run for run in runs if run.scenario_key == "search_latency_regression")
+                generic.artifacts["execution"] = {
+                    "status": "failed",
+                    "external_refs": {"live_execution": True},
+                    "failure": {"reason": "kubernetes_live_execution_failed"},
+                }
+                coordinator.state_store.save_run_session(generic)
+                _record_mesh_brain_gate_evidence(coordinator)
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64))
+                    + "\n",
+                    encoding="utf-8",
+                )
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("live_action_proof_observed", packet["missing_evidence"])
+                self.assertEqual(packet["observed"]["live_action_run_ids"], [])
             finally:
                 coordinator.stop_background_workers()
 

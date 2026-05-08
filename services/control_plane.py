@@ -867,9 +867,7 @@ class RunCoordinator:
         ]
         live_action_runs = [
             session for session in observed_runs
-            if isinstance(session.artifacts.get("execution"), dict)
-            and isinstance(session.artifacts["execution"].get("external_refs"), dict)
-            and session.artifacts["execution"]["external_refs"].get("live_execution") is True
+            if self._live_action_proof_passed(session.artifacts.get("execution"))
         ]
         denied_action_runs = [
             session for session in observed_runs
@@ -1081,6 +1079,15 @@ class RunCoordinator:
             and record.get("final_release_decision") == "pass"
             and RunCoordinator._artifact_refs_have_hashes(record)
         )
+
+    @staticmethod
+    def _live_action_proof_passed(record: Any) -> bool:
+        if not isinstance(record, dict):
+            return False
+        refs = record.get("external_refs")
+        if not isinstance(refs, dict) or refs.get("live_execution") is not True:
+            return False
+        return record.get("status") == "succeeded" and not isinstance(record.get("failure"), dict)
 
     @staticmethod
     def _mesh_brain_live_canary_smoke_passed(record: Any) -> bool:
