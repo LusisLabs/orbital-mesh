@@ -2,7 +2,7 @@
   "claim_boundaries": [
     "This packet does not claim broad production autonomy.",
     "The live release clearance is bound to the release artifact commit and image digest recorded in the release provenance packet.",
-    "The current branch HEAD has a replay-ready proof bundle; after merge, rerun the release image/provenance and breakthrough proof on the merged commit before pilot promotion."
+    "The committed packet records captured evidence; branch-tip proof is established by rerunning the replay gate on the checked-out commit, and after merge the release image/provenance plus live breakthrough proof must be rerun on the merged commit before pilot promotion."
   ],
   "commands": {
     "closed_loop_export_summary_source": "GET /api/runs/run_20260508T033245_ad9bd5ac/export with X-Mesh-Operator: mesh-compose-chaos and X-Mesh-Roles: viewer,launcher",
@@ -44,12 +44,13 @@
     }
   ],
   "expansion_order": [
-    "one workload",
-    "then one namespace",
-    "then one service class",
-    "then one operator path",
-    "then one additional action class",
-    "then one additional substrate or deployment target"
+    "second service class",
+    "real external incident provider",
+    "real feature flag provider",
+    "external audit sink",
+    "multi-operator pilot",
+    "longer-running watch mode",
+    "production SLO/error-budget reporting"
   ],
   "generated_at": "2026-05-08T06:15:29.734541Z",
   "pilot_scope": {

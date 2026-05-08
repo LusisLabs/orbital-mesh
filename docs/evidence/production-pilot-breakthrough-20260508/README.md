@@ -6,7 +6,7 @@ This packet is the auditable handoff for the 2026-05-08 production-pilot breakth
 
 Mesh can execute a controlled production-pilot remediation loop with evidence-backed policy, bounded action, recovery feedback, Merkle/audit proof, and release-bound go/no-go clearance.
 
-This is not a claim of broad production autonomy. The release clearance is bound to release artifact commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`. The current branch HEAD proof replay is bound to `a37a14b285e814bb3ee7373b321a849e95b7fce9`; after merge, rerun release image provenance and the live breakthrough gate on the merged commit before pilot promotion.
+This is not a claim of broad production autonomy. The release clearance is bound to release artifact commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`. The committed packet records the captured evidence; branch-tip proof is established by rerunning the replay gate on the checked-out commit. After merge, rerun release image provenance and the live breakthrough gate on the merged commit before pilot promotion.
 
 ## Evidence Index
 
@@ -58,4 +58,4 @@ PYTHONPATH=. python3 scripts/breakthrough_evidence_bundle.py --repo-root . --out
 
 The CI release guard is the named `breakthrough-proof-replay` job. It runs focused replay tests, focused ruff, and syntax compilation for the breakthrough proof surfaces. The live promotion gate remains `scripts/run_breakthrough_proof.sh` plus `scripts/verify_pilot_clearance.py` against the deployed runtime.
 
-Expansion stays one axis at a time: workload, namespace, service class, operator path, action class, then substrate or deployment target.
+Expansion stays one axis at a time: second service class, real external incident provider, real feature flag provider, external audit sink, multi-operator pilot, longer-running watch mode, then production SLO/error-budget reporting.
