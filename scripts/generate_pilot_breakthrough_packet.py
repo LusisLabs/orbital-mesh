@@ -168,7 +168,15 @@ def generate_pilot_breakthrough_packet(
             }
             for path in component_paths
         ],
-        "commands": _commands(normalized_base_url, run_id, proof_path, chaos_path, node_path, output_dir),
+        "commands": _commands(
+            normalized_base_url,
+            run_id,
+            proof_path,
+            chaos_path,
+            node_path,
+            output_dir,
+            timeout_seconds=timeout_seconds,
+        ),
         "regression_guard": {
             "ci_job": "breakthrough-proof-replay",
             "ci_scope": "focused replay tests, focused ruff, syntax compilation, and packet generator tests",
@@ -411,21 +419,31 @@ def _packet_checks(
     }
 
 
-def _commands(base_url: str, run_id: str, proof_path: Path, chaos_path: Path, node_path: Path, output_dir: Path) -> dict[str, str]:
+def _commands(
+    base_url: str,
+    run_id: str,
+    proof_path: Path,
+    chaos_path: Path,
+    node_path: Path,
+    output_dir: Path,
+    *,
+    timeout_seconds: float,
+) -> dict[str, str]:
+    timeout_value = f"{timeout_seconds:g}"
     return {
         "packet_generation": (
             "scripts/generate_pilot_breakthrough_packet.py "
-            f"--base-url {base_url} --run-id {run_id} --proof-bundle {proof_path} "
+            f"--base-url {base_url} --timeout-seconds {timeout_value} --run-id {run_id} --proof-bundle {proof_path} "
             f"--chaos-summary {chaos_path} --node-summary {node_path} --output-dir {output_dir} --json"
         ),
         "pilot_clearance": (
-            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds 30 --json"
+            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds {timeout_value} --json"
         ),
         "branch_tip_replay_proof": "scripts/run_breakthrough_proof.sh --replay-only",
         "run_export": f"GET /api/runs/{run_id}/export with X-Mesh-Operator and X-Mesh-Roles headers",
         "live_gate_before_pilot_promotion": (
             "scripts/run_breakthrough_proof.sh && "
-            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds 30 --json"
+            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds {timeout_value} --json"
         ),
     }
 
