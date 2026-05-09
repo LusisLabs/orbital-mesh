@@ -56,7 +56,6 @@ jobs:
     needs: validate-approval
     env:
       HANDOFF_IMAGE_TAG: orbital-mesh:handoff-${{ github.run_id }}
-      MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -142,6 +141,8 @@ jobs:
             --build-command "docker build --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $HANDOFF_IMAGE_TAG ." \
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
+        env:
+          MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
         run: |
           set -euo pipefail
           BASE_IMAGE_ARGS=()
