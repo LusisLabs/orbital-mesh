@@ -118,8 +118,10 @@ from .halo import (
     record_halo_optimization_cycle,
     run_halo_engine,
 )
+from .incident_coverage import load_incident_coverage_proof, verify_incident_coverage_proof
 from .merkle import build_merkle_proof, build_merkle_snapshot, verify_merkle_proof
 from .policies import load_policy
+from .autonomy_policy import AutonomyPolicyVerdict, evaluate_autonomy_policy
 from .phoenix_trace import build_phoenix_spans
 from .connector_certification import (
     build_connector_certification_matrix,
@@ -145,12 +147,16 @@ from .pilot_signoff import build_pilot_signoff_packet, load_pilot_signoff_packet
 from .policy_lifecycle import build_policy_lifecycle_packet, policy_lifecycle_ready
 from .postmortem_review import build_postmortem_review
 from .provider_adapter import load_provider_adapter_proof, provider_adapter_proof_ready, verify_provider_adapter_proof
+from .provider_action_scope import load_provider_action_scope_proof, verify_provider_action_scope_proof
+from .production_autonomy_clearance import verify_production_autonomy_clearance
+from .production_target import load_production_target_proof, verify_production_target_proof
 from .procurement_security import (
     load_procurement_security_package,
     procurement_security_package_ready,
     verify_procurement_security_package,
 )
 from .public_proof import load_public_proof_package, public_proof_package_ready, verify_public_proof_package
+from .repeatability import load_repeatability_proof, verify_repeatability_proof
 from .run_events import (
     AGENT_TASK_RECORDED,
     APPROVAL_BLOCKED,
@@ -211,5 +217,6 @@ from .data_classification import (
 from .evaluation_kit import load_evaluation_kit_packet, verify_evaluation_kit_packet
 from .run_export_retrieval import verify_run_export_retrieval
 from .run_export_upload import load_run_export_upload_proof, verify_run_export_upload_proof
+from .watch_mode_proof import load_watch_mode_proof, verify_watch_mode_proof
 from .watcher_ownership import build_watcher_ownership_packet
 from .threat_model import load_threat_model_register, threat_model_register_ready, verify_threat_model_register

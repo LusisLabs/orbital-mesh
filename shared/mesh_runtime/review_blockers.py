@@ -107,7 +107,7 @@ def classify_blocking_reasons(
         reason = str(raw_reason).strip()
         if not reason:
             continue
-        if reason == "approval required before execution":
+        if reason in {"approval required before execution", "approval_required_before_execution"}:
             if review_can_auto_remediate:
                 recoverable.append(reason)
             else:

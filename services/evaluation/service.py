@@ -15,10 +15,11 @@ from shared.mesh_runtime import (
     log_runtime_event,
     load_policy,
 )
+from shared.mesh_runtime.autonomy_policy import evaluate_autonomy_policy
 from shared.mesh_runtime.evidence_sufficiency import evaluate_evidence_sufficiency
+from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 from shared.mesh_runtime.review_blockers import classify_blocking_reasons
 from shared.mesh_runtime.remediation_safety import evaluate_remediation_safety, safety_blocking_reason
-from shared.mesh_runtime.phoenix_trace import build_phoenix_spans
 
 from .evaluation_stack import build_evaluation_stack
 from .mesh_eval import MeshEvalConfig
@@ -175,6 +176,15 @@ class EvaluationService:
         evidence_sufficiency = evaluate_evidence_sufficiency(trigger, decision)
         if not evidence_sufficiency["passed"]:
             blocking_reasons.append("evidence sufficiency gate did not pass")
+        autonomy_policy_verdict = evaluate_autonomy_policy(
+            decision,
+            connector_registry_path=self.config.connector_certification_registry_path,
+            target_profile=self.config.readiness_profile,
+            approval_observed=_approval_observed(run_events, artifacts),
+            live_execution_enabled=_live_execution_enabled(self.config, system),
+            force_approval_gate=self.config.force_approval_gate,
+        )
+        blocking_reasons.extend(autonomy_policy_verdict.blockers)
 
         policy_passed = decision_allowed and system_allowed and action_allowed and (allow_rereevaluation or not duplicate_trigger)
         readiness_passed = (
@@ -274,6 +284,7 @@ class EvaluationService:
                 },
                 "verifier": verifier_output,
                 "evidence_sufficiency": evidence_sufficiency,
+                "autonomy_policy": autonomy_policy_verdict.to_dict(),
                 "blocker_analysis": blocker_analysis,
             },
             phoenix_spans=phoenix_spans,
@@ -293,6 +304,7 @@ class EvaluationService:
             "business_rules": business_rules,
             "execution_readiness": execution_readiness,
             "evidence_sufficiency": evidence_sufficiency,
+            "autonomy_policy": autonomy_policy_verdict.to_dict(),
             "remediation_safety": safety_case.to_dict(),
             "blocker_analysis": blocker_analysis,
             "evaluation_stack": evaluation_stack,
@@ -506,3 +518,25 @@ def _artifacts_for_run(state_store: object, run_id: str | None) -> dict[str, obj
         return {}
     artifacts = getattr(session, "artifacts", None)
     return dict(artifacts) if isinstance(artifacts, dict) else {}
+
+
+def _live_execution_enabled(config: RuntimeConfig, system: str) -> bool:
+    if system == "kubernetes_service":
+        return config.kubernetes_live_execution_enabled
+    return False
+
+
+def _approval_observed(run_events: list[object] | None, artifacts: dict[str, object] | None) -> bool:
+    for event in run_events or []:
+        payload = event if isinstance(event, dict) else getattr(event, "payload", None)
+        event_type = str((payload or {}).get("event_type") or getattr(event, "event_type", "")).lower()
+        command = str((payload or {}).get("command") or "").lower()
+        outcome = str((payload or {}).get("outcome") or "").lower()
+        if "approval" in event_type and outcome in {"approved", "accepted", "succeeded"}:
+            return True
+        if command in {"approve", "approved"}:
+            return True
+    records = (artifacts or {}).get("approval_records")
+    if isinstance(records, list) and records:
+        return True
+    return False

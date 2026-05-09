@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/watch-mode-proof.schema.json",
+  "title": "WatchModeProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "environment",
+    "evidence_level",
+    "watcher_name",
+    "signal_source",
+    "started_at",
+    "completed_at",
+    "ticks",
+    "runs",
+    "duplicate_suppression",
+    "false_positive_controls",
+    "kill_switch",
+    "provider_failure",
+    "audit_exports"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.watch_mode_proof.v1"]
+    },
+    "proof_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "environment": { "type": "string" },
+    "evidence_level": {
+      "type": "string",
+      "enum": ["fixture", "live"]
+    },
+    "watcher_name": { "type": "string" },
+    "signal_source": { "type": "string" },
+    "started_at": { "type": "string" },
+    "completed_at": { "type": "string" },
+    "ticks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["tick_id", "observed_at", "target_ref", "outcome"],
+        "additionalProperties": false,
+        "properties": {
+          "tick_id": { "type": "string" },
+          "observed_at": { "type": "string" },
+          "target_ref": { "type": "string" },
+          "outcome": {
+            "type": "string",
+            "enum": ["run_created", "healthy_ignored", "duplicate_suppressed", "provider_failure_recovered", "kill_switch_paused"]
+          },
+          "run_id": { "type": ["string", "null"] },
+          "error_signature": { "type": ["string", "null"] },
+          "provider": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "run_id",
+          "target_ref",
+          "error_signature",
+          "decision_type",
+          "evaluation_ref",
+          "evidence_refs",
+          "approval_state",
+          "run_export_ref",
+          "postmortem_export_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "run_id": { "type": "string" },
+          "target_ref": { "type": "string" },
+          "error_signature": { "type": "string" },
+          "decision_type": { "type": "string" },
+          "evaluation_ref": { "type": "string" },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "approval_state": {
+            "type": "string",
+            "enum": ["not_required", "approved", "blocked", "pending"]
+          },
+          "approval_ref": { "type": ["string", "null"] },
+          "run_export_ref": { "type": "string" },
+          "postmortem_export_ref": { "type": "string" }
+        }
+      }
+    },
+    "duplicate_suppression": {
+      "type": "object",
+      "required": ["duplicate_ticks_suppressed", "repeated_run_count"],
+      "additionalProperties": false,
+      "properties": {
+        "duplicate_ticks_suppressed": { "type": "integer", "minimum": 0 },
+        "repeated_run_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "false_positive_controls": {
+      "type": "object",
+      "required": ["healthy_ticks_ignored", "false_positive_run_count"],
+      "additionalProperties": false,
+      "properties": {
+        "healthy_ticks_ignored": { "type": "integer", "minimum": 0 },
+        "false_positive_run_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "kill_switch": {
+      "type": "object",
+      "required": ["watchers_paused", "event_ref", "ticks_suppressed_after_pause"],
+      "additionalProperties": false,
+      "properties": {
+        "watchers_paused": { "type": "boolean" },
+        "event_ref": { "type": "string" },
+        "ticks_suppressed_after_pause": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "provider_failure": {
+      "type": "object",
+      "required": ["provider", "recovered", "operator_visible_ref", "run_created_during_failure"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "type": "string" },
+        "recovered": { "type": "boolean" },
+        "operator_visible_ref": { "type": "string" },
+        "run_created_during_failure": { "type": "boolean" }
+      }
+    },
+    "audit_exports": {
+      "type": "object",
+      "required": ["all_runs_exported", "secret_redaction_verified", "third_party_replay_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "all_runs_exported": { "type": "boolean" },
+        "secret_redaction_verified": { "type": "boolean" },
+        "third_party_replay_ref": { "type": "string" }
+      }
+    }
+  }
+}
