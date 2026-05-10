@@ -13,7 +13,7 @@ This is not a claim of broad production autonomy. The release clearance is bound
 - `packet.json`: top-level packet, claim boundary, pilot scope, expansion order, commands, and file hashes.
 - `pilot-clearance.json`: historical container-local `scripts/verify_pilot_clearance.py` pass against release-bound runtime `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`.
 - `health-binding.json`: `/api/health` runtime binding capture with commit and image digest checks.
-- `breakthrough-proof-summary.json`: current-HEAD replay-ready proof bundle summary and validation command hashes.
+- `breakthrough-proof-summary.json`: captured replay-ready proof bundle summary and validation command hashes.
 - `chaos-summary.json`: compose chaos breakthrough metrics, substrate coverage, multi-fault coverage, and source hashes.
 - `node-summary.json`: production node breakthrough metrics and source hashes.
 - `closed-loop-run-summary.json`: normalized postmortem/export summary for `run_20260508T033245_ad9bd5ac`.
@@ -21,7 +21,7 @@ This is not a claim of broad production autonomy. The release clearance is bound
 
 Raw `.mesh-runtime-state` logs and full run exports are intentionally not committed here. The committed files capture stable hashes, bounded status fields, metrics, action facts, and Merkle proof identifiers.
 
-Latest branch-tip replay proof: `.mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json` with bundle SHA `720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d`, generated from clean commit `2f9b909fb146865af6898fadb141da9091b56ff8`.
+Historical branch-tip replay proof for this packet: `.mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json` with bundle SHA `720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d`, generated from clean commit `2f9b909fb146865af6898fadb141da9091b56ff8`. This is not current-HEAD pilot clearance for commit `583eb3e2335cb416e1360d9f0b2cbd3420e04275`.
 
 ## Pilot Drill Scope
 

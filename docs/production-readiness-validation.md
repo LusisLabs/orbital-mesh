@@ -28,8 +28,8 @@ Latest imported hydrogen-mesh audit:
 | UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
 | Production-like smoke | `./scripts/prod_smoke.sh` | PASS | Reran on 2026-05-06 against `http://127.0.0.1:8787` with approved localhost HTTP access; health returned `status=ok`, readiness returned `state_path=/app/.mesh-runtime-state`, `goose.ready=true`, and the script printed `prod smoke passed`. |
-| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | PASS | Reran `scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json` inside the recreated compose `mesh` service on 2026-05-08 because the agent sandbox blocks Python `urllib` to localhost while the user shell and `curl` can reach the service. The verifier returned `status=pass`, `/api/readiness` returned `profile=pilot`, `status=ready`, `blockers=[]`, and `/api/pilot/go-no-go` generated at `2026-05-08T05:31:28.934238+00:00` returned `status=go`, `missing_evidence=[]`, and all checks passed. `/api/health` returned `status=ok` at `2026-05-08T05:30:55Z` with runtime commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`, matching the mounted release packet. The local breakthrough proof bundle is `.mesh-runtime-state/proofs/breakthrough-proof-20260508T050910Z.json` with SHA `2de6b7212eb00c5e92532d5fd1d39a12b0ac76e31d59b53225b2e01e0ae6dac9`; the live closed-loop run recorded for the breakthrough claim is `run_20260508T033245_ad9bd5ac`. |
-| Release provenance / CI artifacts | CI run `25525840560` plus `mesh.release_provenance.v1` completion and runtime-binding checks | PASS, RUNTIME BOUND | Live CI passed on 2026-05-07 UTC at branch commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`. Downloaded artifacts are under `/tmp/orbital-mesh-ci-25525840560-803b13e/`. Combining the CI attestation, SBOM, vulnerability scan, signed policy lifecycle, and local migration proof produced `/tmp/orbital-mesh-ci-25525840560-803b13e/release-provenance-complete.json` with `status=complete`, `missing=[]`, image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`, and packet SHA `07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6`. On 2026-05-08 the compose `mesh` service was recreated with `MESH_BUILD_COMMIT=803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and `MESH_BUILD_IMAGE_DIGEST=sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`; `/api/health` and the pilot-clearance verifier both reported matching runtime binding. Later commits after `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` do not have current-head release image artifacts while GitHub refuses workflow jobs for account billing or spending-limit reasons. After this PR merges, rerun the same proof on the merged commit or produce a new release image handoff for current `HEAD` before extending the release claim beyond `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`. |
+| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED, RUNTIME BOUND | Reran `scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --json` on 2026-05-10 against the current live handoff runtime. `/api/health` returned `status=ok` with runtime commit `583eb3e2335cb416e1360d9f0b2cbd3420e04275` and image digest `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a`, matching the mounted release packet. The verifier still returned `status=fail`: `/api/readiness` was `profile=pilot`, `status=blocked`, and `/api/pilot/go-no-go` was `status=blocked`. Readiness blockers were `operator_identity_required`, `authenticated_ingress_deployment_verified`, `policy_lifecycle_signed`, `backup_restore_rehearsal_verified`, `state_backend_postgres`, `database_url_configured`, `live_feedback_source_configured`, `mesh_brain_artifact_uri_prefix_configured`, `mesh_brain_serving_backend_configured`, `run_export_retention_reviewed`, `design_partner_packet_verified`, `unfinished_feature_flag_adapter_disabled`, and `unfinished_incident_adapter_disabled`. Missing go/no-go evidence was `readiness_green`, `live_action_proof_observed`, `denied_action_proof_observed`, `mesh_brain_model_kernel_gate_observed`, `mesh_brain_live_canary_smoke_observed`, `mesh_brain_single_crops_canary_lane_observed`, `mesh_brain_rollback_drill_observed`, and `on_call_drill_verified`. The 2026-05-08 green result remains historical for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` only. |
+| Release provenance / CI artifacts | CI and handoff artifacts plus `mesh.release_provenance.v1` completion and runtime-binding checks | PARTIAL, CURRENT HEAD RUNTIME BOUND | The 2026-05-10 live handoff runtime mounted a complete release packet for current `HEAD`: `git_commit=583eb3e2335cb416e1360d9f0b2cbd3420e04275`, image digest `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a`, packet SHA `db7a5d5b6cddfcf9994605672f984e10cb72ebcef8f9e3cbec86ad33855d2904`, and runtime binding matched `/api/health`. Current-head provenance generation from this checkout still returned `status=incomplete` because the local tree is dirty at `AGENTS.md` and local release inputs are missing: `image_digest`, `base_image_digests`, `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`, `vulnerability_scan_path`, `ci_attestation`, and `build_command`. The older CI run `25525840560` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f` remain historical evidence for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` only. |
 | Autonomy policy tier guard | `PYTHONPATH=. python3 -m unittest tests.test_autonomy_policy tests.test_remediation_safety -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `shared.mesh_runtime.autonomy_policy.evaluate_autonomy_policy`. The focused suite verifies `fully_autonomous`, `approval_required`, `advisory_only`, and `denied_always`; Kubernetes live rollback is allowed only when connector certification grants the `rollback` scope; live feature-flag writes fail closed because `feature_flag_adapter` is still `dry-run`/`proposal` only; local mock execution reports live blockers without promoting fixture execution to live authority; and `force_approval_gate` blocks autonomous live Kubernetes execution through `EvaluationService.stage_results.autonomy_policy`. This is contract and fixture evidence, not a live broad-production autonomy proof. |
 | Watch-mode proof contract | `PYTHONPATH=. python3 -m unittest tests.test_watch_mode_proof tests.test_autonomy_policy tests.test_kubernetes_watcher tests.test_watcher_registry -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `mesh.watch_mode_proof.v1` and `scripts/verify_watch_mode_proof.py`. The verifier requires multiple ticks, at least two unique run IDs, duplicate suppression with zero repeated runs, healthy false-positive suppression, watcher kill-switch pause evidence, recovered provider failure with no run created during the failure, recorded decisions/evidence/approval state, run export refs, postmortem export refs, secret-redaction proof, and a third-party replay ref. `--require-live` fails fixture packets unless `evidence_level=live`, so fixture watch proof cannot be presented as live production proof. |
 | Provider action-scope proof contract | `PYTHONPATH=. python3 -m unittest tests.test_provider_action_scope tests.test_watch_mode_proof tests.test_autonomy_policy -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `mesh.provider_action_scope_proof.v1` and `scripts/verify_provider_action_scopes.py`. The verifier checks requested incident/action scopes against `config/connector-certification.registry.json`, connector state, policy tier, evidence refs, approval behavior, rollback or compensating refs, degraded behavior, credential governance, run exports, live refs when `--require-live` is set, and secret-material absence. Fixture tests prove Kubernetes `rollback`, OTel `feedback-proof`, and audit `local-audit` can pass as registry-allowed fixture scopes, while feature-flag `write` and external audit `append-only-audit-write` fail closed because the registry does not currently certify those scopes. This does not promote incident, feature-flag, or external audit providers beyond their registry states. |
@@ -81,14 +81,15 @@ service container and succeeded.
   `ready: false`, `status: below_threshold`, `capability_axis_pass_rate:
   0.2174`, and `5` passed axes out of `23` known axes. This is useful risk
   evidence, but it is not the compose stack smoke gate.
-- `.mesh-runtime-state/release-provenance.json` is an ignored local packet
-  mounted by the running stack at the 2026-05-07T23:32:34Z go/no-go check. It
-  was generated for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and image
-  digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f`.
-  The packet itself is complete with packet SHA
-  `07e35cd2177992ece373b4cde774ee921d52d46017a389fc9fba6b300f92afa6`, but it
-  does not clear the live go/no-go gate because the running control plane
-  reports no runtime commit or image digest.
+- The earlier `.mesh-runtime-state/release-provenance.json` packet for commit
+  `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` is historical. The current live
+  handoff runtime mounted a complete current-head release packet at
+  `/release-provenance.json` for commit
+  `583eb3e2335cb416e1360d9f0b2cbd3420e04275` and image digest
+  `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a`,
+  with packet SHA
+  `db7a5d5b6cddfcf9994605672f984e10cb72ebcef8f9e3cbec86ad33855d2904`. This
+  proves runtime binding only; readiness and go/no-go remain blocked.
 - `.mesh-runtime-state/`, `.venv/`, `web/dist/`, and `web/test-results/` are
   ignored local artifacts and must not be treated as committed release proof.
 
@@ -106,30 +107,27 @@ service container and succeeded.
 
 - Full strict mypy remains partial until the `files` scope is expanded beyond
   `services/decision/hypothesis_engine.py`.
-- Release provenance packet generation is complete for CI run `25525840560`,
-  but live deployment binding remains blocked. The running stack must use the
-  exact release packet and report matching `MESH_BUILD_COMMIT` and
-  `MESH_BUILD_IMAGE_DIGEST` from the deployed image. Independent local images
-  are not valid substitutes unless their digest matches the CI packet digest.
-  Current-head CI is also blocked by GitHub account billing or spending-limit
-  enforcement, so no current-head release image artifact exists for commits
-  after `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` until that platform issue is
-  cleared and the image job runs. The normal CI workflow does not publish a
-  pullable release image. A manual
-  `.github/workflows/release-image-handoff.yml` path now exists for explicit
-  operator-approved exports only; it requires `confirm_export=EXPORT_RELEASE_IMAGE`
-  and uploads a runnable image artifact plus `mesh.release_image_handoff.v1`.
-  Downloaded handoff artifacts must pass
-  `scripts/verify_release_image_handoff.py --require-artifacts` before runtime
-  deployment binding. This path has not been run for pilot clearance in the
-  current audit.
+- Current-head release provenance has split evidence. The live handoff runtime
+  reports matching current-head commit and image digest, but local provenance
+  generation from this checkout remains incomplete until the dirty tree and
+  local release inputs listed above are resolved. The older CI run
+  `25525840560` remains historical evidence for commit
+  `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`, not for current `HEAD`.
 - Pilot readiness and go/no-go must be treated as runtime-bound, not
-  repository-wide. The historical green row above is valid only for the
-  recreated compose service that reported commit
-  `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` and the matching release image
-  digest. Any service that reports `commit=unknown` or omits
-  `MESH_BUILD_IMAGE_DIGEST` remains blocked by runtime binding until the
-  pilot-clearance verifier returns `status=pass` for that exact base URL.
+  repository-wide. The current handoff runtime is commit/image bound to
+  `583eb3e2335cb416e1360d9f0b2cbd3420e04275`, but the pilot-clearance verifier
+  still returns `status=fail` because readiness and go/no-go evidence are
+  blocked. Historical green rows do not clear the current runtime.
+- Current readiness blockers map to explicit runtime inputs, not optional
+  advisory checks: `MESH_OPERATOR_IDENTITY_REQUIRED=1`,
+  `MESH_AUTHENTICATED_INGRESS_PROOF_PATH`, a signed policy lifecycle key,
+  `MESH_BACKUP_RESTORE_REHEARSAL_PATH`, `MESH_STATE_BACKEND=postgres`,
+  `MESH_DATABASE_URL`, either Prometheus feedback config or enabled Kubernetes
+  live execution, durable `MESH_BRAIN_ARTIFACT_URI_PREFIX`,
+  `MESH_BRAIN_SERVING_BASE_URL`, `MESH_BRAIN_SERVING_MODEL`,
+  `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`, `MESH_DESIGN_PARTNER_PACKET_PATH`,
+  and either disabled unfinished adapter credentials or valid provider proof
+  packets for the feature-flag and incident adapters.
 - Broad production-autonomy claims remain blocked. The current autonomy policy
   guard is a deterministic contract in
   `shared.mesh_runtime.autonomy_policy.evaluate_autonomy_policy` and is wired
