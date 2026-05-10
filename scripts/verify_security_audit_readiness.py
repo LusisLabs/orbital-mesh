@@ -44,7 +44,7 @@ REQUIRED_MARKERS = {
     ".github/dependabot.yml": (
         'package-ecosystem: "github-actions"',
         'package-ecosystem: "npm"',
-        'package-ecosystem: "uv"',
+        'package-ecosystem: "pip"',
         'package-ecosystem: "cargo"',
         'directory: "/latent-mesh/LatentMAS"',
     ),

@@ -8,7 +8,7 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | --- | --- |
 | Security policy | `SECURITY.md` defines supported versions, private reporting, sensitive artifact handling, baseline controls, and audit cadence. |
 | Scorecard | `.github/workflows/security.yml` runs OpenSSF Scorecard on public repositories, and on private repositories only when `OPENSSF_SCORECARD_ON_PRIVATE=true` is set. |
-| Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, uv, root Cargo, and LatentMAS Cargo dependencies. |
+| Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, pip, root Cargo, and LatentMAS Cargo dependencies. |
 | Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes when the repository is public or `GHAS_DEPENDENCY_REVIEW_ON_PRIVATE=true` confirms private-repository support. |
 | Known vulnerabilities | The security workflow scans lockfiles with a pinned OSV scanner image, uploads `osv-lockfile-scan.json`, runs `npm audit --audit-level=high`, and uploads `npm-audit.json` for release-candidate evidence. |
 | Token permissions | GitHub workflows use `contents: read` by default; private-repository CodeQL and Scorecard jobs add the read scopes needed for workflow-run, check, issue, status, and pull-request metadata plus scoped `security-events: write` for SARIF upload. Scorecard receives `GITHUB_TOKEN` explicitly for private-repository GraphQL queries. |
