@@ -19,7 +19,7 @@ from services.ingest.service import IngestService
 from services.trigger.service import TriggerService
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import ExecutionRecord, RuntimeConfig, load_fixture
-from shared.mesh_runtime.integrations import build_readiness
+from shared.mesh_runtime.integrations import build_readiness, invalidate_readiness_cache
 from shared.mesh_runtime.orchestration_topology import ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION
 
 
@@ -694,6 +694,38 @@ class ReadinessProfileTests(unittest.TestCase):
 
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("mesh_brain_artifact_uri_prefix_configured", readiness["blockers"])
+
+    def test_readiness_cache_key_tracks_mesh_brain_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            invalidate_readiness_cache()
+            self.addCleanup(invalidate_readiness_cache)
+            blocked_config = _pilot_ready_config(tmp)
+            blocked_config.mesh_brain_artifact_uri_prefix = None
+
+            blocked = build_readiness(blocked_config).to_dict()
+            ready = build_readiness(_pilot_ready_config(tmp)).to_dict()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("mesh_brain_artifact_uri_prefix_configured", blocked["blockers"])
+        self.assertEqual(ready["status"], "ready")
+
+    def test_readiness_cache_key_tracks_default_steering_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            invalidate_readiness_cache()
+            self.addCleanup(invalidate_readiness_cache)
+            blocked_config = _pilot_ready_config(tmp)
+            blocked_config.force_approval_gate = False
+            blocked_config.default_steering_mode = "manual_review"
+            ready_config = _pilot_ready_config(tmp)
+            ready_config.force_approval_gate = False
+            ready_config.default_steering_mode = "approval_gate"
+
+            blocked = build_readiness(blocked_config).to_dict()
+            ready = build_readiness(ready_config).to_dict()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("force_approval_gate", blocked["blockers"])
+        self.assertEqual(ready["status"], "ready")
 
 
 class ProductionComposeContractTests(unittest.TestCase):
