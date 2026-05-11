@@ -1,15 +1,24 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from copy import deepcopy
+from datetime import datetime, timezone
 from http import HTTPStatus
 from dataclasses import dataclass
-from typing import Any, Protocol
+from pathlib import Path
+from typing import Any, Protocol, cast
 from urllib import error, request
 
 from .config import RuntimeConfig
+from .json_store import LockedJsonFile
 
 
 class HelixMemoryProjectionError(RuntimeError):
+    pass
+
+
+class HelixMemoryProjectionRecordError(HelixMemoryProjectionError):
     pass
 
 
@@ -27,6 +36,22 @@ class HelixMemoryProjectionProtocol(Protocol):
     def record_retrieval(self, record: dict[str, Any]) -> None: ...
 
     def upsert_memory_packet(self, record: dict[str, Any]) -> None: ...
+
+    def replay_pending(self, limit: int | None = None) -> dict[str, Any]: ...
+
+    def projection_status(self) -> dict[str, Any]: ...
+
+
+class HelixMemoryProjectionOutboxProtocol(Protocol):
+    def enqueue(self, operation: str, record: dict[str, Any]) -> str: ...
+
+    def mark_applied(self, event_id: str) -> None: ...
+
+    def mark_failed(self, event_id: str, error_message: str) -> None: ...
+
+    def pending_events(self, limit: int | None = None) -> list[dict[str, Any]]: ...
+
+    def status(self) -> dict[str, Any]: ...
 
 
 @dataclass(frozen=True)
@@ -71,6 +96,13 @@ class DisabledHelixMemoryProjection:
 
     def upsert_memory_packet(self, record: dict[str, Any]) -> None:
         del record
+
+    def replay_pending(self, limit: int | None = None) -> dict[str, Any]:
+        del limit
+        return {"enabled": False, "outbox_enabled": False, "attempted": 0, "applied": 0, "failed": 0, "failures": []}
+
+    def projection_status(self) -> dict[str, Any]:
+        return {"enabled": False, "outbox_enabled": False}
 
 
 class HelixMemoryProjection:
@@ -169,6 +201,13 @@ class HelixMemoryProjection:
             },
         )
 
+    def replay_pending(self, limit: int | None = None) -> dict[str, Any]:
+        del limit
+        return {"enabled": True, "outbox_enabled": False, "attempted": 0, "applied": 0, "failed": 0, "failures": []}
+
+    def projection_status(self) -> dict[str, Any]:
+        return {"enabled": True, "outbox_enabled": False}
+
     def _query(self, query_name: str, payload: dict[str, Any]) -> None:
         try:
             self.client.query(query_name, payload)
@@ -176,14 +215,208 @@ class HelixMemoryProjection:
             raise HelixMemoryProjectionError(f"HelixDB memory projection query {query_name!r} failed: {exc}") from exc
 
 
+class DurableHelixMemoryProjection:
+    enabled = True
+
+    def __init__(
+        self,
+        projection: HelixMemoryProjection,
+        outbox: HelixMemoryProjectionOutboxProtocol,
+        *,
+        raise_on_failure: bool = False,
+    ):
+        self.projection = projection
+        self.outbox = outbox
+        self.raise_on_failure = raise_on_failure
+
+    def upsert_observation(self, record: dict[str, Any]) -> None:
+        self._project("upsert_observation", record)
+
+    def upsert_claim(self, record: dict[str, Any]) -> None:
+        self._project("upsert_claim", record)
+
+    def upsert_relationship(self, record: dict[str, Any]) -> None:
+        self._project("upsert_relationship", record)
+
+    def upsert_supersession(self, record: dict[str, Any]) -> None:
+        self._project("upsert_supersession", record)
+
+    def record_retrieval(self, record: dict[str, Any]) -> None:
+        self._project("record_retrieval", record)
+
+    def upsert_memory_packet(self, record: dict[str, Any]) -> None:
+        self._project("upsert_memory_packet", record)
+
+    def replay_pending(self, limit: int | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "enabled": True,
+            "outbox_enabled": True,
+            "attempted": 0,
+            "applied": 0,
+            "failed": 0,
+            "failures": [],
+        }
+        failures = cast(list[dict[str, str]], result["failures"])
+        for event in self.outbox.pending_events(limit):
+            event_id = str(event.get("event_id", ""))
+            operation = str(event.get("operation", ""))
+            record = event.get("record")
+            result["attempted"] = int(result["attempted"]) + 1
+            if not event_id or not isinstance(record, dict):
+                error_message = "HelixDB projection outbox event is malformed"
+                if event_id:
+                    self.outbox.mark_failed(event_id, error_message)
+                result["failed"] = int(result["failed"]) + 1
+                failures.append({"event_id": event_id, "error": error_message})
+                continue
+            try:
+                self._call_operation(operation, cast(dict[str, Any], record))
+            except HelixMemoryProjectionError as exc:
+                error_message = str(exc)
+                self.outbox.mark_failed(event_id, error_message)
+                result["failed"] = int(result["failed"]) + 1
+                failures.append({"event_id": event_id, "error": error_message})
+            else:
+                self.outbox.mark_applied(event_id)
+                result["applied"] = int(result["applied"]) + 1
+        result["outbox"] = self.projection_status()
+        return result
+
+    def projection_status(self) -> dict[str, Any]:
+        return {"enabled": True, "outbox_enabled": True, **self.outbox.status()}
+
+    def _project(self, operation: str, record: dict[str, Any]) -> None:
+        event_id = self.outbox.enqueue(operation, record)
+        try:
+            self._call_operation(operation, record)
+        except HelixMemoryProjectionRecordError as exc:
+            self.outbox.mark_failed(event_id, str(exc))
+            raise
+        except HelixMemoryProjectionError as exc:
+            self.outbox.mark_failed(event_id, str(exc))
+            if self.raise_on_failure:
+                raise
+        except Exception as exc:
+            wrapped = HelixMemoryProjectionError(f"HelixDB memory projection operation {operation!r} failed: {exc}")
+            self.outbox.mark_failed(event_id, str(wrapped))
+            if self.raise_on_failure:
+                raise wrapped from exc
+        else:
+            self.outbox.mark_applied(event_id)
+
+    def _call_operation(self, operation: str, record: dict[str, Any]) -> None:
+        if operation not in _PROJECTION_OPERATIONS:
+            raise HelixMemoryProjectionRecordError(f"unknown HelixDB memory projection operation {operation!r}")
+        method = getattr(self.projection, operation)
+        method(record)
+
+
+class HelixMemoryProjectionOutbox:
+    def __init__(self, path: Path):
+        self.path = path
+
+    def enqueue(self, operation: str, record: dict[str, Any]) -> str:
+        event = build_helix_memory_projection_event(operation, record)
+        event_id = str(event["event_id"])
+        with LockedJsonFile(self.path) as payload:
+            events = _outbox_events(payload)
+            for existing in events:
+                if existing.get("event_id") == event_id:
+                    if existing.get("status") != "applied":
+                        existing["operation"] = event["operation"]
+                        existing["record"] = deepcopy(event["record"])
+                        existing["status"] = "pending"
+                        existing["updated_at"] = event["updated_at"]
+                    return event_id
+            events.append(event)
+        return event_id
+
+    def mark_applied(self, event_id: str) -> None:
+        self._update_event(
+            event_id,
+            status="applied",
+            last_error=None,
+            applied_at=_utc_timestamp(),
+            increment_attempts=True,
+        )
+
+    def mark_failed(self, event_id: str, error_message: str) -> None:
+        self._update_event(
+            event_id,
+            status="failed",
+            last_error=error_message,
+            applied_at=None,
+            increment_attempts=True,
+        )
+
+    def pending_events(self, limit: int | None = None) -> list[dict[str, Any]]:
+        with LockedJsonFile(self.path) as payload:
+            events = [
+                deepcopy(event)
+                for event in _outbox_events(payload)
+                if event.get("status") in {"pending", "failed"}
+            ]
+        if limit is None:
+            return events
+        return events[: max(limit, 0)]
+
+    def status(self) -> dict[str, Any]:
+        with LockedJsonFile(self.path) as payload:
+            events = [deepcopy(event) for event in _outbox_events(payload)]
+        return _outbox_status(events, path=str(self.path))
+
+    def _update_event(
+        self,
+        event_id: str,
+        *,
+        status: str,
+        last_error: str | None,
+        applied_at: str | None,
+        increment_attempts: bool,
+    ) -> None:
+        with LockedJsonFile(self.path) as payload:
+            for event in _outbox_events(payload):
+                if event.get("event_id") != event_id:
+                    continue
+                event["status"] = status
+                event["updated_at"] = _utc_timestamp()
+                event["last_error"] = last_error
+                event["applied_at"] = applied_at
+                if increment_attempts:
+                    event["attempts"] = int(event.get("attempts") or 0) + 1
+                return
+
+
 def build_helix_memory_projection(
     config: RuntimeConfig,
     *,
     client: Any | None = None,
+    outbox: HelixMemoryProjectionOutboxProtocol | None = None,
+    raise_on_failure: bool = False,
 ) -> HelixMemoryProjectionProtocol:
     if config.memory_graph_backend != "helix":
         return DisabledHelixMemoryProjection()
-    return HelixMemoryProjection(config, client=client)
+    projection = HelixMemoryProjection(config, client=client)
+    projection_outbox = outbox or HelixMemoryProjectionOutbox(Path(config.state_directory) / "helix_memory_projection_outbox.json")
+    return DurableHelixMemoryProjection(projection, projection_outbox, raise_on_failure=raise_on_failure)
+
+
+def build_helix_memory_projection_event(operation: str, record: dict[str, Any]) -> dict[str, Any]:
+    if operation not in _PROJECTION_OPERATIONS:
+        raise HelixMemoryProjectionRecordError(f"unknown HelixDB memory projection operation {operation!r}")
+    now = _utc_timestamp()
+    record_payload = deepcopy(record)
+    return {
+        "event_id": _projection_event_id(operation, record_payload),
+        "operation": operation,
+        "record": record_payload,
+        "status": "pending",
+        "attempts": 0,
+        "last_error": None,
+        "created_at": now,
+        "updated_at": now,
+        "applied_at": None,
+    }
 
 
 def _build_helix_client(config: RuntimeConfig) -> Any:
@@ -236,5 +469,74 @@ def _optional(value: Any) -> str:
 def _required(record: dict[str, Any], key: str) -> str:
     value = record.get(key)
     if value is None or value == "":
-        raise HelixMemoryProjectionError(f"HelixDB memory projection record missing {key!r}")
+        raise HelixMemoryProjectionRecordError(f"HelixDB memory projection record missing {key!r}")
     return str(value)
+
+
+_PROJECTION_OPERATIONS = {
+    "upsert_observation",
+    "upsert_claim",
+    "upsert_relationship",
+    "upsert_supersession",
+    "record_retrieval",
+    "upsert_memory_packet",
+}
+
+_PROJECTION_ID_KEYS = {
+    "upsert_observation": "observation_id",
+    "upsert_claim": "claim_id",
+    "upsert_relationship": "relationship_id",
+    "upsert_supersession": "supersession_id",
+    "record_retrieval": "retrieval_id",
+    "upsert_memory_packet": "packet_id",
+}
+
+
+def _projection_event_id(operation: str, record: dict[str, Any]) -> str:
+    identity_key = _PROJECTION_ID_KEYS[operation]
+    identity = _safe_event_id_part(record.get(identity_key) or "unknown")
+    payload_hash = hashlib.sha256(_json_text(record).encode("utf-8")).hexdigest()[:24]
+    return f"{operation}:{identity}:{payload_hash}"
+
+
+def _safe_event_id_part(value: Any) -> str:
+    raw = str(value)
+    return "".join(character if character.isalnum() or character in {"-", "_", "."} else "_" for character in raw)
+
+
+def _outbox_events(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list):
+        events: list[dict[str, Any]] = []
+        payload["events"] = events
+        return events
+    if all(isinstance(event, dict) for event in raw_events):
+        return cast(list[dict[str, Any]], raw_events)
+    events = [event for event in raw_events if isinstance(event, dict)]
+    payload["events"] = events
+    return events
+
+
+def _outbox_status(events: list[dict[str, Any]], *, path: str | None = None) -> dict[str, Any]:
+    counts = {"pending": 0, "failed": 0, "applied": 0}
+    last_error = None
+    for event in events:
+        status = str(event.get("status") or "pending")
+        if status in counts:
+            counts[status] += 1
+        if event.get("last_error"):
+            last_error = str(event["last_error"])
+    result: dict[str, Any] = {
+        "total": len(events),
+        "pending": counts["pending"],
+        "failed": counts["failed"],
+        "applied": counts["applied"],
+        "last_error": last_error,
+    }
+    if path is not None:
+        result["path"] = path
+    return result
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat()

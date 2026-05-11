@@ -127,7 +127,7 @@ class MigrationRehearsalTests(unittest.TestCase):
                     "--environment",
                     "staging",
                     "--applied-migration-count",
-                    "5",
+                    "6",
                     "--rolled-back",
                     "--rollback-ref",
                     "restore://postgres/migration-rehearsal/test",
@@ -157,7 +157,7 @@ class MigrationRehearsalTests(unittest.TestCase):
             )
 
         self.assertEqual(packet["schema_version"], "mesh.migration_rehearsal.v1")
-        self.assertEqual(packet["migration_version"], "004_incident_corpus")
+        self.assertEqual(packet["migration_version"], "005_helix_projection_outbox")
         self.assertEqual(verification["status"], "pass")
 
 

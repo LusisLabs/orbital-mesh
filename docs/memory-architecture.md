@@ -66,8 +66,15 @@ helix check
 helix push dev
 ```
 
-The projection is fail-closed when enabled: an unreachable instance or missing
-compiled query raises a runtime error instead of silently forking memory state.
+The projection is recoverable when enabled. Canonical writes land in the
+configured Mesh state backend first, then the Helix operation is recorded in a
+projection outbox before the query is attempted. File-backed state stores the
+outbox at `helix_memory_projection_outbox.json` under `state_directory`;
+Postgres-backed state stores it in `helix_memory_projection_outbox`. Endpoint
+or query failures leave `failed` outbox entries for replay instead of silently
+forking memory state. Record-shape errors still raise because they indicate a
+contract bug before the projection boundary.
+
 It is not a replacement for Postgres pilot persistence until equivalent
 restart, migration, backup/restore, load, and release provenance gates exist
 and pass.
@@ -75,7 +82,7 @@ and pass.
 Focused proof:
 
 ```bash
-scripts/verify_helix_memory_projection.py --json --require-enabled
+scripts/verify_helix_memory_projection.py --json --require-enabled --replay-pending
 ```
 
 ## Lifecycle

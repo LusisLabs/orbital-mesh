@@ -30,7 +30,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Promptfoo is a compatibility mode name and advisory integration lane. Mesh-native evaluation decides pass/fail.
 - Hermes is first-class for explanation and interaction. In `auto` orchestration mode the adapter prefers Hermes when ready, then Goose, then native fallback. Hermes does not replace Mesh authority.
 - Postgres is the compose production default and required for multi-operator production reliance. File-backed state remains supported and is the library default.
-- HelixDB memory projection is an optional graph-vector overlay for verified memory records. Do not treat `MESH_MEMORY_GRAPH_BACKEND=helix` as a replacement for `MESH_STATE_BACKEND=postgres` pilot persistence or release proof.
+- HelixDB memory projection is an optional graph-vector overlay for verified memory records, with a replayable projection outbox for failed Helix writes. Do not treat `MESH_MEMORY_GRAPH_BACKEND=helix` as a replacement for `MESH_STATE_BACKEND=postgres` pilot persistence or release proof.
 - Local smoke evidence is not production proof.
 - Synthetic, fixture, local-only, or `--allow-dirty` release evidence is not pilot-signing proof.
 - Raw secrets, kubeconfigs, tokens, API keys, SSH keys, and service account credentials must not enter run artifacts, docs examples, or committed fixtures.

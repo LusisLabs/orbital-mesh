@@ -41,6 +41,19 @@ http://127.0.0.1:8787
 
 The default stack runs `MESH_STACK_AGENT_FABRIC_MODE=deepagents` and enables the CPU LatentMAS sidecar. DeepAgents and LatentMAS stay advisory: Mesh policy, deterministic evaluation, approval gates, and Kubernetes allowlists remain authoritative.
 
+## Full-Stack E2E Overlay
+
+Use `docker-compose.e2estack.yml` when the goal is a pilot-like local composition that wires the authenticated ingress, telemetry, artifact, provider, audit, release-binding, evidence-packet, network-segmentation, and standalone frontend slices in one Compose graph:
+
+```bash
+docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml config --quiet
+docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml up --build
+```
+
+The overlay publishes the trusted-header TLS gateway on `https://127.0.0.1:${MESH_E2E_INGRESS_PORT:-8443}`, the standalone `meshapp` asset service on `http://127.0.0.1:${MESH_E2E_FRONTEND_PORT:-3000}`, and Grafana on `http://127.0.0.1:${MESH_E2E_GRAFANA_PORT:-3001}`. Mesh, Postgres, k3s APIs, LatentMAS, Prometheus, Loki, Jaeger, MinIO, provider adapters, RPC, and indexer targets are attached to explicit internal networks instead of the default Compose network.
+
+`mesh-e2e-proof-seed` materializes local E2E proof packets into `mesh_runtime_state:/app/.mesh-runtime-state/e2e`, and `mesh-e2e-proof-verify` runs the matching verifier scripts before Mesh starts. These packets are valid local rehearsal inputs; production pilot clearance still requires operator-captured evidence from the real ingress/IdP, artifact store, audit sink, provider accounts, on-call drill, backup/restore, load rehearsal, and release pipeline.
+
 ## Optional Lanes
 
 Use the CUDA LatentMAS worker sidecar instead of the default CPU sidecar:

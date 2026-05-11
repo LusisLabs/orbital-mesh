@@ -15,7 +15,7 @@ from uuid import uuid4
 from .config import RuntimeConfig
 from .contracts import ClaimRecord, MemoryPacket, ObservationRecord, RelationshipRecord, RetrievalRecord, SupersessionRecord
 from .control_plane_models import GoalRecord, RunEvent, RunSession
-from .helix_memory import build_helix_memory_projection
+from .helix_memory import build_helix_memory_projection, build_helix_memory_projection_event
 from .learning_logic import historical_success_rate, learning_context_from_outcomes, recovery_patterns
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .mesh_state_store import RunFilters
@@ -37,7 +37,8 @@ class PostgresStateStore:
         self.database_url = config.database_url
         self.runtime_store = RuntimeStateStore(config.state_directory)
         self.vault = VaultManager(config.vault_path, runtime_config=config)
-        self.helix_memory = build_helix_memory_projection(config)
+        helix_outbox = _PostgresHelixMemoryProjectionOutbox(self) if config.memory_graph_backend == "helix" else None
+        self.helix_memory = build_helix_memory_projection(config, outbox=helix_outbox)
         self._last_vault_materialized_at: dict[str, float] = {}
         self._vault_materialize_lock = threading.Lock()
         self._vault_materialize_min_interval_seconds = float(
@@ -914,6 +915,141 @@ class PostgresStateStore:
         except queue.Full:
             return
         vault_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
+
+class _PostgresHelixMemoryProjectionOutbox:
+    def __init__(self, store: PostgresStateStore):
+        self.store = store
+
+    def enqueue(self, operation: str, record: dict[str, Any]) -> str:
+        event = build_helix_memory_projection_event(operation, record)
+        with self.store._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO helix_memory_projection_outbox
+                (event_id, operation, record, status, attempts, last_error, created_at, updated_at, applied_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_id) DO UPDATE SET
+                  operation = EXCLUDED.operation,
+                  record = EXCLUDED.record,
+                  status = CASE
+                    WHEN helix_memory_projection_outbox.status = 'applied'
+                    THEN helix_memory_projection_outbox.status
+                    ELSE 'pending'
+                  END,
+                  last_error = CASE
+                    WHEN helix_memory_projection_outbox.status = 'applied'
+                    THEN helix_memory_projection_outbox.last_error
+                    ELSE NULL
+                  END,
+                  updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    event["event_id"],
+                    event["operation"],
+                    self.store._jsonb(event["record"]),
+                    event["status"],
+                    event["attempts"],
+                    event["last_error"],
+                    event["created_at"],
+                    event["updated_at"],
+                    event["applied_at"],
+                ),
+            )
+        return str(event["event_id"])
+
+    def mark_applied(self, event_id: str) -> None:
+        now = _timestamp()
+        with self.store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE helix_memory_projection_outbox
+                SET status = 'applied',
+                    attempts = attempts + 1,
+                    last_error = NULL,
+                    updated_at = %s,
+                    applied_at = %s
+                WHERE event_id = %s
+                """,
+                (now, now, event_id),
+            )
+
+    def mark_failed(self, event_id: str, error_message: str) -> None:
+        with self.store._connect() as conn:
+            conn.execute(
+                """
+                UPDATE helix_memory_projection_outbox
+                SET status = 'failed',
+                    attempts = attempts + 1,
+                    last_error = %s,
+                    updated_at = %s
+                WHERE event_id = %s
+                """,
+                (error_message, _timestamp(), event_id),
+            )
+
+    def pending_events(self, limit: int | None = None) -> list[dict[str, Any]]:
+        if limit is not None and limit <= 0:
+            return []
+        limit_sql = "LIMIT %s" if limit is not None else ""
+        params = (limit,) if limit is not None else ()
+        with self.store._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT event_id, operation, record, status, attempts, last_error, created_at, updated_at, applied_at
+                FROM helix_memory_projection_outbox
+                WHERE status IN ('pending', 'failed')
+                ORDER BY created_at ASC
+                {limit_sql}
+                """,
+                params,
+            ).fetchall()
+        return [
+            {
+                "event_id": row[0],
+                "operation": row[1],
+                "record": _json_payload(row[2]),
+                "status": row[3],
+                "attempts": row[4],
+                "last_error": row[5],
+                "created_at": row[6],
+                "updated_at": row[7],
+                "applied_at": row[8],
+            }
+            for row in rows
+        ]
+
+    def status(self) -> dict[str, Any]:
+        counts = {"pending": 0, "failed": 0, "applied": 0}
+        with self.store._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT status, COUNT(*)
+                FROM helix_memory_projection_outbox
+                GROUP BY status
+                """
+            ).fetchall()
+            error_row = conn.execute(
+                """
+                SELECT last_error
+                FROM helix_memory_projection_outbox
+                WHERE last_error IS NOT NULL
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        for row in rows:
+            status = str(row[0])
+            if status in counts:
+                counts[status] = int(row[1])
+        return {
+            "backend": "postgres",
+            "total": sum(counts.values()),
+            "pending": counts["pending"],
+            "failed": counts["failed"],
+            "applied": counts["applied"],
+            "last_error": error_row[0] if error_row else None,
+        }
 
 
 def _json_payload(value: Any) -> Any:

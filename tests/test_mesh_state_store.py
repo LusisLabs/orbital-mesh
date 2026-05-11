@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import tempfile
 import unittest
@@ -7,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from shared.mesh_runtime import FileStateStore, HelixMemoryProjection, RuntimeConfig, build_mesh_state_store
-from shared.mesh_runtime.helix_memory import HelixMemoryQueryNames
+from shared.mesh_runtime.helix_memory import HelixMemoryQueryNames, build_helix_memory_projection
 from shared.mesh_runtime.json_store import LockedJsonFile
 from shared.mesh_runtime.mesh_state_store import RunFilters
 
@@ -269,11 +270,56 @@ class MeshStateStoreTests(unittest.TestCase):
         self.assertEqual(projection.calls[1][1]["claim_id"], "claim_1")
         self.assertEqual(projection.calls[2][1]["relationship_id"], "rel_1")
 
+    def test_file_store_buffers_helix_projection_failures_in_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("shared.mesh_runtime.helix_memory._build_helix_client", return_value=_FailingHelixClient()):
+                store = FileStateStore(
+                    RuntimeConfig(
+                        state_directory=tmp,
+                        vault_path=f"{tmp}/vault",
+                        memory_graph_backend="helix",
+                    )
+                )
+                observation = store.append_observation(_observation())
+
+            self.assertEqual(observation["observation_id"], "obs_1")
+            outbox = json.loads((Path(tmp) / "helix_memory_projection_outbox.json").read_text(encoding="utf-8"))
+
+        events = outbox["events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["operation"], "upsert_observation")
+        self.assertEqual(events[0]["record"]["observation_id"], "obs_1")
+        self.assertEqual(events[0]["status"], "failed")
+        self.assertIn("offline", events[0]["last_error"])
+
+    def test_helix_projection_replays_failed_outbox_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", memory_graph_backend="helix")
+            failing_projection = build_helix_memory_projection(config, client=_FailingHelixClient())
+            failing_projection.upsert_claim(_claim())
+
+            self.assertEqual(failing_projection.projection_status()["failed"], 1)
+
+            client = _FakeHelixClient()
+            replaying_projection = build_helix_memory_projection(config, client=client)
+            replay = replaying_projection.replay_pending()
+
+            self.assertEqual(replay["attempted"], 1)
+            self.assertEqual(replay["applied"], 1)
+            self.assertEqual(replay["failed"], 0)
+            self.assertEqual(client.calls[0][0], "mesh_upsert_claim")
+            self.assertEqual(replaying_projection.projection_status()["failed"], 0)
+
     def test_helix_query_assets_define_projection_queries(self) -> None:
         queries = Path("helix/mesh-memory/db/queries.hx").read_text(encoding="utf-8")
         asset_names = set(re.findall(r"^QUERY\s+([A-Za-z_][A-Za-z0-9_]*)\(", queries, flags=re.MULTILINE))
         expected_names = set(vars(HelixMemoryQueryNames.from_namespace("mesh")).values())
         self.assertEqual(asset_names, expected_names)
+
+    def test_postgres_migrations_define_helix_projection_outbox(self) -> None:
+        migration = Path("migrations/postgres/005_helix_projection_outbox.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE IF NOT EXISTS helix_memory_projection_outbox", migration)
+        self.assertIn("idx_helix_memory_projection_outbox_status", migration)
 
     def test_file_store_persists_verified_memory_records_and_packets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -341,6 +387,12 @@ class _FakeHelixClient:
     def query(self, name: str, payload: dict[str, object]) -> list[dict[str, object]]:
         self.calls.append((name, payload))
         return [{"ok": True}]
+
+
+class _FailingHelixClient:
+    def query(self, name: str, payload: dict[str, object]) -> list[dict[str, object]]:
+        del name, payload
+        raise RuntimeError("helix offline")
 
 
 class _FakeHelixProjection:

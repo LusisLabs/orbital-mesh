@@ -11,7 +11,7 @@ from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.helix_memory import HelixMemoryProjectionError, build_helix_memory_projection
 
 
-def verify_helix_memory_projection(config: RuntimeConfig) -> dict[str, Any]:
+def verify_helix_memory_projection(config: RuntimeConfig, *, replay_pending: bool = False) -> dict[str, Any]:
     if config.memory_graph_backend != "helix":
         return {
             "status": "skipped",
@@ -19,7 +19,12 @@ def verify_helix_memory_projection(config: RuntimeConfig) -> dict[str, Any]:
             "memory_graph_backend": config.memory_graph_backend,
         }
 
-    projection = build_helix_memory_projection(config)
+    projection = build_helix_memory_projection(config, raise_on_failure=True)
+    replay_result = projection.replay_pending() if replay_pending else None
+    if replay_result is not None and int(replay_result.get("failed") or 0) > 0:
+        raise HelixMemoryProjectionError(
+            f"HelixDB memory projection replay failed for {replay_result['failed']} outbox event(s)"
+        )
     now = datetime.now(timezone.utc).isoformat()
     observation = {
         "observation_id": f"obs_helix_projection_probe_{_stamp(now)}",
@@ -107,11 +112,12 @@ def verify_helix_memory_projection(config: RuntimeConfig) -> dict[str, Any]:
     projection.record_retrieval(retrieval)
     projection.upsert_memory_packet(packet)
 
-    return {
+    result = {
         "status": "passed",
         "memory_graph_backend": config.memory_graph_backend,
         "helix_endpoint": config.helix_api_endpoint or f"local:{config.helix_port}",
         "helix_query_namespace": config.helix_query_namespace,
+        "outbox": projection.projection_status(),
         "projected": {
             "observation_id": observation["observation_id"],
             "claim_id": claim["claim_id"],
@@ -122,6 +128,9 @@ def verify_helix_memory_projection(config: RuntimeConfig) -> dict[str, Any]:
             "packet_id": packet["packet_id"],
         },
     }
+    if replay_result is not None:
+        result["replay"] = replay_result
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,10 +141,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Fail instead of skipping when MESH_MEMORY_GRAPH_BACKEND is not helix.",
     )
+    parser.add_argument(
+        "--replay-pending",
+        action="store_true",
+        help="Replay pending HelixDB projection outbox events before writing the probe records.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        result = verify_helix_memory_projection(RuntimeConfig.from_env())
+        result = verify_helix_memory_projection(RuntimeConfig.from_env(), replay_pending=args.replay_pending)
     except HelixMemoryProjectionError as exc:
         result = {"status": "failed", "reason": str(exc)}
 
