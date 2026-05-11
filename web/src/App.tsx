@@ -2680,8 +2680,17 @@ function ReadinessGateList({
             : [record.certification, record.detail].filter(Boolean).map(String).join(" / ") || summarizeRecord(record);
         const blockerDetail = blocked ? asRecord(blockerDetails?.[name]) : {};
         const remediation = typeof blockerDetail.remediation === "string" ? blockerDetail.remediation : "";
+        const stateSlice = typeof blockerDetail.state_slice === "string" ? `State: ${blockerDetail.state_slice}` : "";
+        const evidencePath = typeof blockerDetail.evidence_path === "string" && blockerDetail.evidence_path
+          ? `Evidence: ${blockerDetail.evidence_path}`
+          : "";
         const env = stringList(blockerDetail.env);
-        const operatorDetail = [remediation, env.length ? `Inputs: ${env.join(", ")}` : ""].filter(Boolean).join(" / ");
+        const operatorDetail = [
+          remediation,
+          stateSlice,
+          evidencePath,
+          env.length ? `Inputs: ${env.join(", ")}` : "",
+        ].filter(Boolean).join(" / ");
         return (
           <div key={name} className={`gate-matrix-row ${blocked ? "blocked" : ""}`}>
             <span>{humanize(name)}</span>
@@ -3038,6 +3047,13 @@ function PilotPacketView({
   activeRun: RunDetail | null;
 }) {
   const checks = Object.entries(packet?.checks ?? {});
+  const observed = packet?.observed;
+  const proofIds = (ids?: string[]) => (ids ?? []).slice(0, 3).join(", ") || "none";
+  const canaryLanes = (observed?.mesh_brain_canary_lanes ?? [])
+    .map((lane) => [lane.tenant_id, lane.task_type].filter(Boolean).join(":"))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ") || "none";
   return (
     <div className="mesh-dashboard-grid">
       <section className="mesh-card mesh-card-span">
@@ -3081,10 +3097,14 @@ function PilotPacketView({
       <section className="mesh-card">
         <SectionTitle icon={<FolderGit2 size={15} />} title="Observed Proofs" />
         <div className="mesh-stack">
-          <ContextStat label="Approved" value={(packet?.observed.approved_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Live action" value={(packet?.observed.live_action_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Denied action" value={(packet?.observed.denied_action_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Merkle" value={(packet?.observed.merkle_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
+          <ContextStat label="Approved" value={proofIds(observed?.approved_run_ids)} />
+          <ContextStat label="Live action" value={proofIds(observed?.live_action_run_ids)} />
+          <ContextStat label="Denied action" value={proofIds(observed?.denied_action_run_ids)} />
+          <ContextStat label="Merkle" value={proofIds(observed?.merkle_run_ids)} />
+          <ContextStat label="Model kernel" value={proofIds(observed?.mesh_brain_model_kernel_run_ids)} />
+          <ContextStat label="Live canary" value={proofIds(observed?.mesh_brain_live_canary_smoke_run_ids)} />
+          <ContextStat label="Canary lanes" value={canaryLanes} />
+          <ContextStat label="Rollback drill" value={proofIds(observed?.mesh_brain_rollback_drill_run_ids)} />
         </div>
       </section>
       <section className="mesh-card">
