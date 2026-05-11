@@ -17,6 +17,10 @@
 - Agent fabric modes:
   - `native` keeps agent-task lanes as deterministic `native_contract` artifacts.
   - `deepagents` routes Goose/Hermes/Codex/Claude Code/OpenClaw plus the native orchestration platform lanes through `services/orchestrator/deepagents_adapter.py`. The adapter runs inside a per-run sandbox workspace and returns proposal artifacts only. It does not execute Mesh actuation, live Kubernetes commands, or real repo writes.
+- Orchestration topology:
+  - `config/orchestration-topology.profile.json` maps domain and infrastructure evidence to `centralized`, `hierarchical`, `decentralized`, `federated`, or `hybrid` lane routing before agent-task collection.
+  - The profile includes organization domain, teams/tenants, ownership boundaries, deployment substrates, data boundaries, preferred agents, allowed model providers/models, autonomy tier, risk thresholds, and required evidence refs.
+  - Topology resolution records selected lanes, topology roles, model/provider bindings, source evidence, authority posture, credential boundary, blockers, and reconciliation mode on each `AgentTask` and run export. External lanes remain proposal-only unless connector certification grants bounded action.
 
 ## Environment variables
 
@@ -44,14 +48,19 @@ inspection and never blocks execution.
 - `MESH_READINESS_PROBE_TIMEOUT_SECONDS`
 - `MESH_AGENT_FABRIC_MODE`
 - `MESH_AGENT_MESH_AGENTS`
+- `MESH_AGENT_TASK_TIMEOUT_SECONDS`
 - `MESH_DEEPAGENTS_MODEL`
 - `MESH_DEEPAGENTS_TIMEOUT_SECONDS`
 - `MESH_DEEPAGENTS_WORKSPACE_ROOT`
 - `MESH_DEEPAGENTS_MAX_ARTIFACT_CHARS`
+- `MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH`
+- `MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH`
 
 If `setup_integrations.py` has already written a command into `.mesh-runtime-state/integrations.json`, the runtime uses that saved command unless an explicit environment variable overrides it.
 
 `MESH_AGENT_FABRIC_MODE` is not stored in `.mesh-runtime-state/integrations.json`; it is runtime config only and defaults to `native`.
+
+`MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH` is the state slice for topology-aware agent routing. Keep edits in that profile tied to explicit source evidence: service ownership, connector certification, policy lifecycle, threat model, readiness, historical outcomes, and trust-ladder state. Model bindings record provider/model/route and secret env-var names only; raw API keys or tokens must stay outside run artifacts.
 
 ## Native Mesh Eval
 
@@ -146,6 +155,7 @@ Legacy host-driven e2e overlay variables:
   - provider-key warnings in `deepagents.warnings` when the selected model family is missing credentials
 - For `MESH_DEEPAGENTS_MODEL=openai:MiniMax-*`, Mesh now resolves the OpenAI-compatible key from `OPENAI_API_KEY` first and falls back to `MINIMAX_API_KEY` when present.
 - LatentMAS readiness now reads the sidecar `/health` payload instead of treating any HTTP 200 as ready. If the configured device is unavailable, readiness surfaces the sidecar detail string rather than reporting a false green state.
+- Orchestration topology readiness now reports `org_profile_ready`, active topology modes, organization profile summary, model provider policy, required evidence refs, and profile blockers.
 Goose no longer probes installed Ollama models during integration resolution. If `OPENAI_BASE_URL` is configured and no explicit Goose provider is set, the resolver infers the OpenAI-compatible route and defaults the model to `MiniMax-M2.5`. Ollama is used only when `GOOSE_PROVIDER=ollama` or an equivalent explicit provider setting is present.
 
 ## Mock, Fallback, And Stub Classification
@@ -200,7 +210,7 @@ Behavior:
 
 - Mesh creates one sandbox workspace per run/task/lane under `MESH_DEEPAGENTS_WORKSPACE_ROOT`.
 - For patch-shaped tasks, Mesh copies only `allowed_paths` files into that workspace before invoking Deep Agents.
-- The adapter records `adapter="deepagents"` plus `workspace_path`, `diff`, `deepagents_final_message`, `changed_files`, and `test_results` in the attempt output when available.
+- The adapter records `adapter="deepagents"` plus `workspace_path`, `effective_model`, redacted `model_binding`, `diff`, `deepagents_final_message`, `changed_files`, and `test_results` in the attempt output when available.
 - Missing provider keys should not crash the control plane. The attempt carries non-blocking risk flags and readiness warnings instead.
 - Deep Agents uses the OpenAI-compatible MiniMax route with explicit `base_url` and API key wiring when the configured model is `openai:MiniMax-*`. This avoids proposal-lane 401s caused by relying on implicit env discovery.
 

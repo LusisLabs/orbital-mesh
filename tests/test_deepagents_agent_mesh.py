@@ -289,6 +289,9 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertEqual(attempt.adapter, "deepagents")
         self.assertEqual(attempt.status, "failed")
         self.assertIn("deepagents_dependency_missing", attempt.risk_flags)
+        self.assertEqual(attempt.output["effective_model"], "openai:MiniMax-M2.7")
+        self.assertEqual(attempt.output["model_binding"]["provider"], "openai")
+        self.assertFalse(attempt.output["model_binding"]["secret_material_present"])
 
     def test_copy_allowed_workspace_only_includes_existing_allowed_files(self) -> None:
         repo = Path(self.temp_dir.name) / "repo"

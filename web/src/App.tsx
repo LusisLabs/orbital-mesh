@@ -2492,7 +2492,7 @@ function ControlPlaneView({
           <MetricCard metric={{ label: "Environment", value: health ? humanize(health.environment) : "Unknown", detail: health ? `${health.version} ${health.commit.slice(0, 7)}` : "Health unavailable", tone: health ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Readiness", value: readiness ? humanize(readiness.status) : "Unknown", detail: readiness ? `${humanize(readiness.profile)} profile` : "Profile unavailable", tone: readiness?.status === "ready" ? "good" : "danger" }} />
           <MetricCard metric={{ label: "Required gates", value: `${requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length}/${requiredChecks.length}`, detail: "profile checks", tone: readiness?.blockers.length ? "danger" : "good" }} />
-          <MetricCard metric={{ label: "Topology", value: readiness?.orchestration_topology?.active_topology ? humanize(String(readiness.orchestration_topology.active_topology)) : "Unknown", detail: readiness?.orchestration_topology?.ready ? "profile configured" : "profile unavailable", tone: readiness?.orchestration_topology?.ready ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Topology", value: readiness?.orchestration_topology?.active_topology ? humanize(String(readiness.orchestration_topology.active_topology)) : "Unknown", detail: readiness?.orchestration_topology?.org_profile_ready ? "org profile configured" : "profile unavailable", tone: readiness?.orchestration_topology?.org_profile_ready ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Integrations", value: `${integrationsReady}/${integrationsTotal}`, detail: "optional connector probes", tone: integrationsReady === integrationsTotal ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Agents", value: `${agentConnectors.filter((a) => a.state === "ready").length}/${agentConnectors.length}`, detail: "worker connectors", tone: "neutral" }} />
           <MetricCard metric={{ label: "Run stream", value: humanize(runConnection), detail: "active run SSE", tone: runConnection === "connected" ? "good" : "warn" }} />
@@ -5126,22 +5126,39 @@ function AgentTopologyPanel({ task }: { task: AgentTask }) {
         <div className="mesh-table-wrap compact-table">
           <table className="mesh-table">
             <thead>
-              <tr><th>Lane</th><th>Role</th><th>Authority</th><th>State</th></tr>
+              <tr><th>Lane</th><th>Topology</th><th>Model</th><th>Authority</th><th>Reconcile</th></tr>
             </thead>
             <tbody>
               {lanes.map((lane, index) => {
                 const record = asRecord(lane);
+                const modelBinding = asRecord(record.model_binding);
                 return (
                   <tr key={`${record.lane_id ?? index}`}>
                     <td>{humanize(String(record.lane_id ?? "lane"))}</td>
-                    <td>{humanize(String(record.role ?? "worker"))}</td>
+                    <td>{humanize(String(record.topology_role ?? record.role ?? "worker"))}</td>
+                    <td>{modelBinding.supported === false ? "None" : `${String(modelBinding.provider ?? "unknown")}:${String(modelBinding.model ?? "unknown")}`}</td>
                     <td>{humanize(String(record.authority ?? "proposal_only"))}</td>
-                    <td>{humanize(String(record.certified_state ?? "unknown"))}</td>
+                    <td>{humanize(String(record.reconciliation_mode ?? topology.reconciliation ?? "mesh_reconciles"))}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
+        </div>
+      ) : null}
+      {lanes.length > 0 ? (
+        <div className="context-link-list compact">
+          {lanes.slice(0, 4).map((lane, index) => {
+            const record = asRecord(lane);
+            const evidence = asRecord(record.source_evidence);
+            return evidence.profile_rule_ref ? (
+              <ContextLink
+                key={`lane-evidence-${record.lane_id ?? index}`}
+                label={`${humanize(String(record.lane_id ?? "lane"))} evidence`}
+                value={String(evidence.profile_rule_ref)}
+              />
+            ) : null;
+          })}
         </div>
       ) : null}
       {blockers.length > 0 && (

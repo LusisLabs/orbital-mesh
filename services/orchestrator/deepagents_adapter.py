@@ -401,6 +401,28 @@ def _resolve_deepagents_model_string(config: RuntimeConfig) -> str:
     return config.mesh_deepagents_model
 
 
+def _deepagents_model_binding(model: str, config: RuntimeConfig) -> dict[str, Any]:
+    provider = model.split(":", 1)[0] if ":" in model else "langchain"
+    model_id = model.split(":", 1)[1] if ":" in model else model
+    secret_refs: list[str] = []
+    if provider == "openai":
+        secret_refs = ["OPENAI_API_KEY", "MINIMAX_API_KEY"]
+    elif provider == "anthropic":
+        secret_refs = ["ANTHROPIC_API_KEY"]
+    if _observer_can_back(provider, config):
+        secret_refs.append("MESH_OBSERVER_API_KEY")
+    return {
+        "supported": True,
+        "provider": provider,
+        "model": model_id,
+        "route": "deepagents_sandbox",
+        "config_source": "RuntimeConfig.mesh_deepagents_model",
+        "secret_ref_envs": secret_refs,
+        "credential_configured": not _model_env_warnings(model, config),
+        "secret_material_present": False,
+    }
+
+
 def _import_deepagents() -> tuple[Any, Any]:
     try:
         from deepagents.backends.filesystem import FilesystemBackend
@@ -510,6 +532,8 @@ class DeepAgentsAdapter:
         risk_flags: list[str] = []
         if not evaluation.passed:
             risk_flags.append("evaluation_failed")
+        effective_model = _resolve_deepagents_model_string(self.config)
+        model_binding = _deepagents_model_binding(effective_model, self.config)
 
         try:
             FilesystemBackend, create_deep_agent = _import_deepagents()
@@ -523,7 +547,11 @@ class DeepAgentsAdapter:
                 summary=self._cap_text(f"Deep Agents dependency unavailable: {exc}"),
                 risk_flags=[*risk_flags, "deepagents_dependency_missing"],
                 recommended_action="human_review",
-                output={"error": self._cap_text(str(exc))},
+                output={
+                    "error": self._cap_text(str(exc)),
+                    "effective_model": effective_model,
+                    "model_binding": model_binding,
+                },
             )
 
         workspace = (
@@ -549,7 +577,6 @@ class DeepAgentsAdapter:
         # Resolve the effective model string (observer fallback when
         # MESH_DEEPAGENTS_MODEL wasn't explicitly set), then check
         # credentials against the resolved model's provider.
-        effective_model = _resolve_deepagents_model_string(self.config)
         env_warnings = _model_env_warnings(effective_model, self.config)
         if env_warnings:
             risk_flags.append("deepagents_model_credentials_missing")
@@ -599,6 +626,8 @@ class DeepAgentsAdapter:
                 output={
                     "error": self._cap_text(str(exc)),
                     "workspace_path": str(workspace),
+                    "effective_model": effective_model,
+                    "model_binding": model_binding,
                 },
             )
 
@@ -632,6 +661,8 @@ class DeepAgentsAdapter:
                 output={
                     "workspace_path": str(workspace),
                     "context_chars": len(json.dumps(ctx, default=str)),
+                    "effective_model": effective_model,
+                    "model_binding": model_binding,
                 },
             )
         except Exception as exc:  # noqa: BLE001
@@ -648,6 +679,8 @@ class DeepAgentsAdapter:
                 output={
                     "error": self._cap_text(str(exc)),
                     "workspace_path": str(workspace),
+                    "effective_model": effective_model,
+                    "model_binding": model_binding,
                 },
             )
         finally:
@@ -718,6 +751,8 @@ class DeepAgentsAdapter:
             "diff": self._cap_text(diff_text),
             "deepagents_final_message": self._cap_text(final_text),
             "workspace_path": str(workspace),
+            "effective_model": effective_model,
+            "model_binding": model_binding,
         }
         if env_warnings:
             output["model_env_warnings"] = env_warnings

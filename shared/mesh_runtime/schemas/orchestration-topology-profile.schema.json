@@ -7,6 +7,120 @@
     "default_topology": {
       "enum": ["centralized", "hierarchical", "decentralized", "federated", "hybrid"]
     },
+    "model_provider_policy": {
+      "additionalProperties": false,
+      "properties": {
+        "allowed_providers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_models": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "lane_defaults": {
+          "additionalProperties": {},
+          "type": "object"
+        }
+      },
+      "required": ["allowed_providers", "allowed_models", "lane_defaults"],
+      "type": "object"
+    },
+    "organization_profile": {
+      "additionalProperties": false,
+      "properties": {
+        "autonomy_tier": {
+          "type": "string"
+        },
+        "allowed_model_providers": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "allowed_models": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "data_boundaries": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "deployment_substrates": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "domain": {
+          "type": "string"
+        },
+        "ownership_boundaries": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "preferred_agents": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "required_evidence_refs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "risk_thresholds": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "teams": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "tenants": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "domain",
+        "teams",
+        "tenants",
+        "ownership_boundaries",
+        "deployment_substrates",
+        "data_boundaries",
+        "preferred_agents",
+        "allowed_model_providers",
+        "allowed_models",
+        "autonomy_tier",
+        "risk_thresholds",
+        "required_evidence_refs"
+      ],
+      "type": "object"
+    },
     "rules": {
       "items": {
         "additionalProperties": false,
@@ -23,6 +137,22 @@
           "data_boundary_required": {
             "type": "boolean"
           },
+          "evidence_requirements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "fallback_agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "lane_overrides": {
+            "additionalProperties": {},
+            "type": "object"
+          },
           "lanes": {
             "items": {
               "type": "string"
@@ -33,6 +163,54 @@
             "additionalProperties": false,
             "properties": {
               "action_classes": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "allowed_model_providers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "autonomy_tiers": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "data_boundaries": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "deployment_substrates": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "environments": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "model_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "namespaces": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "org_domains": {
                 "items": {
                   "type": "string"
                 },
@@ -56,6 +234,12 @@
                 },
                 "type": "array"
               },
+              "teams": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "tenant_ids": {
                 "items": {
                   "type": "string"
@@ -71,11 +255,31 @@
             },
             "type": "object"
           },
+          "model_bindings": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "preferred_agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "reason": {
             "type": "string"
           },
           "reconciliation": {
             "type": "string"
+          },
+          "required_agents": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "risk_policy": {
+            "additionalProperties": {},
+            "type": "object"
           },
           "rule_id": {
             "type": "string"
@@ -97,6 +301,6 @@
       "enum": ["mesh.orchestration_topology_profile.v1"]
     }
   },
-  "required": ["version", "default_topology", "source_refs", "rules"],
+  "required": ["version", "default_topology", "organization_profile", "model_provider_policy", "source_refs", "rules"],
   "type": "object"
 }

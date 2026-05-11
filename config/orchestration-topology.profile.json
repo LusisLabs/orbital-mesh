@@ -2,6 +2,163 @@
   "version": "mesh.orchestration_topology_profile.v1",
   "default_topology": "centralized",
   "description": "Mesh-native topology profile. External orchestrators remain evidence or proposal lanes unless connector certification grants bounded action.",
+  "organization_profile": {
+    "domain": "platform_sre",
+    "teams": [
+      {
+        "team_id": "platform.search",
+        "name": "Search Platform",
+        "tenant_ids": ["tenant_a"],
+        "owned_services": ["search-api", "semantic-search"],
+        "preferred_agents": ["hermes", "goose", "temporal", "kubernetes", "dagster"]
+      },
+      {
+        "team_id": "platform.workflow",
+        "name": "Workflow Platform",
+        "tenant_ids": ["tenant_a"],
+        "owned_services": ["workflow"],
+        "preferred_agents": ["temporal", "airflow", "prefect", "dagster"]
+      }
+    ],
+    "tenants": [
+      {
+        "tenant_id": "tenant_a",
+        "customer_boundary": "single_customer",
+        "federation_mode": "bounded_evidence_exchange"
+      }
+    ],
+    "ownership_boundaries": [
+      {
+        "source_ref": "config/ownership.registry.json",
+        "boundary_type": "service_environment_tenant"
+      }
+    ],
+    "deployment_substrates": [
+      {
+        "substrate": "kubernetes",
+        "environments": ["staging", "production"],
+        "authority": "bounded_action_when_certified"
+      },
+      {
+        "substrate": "workflow",
+        "environments": ["staging", "production"],
+        "authority": "proposal_and_evidence"
+      },
+      {
+        "substrate": "data",
+        "environments": ["staging", "production"],
+        "authority": "proposal_and_evidence"
+      },
+      {
+        "substrate": "ml",
+        "environments": ["staging", "production"],
+        "authority": "federated_evidence"
+      }
+    ],
+    "data_boundaries": [
+      {
+        "boundary_id": "tenant_a_operational",
+        "classification": "operational",
+        "tenant_id": "tenant_a",
+        "reservoir_refs": ["reservoir://tenant_a/ops-signals", "reservoir://tenant_a/search-runtime"]
+      },
+      {
+        "boundary_id": "tenant_a_model_evidence",
+        "classification": "model_evidence",
+        "tenant_id": "tenant_a",
+        "reservoir_refs": ["reservoir://tenant_a/model-evidence"]
+      }
+    ],
+    "preferred_agents": [
+      "hermes",
+      "goose",
+      "codex",
+      "claudecode",
+      "openclaw",
+      "temporal",
+      "kubernetes",
+      "dagster",
+      "prefect",
+      "flyte",
+      "latentmas"
+    ],
+    "allowed_model_providers": ["openai-compatible", "openai", "anthropic", "huggingface", "ollama", "local"],
+    "allowed_models": [
+      {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.7",
+        "lanes": ["deepagents", "codex", "claudecode", "openclaw"]
+      },
+      {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.5",
+        "lanes": ["goose", "hermes"]
+      },
+      {
+        "provider": "huggingface",
+        "model": "Qwen/Qwen3-4B",
+        "lanes": ["latentmas"]
+      }
+    ],
+    "autonomy_tier": "approval_required",
+    "risk_thresholds": {
+      "bounded_action_maximum": "high",
+      "proposal_only_above": "critical",
+      "operator_approval_required_for": ["medium", "high", "critical"]
+    },
+    "required_evidence_refs": [
+      "config/ownership.registry.json",
+      "config/connector-certification.registry.json",
+      "config/policy-lifecycle.manifest.json",
+      "config/threat-model.register.json",
+      "/api/readiness",
+      "state://runs",
+      "state://learning/trust_ladder.json"
+    ]
+  },
+  "model_provider_policy": {
+    "allowed_providers": ["openai-compatible", "openai", "anthropic", "huggingface", "ollama", "local"],
+    "allowed_models": [
+      {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.7"
+      },
+      {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.5"
+      },
+      {
+        "provider": "huggingface",
+        "model": "Qwen/Qwen3-4B"
+      }
+    ],
+    "lane_defaults": {
+      "hermes": {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.5",
+        "route": "hermes_bridge",
+        "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"]
+      },
+      "goose": {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.5",
+        "route": "goose_bridge",
+        "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"]
+      },
+      "deepagents": {
+        "provider": "openai-compatible",
+        "model": "MiniMax-M2.7",
+        "route": "deepagents_sandbox",
+        "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"]
+      },
+      "latentmas": {
+        "provider": "huggingface",
+        "model": "Qwen/Qwen3-4B",
+        "route": "latentmas_http",
+        "secret_ref_envs": []
+      }
+    }
+  },
   "source_refs": {
     "ownership_registry": "config/ownership.registry.json",
     "connector_certification_registry": "config/connector-certification.registry.json",
@@ -14,6 +171,59 @@
   },
   "rules": [
     {
+      "rule_id": "tenant-search-hybrid",
+      "topology": "hybrid",
+      "match": {
+        "services": ["search-api", "semantic-search"],
+        "action_classes": ["rollback_deployment"],
+        "risk_tiers": ["medium", "high"],
+        "signal_sources": ["kubernetes"],
+        "tenant_ids": ["tenant_a"],
+        "org_domains": ["platform_sre"],
+        "deployment_substrates": ["kubernetes"],
+        "data_boundaries": ["operational"]
+      },
+      "required_agents": ["temporal", "kubernetes"],
+      "preferred_agents": ["hermes", "dagster"],
+      "fallback_agents": ["goose"],
+      "lanes": ["temporal", "kubernetes", "hermes", "dagster"],
+      "lane_overrides": {
+        "temporal": {
+          "topology_role": "supervisor_lane",
+          "reconciliation_mode": "durable_supervisor_evidence"
+        },
+        "kubernetes": {
+          "topology_role": "bounded_actuator_lane",
+          "authority": "bounded_action",
+          "reconciliation_mode": "bounded_action_evidence"
+        },
+        "hermes": {
+          "topology_role": "peer_proposal_lane",
+          "reconciliation_mode": "proposal_review"
+        },
+        "dagster": {
+          "topology_role": "federated_tenant_lane",
+          "reconciliation_mode": "tenant_asset_evidence"
+        }
+      },
+      "model_bindings": {
+        "hermes": {
+          "provider": "openai-compatible",
+          "model": "MiniMax-M2.5",
+          "route": "hermes_bridge"
+        }
+      },
+      "evidence_requirements": ["ownership_boundary", "connector_certification", "readiness", "historical_outcomes", "trust_ladder"],
+      "risk_policy": {
+        "operator_approval_required": true,
+        "maximum_lane_authority": "bounded_action"
+      },
+      "reason": "Tenant-scoped search rollback mixes durable supervision, peer review, federated data evidence, and Kubernetes bounded action while Mesh reconciles final authority.",
+      "reconciliation": "mesh_reconciles_hybrid_supervisor_peer_federated_and_actuator_outputs",
+      "data_boundary_required": true,
+      "credential_boundary_required": true
+    },
+    {
       "rule_id": "search-kubernetes-hybrid",
       "topology": "hybrid",
       "match": {
@@ -22,7 +232,25 @@
         "risk_tiers": ["medium", "high"],
         "signal_sources": ["kubernetes"]
       },
+      "required_agents": ["temporal", "kubernetes"],
+      "preferred_agents": ["hermes"],
       "lanes": ["temporal", "kubernetes", "hermes"],
+      "lane_overrides": {
+        "temporal": {
+          "topology_role": "supervisor_lane",
+          "reconciliation_mode": "durable_supervisor_evidence"
+        },
+        "kubernetes": {
+          "topology_role": "bounded_actuator_lane",
+          "authority": "bounded_action",
+          "reconciliation_mode": "bounded_action_evidence"
+        },
+        "hermes": {
+          "topology_role": "peer_proposal_lane",
+          "reconciliation_mode": "proposal_review"
+        }
+      },
+      "evidence_requirements": ["ownership_boundary", "connector_certification", "readiness"],
       "reason": "High-risk search rollback uses durable workflow evidence, Kubernetes bounded action, and Hermes proposal review.",
       "reconciliation": "mesh_reconciles_per_rule_topology_outputs"
     },
@@ -30,9 +258,23 @@
       "rule_id": "workflow-supervisor-hierarchy",
       "topology": "hierarchical",
       "match": {
-        "signal_sources": ["workflow"]
+        "signal_sources": ["workflow"],
+        "deployment_substrates": ["workflow"]
       },
+      "required_agents": ["temporal"],
+      "preferred_agents": ["airflow", "hermes"],
       "lanes": ["temporal", "airflow", "hermes"],
+      "lane_overrides": {
+        "temporal": {
+          "topology_role": "supervisor_lane"
+        },
+        "airflow": {
+          "topology_role": "worker_evidence_lane"
+        },
+        "hermes": {
+          "topology_role": "review_lane"
+        }
+      },
       "reason": "Workflow-originated incidents route through a Temporal supervisor lane and worker evidence lanes before Mesh reconciliation.",
       "reconciliation": "mesh_reconciles_supervisor_and_worker_outputs"
     },
@@ -40,8 +282,10 @@
       "rule_id": "data-pipeline-peer-proposals",
       "topology": "decentralized",
       "match": {
-        "signal_sources": ["data"]
+        "signal_sources": ["data"],
+        "deployment_substrates": ["data"]
       },
+      "preferred_agents": ["dagster", "prefect", "flyte"],
       "lanes": ["dagster", "prefect", "flyte"],
       "reason": "Data-pipeline incidents collect certified peer proposals in parallel while Mesh remains the reconciler.",
       "reconciliation": "mesh_reconciles_parallel_peer_proposals"
@@ -51,8 +295,12 @@
       "topology": "federated",
       "match": {
         "signal_sources": ["ml"],
-        "tenant_ids": ["tenant_a"]
+        "tenant_ids": ["tenant_a"],
+        "deployment_substrates": ["ml"],
+        "data_boundaries": ["model_evidence", "operational"]
       },
+      "required_agents": ["flyte"],
+      "preferred_agents": ["dagster", "hermes"],
       "lanes": ["flyte", "dagster", "hermes"],
       "reason": "Tenant-scoped model workflow evidence can collaborate only through recorded ownership, data, and credential boundaries.",
       "reconciliation": "mesh_reconciles_with_tenant_data_and_credential_boundaries",

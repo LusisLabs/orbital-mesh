@@ -10,6 +10,8 @@
 
 **External messaging:** Prefer **policy-guided**, **bounded**, and **intent-driven** remediation. Avoid hype terms such as **“self-healing”** or generic **“AI-powered”**; Mesh runs are **operator-steerable** and **evaluation-gated** unless you explicitly choose interruptible auto mode.
 
+**Agent topology:** Mesh treats agent topology as a first-class control-plane input, not a display label. The state slice is the versioned `mesh.orchestration_topology_profile.v1` profile at [`config/orchestration-topology.profile.json`](./config/orchestration-topology.profile.json), plus the per-run `mesh.orchestration_topology_resolution.v1` / `lane_routing` artifact. That profile maps organization domain, teams/tenants, ownership boundaries, deployment substrates, data boundaries, preferred agents, allowed model providers/models, autonomy tier, risk thresholds, connector certification, readiness, historical outcomes, and trust state into `centralized`, `hierarchical`, `decentralized`, `federated`, or `hybrid` agent-mesh routing. Selected lanes can run concurrently as proposal, review, federated evidence, or bounded-action evidence, but Mesh remains the reconciler, policy gate, audit surface, and authority boundary.
+
 ## Kubernetes rollback scope (live execution)
 
 When `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED` is set and allowlists permit the target, **`rollback_deployment`** maps to **`kubectl rollout undo`** for the Deployment (previous revision). That **only** moves the Deployment’s rollout back; it does **not** by itself restore full arbitrary application state beyond what the workload’s images and ReplicaSet history imply. **`restart_deployment`** maps to **`kubectl rollout restart`**. Both are additionally constrained by **`MESH_KUBERNETES_ALLOWED_CONTEXTS`** and **`MESH_KUBERNETES_ALLOWED_NAMESPACES`**.
@@ -23,6 +25,7 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
 | Operator surface | Browser-first Vite control plane served by `run_server.py`; curses TUI served by `run_tui.py` for terminal-native inspection |
 | Model lifecycle | `mesh_brain` package for post-training, eval, serving, model management, and hardware-routing primitives |
+| Agent topology | Profile-driven lane routing across centralized, hierarchical, decentralized, federated, and hybrid governance structures |
 
 ## What It Does
 
@@ -35,6 +38,8 @@ These are the dimensions this codebase is built to support; they match a discipl
 - Mirrors that memory into a fixed Obsidian-compatible vault layout
 - Computes Merkle roots for canonical run events and returns proofs per event
 - Integrates with a local code/process inspection surface for repository context
+- Resolves a versioned orchestration topology before agent-task collection and records it as run-level lane-routing evidence
+- Collects bounded concurrent proposal attempts from configured agent lanes such as Goose, Hermes, Codex, Claude Code, OpenClaw, native platform lanes, DeepAgents, and LatentMAS where enabled
 - Supports two evaluation modes:
   - `native` Mesh trajectory evaluation
   - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
@@ -43,7 +48,6 @@ These are the dimensions this codebase is built to support; they match a discipl
   - `native`
   - `goose`
   - `hermes`
-- Reports proposal-lane readiness for Evo and supports explicit operator-triggered Evo bootstrap/status for bounded repo patch runs.
 - Includes `mesh_brain`, the post-training and model-lifecycle plane extracted from Mesh, with data refinery, training job, eval, serving, model-management, and hardware-routing primitives.
 
 ## Runtime Model
@@ -78,6 +82,12 @@ Recoverable blockers such as low confidence or failed trajectory scorers can tri
 
 Runs choose one evaluation mode and one orchestration mode.
 
+### Agent mesh topology
+
+Before agent-task attempts are collected, Mesh resolves the active topology from `MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH`. The shipped profile defaults to `centralized` and includes active rules for tenant-aware `hybrid` Kubernetes rollback routing, generic hybrid rollback routing, `hierarchical` workflow supervision, `decentralized` data-pipeline peer proposals, and `federated` tenant model-workflow evidence. `MESH_AGENT_MESH_AGENTS` can restrict the candidate lanes; profile rules cannot re-add a lane excluded by that runtime filter.
+
+Topology resolution records selected lanes, lane roles, topology roles, model/provider bindings, authority posture, credential boundary, source evidence, blockers, and reconciliation mode. External orchestrators and agent runtimes stay proposal-only unless connector certification and credential boundaries explicitly grant bounded action; Kubernetes is the current bounded production-style actuator lane when live execution and allowlists permit it.
+
 ### Evaluation: `native`
 
 Default local evaluation path. Uses deterministic contract checks, task traces, behavioral scorers, verifier output, and reasoning-bank memory. It also emits `stage_results.evaluation_stack`, which maps Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix to Mesh-native artifacts without giving those tools execution authority. Each lane can bind to an existing account through redacted environment-backed connection state.
@@ -98,9 +108,9 @@ CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge
 
 CLI-backed orchestration mode. `setup_integrations.py` resolves this to a bridge command that runs a real Hermes review step before bounded local actuation. The default image bundles the Hermes CLI, so the control plane can offer Hermes without a Docker socket or separate sidecar.
 
-### Proposal lane: `evo`
+### Proposal Lanes
 
-Evo is not an orchestration mode. Mesh probes the configured Evo CLI with `--version`, requires the output to identify `evo-hq-cli`, and records an agent-task recommendation for bounded code-remediation runs. Normal run progression does not invoke Evo. A separate operator steering command can launch a bounded Evo bootstrap or status check for eligible repo patch runs.
+Proposal lanes are selected by the topology resolver and connector certification registry. Goose, Hermes, Codex, Claude Code, OpenClaw, Deep Agents, LatentMAS, and native platform lanes can provide evidence or proposals. Mesh owns evaluation, reconciliation, audit, promotion, and bounded actuation.
 
 ## Repository Layout
 
@@ -114,7 +124,7 @@ orbital-mesh/
 ├── run_server.py                    # browser control-plane entrypoint
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
-├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes / Evo config
+├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes config
 ├── mesh_brain/                      # post-training, eval, serving, and model lifecycle plane
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
@@ -182,7 +192,7 @@ This writes integration configuration to:
 .mesh-runtime-state/integrations.json
 ```
 
-The saved commands point at bridge entrypoints inside `orbital-mesh`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Evo is resolved as a proposal-lane CLI only; use `MESH_EVO_COMMAND=evo` for a global `evo-hq-cli` install or `MESH_EVO_COMMAND="uv run --project /workspace/orbital-mesh/evo/plugins/evo evo"` for the vendored source when `uv` is available.
+The saved commands point at bridge entrypoints inside `orbital-mesh`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Agent lane routing is controlled by `config/orchestration-topology.profile.json` and connector certification, not by importing adapter modules.
 
 ### 2. Install the browser UI dependencies
 
@@ -350,21 +360,6 @@ Live Kubernetes deployment harvesting is also supported:
 }
 ```
 
-Evo can also be launched explicitly for an eligible repo patch run:
-
-```json
-{
-  "command": "launch_evo",
-  "target_path": "app/search.py",
-  "benchmark_command": "python3 benchmark.py --target {target}",
-  "instrumentation_mode": "inline",
-  "metric": "max",
-  "gate_command": "python3 -m unittest discover -s tests"
-}
-```
-
-`launch_evo` is accepted only when a run is paused at `evaluation_ready` or after completion. It requires `evo.ready`, a `repo_patch_service` decision, explicit repo boundaries, and a clean git worktree before bootstrap.
-
 ## Vault Layout
 
 Run and goal memory are mirrored to:
@@ -381,7 +376,6 @@ Fixed directories:
 - `Evaluations/`
 - `Executions/`
 - `Feedback/`
-- `Evo/`
 - `Merkle/`
 - `Notes/`
 
@@ -390,7 +384,6 @@ Each run writes:
 - a run note linking the goal and stage artifacts
 - JSON-backed artifact notes for decision, evaluation, execution, and feedback
 - operator notes
-- Evo launch notes when present
 - a Merkle note containing the current root and event IDs
 
 ## Merkle Event Ledger
@@ -625,6 +618,12 @@ Supported configuration variables:
 - `MESH_INTEGRATIONS_CONFIG_PATH`
 - `MESH_DEFAULT_STEERING_MODE`
 - `MESH_DEFAULT_OPERATOR_PAUSE_POINT`
+- `MESH_AGENT_FABRIC_MODE`: `native` records deterministic proposal artifacts; `deepagents` routes selected lanes through the bounded Deep Agents sandbox.
+- `MESH_AGENT_MESH_AGENTS`: optional comma-separated lane restriction before topology profile selection.
+- `MESH_AGENT_TASK_TIMEOUT_SECONDS`: total proposal-lane collection budget.
+- `MESH_DEEPAGENTS_MODEL`: provider/model string for the Deep Agents proposal fabric.
+- `MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH`: versioned profile used to map organization/infra/model evidence to agent topology.
+- `MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH`: optional proof packet used by expansion readiness to verify topology routing with real run evidence.
 - `MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE`
 - `MESH_INCIDENT_CREDENTIALS_AVAILABLE`
 - `MESH_AUDIT_LOGGING_AVAILABLE`
@@ -638,8 +637,6 @@ Supported configuration variables:
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_COMMAND`
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
-- `MESH_EVO_COMMAND` — optional Evo proposal-lane command; must resolve to `evo-hq-cli`.
-- `MESH_EVO_COMMAND_TIMEOUT_SECONDS` — timeout for the Evo `--version` readiness probe.
 - `MESH_SIMULATION_ENABLED` — enables `POST /api/simulations/{scenario_id}/run`; disabled by default.
 - `MESH_SIMULATION_CONTEXT_ALLOWLIST` — comma-separated sandbox kube contexts permitted for simulation runs.
 - `MESH_BENCHMARK_EXPORT_PATH` — JSONL dataset export path for simulation-backed benchmark runs.
@@ -863,7 +860,7 @@ Inspect readiness from the running backend:
 curl http://127.0.0.1:8787/api/readiness
 ```
 
-By default, Promptfoo becomes ready automatically in the container. Hermes is installed in the image and reports ready when the configured `MESH_HERMES_COMMAND` can reach the CLI. Goose is installed in the image and reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route. Evo reports unavailable unless you provide `MESH_EVO_COMMAND`; Mesh does not auto-install Evo.
+By default, Promptfoo becomes ready automatically in the container. Hermes is installed in the image and reports ready when the configured `MESH_HERMES_COMMAND` can reach the CLI. Goose is installed in the image and reports ready after you provide a working provider configuration such as a MiniMax OpenAI-compatible route. Agent mesh readiness also reports the topology profile, org profile, connector certification, and redacted model-provider policy.
 
 ```bash
 export MESH_COMPOSE_GOOSE_PROVIDER=openai
@@ -1027,7 +1024,7 @@ The stable local path is:
 1. `native` evaluation + `native` orchestration
 2. browser operator approval gate
 3. vault and Merkle inspection
-4. optional Promptfoo / Goose / Hermes / Evo CLI enablement through `setup_integrations.py`
+4. optional Promptfoo / Goose / Hermes CLI enablement through `setup_integrations.py`
 
 ## Supporting Docs
 

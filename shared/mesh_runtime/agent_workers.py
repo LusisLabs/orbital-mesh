@@ -28,6 +28,16 @@ DEFAULT_AGENT_WORKERS = (
     *NATIVE_ORCHESTRATION_PLATFORM_WORKERS,
 )
 
+MODEL_BOUND_AGENT_WORKERS = (
+    "goose",
+    "hermes",
+    "codex",
+    "claudecode",
+    "openclaw",
+    "deepagents",
+    "latentmas",
+)
+
 
 def build_agent_task(
     *,

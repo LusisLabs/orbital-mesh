@@ -116,12 +116,18 @@ class IntegrationsTests(unittest.TestCase):
 
         connectors = readiness["connector_certification"]
         self.assertNotIn("evo", connectors)
+        self.assertIn("codex", connectors)
+        self.assertIn("claudecode", connectors)
+        self.assertIn("openclaw", connectors)
         for connector_id, connector in connectors.items():
             if connector_id == "kubernetes":
                 self.assertIn(connector["state"], {"staging-ready", "pilot-ready"})
             else:
                 self.assertEqual(connector["state"], "staging-ready", connector_id)
             self.assertEqual(connector["blockers"], [], connector_id)
+        self.assertFalse(connectors["codex"]["credential_boundary"]["repo_write_credentials_allowed"])
+        self.assertFalse(connectors["openclaw"]["credential_boundary"]["production_actuator_credentials_allowed"])
+        self.assertTrue(readiness["orchestration_topology"]["org_profile_ready"])
         self.assertTrue(readiness["promptfoo"]["ready"])
         self.assertTrue(readiness["hermes"]["ready"])
         self.assertTrue(readiness["goose"]["ready"])

@@ -155,6 +155,7 @@ class AgentMeshService:
             policy_lifecycle_manifest_path=self.config.policy_lifecycle_manifest_path,
             threat_model_register_path=self.config.threat_model_register_path,
             state_directory=self.config.state_directory,
+            lane_model_bindings=self._lane_model_bindings(),
         )
         agents = list(topology.get("selected_agents") or candidate_agents)
         task = build_agent_task(
@@ -641,6 +642,59 @@ class AgentMeshService:
             agents.append("latentmas")
         return agents
 
+    def _lane_model_bindings(self) -> dict[str, Any]:
+        deepagents = _model_binding_from_model_string(
+            self.config.mesh_deepagents_model,
+            route="deepagents_sandbox",
+            config_source="RuntimeConfig.mesh_deepagents_model",
+            secret_ref_envs=["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MINIMAX_API_KEY"],
+        )
+        deepagents_provider = str(deepagents.get("provider") or "").lower()
+        if (
+            self.config.observer_enabled
+            and self.config.observer_api_key
+            and self.config.observer_provider.lower() == deepagents_provider
+        ):
+            deepagents["credential_configured"] = True
+        observer = _optional_model_binding(
+            provider=self.config.observer_provider,
+            model=self.config.observer_model,
+            route="observer_judge",
+            config_source="RuntimeConfig.observer_*",
+            enabled=self.config.observer_enabled,
+            secret_ref_envs=["MESH_OBSERVER_API_KEY"],
+        )
+        sre_judge = _optional_model_binding(
+            provider=self.config.sre_judge_provider,
+            model=self.config.sre_judge_model,
+            route="sre_judge",
+            config_source="RuntimeConfig.sre_judge_*",
+            enabled=self.config.sre_judge_enabled,
+            secret_ref_envs=["MESH_SRE_JUDGE_API_KEY"],
+        )
+        bindings: dict[str, Any] = {
+            "deepagents": deepagents,
+            "codex": {**deepagents, "config_source": "RuntimeConfig.mesh_deepagents_model:codex"},
+            "claudecode": {**deepagents, "config_source": "RuntimeConfig.mesh_deepagents_model:claudecode"},
+            "openclaw": {**deepagents, "config_source": "RuntimeConfig.mesh_deepagents_model:openclaw"},
+            "latentmas": {
+                "provider": "huggingface",
+                "model": self.config.latentmas_model_name,
+                "route": "latentmas_http",
+                "device": self.config.latentmas_device,
+                "prompt_mode": self.config.latentmas_prompt_mode,
+                "max_new_tokens": self.config.latentmas_max_new_tokens,
+                "config_source": "RuntimeConfig.latentmas_*",
+                "secret_ref_envs": [],
+                "credential_configured": bool(self.config.latentmas_url),
+            },
+        }
+        if observer:
+            bindings["observer"] = observer
+        if sre_judge:
+            bindings["sre_judge"] = sre_judge
+        return bindings
+
     def _platform_risk_flags(self, agent: str, task: AgentTask) -> list[str]:
         if agent != "kubernetes":
             return []
@@ -695,6 +749,49 @@ def _proposal_observation(agent: str, service: str, content: str) -> dict[str, A
         "service": service,
         "author": agent,
         "content": content,
+    }
+
+
+def _model_binding_from_model_string(
+    model_string: str,
+    *,
+    route: str,
+    config_source: str,
+    secret_ref_envs: list[str],
+) -> dict[str, Any]:
+    provider = "unknown"
+    model = model_string
+    if ":" in model_string:
+        provider, model = model_string.split(":", 1)
+    elif "/" in model_string:
+        provider = "huggingface"
+    return {
+        "provider": provider,
+        "model": model,
+        "route": route,
+        "config_source": config_source,
+        "secret_ref_envs": secret_ref_envs,
+    }
+
+
+def _optional_model_binding(
+    *,
+    provider: str,
+    model: str,
+    route: str,
+    config_source: str,
+    enabled: bool,
+    secret_ref_envs: list[str],
+) -> dict[str, Any]:
+    if not enabled or not model:
+        return {}
+    return {
+        "provider": provider,
+        "model": model,
+        "route": route,
+        "config_source": config_source,
+        "secret_ref_envs": secret_ref_envs,
+        "credential_configured": True,
     }
 
 

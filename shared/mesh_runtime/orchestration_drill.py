@@ -23,6 +23,7 @@ _REQUIRED_SOURCE_EVIDENCE = frozenset(
         "readiness",
         "historical_outcomes",
         "trust_ladder",
+        "organization_profile",
     }
 )
 
@@ -128,7 +129,11 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
             "multi_lane_topology": False,
             "lane_records_cover_selected_lanes": False,
             "lane_roles_present": False,
+            "lane_topology_roles_present": False,
             "lane_authority_present": False,
+            "lane_model_bindings_present": False,
+            "lane_source_evidence_present": False,
+            "lane_reconciliation_modes_present": False,
             "proposal_lanes_do_not_execute": False,
             "bounded_action_lanes_certified": False,
             "source_evidence_complete": False,
@@ -160,8 +165,16 @@ def _proof_checks(proof: dict[str, Any] | None) -> dict[str, bool]:
         "multi_lane_topology": len(lane_records) >= 2,
         "lane_records_cover_selected_lanes": bool(lane_ids) and (not selected_agents or selected_agents.issubset(lane_ids)),
         "lane_roles_present": bool(lane_records) and all(bool(str(lane.get("role") or "").strip()) for lane in lane_records),
+        "lane_topology_roles_present": bool(lane_records)
+        and all(bool(str(lane.get("topology_role") or "").strip()) for lane in lane_records),
         "lane_authority_present": bool(lane_records)
         and all(bool(str(lane.get("authority") or "").strip()) for lane in lane_records),
+        "lane_model_bindings_present": bool(lane_records)
+        and all(isinstance(lane.get("model_binding"), dict) for lane in lane_records),
+        "lane_source_evidence_present": bool(lane_records)
+        and all(isinstance(lane.get("source_evidence"), dict) for lane in lane_records),
+        "lane_reconciliation_modes_present": bool(lane_records)
+        and all(bool(str(lane.get("reconciliation_mode") or "").strip()) for lane in lane_records),
         "proposal_lanes_do_not_execute": _proposal_lanes_do_not_execute(lane_records),
         "bounded_action_lanes_certified": _bounded_action_lanes_certified(lane_records, proof),
         "source_evidence_complete": _REQUIRED_SOURCE_EVIDENCE.issubset(set(source_evidence)),
