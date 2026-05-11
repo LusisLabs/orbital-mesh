@@ -52,7 +52,7 @@ Additional migrations extend the same production store:
 
 - `002_memory_substrate.sql`: canonical observations, claims, relationships,
   supersessions, retrieval records, and memory packets.
-- `003_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
+- `004_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
   refs, text indexes, and row-to-memory projection refs.
 
 Incident-corpus payloads keep the full JSON row as the compatibility boundary.
