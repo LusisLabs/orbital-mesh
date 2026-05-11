@@ -56,7 +56,7 @@ Compatibility review:
 - treat Podman, K3s, OpenShift, Rancher-managed Kubernetes, managed Kubernetes, Cloud Run, Azure Container Apps, Fly.io, Railway, and Render as recipes until the evaluator supplies target-specific smoke and release evidence;
 - treat ECS/Fargate as the first non-Kubernetes production target candidate after the Kubernetes pilot path is repeatable;
 - reject broad "all orchestrators supported" claims.
-- treat `agentic-operator-core-main/` as source input for future CRD/operator/Helm/Argo/MCP/LiteLLM/metering/network-policy work, not as current Orbital Mesh runtime proof.
+- treat the provenance-recorded `agentic-operator-core-main/` source input as future CRD/operator/Helm/Argo/MCP/LiteLLM/metering/network-policy material, not as current Orbital Mesh runtime proof.
 
 Enterprise pass criteria:
 
@@ -66,7 +66,7 @@ Enterprise pass criteria:
 - `GET /api/policy/lifecycle` returns signed policy hashes with no missing manifest coverage;
 - every mutating decision's evaluation includes `stage_results.evidence_sufficiency` and no `evidence sufficiency gate did not pass` blocker before execution;
 - `scripts/verify_data_classification_policy.py --json` passes with signal, log, trace, model-output, audit-proof, training-candidate, operator-identity, and secret-material coverage;
-- `scripts/verify_agentic_operator_source_provenance.py --json` passes and shows the source input is Apache-2.0, snapshot-bound, source-input-only, and not active runtime;
+- `python3 scripts/verify_agentic_operator_source_provenance.py --json` passes and shows the source input is Apache-2.0, snapshot-bound, source-input-only, and not active runtime;
 - `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json` passes and proves the sample export package, zip archive, retrieval proof, benchmark harness entrypoint, golden scenarios, command, and expected benchmark artifacts are present;
 - `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --expected-suite golden --expected-scenario-id feature_flag_latency_disable --expected-scenario-id kubernetes_crashloop_patch --json` passes after the formal benchmark command runs;
 - `GET /api/runs/{run_id}/timeline-proof` returns gapless monotonic sequence checks, parseable `time_unix_nano` values, payload hashes, Merkle root, and a valid latest-event proof;
