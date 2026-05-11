@@ -356,8 +356,9 @@ def _migration_rehearsal_record(raw_path: str, migrations: list[dict[str, str]])
     from shared.mesh_runtime.migration_rehearsal import verify_migration_rehearsal
 
     artifact = _artifact_record(raw_path)
+    proof_path = _resolved_artifact_path(raw_path) if raw_path else None
     verification = verify_migration_rehearsal(
-        raw_path or None,
+        proof_path,
         expected_migration_version=_migration_version(migrations),
         expected_migration_combined_sha256=_combined_hash(migrations),
     )
@@ -383,14 +384,18 @@ def _migration_rehearsal_record(raw_path: str, migrations: list[dict[str, str]])
 def _artifact_record(raw_path: str) -> dict[str, Any]:
     if not raw_path:
         return {"path": None, "exists": False, "sha256": None}
-    path = Path(raw_path)
-    resolved = path if path.is_absolute() else REPO_ROOT / path
+    resolved = _resolved_artifact_path(raw_path)
     exists = resolved.exists() and resolved.is_file()
     return {
         "path": raw_path,
         "exists": exists,
         "sha256": _sha256(resolved) if exists else None,
     }
+
+
+def _resolved_artifact_path(raw_path: str) -> Path:
+    path = Path(raw_path)
+    return path if path.is_absolute() else REPO_ROOT / path
 
 
 def _ci_attestation_record(
