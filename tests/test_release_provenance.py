@@ -294,6 +294,44 @@ class ReleaseProvenanceTests(unittest.TestCase):
         self.assertIn("policy_lifecycle_signed", packet["missing"])
         self.assertIn("migration_rehearsal", packet["missing"])
 
+    def test_missing_policy_signing_key_path_keeps_packet_incomplete_without_crashing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_key = Path(tmp) / "missing-policy-signing-key"
+            result = subprocess.run(
+                [sys.executable, SCRIPT, "--json"],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "MESH_POLICY_SIGNING_KEY_PATH": str(missing_key)},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            packet = json.loads(result.stdout)
+            self.assertEqual(packet["policies"]["lifecycle"]["status"], "incomplete")
+            self.assertIn("policy_hash_signature", packet["policies"]["lifecycle"]["missing"])
+
+    def test_build_image_digest_env_alias_supplies_release_image_digest(self) -> None:
+        image_digest = f"sha256:{'d' * 64}"
+        result = subprocess.run(
+            [sys.executable, SCRIPT, "--json"],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "MESH_IMAGE_DIGEST": "",
+                "MESH_STACK_IMAGE_DIGEST": "",
+                "MESH_BUILD_IMAGE_DIGEST": image_digest,
+            },
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        packet = json.loads(result.stdout)
+        self.assertEqual(packet["image"]["digest"], image_digest)
+        self.assertNotIn("image_digest", packet["missing"])
+
     def test_require_complete_rejects_placeholder_ci_attestation(self) -> None:
         discovery = subprocess.run(
             [sys.executable, SCRIPT, "--json"],
@@ -581,11 +619,13 @@ class ReleaseProvenanceTests(unittest.TestCase):
             ci_attestation = Path(tmp) / "ci-attestation.json"
             migration_rehearsal = Path(tmp) / "migration-rehearsal.json"
             output = Path(tmp) / "release-provenance.json"
+            policy_signing_key = Path(tmp) / "policy-signing-key"
             image_digest = f"sha256:{'a' * 64}"
             sbom.write_text(sbom_json(image_digest), encoding="utf-8")
             vuln.write_text(vulnerability_scan_json(image_digest), encoding="utf-8")
             write_ci_attestation(ci_attestation)
             migration_rehearsal.write_text(migration_rehearsal_json(discovered), encoding="utf-8")
+            policy_signing_key.write_text("test-policy-signing-key\n", encoding="utf-8")
             result = subprocess.run(
                 [
                     sys.executable,
@@ -609,8 +649,8 @@ class ReleaseProvenanceTests(unittest.TestCase):
                     "docker buildx build --provenance=true",
                     "--builder-identity",
                     "ci:test",
-                    "--policy-signing-key",
-                    "test-policy-signing-key",
+                    "--policy-signing-key-path",
+                    str(policy_signing_key),
                     *base_args,
                 ],
                 cwd=REPO_ROOT,
@@ -624,6 +664,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
             self.assertEqual(packet["status"], "complete")
             self.assertEqual(packet["missing"], [])
             self.assertEqual(packet["policies"]["lifecycle"]["status"], "complete")
+            self.assertEqual(packet["policies"]["lifecycle"]["signature"]["key_id"], "policy-lifecycle-hmac")
             self.assertEqual(packet["connectors"]["certification"]["status"], "complete")
             self.assertEqual(packet["deployment"]["compatibility"]["status"], "complete")
             self.assertTrue(packet["ci"]["attestation"]["exists"])

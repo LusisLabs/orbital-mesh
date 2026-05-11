@@ -804,10 +804,15 @@ class ProductionComposeContractTests(unittest.TestCase):
             'MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH: "${MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH:?set Mesh Brain artifact upload proof manifest path}"',
             'MESH_BRAIN_SERVING_BASE_URL: "${MESH_BRAIN_SERVING_BASE_URL:?set OpenAI-compatible Mesh Brain serving backend URL}"',
             'MESH_BRAIN_SERVING_MODEL: "${MESH_BRAIN_SERVING_MODEL:?set Mesh Brain serving model name}"',
+            'MESH_RUN_EXPORT_RETENTION_DAYS: "${MESH_RUN_EXPORT_RETENTION_DAYS:-30}"',
+            'MESH_RUN_EXPORT_RETENTION_REVIEWED: "${MESH_RUN_EXPORT_RETENTION_REVIEWED:?set MESH_RUN_EXPORT_RETENTION_REVIEWED=1 after reviewing pilot retention policy}"',
             'MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH: "${MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH:-/app/config/deployment-compatibility.registry.json}"',
             'MESH_POLICY_LIFECYCLE_MANIFEST_PATH: "${MESH_POLICY_LIFECYCLE_MANIFEST_PATH:-/app/config/policy-lifecycle.manifest.json}"',
             'MESH_FAILURE_MODE_LIBRARY_PATH: "${MESH_FAILURE_MODE_LIBRARY_PATH:-/app/config/failure-mode.library.json}"',
-            'MESH_POLICY_SIGNING_KEY: "${MESH_POLICY_SIGNING_KEY:?inject policy lifecycle signing key through your platform secret store}"',
+            'MESH_POLICY_SIGNING_KEY: "${MESH_POLICY_SIGNING_KEY:-}"',
+            'MESH_POLICY_SIGNING_KEY_PATH: "${MESH_POLICY_SIGNING_KEY_PATH:-}"',
+            'MESH_BUILD_COMMIT: "${MESH_BUILD_COMMIT:?set release git commit from release provenance packet}"',
+            'MESH_BUILD_IMAGE_DIGEST: "${MESH_BUILD_IMAGE_DIGEST:?set release image digest from release provenance packet}"',
             'MESH_BACKUP_RESTORE_REHEARSAL_PATH: "${MESH_BACKUP_RESTORE_REHEARSAL_PATH:?set backup and restore rehearsal proof path}"',
             'MESH_MIGRATION_REHEARSAL_PATH: "${MESH_MIGRATION_REHEARSAL_PATH:?set Postgres migration rehearsal proof path}"',
             'MESH_ON_CALL_DRILL_PATH: "${MESH_ON_CALL_DRILL_PATH:?set production on-call drill proof path}"',
@@ -815,6 +820,28 @@ class ProductionComposeContractTests(unittest.TestCase):
             'MESH_INCIDENT_CREDENTIALS_AVAILABLE: "${MESH_INCIDENT_CREDENTIALS_AVAILABLE:-false}"',
         ):
             self.assertIn(marker, compose)
+
+    def test_env_example_documents_pilot_evidence_handoff(self) -> None:
+        env_example = Path(".env.example").read_text(encoding="utf-8")
+
+        for marker in (
+            "MESH_AUTHENTICATED_INGRESS_PROOF_PATH=.mesh-runtime-state/authenticated-ingress-deployment-proof.json",
+            "MESH_DESIGN_PARTNER_PACKET_PATH=.mesh-runtime-state/design-partner-packet.json",
+            "MESH_BACKUP_RESTORE_REHEARSAL_PATH=.mesh-runtime-state/backup-restore-rehearsal.json",
+            "# MESH_POLICY_SIGNING_KEY_PATH=/run/secrets/mesh-policy-signing-key",
+            "# MESH_POLICY_SIGNING_KEY=<target HMAC key from secret manager>",
+            "# MESH_BRAIN_ARTIFACT_URI_PREFIX=s3://mesh-prod-artifacts/mesh-brain",
+            "MESH_BRAIN_ARTIFACT_REGISTRY_PATH=.mesh-runtime-state/artifacts.json",
+            "MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH=.mesh-runtime-state/mesh-brain-artifact-upload-proof.json",
+            "# MESH_BRAIN_SERVING_BASE_URL=https://mesh-brain-serving.example.internal/v1",
+            "# MESH_BRAIN_SERVING_MODEL=nvidia/nemotron-3-nano-4b",
+            "MESH_RUN_EXPORT_RETENTION_DAYS=30",
+            "MESH_RUN_EXPORT_RETENTION_REVIEWED=0",
+            "MESH_RELEASE_PROVENANCE_PATH=.mesh-runtime-state/release-provenance.json",
+            "# MESH_BUILD_IMAGE_DIGEST=sha256:<release image digest>",
+            "MESH_ON_CALL_DRILL_PATH=.mesh-runtime-state/on-call-drill.json",
+        ):
+            self.assertIn(marker, env_example)
 
 
 class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):

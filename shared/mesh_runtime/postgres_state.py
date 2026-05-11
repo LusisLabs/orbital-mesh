@@ -15,6 +15,7 @@ from uuid import uuid4
 from .config import RuntimeConfig
 from .contracts import ClaimRecord, MemoryPacket, ObservationRecord, RelationshipRecord, RetrievalRecord, SupersessionRecord
 from .control_plane_models import GoalRecord, RunEvent, RunSession
+from .helix_memory import build_helix_memory_projection
 from .learning_logic import historical_success_rate, learning_context_from_outcomes, recovery_patterns
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .mesh_state_store import RunFilters
@@ -36,6 +37,7 @@ class PostgresStateStore:
         self.database_url = config.database_url
         self.runtime_store = RuntimeStateStore(config.state_directory)
         self.vault = VaultManager(config.vault_path, runtime_config=config)
+        self.helix_memory = build_helix_memory_projection(config)
         self._last_vault_materialized_at: dict[str, float] = {}
         self._vault_materialize_lock = threading.Lock()
         self._vault_materialize_min_interval_seconds = float(
@@ -399,6 +401,7 @@ class PostgresStateStore:
 
     def append_observation(self, record: dict[str, Any]) -> dict[str, Any]:
         observation = ObservationRecord.from_dict(record)
+        record_payload = observation.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -414,12 +417,13 @@ class PostgresStateStore:
                     self._jsonb(observation.scope),
                     observation.kind,
                     observation.content,
-                    self._jsonb(observation.to_dict()),
+                    self._jsonb(record_payload),
                     observation.created_at,
                 ),
             )
-        self.vault.write_memory_observation(observation.to_dict())
-        return observation.to_dict()
+        self.vault.write_memory_observation(record_payload)
+        self.helix_memory.upsert_observation(record_payload)
+        return record_payload
 
     def list_observations(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         filters = filters or {}
@@ -451,6 +455,7 @@ class PostgresStateStore:
 
     def save_claim(self, record: dict[str, Any]) -> dict[str, Any]:
         claim = ClaimRecord.from_dict(record)
+        record_payload = claim.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -471,12 +476,13 @@ class PostgresStateStore:
                     claim.tier,
                     claim.statement,
                     claim.confidence,
-                    self._jsonb(claim.to_dict()),
+                    self._jsonb(record_payload),
                     claim.updated_at,
                 ),
             )
-        self.vault.write_memory_claim(claim.to_dict())
-        return claim.to_dict()
+        self.vault.write_memory_claim(record_payload)
+        self.helix_memory.upsert_claim(record_payload)
+        return record_payload
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -493,6 +499,7 @@ class PostgresStateStore:
 
     def save_relationship(self, record: dict[str, Any]) -> dict[str, Any]:
         relationship = RelationshipRecord.from_dict(record)
+        record_payload = relationship.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -510,10 +517,11 @@ class PostgresStateStore:
                     relationship.from_id,
                     relationship.to_id,
                     relationship.type,
-                    self._jsonb(relationship.to_dict()),
+                    self._jsonb(record_payload),
                 ),
             )
-        return relationship.to_dict()
+        self.helix_memory.upsert_relationship(record_payload)
+        return record_payload
 
     def list_relationships(
         self,
@@ -540,6 +548,7 @@ class PostgresStateStore:
 
     def save_supersession(self, record: dict[str, Any]) -> dict[str, Any]:
         supersession = SupersessionRecord.from_dict(record)
+        record_payload = supersession.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -552,7 +561,7 @@ class PostgresStateStore:
                     supersession.supersession_id,
                     supersession.old_claim_id,
                     supersession.new_claim_id,
-                    self._jsonb(supersession.to_dict()),
+                    self._jsonb(record_payload),
                     supersession.created_at,
                 ),
             )
@@ -562,7 +571,8 @@ class PostgresStateStore:
             old_claim["superseded_by"] = supersession.new_claim_id
             old_claim["updated_at"] = supersession.created_at
             self.save_claim(old_claim)
-        return supersession.to_dict()
+        self.helix_memory.upsert_supersession(record_payload)
+        return record_payload
 
     def retrieve_memory(self, request: dict[str, Any]) -> dict[str, Any]:
         from .memory_retrieval import MemoryRetrievalService
@@ -571,6 +581,7 @@ class PostgresStateStore:
 
     def record_memory_retrieval(self, record: dict[str, Any]) -> dict[str, Any]:
         retrieval = RetrievalRecord.from_dict(record)
+        record_payload = retrieval.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -584,15 +595,17 @@ class PostgresStateStore:
                     retrieval.query,
                     self._jsonb(retrieval.scope),
                     retrieval.channels,
-                    self._jsonb(retrieval.to_dict()),
+                    self._jsonb(record_payload),
                     retrieval.created_at,
                 ),
             )
-        self.vault.write_memory_retrieval(retrieval.to_dict())
-        return retrieval.to_dict()
+        self.vault.write_memory_retrieval(record_payload)
+        self.helix_memory.record_retrieval(record_payload)
+        return record_payload
 
     def save_memory_packet(self, packet: dict[str, Any]) -> dict[str, Any]:
         model = MemoryPacket.from_dict(packet)
+        record_payload = model.to_dict()
         with self._connect() as conn:
             conn.execute(
                 """
@@ -603,11 +616,12 @@ class PostgresStateStore:
                 (
                     model.packet_id,
                     self._jsonb(model.scope),
-                    self._jsonb(model.to_dict()),
+                    self._jsonb(record_payload),
                     model.generated_at,
                 ),
             )
-        return model.to_dict()
+        self.helix_memory.upsert_memory_packet(record_payload)
+        return record_payload
 
     def get_memory_packet(self, packet_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:

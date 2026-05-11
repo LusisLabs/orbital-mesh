@@ -93,7 +93,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            meshapp/frontend/package-lock.json
       - run: npm ci
       - name: Lint
         run: npm run lint
@@ -101,6 +103,18 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test --silent
+      - name: Install meshapp dependencies
+        run: npm ci
+        working-directory: meshapp/frontend
+      - name: Lint meshapp
+        run: npm run lint
+        working-directory: meshapp/frontend
+      - name: Build meshapp
+        run: npm run build
+        working-directory: meshapp/frontend
+      - name: Test meshapp
+        run: npm test --silent
+        working-directory: meshapp/frontend
 
   docker-build:
     runs-on: ubuntu-latest

@@ -5,6 +5,13 @@ Mesh supports two runtime state backends:
 - `file`: default local mode. Runs, events, learning outcomes, vault mirrors, and Merkle audit output stay under `.mesh-runtime-state`.
 - `postgres`: production mode. Canonical run state is stored in Postgres using `MESH_DATABASE_URL`.
 
+HelixDB is supported separately as an optional verified-memory graph projection,
+not as a canonical runtime state backend. Set `MESH_MEMORY_GRAPH_BACKEND=helix`
+to mirror observations, claims, relationships, supersessions, retrieval records,
+and memory packets into HelixDB while keeping run sessions, event streams,
+Merkle roots, approvals, and pilot-readiness persistence on `file` or
+`postgres`.
+
 File mode uses lock files plus atomic replace writes for JSON state. If a state file is malformed, Mesh writes a `.corrupt.<timestamp>` backup and recreates an empty object instead of crashing the control-plane read path.
 
 Supabase is supported as a hosted Postgres target by setting `MESH_DATABASE_URL`. Mesh does not use Supabase-specific APIs in this version.
@@ -17,6 +24,21 @@ MESH_DATABASE_URL=postgresql://mesh:mesh@postgres:5432/mesh
 ```
 
 `MESH_STATE_BACKEND=file` remains the default. File mode preserves the local replay model and continues to write `.mesh-runtime-state`.
+
+Optional HelixDB memory projection:
+
+```bash
+MESH_MEMORY_GRAPH_BACKEND=helix
+MESH_HELIX_API_ENDPOINT=http://localhost:6969
+MESH_HELIX_QUERY_NAMESPACE=mesh
+```
+
+Run `scripts/verify_helix_memory_projection.py --json --require-enabled`
+against a running HelixDB instance after deploying the matching HelixQL queries.
+The checked-in query project is `helix/mesh-memory/`. The Python adapter calls
+`MESH_HELIX_API_ENDPOINT` directly when set; without an endpoint it uses the
+optional `helix` Python extra if present and otherwise probes
+`http://localhost:${MESH_HELIX_PORT}`.
 
 ## Docker Stack
 

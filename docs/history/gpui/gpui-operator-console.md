@@ -1,7 +1,9 @@
 # Archived GPUI Operator Console
 
 This document records the archived GPUI desktop experiment. The active operator
-surface is the browser UI in `web/`, served by `run_server.py`.
+surface is the `meshapp/` Next static app, served by `run_server.py` from
+`meshapp/frontend/out` or launched through the zero-native shell. `web/`
+remains the Vite reference surface during migration.
 
 The archived Rust desktop client lives under `docs/history/gpui/mesh-gpui/`.
 It is not part of the active root build, packaging path, or production roadmap.

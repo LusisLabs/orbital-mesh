@@ -29,7 +29,7 @@ Expected result:
 - Python unit suite passes.
 - TypeScript lint/typecheck passes.
 - Vitest suite passes.
-- `web/dist/index.html` points at the newly built asset names.
+- `meshapp/frontend/out/index.html` points at the newly built asset names.
 
 ## 3. Start Docker-Native E2E
 

@@ -73,7 +73,7 @@ def verify_design_partner_packet(
         "advisory_checks": sorted(advisory_checks),
         "missing": missing,
         "checks": checks,
-        "error": load_error,
+        "error": load_error or ("packet_missing" if packet is None else None),
     }
 
 

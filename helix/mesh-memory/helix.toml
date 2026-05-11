@@ -1,0 +1,9 @@
+[project]
+name = "orbital-mesh-memory"
+queries = "./db/"
+
+[local.dev]
+port = 6969
+build_mode = "dev"
+mcp = true
+bm25 = true

@@ -25,6 +25,7 @@ DEPENDENCY_LOCKFILES = (
     "pyproject.toml",
     "uv.lock",
     "web/package-lock.json",
+    "meshapp/frontend/package-lock.json",
 )
 BUILD_INPUTS = (
     "Dockerfile",
@@ -49,7 +50,13 @@ def main() -> int:
     parser.add_argument("--require-complete", action="store_true", help="Exit non-zero unless every pilot provenance gate passes.")
     parser.add_argument("--allow-dirty", action="store_true", help="Do not fail completeness on a dirty git tree.")
     parser.add_argument("--image-tag", default=os.getenv("MESH_STACK_IMAGE") or os.getenv("MESH_IMAGE") or DEFAULT_IMAGE_TAG)
-    parser.add_argument("--image-digest", default=os.getenv("MESH_IMAGE_DIGEST") or os.getenv("MESH_STACK_IMAGE_DIGEST") or "")
+    parser.add_argument(
+        "--image-digest",
+        default=os.getenv("MESH_IMAGE_DIGEST")
+        or os.getenv("MESH_STACK_IMAGE_DIGEST")
+        or os.getenv("MESH_BUILD_IMAGE_DIGEST")
+        or "",
+    )
     parser.add_argument("--sbom", default=os.getenv("MESH_SBOM_PATH") or "")
     parser.add_argument("--vulnerability-scan", default=os.getenv("MESH_VULNERABILITY_SCAN_PATH") or "")
     parser.add_argument("--ci-attestation", default=os.getenv("MESH_CI_ATTESTATION_PATH") or "")
@@ -59,6 +66,7 @@ def main() -> int:
     parser.add_argument("--readiness-profile", default=os.getenv("MESH_READINESS_PROFILE") or "pilot")
     parser.add_argument("--environment", default=os.getenv("MESH_ENVIRONMENT") or "production")
     parser.add_argument("--policy-signing-key", default=os.getenv("MESH_POLICY_SIGNING_KEY") or "")
+    parser.add_argument("--policy-signing-key-path", default=os.getenv("MESH_POLICY_SIGNING_KEY_PATH") or "")
     parser.add_argument("--policy-signing-key-id", default=os.getenv("MESH_POLICY_SIGNING_KEY_ID") or "policy-lifecycle-hmac")
     parser.add_argument(
         "--policy-lifecycle-manifest",
@@ -108,9 +116,10 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     base_digest_overrides.update(_attested_base_image_digests(trusted_ci_attestation_payload))
     base_images = _base_images(base_digest_overrides)
     policies = _hash_directory("policies", "*.json")
+    policy_signing_key = _read_policy_signing_key(args)
     policy_lifecycle = build_policy_lifecycle_packet(
         manifest_path=args.policy_lifecycle_manifest,
-        signing_key=args.policy_signing_key,
+        signing_key=policy_signing_key,
         signing_key_id=args.policy_signing_key_id,
     )
     connector_certification = build_connector_certification_matrix(
@@ -234,6 +243,21 @@ def _checks(
         "readiness_profile": bool(args.readiness_profile),
         "environment": bool(args.environment),
     }
+
+
+def _read_policy_signing_key(args: argparse.Namespace) -> str:
+    raw = (args.policy_signing_key or "").strip()
+    if raw:
+        return raw
+    path_value = (args.policy_signing_key_path or "").strip()
+    if not path_value:
+        return ""
+    path = Path(path_value)
+    resolved = path if path.is_absolute() else REPO_ROOT / path
+    try:
+        return resolved.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _git_snapshot() -> dict[str, Any]:

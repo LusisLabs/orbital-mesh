@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc" viewBox="0 0 200 200">
+  <title id="title">Orbital Mesh mark</title>
+  <desc id="desc">A bounded orbital mesh with six infrastructure nodes around a central policy gate.</desc>
+  <defs>
+    <linearGradient id="mesh-blue" x1="42" y1="32" x2="158" y2="168" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6D9CFF"/>
+      <stop offset="1" stop-color="#548AF7"/>
+    </linearGradient>
+    <linearGradient id="mesh-core" x1="75" y1="74" x2="125" y2="126" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#232A35"/>
+      <stop offset="1" stop-color="#141820"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M100 20a80 80 0 0 1 70.8 42.8" stroke="#3A4352" stroke-width="4"/>
+    <path d="M176.8 92.2a80 80 0 0 1-30.6 70.7" stroke="#3A4352" stroke-width="4"/>
+    <path d="M116.7 178.2a80 80 0 0 1-78.4-29.3" stroke="#3A4352" stroke-width="4"/>
+    <path d="M24.4 116.4A80 80 0 0 1 55.3 37" stroke="#3A4352" stroke-width="4"/>
+
+    <path d="M100 28a72 72 0 0 1 63.8 38.5" stroke="url(#mesh-blue)" stroke-width="3"/>
+    <path d="M169 93.5a72 72 0 0 1-27.6 63.6" stroke="url(#mesh-blue)" stroke-width="3" opacity="0.84"/>
+    <path d="M115 170.4a72 72 0 0 1-70.5-26.3" stroke="url(#mesh-blue)" stroke-width="3" opacity="0.72"/>
+
+    <path d="M100 34 157 67 157 133 100 166 43 133 43 67Z" stroke="#548AF7" stroke-opacity="0.42" stroke-width="1.5"/>
+    <path d="M100 58 136 79 136 121 100 142 64 121 64 79Z" stroke="#2AACB8" stroke-opacity="0.44" stroke-width="1.5"/>
+    <path d="M100 34v48M157 67l-42 24M157 133l-42-24M100 166v-48M43 133l42-24M43 67l42 24" stroke="#548AF7" stroke-opacity="0.26" stroke-width="1.25"/>
+  </g>
+
+  <g fill="#181A1F" stroke="#548AF7" stroke-width="3">
+    <circle cx="100" cy="34" r="7"/>
+    <circle cx="157" cy="67" r="7"/>
+    <circle cx="157" cy="133" r="7"/>
+    <circle cx="100" cy="166" r="7"/>
+    <circle cx="43" cy="133" r="7"/>
+    <circle cx="43" cy="67" r="7"/>
+  </g>
+
+  <rect x="72" y="72" width="56" height="56" rx="10" fill="url(#mesh-core)" stroke="#73B00A" stroke-width="3"/>
+  <path d="M88 99h24M100 87v26" stroke="#73B00A" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="100" cy="100" r="5" fill="#F2F4F7"/>
+  <path d="M82 72v-9h36v9M82 128v9h36v-9" fill="none" stroke="#2C323D" stroke-width="3" stroke-linecap="round"/>
+</svg>

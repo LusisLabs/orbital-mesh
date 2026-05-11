@@ -15,7 +15,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 SCHEMA_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "schemas" / "control-plane.schema.json"
-TYPES_PATH = REPO_ROOT / "web" / "src" / "types.ts"
+TYPES_PATHS = (
+    REPO_ROOT / "web" / "src" / "types.ts",
+    REPO_ROOT / "meshapp" / "frontend" / "src" / "types.ts",
+)
 GENERATED_START = "// <generated-control-plane-contracts>"
 GENERATED_END = "// </generated-control-plane-contracts>"
 
@@ -51,20 +54,31 @@ MODEL_CLASSES = (
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate control-plane JSON Schema and TypeScript contracts.")
     parser.add_argument("--check", action="store_true", help="Fail if generated files are not up to date.")
+    parser.add_argument(
+        "--types-path",
+        action="append",
+        default=None,
+        help="TypeScript contract file to update or check. Defaults to web and meshapp operator clients.",
+    )
     args = parser.parse_args()
 
     schema_text = json.dumps(build_schema(), indent=2, sort_keys=True) + "\n"
     types_text = render_typescript_block()
-
-    current_types = TYPES_PATH.read_text(encoding="utf-8")
-    next_types = replace_generated_block(current_types, types_text)
+    types_paths = tuple(REPO_ROOT / path for path in args.types_path) if args.types_path else TYPES_PATHS
+    next_types_by_path: dict[Path, str] = {}
+    current_types_by_path: dict[Path, str] = {}
+    for types_path in types_paths:
+        current_types = types_path.read_text(encoding="utf-8")
+        current_types_by_path[types_path] = current_types
+        next_types_by_path[types_path] = replace_generated_block(types_path, current_types, types_text)
 
     if args.check:
         stale = []
         if not SCHEMA_PATH.exists() or SCHEMA_PATH.read_text(encoding="utf-8") != schema_text:
             stale.append(str(SCHEMA_PATH.relative_to(REPO_ROOT)))
-        if current_types != next_types:
-            stale.append(str(TYPES_PATH.relative_to(REPO_ROOT)))
+        for types_path, current_types in current_types_by_path.items():
+            if current_types != next_types_by_path[types_path]:
+                stale.append(str(types_path.relative_to(REPO_ROOT)))
         if stale:
             print("Generated contracts are stale:", ", ".join(stale), file=sys.stderr)
             print("Run: python3 scripts/generate_control_plane_contracts.py", file=sys.stderr)
@@ -73,13 +87,14 @@ def main() -> int:
 
     SCHEMA_PATH.parent.mkdir(parents=True, exist_ok=True)
     SCHEMA_PATH.write_text(schema_text, encoding="utf-8")
-    TYPES_PATH.write_text(next_types, encoding="utf-8")
+    for types_path, next_types in next_types_by_path.items():
+        types_path.write_text(next_types, encoding="utf-8")
     return 0
 
 
-def replace_generated_block(current: str, generated: str) -> str:
+def replace_generated_block(types_path: Path, current: str, generated: str) -> str:
     if GENERATED_START not in current or GENERATED_END not in current:
-        raise SystemExit(f"{TYPES_PATH} must contain {GENERATED_START!r} and {GENERATED_END!r} markers")
+        raise SystemExit(f"{types_path} must contain {GENERATED_START!r} and {GENERATED_END!r} markers")
     prefix, rest = current.split(GENERATED_START, 1)
     _, suffix = rest.split(GENERATED_END, 1)
     return f"{prefix}{GENERATED_START}\n{generated}{GENERATED_END}{suffix}"

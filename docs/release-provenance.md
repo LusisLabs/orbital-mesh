@@ -68,6 +68,18 @@ scripts/verify_pilot_clearance.py \
 
 The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, and runtime commit/image-digest binding all pass together.
 
+To prove a live runtime is booted but intentionally blocked on missing pilot evidence, use the blocked-state mode:
+
+```bash
+scripts/verify_pilot_clearance.py \
+  --base-url https://<mesh-host> \
+  --timeout-seconds 30 \
+  --expect-blocked \
+  --json
+```
+
+This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` are reachable and explicitly blocked on the expected evidence/config gaps with no unexpected extra blocker names. It also fails if expected observed proofs such as denied-action and Mesh Brain kernel/canary/rollback evidence regress. Its JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details for the required state slices, env vars, evidence paths, remediation, and source endpoints. It is not a release-clearance signal.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:
@@ -84,6 +96,7 @@ scripts/generate_release_provenance.py \
   --build-command "$MESH_BUILD_COMMAND" \
   --builder-identity "$MESH_BUILDER_IDENTITY" \
   --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
+  --policy-signing-key-path "$MESH_POLICY_SIGNING_KEY_PATH" \
   --connector-certification-registry config/connector-certification.registry.json \
   --base-image-digest "python:3.12-slim-bookworm=sha256:<digest>" \
   --base-image-digest "python:3.11-slim-bookworm=sha256:<digest>" \
@@ -139,13 +152,13 @@ python3 scripts/collect_release_image_metadata.py \
   --base-image-args dist/base-image-digest.args
 ```
 
-The collector writes `MESH_IMAGE_DIGEST` and base-image digest args for the attestation generator. It prefers pushed repo digests when present and falls back to the local Docker image id for unpushed CI builds; signed pilot releases should still use the published image digest.
+The collector writes `MESH_IMAGE_DIGEST` and base-image digest args for the attestation generator. `scripts/generate_release_provenance.py` accepts `MESH_IMAGE_DIGEST`, `MESH_STACK_IMAGE_DIGEST`, or the runtime-binding alias `MESH_BUILD_IMAGE_DIGEST` when `--image-digest` is not supplied. It prefers pushed repo digests when present and falls back to the local Docker image id for unpushed CI builds; signed pilot releases should still use the published image digest.
 
 ## Release Image Handoff
 
 The current CI workflow builds and attests the image, but it does not upload a runnable private image artifact. That is intentional: uploading the built image exports private repo contents into GitHub Actions artifact storage.
 
-Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web, release-cut, and security gates, builds the image, records release image metadata, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`.
+Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web reference, meshapp operator, release-cut, and security gates, builds the image, records release image metadata, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`. Release provenance hashes both `web/package-lock.json` and `meshapp/frontend/package-lock.json` because the production image now serves the meshapp static export.
 
 The uploaded artifact includes:
 
@@ -223,7 +236,7 @@ The CI attestation artifact must use `mesh.ci_attestation.v1`, include a matchin
 
 `config/policy-lifecycle.manifest.json` records owner, lifecycle state, risk tier, effective window, review expiry, and rollback reference for every JSON policy in `policies/`.
 
-`GET /api/policy/lifecycle` returns `mesh.policy_lifecycle.v1` with every policy file hash, the combined policy hash, manifest hash, coverage checks, and an HMAC signature when `MESH_POLICY_SIGNING_KEY` is supplied. Staging and pilot readiness include `policy_lifecycle_signed`; a missing signing key or manifest/policy mismatch blocks readiness.
+`GET /api/policy/lifecycle` returns `mesh.policy_lifecycle.v1` with every policy file hash, the combined policy hash, manifest hash, coverage checks, and an HMAC signature when `MESH_POLICY_SIGNING_KEY` or `MESH_POLICY_SIGNING_KEY_PATH` is supplied. Staging and pilot readiness include `policy_lifecycle_signed`; a missing signing key or manifest/policy mismatch blocks readiness. `scripts/generate_release_provenance.py` follows the same precedence: raw `MESH_POLICY_SIGNING_KEY` first, then the key file path.
 
 ## Connector Certification Matrix
 

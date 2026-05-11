@@ -58,6 +58,32 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertEqual(cfg.observer_prompt_cache_mode, "automatic")
         self.assertEqual(cfg.observer_prompt_cache_ttl, "1h")
 
+    def test_helix_memory_graph_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_MEMORY_GRAPH_BACKEND": "helix",
+                "MESH_HELIX_API_ENDPOINT": "https://helix.example.test",
+                "MESH_HELIX_PORT": "7979",
+                "MESH_HELIX_QUERY_NAMESPACE": "meshPilot",
+            },
+            clear=True,
+        ):
+            cfg = RuntimeConfig.from_env()
+        self.assertEqual(cfg.memory_graph_backend, "helix")
+        self.assertEqual(cfg.helix_api_endpoint, "https://helix.example.test")
+        self.assertEqual(cfg.helix_port, 7979)
+        self.assertEqual(cfg.helix_query_namespace, "meshPilot")
+
+    def test_invalid_helix_memory_graph_backend_fails_closed(self) -> None:
+        with patch.dict("os.environ", {"MESH_MEMORY_GRAPH_BACKEND": "maybe"}, clear=True):
+            with self.assertRaises(ValueError):
+                RuntimeConfig.from_env()
+
+    def test_invalid_helix_query_namespace_fails_closed(self) -> None:
+        with self.assertRaises(ValueError):
+            RuntimeConfig(memory_graph_backend="helix", helix_query_namespace="mesh-prod")
+
     def test_relative_state_directory_is_repo_anchored(self) -> None:
         with patch.dict(
             "os.environ",

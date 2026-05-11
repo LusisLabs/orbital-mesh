@@ -1,0 +1,32 @@
+{
+  "name": "meshapp",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "contracts:generate": "python3 ../../scripts/generate_control_plane_contracts.py --types-path meshapp/frontend/src/types.ts",
+    "contracts:check": "python3 ../../scripts/generate_control_plane_contracts.py --check --types-path meshapp/frontend/src/types.ts",
+    "dev": "next dev",
+    "lint": "npm run contracts:check && tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run contracts:check && npm run typecheck && next build",
+    "test": "vitest run",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@vscode/codicons": "^0.0.38",
+    "@xyflow/react": "^12.8.6",
+    "lucide-react": "^0.562.0",
+    "next": "^16.2.6",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.4"
+  }
+}

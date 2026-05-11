@@ -55,6 +55,7 @@ from .control_plane_models import (
     SteeringCommand,
 )
 from .control_plane_state import ControlPlaneStateStore, FileStateStore
+from .helix_memory import HelixMemoryProjection, HelixMemoryProjectionError, build_helix_memory_projection
 from .mesh_state_store import MeshStateStore, RunFilters
 from .migration_rehearsal import (
     build_migration_rehearsal_packet,

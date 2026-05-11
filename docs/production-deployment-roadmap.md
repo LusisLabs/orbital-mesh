@@ -21,7 +21,7 @@ The first production test must prove:
 | Surface | Current repo anchor | Production posture |
 | --- | --- | --- |
 | Control plane API and SSE | `control_plane_server.py`, `services/control_plane.py` | Core runtime. Must be placed behind authenticated TLS before external access. |
-| Browser operator UI | `web/`, served by `run_server.py` | Primary human operator surface for local, CI-visible, and production-pilot review. |
+| Operator UI | `meshapp/`, served by `run_server.py` from `meshapp/frontend/out` and available through the zero-native shell | Primary human operator surface for local, CI-visible, and production-pilot review. `web/` remains the Vite reference surface during migration. |
 | Archived GPUI operator console | `docs/history/gpui/mesh-gpui/` | Archived experiment. Not an active build, packaging, or parity target. |
 | TUI | `run_tui.py` | Local companion only. |
 | Manual and fixture runs | `POST /api/runs`, `fixtures/signals/` | Safe replay and demo path. |
@@ -36,7 +36,7 @@ The first production test must prove:
 | Deep Agents fabric | `services/orchestrator/deepagents_adapter.py` | Proposal-only sandbox lane. No direct kubeconfig, repo writes, or actuation. |
 | Mesh Brain | `mesh_brain/`, `docs/post-training/` | Model-lifecycle plane. Runtime hooks are ready for controlled MVP proof, not broad model-serving production. |
 | Readiness and SLO surfaces | `/api/readiness`, `/api/agent/slo`, `/metrics` | Existing observability base. Needs tier-specific readiness profiles before pilot. |
-| Persistence | `.mesh-runtime-state`, Postgres-backed stores | JSON state is replay-friendly; Postgres projection is required before multi-operator production reliance. |
+| Persistence | `.mesh-runtime-state`, Postgres-backed stores, optional HelixDB memory projection | JSON state is replay-friendly; Postgres persistence is required before multi-operator production reliance. HelixDB is a graph-vector projection for verified memory, not canonical run-state proof. |
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
 | Deployment compatibility | `docker-compose.stack.yml`, `docker-compose.prod.yml`, `docs/deployment-compatibility.md`, `docs/reference-architectures.md` | Open by contract. Docker Compose and Kubernetes are validated paths; other container and orchestrator targets are supported, recipes, backlog, or not planned according to evidence. |
 | Agentic operator fork source | `agentic-operator-core-main/`, `docs/agentic-operator-core-import-plan.md` | Source input for CRDs, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. Must be adapted to Orbital Mesh authority gates before runtime use. |

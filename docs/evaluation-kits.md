@@ -25,7 +25,7 @@ Required artifacts:
 - production endpoint smoke command: `scripts/prod_smoke.sh`;
 - Postgres restart proof harness: `scripts/verify_postgres_restart_proof.py`;
 - generated API contract: `shared/mesh_runtime/schemas/control-plane.schema.json`;
-- UI contract types: `web/src/types.ts`;
+- UI contract types: `web/src/types.ts` and `meshapp/frontend/src/types.ts`;
 - benchmark harness entrypoint: `services/benchmark/__main__.py`.
 
 Evaluation sequence:
