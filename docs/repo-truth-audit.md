@@ -1,6 +1,6 @@
 # Repo Truth Audit
 
-This audit classifies the repository state as of 2026-05-11 from committed code, config, tests, and named docs on `origin/main` at `6ee4e37810dd2b4f740c4c44c783a48a467cd756`. It is not live production clearance. Treat any live-readiness claim as unknown until rerun in the target environment.
+This audit classifies the repository state as of 2026-05-11 from committed code, config, tests, and named docs on `origin/main` at `d327b03825d95649728816cad449f7f2dae472fc`. It is not live production clearance. Treat any live-readiness claim as unknown until rerun in the target environment.
 
 ## Confirmed Current Truths
 
