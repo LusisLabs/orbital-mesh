@@ -63,10 +63,11 @@ Run the final pilot-clearance audit only after deployment binding is in place:
 scripts/verify_pilot_clearance.py \
   --base-url https://<mesh-host> \
   --timeout-seconds 30 \
+  --expected-head "$(git rev-parse HEAD)" \
   --json
 ```
 
-The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, and runtime commit/image-digest binding all pass together.
+The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, runtime commit/image-digest binding, and the live `/api/health.commit` to `--expected-head` binding all pass together. Omit `--expected-head` only for explicit historical release-bound audits that are not current-head pilot clearance.
 
 ## Pilot Completeness Gate
 

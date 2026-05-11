@@ -52,6 +52,7 @@ class PilotBreakthroughPacketTests(unittest.TestCase):
             self.assertEqual(packet["expansion_order"], generate_pilot_breakthrough_packet.EXPANSION_ORDER)
             self.assertEqual(len(packet["evidence_files"]), 6)
             self.assertIn("--timeout-seconds 1", packet["commands"]["pilot_clearance"])
+            self.assertIn(f"--expected-head {HEAD}", packet["commands"]["pilot_clearance"])
             self.assertIn("--timeout-seconds 1", packet["commands"]["packet_generation"])
 
             run_summary = _load_json(output_dir / "closed-loop-run-summary.json")

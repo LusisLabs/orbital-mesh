@@ -119,6 +119,7 @@ def generate_pilot_breakthrough_packet(
         base_url=normalized_base_url,
         timeout_seconds=timeout_seconds,
         requester=lambda url, timeout: fetch(url, timeout, None),
+        expected_head=head if require_runtime_head else "",
     )
     run_export = _safe_request(
         f"{normalized_base_url}/api/runs/{run_id}/export",
@@ -176,6 +177,7 @@ def generate_pilot_breakthrough_packet(
             node_path,
             output_dir,
             timeout_seconds=timeout_seconds,
+            expected_head=head if require_runtime_head else "",
         ),
         "regression_guard": {
             "ci_job": "breakthrough-proof-replay",
@@ -428,8 +430,10 @@ def _commands(
     output_dir: Path,
     *,
     timeout_seconds: float,
+    expected_head: str = "",
 ) -> dict[str, str]:
     timeout_value = f"{timeout_seconds:g}"
+    expected_head_flag = f" --expected-head {expected_head}" if expected_head else ""
     return {
         "packet_generation": (
             "scripts/generate_pilot_breakthrough_packet.py "
@@ -437,13 +441,15 @@ def _commands(
             f"--chaos-summary {chaos_path} --node-summary {node_path} --output-dir {output_dir} --json"
         ),
         "pilot_clearance": (
-            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds {timeout_value} --json"
+            f"scripts/verify_pilot_clearance.py --base-url {base_url} "
+            f"--timeout-seconds {timeout_value}{expected_head_flag} --json"
         ),
         "branch_tip_replay_proof": "scripts/run_breakthrough_proof.sh --replay-only",
         "run_export": f"GET /api/runs/{run_id}/export with X-Mesh-Operator and X-Mesh-Roles headers",
         "live_gate_before_pilot_promotion": (
             "scripts/run_breakthrough_proof.sh && "
-            f"scripts/verify_pilot_clearance.py --base-url {base_url} --timeout-seconds {timeout_value} --json"
+            f"scripts/verify_pilot_clearance.py --base-url {base_url} "
+            f"--timeout-seconds {timeout_value}{expected_head_flag} --json"
         ),
     }
 
