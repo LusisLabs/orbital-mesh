@@ -108,6 +108,20 @@ jobs:
     needs: [python-test, breakthrough-proof-replay, web]
     env:
       MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: mesh
+          POSTGRES_USER: mesh
+          POSTGRES_PASSWORD: mesh
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mesh -d mesh"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Build Docker image
@@ -120,6 +134,18 @@ jobs:
             --output dist/release-image-metadata.json \
             --github-env "$GITHUB_ENV" \
             --base-image-args dist/base-image-digest.args
+      - name: Install migration rehearsal dependency
+        run: python -m pip install "psycopg[binary]>=3.2,<4"
+      - name: Run Postgres migration rehearsal
+        env:
+          MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:5432/mesh
+        run: |
+          python scripts/run_postgres_migration_rehearsal.py \
+            --output dist/migration-rehearsal.json \
+            --operator-id github-actions \
+            --environment ci \
+            --rehearsal-id "ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --json
       - name: Healthcheck smoke test
         run: |
           set -euo pipefail
@@ -207,6 +233,7 @@ jobs:
             --output dist/release-provenance-draft.json \
             --image-tag orbital-mesh:ci \
             --ci-attestation dist/ci-attestation.json \
+            --migration-rehearsal dist/migration-rehearsal.json \
             --sbom dist/release-assurance/sbom.cdx.json \
             --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
             --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
@@ -236,5 +263,6 @@ jobs:
           name: release-provenance-draft
           path: |
             dist/release-image-metadata.json
+            dist/migration-rehearsal.json
             dist/release-provenance-draft.json
           retention-days: 30
