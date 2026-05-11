@@ -2008,7 +2008,7 @@ function OverviewDashboard({
         </div>
         <div className="mesh-compact-stats">
           <strong>{readyIntegrations}/{integrationConnectors.length}</strong>
-          <span>production surfaces ready</span>
+          <span>connector surfaces ready</span>
         </div>
         <div className="mesh-stack">
           {integrationConnectors.slice(0, 4).map((connector) => (

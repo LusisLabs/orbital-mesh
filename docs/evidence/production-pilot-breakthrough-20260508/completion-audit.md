@@ -12,9 +12,9 @@ The immediate milestone is not complete until the PR lands and the breakthrough 
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
-| Reproduce proof on current branch tip | `.mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json` on commit `2f9b909fb146865af6898fadb141da9091b56ff8`; requires `git.dirty=false`, `breakthrough_proof.ready=true`, replay pass, and all embedded validation checks pass | Complete for current PR head |
+| Reproduce proof on 2026-05-08 branch tip | `.mesh-runtime-state/proofs/breakthrough-proof-20260508T131725Z.json` on commit `2f9b909fb146865af6898fadb141da9091b56ff8`; requires `git.dirty=false`, `breakthrough_proof.ready=true`, replay pass, and all embedded validation checks pass | Historical for that PR head; not current-HEAD clearance |
 | Produce same `go` result for branch tip after PR lands | PR #22 remains open; no merged-current-HEAD proof exists | Missing |
-| Record proof bundle path and SHA | `breakthrough-proof-summary.json`, `packet.json`, README command section; bundle SHA `720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d` | Complete for current PR head |
+| Record proof bundle path and SHA | `breakthrough-proof-summary.json`, `packet.json`, README command section; bundle SHA `720bce8318418344de0c2d6c6b30a0c0925f2635a68be91c0094c6967842f83d` | Historical for the 2026-05-08 PR head |
 | Record go/no-go JSON output | `pilot-clearance.json` | Complete for release-bound runtime |
 | Record health binding output | `health-binding.json` | Complete for release-bound runtime |
 | Record chaos summary | `chaos-summary.json` | Complete |
