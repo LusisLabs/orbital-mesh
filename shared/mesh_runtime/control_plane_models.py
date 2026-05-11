@@ -200,6 +200,7 @@ class IntegrationReadiness(JsonModel):
     required_checks: dict[str, Any]
     optional_checks: dict[str, Any]
     blockers: list[str]
+    blocker_details: dict[str, Any]
     connector_certification: dict[str, Any]
     orchestration_topology: dict[str, Any]
     promptfoo: IntegrationStatus

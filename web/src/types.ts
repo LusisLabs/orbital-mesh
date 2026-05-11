@@ -125,6 +125,7 @@ export interface IntegrationReadiness {
   required_checks: Record<string, any>;
   optional_checks: Record<string, any>;
   blockers: string[];
+  blocker_details: Record<string, any>;
   connector_certification: Record<string, any>;
   orchestration_topology: Record<string, any>;
   promptfoo: IntegrationStatus;

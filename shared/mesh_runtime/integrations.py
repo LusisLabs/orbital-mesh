@@ -288,6 +288,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         required_checks=required_checks,
         optional_checks=optional_checks,
         blockers=blockers,
+        blocker_details=_blocker_details(runtime_config, required_checks, blockers),
         connector_certification=connector_certification,
         orchestration_topology=orchestration_topology,
         promptfoo=promptfoo_status,
@@ -569,6 +570,183 @@ def _profile_checks(
         if isinstance(passed, bool) and not passed
     ]
     return profile, required_checks, optional_checks, blockers
+
+
+def _blocker_details(
+    runtime_config: RuntimeConfig,
+    required_checks: dict[str, Any],
+    blockers: list[str],
+) -> dict[str, Any]:
+    return {
+        blocker: _blocker_detail(runtime_config, required_checks, blocker)
+        for blocker in blockers
+    }
+
+
+def _blocker_detail(
+    runtime_config: RuntimeConfig,
+    required_checks: dict[str, Any],
+    blocker: str,
+) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "blocker": blocker,
+        "passed": bool(required_checks.get(blocker)),
+        "expected": "true",
+        "observed": required_checks.get(blocker),
+    }
+    details = {
+        "operator_identity_required": {
+            "state_slice": "RuntimeConfig.operator_identity_required",
+            "env": ["MESH_OPERATOR_IDENTITY_REQUIRED"],
+            "expected": "true",
+            "observed": runtime_config.operator_identity_required,
+            "remediation": "Set MESH_OPERATOR_IDENTITY_REQUIRED=1 behind authenticated ingress.",
+        },
+        "authenticated_ingress_deployment_verified": {
+            "state_slice": "RuntimeConfig.authenticated_ingress_proof_path",
+            "env": ["MESH_AUTHENTICATED_INGRESS_PROOF_PATH"],
+            "expected": f"passing mesh.authenticated_ingress_deployment_proof.v1 for {runtime_config.readiness_profile}",
+            "evidence_path": runtime_config.authenticated_ingress_proof_path,
+            "remediation": "Capture and verify the deployed authenticated ingress proof packet.",
+        },
+        "policy_lifecycle_signed": {
+            "state_slice": "RuntimeConfig.policy_lifecycle_manifest_path",
+            "env": ["MESH_POLICY_LIFECYCLE_MANIFEST_PATH", "MESH_POLICY_SIGNING_KEY", "MESH_POLICY_SIGNING_KEY_PATH"],
+            "expected": "signed mesh.policy_lifecycle.v1 packet",
+            "evidence_path": runtime_config.policy_lifecycle_manifest_path,
+            "observed": {"signing_key_configured": bool(runtime_config.policy_signing_key)},
+            "remediation": "Provide the policy lifecycle manifest and HMAC signing key.",
+        },
+        "backup_restore_rehearsal_verified": {
+            "state_slice": "RuntimeConfig.backup_restore_rehearsal_path",
+            "env": ["MESH_BACKUP_RESTORE_REHEARSAL_PATH"],
+            "expected": f"passing mesh.backup_restore_rehearsal.v1 for {runtime_config.readiness_profile}/{runtime_config.state_backend}",
+            "evidence_path": runtime_config.backup_restore_rehearsal_path,
+            "remediation": "Run and verify backup/restore rehearsal for the active profile and state backend.",
+        },
+        "state_backend_postgres": {
+            "state_slice": "RuntimeConfig.state_backend",
+            "env": ["MESH_STATE_BACKEND"],
+            "expected": "postgres",
+            "observed": runtime_config.state_backend,
+            "remediation": "Set MESH_STATE_BACKEND=postgres for pilot readiness.",
+        },
+        "database_url_configured": {
+            "state_slice": "RuntimeConfig.database_url",
+            "env": ["MESH_DATABASE_URL"],
+            "expected": "configured",
+            "observed": "configured" if runtime_config.database_url else "missing",
+            "remediation": "Set MESH_DATABASE_URL to the pilot Postgres database.",
+        },
+        "force_approval_gate": {
+            "state_slice": "RuntimeConfig.force_approval_gate/default_steering_mode",
+            "env": ["MESH_FORCE_APPROVAL_GATE", "MESH_DEFAULT_STEERING_MODE"],
+            "expected": "forced approval gate or default steering mode approval_gate",
+            "observed": {
+                "force_approval_gate": runtime_config.force_approval_gate,
+                "default_steering_mode": runtime_config.default_steering_mode,
+            },
+            "remediation": "Enable MESH_FORCE_APPROVAL_GATE=1 or set MESH_DEFAULT_STEERING_MODE=approval_gate.",
+        },
+        "live_feedback_source_configured": {
+            "state_slice": "RuntimeConfig live feedback source",
+            "env": ["MESH_FEEDBACK_PROMETHEUS_ENABLED", "MESH_PROMETHEUS_URL", "MESH_KUBERNETES_LIVE_EXECUTION_ENABLED"],
+            "expected": "Prometheus feedback source or Kubernetes live execution",
+            "observed": {
+                "feedback_prometheus_enabled": runtime_config.feedback_prometheus_enabled,
+                "prometheus_url_configured": bool(runtime_config.prometheus_url),
+                "kubernetes_live_execution_enabled": runtime_config.kubernetes_live_execution_enabled,
+            },
+            "remediation": "Configure a live feedback source before pilot readiness.",
+        },
+        "mesh_brain_artifact_uri_prefix_configured": {
+            "state_slice": "RuntimeConfig.mesh_brain_artifact_uri_prefix",
+            "env": ["MESH_BRAIN_ARTIFACT_URI_PREFIX"],
+            "expected": "durable URI prefix with s3, gs, az, azblob, r2, or https scheme",
+            "observed": runtime_config.mesh_brain_artifact_uri_prefix or "missing",
+            "remediation": "Set MESH_BRAIN_ARTIFACT_URI_PREFIX to durable artifact storage.",
+        },
+        "mesh_brain_serving_backend_configured": {
+            "state_slice": "RuntimeConfig Mesh Brain serving backend",
+            "env": ["MESH_BRAIN_SERVING_BASE_URL", "MESH_BRAIN_SERVING_MODEL"],
+            "expected": "serving base URL and model configured",
+            "observed": {
+                "base_url_configured": bool(runtime_config.mesh_brain_serving_base_url),
+                "model_configured": bool(runtime_config.mesh_brain_serving_model),
+            },
+            "remediation": "Configure the Mesh Brain OpenAI-compatible serving endpoint and model.",
+        },
+        "run_export_retention_reviewed": {
+            "state_slice": "RuntimeConfig run export retention",
+            "env": ["MESH_RUN_EXPORT_RETENTION_REVIEWED", "MESH_RUN_EXPORT_RETENTION_DAYS"],
+            "expected": "retention reviewed with positive retention days",
+            "observed": {
+                "reviewed": runtime_config.run_export_retention_reviewed,
+                "days": runtime_config.run_export_retention_days,
+            },
+            "remediation": "Set MESH_RUN_EXPORT_RETENTION_REVIEWED=1 after reviewing the pilot retention policy.",
+        },
+        "design_partner_packet_verified": {
+            "state_slice": "RuntimeConfig.design_partner_packet_path",
+            "env": ["MESH_DESIGN_PARTNER_PACKET_PATH"],
+            "expected": "passing mesh.design_partner_packet.v1",
+            "evidence_path": runtime_config.design_partner_packet_path,
+            "remediation": "Provide the partner-specific design-pilot packet.",
+        },
+        "unfinished_feature_flag_adapter_disabled": _provider_blocker_detail(
+            runtime_config,
+            "feature_flag_provider",
+            credentials_available=runtime_config.feature_flag_credentials_available,
+            proof_path=runtime_config.feature_flag_provider_proof_path,
+            credentials_env="MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE",
+            proof_env="MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH",
+        ),
+        "unfinished_incident_adapter_disabled": _provider_blocker_detail(
+            runtime_config,
+            "incident_provider",
+            credentials_available=runtime_config.incident_credentials_available,
+            proof_path=runtime_config.incident_provider_proof_path,
+            credentials_env="MESH_INCIDENT_CREDENTIALS_AVAILABLE",
+            proof_env="MESH_INCIDENT_PROVIDER_PROOF_PATH",
+        ),
+    }
+    detail = details.get(blocker)
+    if isinstance(detail, dict):
+        return {**base, **detail}
+    if blocker.endswith("_configured") or blocker.endswith("_reviewed"):
+        return {
+            **base,
+            "state_slice": f"RuntimeConfig.{blocker}",
+            "remediation": f"Configure the {blocker} readiness input for the active profile.",
+        }
+    return {
+        **base,
+        "state_slice": "IntegrationReadiness.required_checks",
+        "remediation": "Inspect the readiness required_checks entry and provide the missing profile evidence.",
+    }
+
+
+def _provider_blocker_detail(
+    runtime_config: RuntimeConfig,
+    adapter_id: str,
+    *,
+    credentials_available: bool,
+    proof_path: str | None,
+    credentials_env: str,
+    proof_env: str,
+) -> dict[str, Any]:
+    return {
+        "state_slice": f"RuntimeConfig.{adapter_id}",
+        "env": [credentials_env, proof_env],
+        "expected": "credentials disabled or provider adapter proof passes",
+        "observed": {
+            "credentials_available": credentials_available,
+            "proof_path_configured": bool(proof_path),
+            "readiness_profile": runtime_config.readiness_profile,
+        },
+        "evidence_path": proof_path,
+        "remediation": f"Disable {adapter_id} credentials for pilot or provide a passing provider-adapter proof.",
+    }
 
 
 def _profile_at_least(profile: str, minimum: str) -> bool:

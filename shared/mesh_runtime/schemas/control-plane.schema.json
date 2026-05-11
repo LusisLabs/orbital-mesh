@@ -290,6 +290,10 @@
     "IntegrationReadiness": {
       "additionalProperties": false,
       "properties": {
+        "blocker_details": {
+          "additionalProperties": {},
+          "type": "object"
+        },
         "blockers": {
           "items": {
             "type": "string"
@@ -353,6 +357,7 @@
         "required_checks",
         "optional_checks",
         "blockers",
+        "blocker_details",
         "connector_certification",
         "orchestration_topology",
         "promptfoo",
