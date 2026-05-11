@@ -323,6 +323,8 @@ REQUIRED_MARKERS = {
         "release_provenance_complete",
         "runtime_build_commit_match",
         "runtime_image_digest_match",
+        "runtime_expected_head_valid",
+        "runtime_build_commit_matches_expected_head",
     ),
     "docs/release-provenance.md": (
         "MESH_IMAGE_DIGEST",
