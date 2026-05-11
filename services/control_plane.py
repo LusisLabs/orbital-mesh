@@ -511,10 +511,35 @@ class RunCoordinator:
             if not worker.is_alive():
                 continue
             worker.join(timeout=max(0.0, deadline - time.monotonic()))
-        if drained:
+        agent_tasks_drained = self._join_agent_task_threads(deadline)
+        if drained and agent_tasks_drained:
             close_state_store = getattr(self.state_store, "close", None)
             if callable(close_state_store):
                 close_state_store(timeout=max(0.0, deadline - time.monotonic()))
+
+    def _join_agent_task_threads(self, deadline: float) -> bool:
+        """Wait for async agent-task writers so teardown cannot race vault writes."""
+
+        current = threading.current_thread()
+        while time.monotonic() < deadline:
+            with self._lock:
+                live_threads = [
+                    thread
+                    for thread in self._agent_task_threads.values()
+                    if thread is not current and thread.is_alive()
+                ]
+            if not live_threads:
+                break
+            remaining = max(0.0, deadline - time.monotonic())
+            live_threads[0].join(timeout=min(0.1, remaining))
+        with self._lock:
+            for run_id, thread in list(self._agent_task_threads.items()):
+                if not thread.is_alive():
+                    self._agent_task_threads.pop(run_id, None)
+            return not any(
+                thread is not current and thread.is_alive()
+                for thread in self._agent_task_threads.values()
+            )
 
     def watch_status(self) -> dict[str, Any]:
         """Legacy-shape status for the single Kubernetes watcher, if present.

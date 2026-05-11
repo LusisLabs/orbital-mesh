@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import tempfile
+import threading
 import time
 import unittest
 import zipfile
@@ -19,7 +20,7 @@ from services.ingest.service import IngestService
 from services.trigger.service import TriggerService
 from services.control_plane import RunCoordinator
 from shared.mesh_runtime import ExecutionRecord, RuntimeConfig, load_fixture
-from shared.mesh_runtime.integrations import build_readiness
+from shared.mesh_runtime.integrations import build_readiness, invalidate_readiness_cache
 from shared.mesh_runtime.orchestration_topology import ORCHESTRATION_TOPOLOGY_RESOLUTION_VERSION
 
 
@@ -695,6 +696,38 @@ class ReadinessProfileTests(unittest.TestCase):
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("mesh_brain_artifact_uri_prefix_configured", readiness["blockers"])
 
+    def test_readiness_cache_key_tracks_mesh_brain_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            invalidate_readiness_cache()
+            self.addCleanup(invalidate_readiness_cache)
+            blocked_config = _pilot_ready_config(tmp)
+            blocked_config.mesh_brain_artifact_uri_prefix = None
+
+            blocked = build_readiness(blocked_config).to_dict()
+            ready = build_readiness(_pilot_ready_config(tmp)).to_dict()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("mesh_brain_artifact_uri_prefix_configured", blocked["blockers"])
+        self.assertEqual(ready["status"], "ready")
+
+    def test_readiness_cache_key_tracks_default_steering_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            invalidate_readiness_cache()
+            self.addCleanup(invalidate_readiness_cache)
+            blocked_config = _pilot_ready_config(tmp)
+            blocked_config.force_approval_gate = False
+            blocked_config.default_steering_mode = "manual_review"
+            ready_config = _pilot_ready_config(tmp)
+            ready_config.force_approval_gate = False
+            ready_config.default_steering_mode = "approval_gate"
+
+            blocked = build_readiness(blocked_config).to_dict()
+            ready = build_readiness(ready_config).to_dict()
+
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertIn("force_approval_gate", blocked["blockers"])
+        self.assertEqual(ready["status"], "ready")
+
 
 class ProductionComposeContractTests(unittest.TestCase):
     def test_prod_compose_defaults_to_private_boundary_and_required_durable_mesh_brain_config(self) -> None:
@@ -1274,6 +1307,33 @@ class OperatorRoleApiTests(unittest.TestCase):
 
 
 class PolicySimulationAndKillSwitchTests(unittest.TestCase):
+    def test_stop_background_workers_joins_agent_task_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            started = threading.Event()
+            release = threading.Event()
+
+            def worker() -> None:
+                started.set()
+                release.wait(timeout=1)
+
+            thread = threading.Thread(target=worker)
+            try:
+                with coordinator._lock:
+                    coordinator._agent_task_threads["run_test"] = thread
+                thread.start()
+                self.assertTrue(started.wait(timeout=1))
+
+                release.set()
+                coordinator.stop_background_workers(timeout=2)
+
+                self.assertFalse(thread.is_alive())
+                with coordinator._lock:
+                    self.assertEqual(coordinator._agent_task_threads, {})
+            finally:
+                release.set()
+                coordinator.stop_background_workers()
+
     def test_policy_simulator_does_not_create_runs_or_evaluation_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             coordinator = RunCoordinator(_config(tmp))
