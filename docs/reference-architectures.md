@@ -51,7 +51,7 @@ Compatibility posture:
 - ECS/Fargate is the first non-Kubernetes production target candidate for validation.
 - ECS/Fargate promotion requires `scripts/verify_ecs_fargate_promotion.py --proof <ecs-fargate-promotion-proof.json> --json` with health, readiness, ingress identity, Postgres persistence, feedback, audit, rollback, release provenance, image digest, scoped task roles, scoped secret refs, and no raw secret material.
 - Swarm, Mesos/Marathon, Windows Containers, and direct runc/containerd integration are not active roadmap targets.
-- `agentic-operator-core-main/` is source input for Kubernetes operator, CRD, Helm, Argo, MCP, LiteLLM, metering, and network-policy patterns. It is not active runtime until forked through Orbital Mesh authority gates.
+- The provenance-recorded `agentic-operator-core-main/` source input is future material for Kubernetes operator, CRD, Helm, Argo, MCP, LiteLLM, metering, and network-policy patterns. It is not active runtime until a source tree is available and forked through Orbital Mesh authority gates.
 
 ## Local Full-Stack Proof
 
@@ -149,7 +149,7 @@ Gaps before reusable distribution:
 - cloud-specific IAM examples;
 - ingress-controller-specific SSO templates.
 
-Fork-in candidate:
+Fork-in candidate paths when the source tree is available:
 
 - `agentic-operator-core-main/api/v1alpha1/agentworkload_types.go`;
 - `agentic-operator-core-main/api/v1alpha1/tenant_types.go`;

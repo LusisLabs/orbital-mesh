@@ -1,6 +1,6 @@
 # Agentic Operator Core Import Plan
 
-This plan governs how `agentic-operator-core-main/` is forked into Orbital Mesh. The source tree is useful because it already contains a Kubernetes-native agent workload operator, tenant CRD, Helm packaging, Argo orchestration, LiteLLM routing, MCP surface, per-workload metering hooks, network isolation policy, and operator CLI/web surfaces.
+This plan governs how the provenance-recorded `agentic-operator-core-main/` source input is forked into Orbital Mesh when the source tree is available. The source tree is useful because it contains a Kubernetes-native agent workload operator, tenant CRD, Helm packaging, Argo orchestration, LiteLLM routing, MCP surface, per-workload metering hooks, network isolation policy, and operator CLI/web surfaces.
 
 Do not copy the whole tree blindly. Fork contracts, tests, and deployable packaging in phases. Keep Orbital Mesh as the production authority layer: signal, evidence, decision, evaluation, operator approval, bounded execution, feedback, persistence, proof, Perennial, and Darkharness remain authoritative.
 
@@ -57,9 +57,9 @@ The durable product claim is narrower and stronger: Orbital Mesh is a governed r
 1. **Inventory and provenance**
    - Record source commit, license, file list, and imported paths before copying code.
    - Preserve Apache-2.0 notices where code is copied.
-   - Mark the current `agentic-operator-core-main/` tree as source input, not active runtime.
+   - Mark the provenance-recorded `agentic-operator-core-main/` source input as source input, not active runtime.
    - Current machine-checkable record: `config/agentic-operator-source.provenance.json`.
-   - Current verifier: `scripts/verify_agentic_operator_source_provenance.py --json`.
+   - Current verifier: `python3 scripts/verify_agentic_operator_source_provenance.py --json`.
    - Current source commit status: unavailable in the imported snapshot; the verifier binds the source input to a full-tree `source_snapshot_sha256` and fails if the snapshot changes without manifest review.
    - Clean release verification treats the ignored local source tree as absent unless it is mounted, and gates on the tracked provenance manifest plus verifier instead.
    - Staging readiness reports `agentic_operator_source_provenance_recorded`.

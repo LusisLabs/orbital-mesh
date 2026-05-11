@@ -73,7 +73,12 @@ Steering is bounded. Supported commands are:
 - `set_auto_mode`
 - `override_decision`
 - `override_execution_parameters`
+- `explain_blockers`
+- `chat_with_hermes`
 - `attach_note`
+- `handoff`
+- `override_review`
+- `postmortem_review`
 
 Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
 Recoverable blockers such as low confidence or failed trajectory scorers can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
@@ -800,7 +805,7 @@ Full operational context, topology, variables, volumes, teardown, and troublesho
 That stack starts:
 
 1. **`k3s`** — local Kubernetes API on **6443** inside the compose graph.
-2. **`postgres`** — local Postgres on **5432** for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
+2. **`postgres`** — local Postgres on **5432** for production-style persistence testing. `RuntimeConfig` still defaults to `MESH_STATE_BACKEND=file`, but this stack sets Mesh to `MESH_STATE_BACKEND=postgres`.
 3. **`mesh-kube-bootstrap`** — one-shot job that rewrites kubeconfig to `https://k3s:6443`, creates namespace `search`, deploys `semantic-search`, and normalizes the kube context to `mesh-compose`.
 4. **`mesh`** — browser control plane and Python backend on **8787**, with live Kubernetes execution enabled and deterministic native agent-task lanes enabled by default in this topology.
 5. **`hermes`** — dedicated Hermes runtime sidecar reached through `docker exec`.

@@ -122,8 +122,8 @@ The E2E suite verifies:
 
 ## Non-Goals For This Pass
 
-- No backend registry endpoints yet.
+- No new backend registry endpoints beyond the existing readiness, connector, deployment, failure-mode, watcher, policy, and trust surfaces.
 - No OAuth token storage yet.
-- No RBAC implementation yet.
-- No backend mutation behavior change.
+- No new identity provider or session-management implementation; app-level role checks still depend on trusted proxy identity headers.
+- No new backend mutation behavior beyond the existing launch, approval, steering, simulation, kill-switch, watcher, and review routes.
 - No full external dashboard fork.

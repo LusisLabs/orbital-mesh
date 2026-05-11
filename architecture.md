@@ -1,8 +1,8 @@
-# Mesh Intelligence Architecture
+# Orbital Mesh Architecture
 
 ## Scope
 
-`mesh-intelligence` is an audited closed-loop SRE harness covering the full incident lifecycle:
+Orbital Mesh is an audited closed-loop SRE harness covering the full incident lifecycle:
 **detect → investigate → raise → keep history**. It runs across three regression classes today:
 
 1. **Feature-flag regressions** (latency / error / timeout deltas attributable to a flag flip).
@@ -19,36 +19,16 @@ is independently replayable and provable.
 It is an operator control plane with a fixed action surface, not a general autonomous platform for
 arbitrary infra changes, code changes, or open-ended planning.
 
-## Competitive positioning
+## Category And Evaluation Boundaries
 
-Mesh sits in the "AI SRE" category alongside two reference points:
+This document describes the code-backed harness shape. Product positioning and external
+comparisons are not operating truth unless they are tied to a current benchmark artifact.
 
-- **OpenSRE / opensre-cli** — open source SRE assistant; CLI agent for K8s troubleshooting.
-  Mesh's [`services/benchmark/`](services/benchmark) plane runs head-to-head against `opensre-cli`
-  as a registered provider.
-- **Resolve.ai** — closed-source enterprise AI SRE; PagerDuty/Datadog ingestion, single-agent
-  internal investigation, Slack/Teams escalation.
-
-Mesh's edge over both is the harness shape itself, not the LLM:
-
-| Capability | OpenSRE | Resolve.ai | Mesh |
-|---|---|---|---|
-| Multi-source ingest | Manual | Yes | Yes (webhooks + K8s watch + OTel + bare-metal) |
-| Tool-calling investigation | Yes | Yes | Yes — `services/investigation/harness/` planner→critic→loop |
-| Deterministic safety floor under LLM | No | No | Yes — `HypothesisEngine` falsifiable predicates |
-| One-way observer safety promotion | N/A | N/A | Yes — observer can only escalate, never demote |
-| Multi-agent ensemble at execution | Single agent | Single agent | Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents |
-| Reconciliation across competing agent attempts | No | No | Yes — `services/orchestrator/reconciliation.py` |
-| Audit-grade run history | No | Internal-only | Yes — Merkle proofs per event, replayable |
-| Long-tail incident corpus | No | Internal-only | Yes — `IncidentCorpusDatabase` + FTS, exportable |
-| Per-target temporal memory | No | Limited | Yes — `services/signal_history/` (transient vs sustained) |
-| Strategy memory (reasoning bank) | No | Limited | Yes — `shared/mesh_runtime/reasoning_bank.py` |
-| Outer-loop self-improvement | No | No | Yes — HALO read-only run-trace consumer |
-| Open source | Yes | No | Yes |
-
-The hard differentiator is the *harness*: deterministic falsification + multi-agent ensemble +
-audit-grade history. The LLMs themselves are commodity. A user can swap providers, swap agents,
-swap models — the harness contracts hold.
+Current code-backed properties include multi-source ingest, tool-loop investigation, deterministic
+hypothesis predicates, one-way observer safety promotion, agent proposal reconciliation,
+Merkle-rooted run history, corpus export paths, per-target temporal memory, and a proposal-only
+outer loop. External provider comparisons should be made through `services/benchmark/` runs and
+their emitted reports, not through static claims in this document.
 
 ## The four phases
 
@@ -129,21 +109,20 @@ promote toward escalation, none able to demote.
 | Component | Role |
 |---|---|
 | `services/decision/service.py` | Produces exactly one bounded decision per signal class. Action surface enforced by `policies/autonomy.policy.json`. |
-| `services/orchestrator/agent_mesh.py` | Fans the task out to multiple agents (Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents). Each agent records a read-only proposal as an `AgentAttempt`. |
+| `services/orchestrator/agent_mesh.py` | Fans the task out to registered proposal workers. Default workers are Goose, Hermes, Codex, Claude Code, OpenClaw, and native orchestration platform lanes; model-bound lanes include DeepAgents and LatentMAS. Each worker records a read-only proposal as an `AgentAttempt`. |
 | `services/orchestrator/service_agents/registry.py` | Capability matrix — which agents can attempt which task classes. |
 | `services/orchestrator/reconciliation.py` | Selects the best attempt across agents (or escalates if none meet the policy floor). |
 | `services/actuators/` | Bounded side effects: `argocd.py` (GitOps), `systemd_ssh.py` (Reth restart over SSH), `load_balancer.py`, `repo_patch.py`. Gated by `policies/autonomy.policy.json`. |
 | Operator surface | SSE + HTTP for pause / approve / override. Pauseable stages: `trigger_ready`, `decision_ready`, `evaluation_ready`, `feedback_ready`. |
 
-The raise phase is where Mesh's multi-agent design lives. Resolve.ai's single-agent design has
-no defense if the agent hallucinates. Mesh's reconciliation step compares attempts and rejects
-ones with risk flags before any actuator fires.
+The raise phase is where Mesh's multi-agent proposal path lives. Reconciliation compares attempts
+and rejects ones with risk flags before any actuator fires.
 
 ### 4. History
 
 | Component | Role |
 |---|---|
-| `shared/mesh_runtime/state_store_factory.py` | Selects backend at startup. Postgres is production; SQLite + JSON files is local-dev. |
+| `shared/mesh_runtime/state_store_factory.py` | Selects backend at startup. File-backed state is the library default; Postgres is the production compose default and required for multi-operator production reliance. |
 | `shared/mesh_runtime/postgres_state.py` | Postgres backend. Migrations under `migrations/postgres/`. |
 | `shared/mesh_runtime/control_plane_state.py` | SQLite + JSON-files backend. |
 | `shared/mesh_runtime/merkle.py` | Per-event Merkle leaf hashing + snapshot building. Every run has a verifiable Merkle root and per-event inclusion proofs reachable via `/api/runs/:id/merkle/proof/:event_id`. |
@@ -153,9 +132,9 @@ ones with risk flags before any actuator fires.
 | `shared/mesh_runtime/reasoning_bank.py` | Strategy memory across runs. Surfaces "this kind of incident usually responds to X" without prescribing it. |
 | `shared/mesh_runtime/halo.py` | Outer-loop optimization sidecar. Reads run traces, produces proposal-only patches against the harness itself (path-allowlisted, never auto-merges). |
 
-This phase is where Mesh has the strongest moat. Resolve.ai keeps history internal to its
-SaaS; OpenSRE doesn't keep history at all. Mesh's history is on the customer's filesystem,
-Merkle-proofed, replayable, and exportable as JSONL training data.
+This phase is where Mesh keeps durable run history on the operator-controlled filesystem or
+configured database. That history is Merkle-proofed, replayable, and exportable as JSONL
+training data.
 
 ## Architectural invariants
 
@@ -203,7 +182,7 @@ flowchart LR
     evaluation --> verifier[Deterministic Verifier]
     evaluation -->|execute| orchestrator[OrchestratorService]
     evaluation -->|human_review or reject| operator[Operator Review Route]
-    orchestrator --> agent_mesh[Agent Mesh<br/>Goose · Hermes · Codex · CC · OpenClaw · Evo · DeepAgents]
+    orchestrator --> agent_mesh[Agent Mesh<br/>Goose · Hermes · Codex · CC · OpenClaw · platform lanes]
     agent_mesh --> reconcile[Reconciliation]
     reconcile --> actuators[Bounded Local Actuators<br/>argocd · ssh · lb · repo_patch]
     reconcile --> feedback[FeedbackService]
@@ -223,7 +202,7 @@ flowchart LR
 - Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
 - The static web bundle is served from `MESH_WEB_ASSET_PATH` and calls the same HTTP API under `/api/*`.
 - Persistent state lives under `MESH_STATE_DIRECTORY`; autoresearch sessions live under `MESH_RESEARCH_DIRECTORY`; vault artifacts live under `MESH_VAULT_PATH`.
-- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; Hermes is an optional external integration boundary.
+- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network; the app records trusted proxy identity and role headers but does not implement its own IdP or session system. LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; Hermes is an optional external integration boundary.
 - Kubernetes is a foundational production path, but it has two separate requirements: the runtime must have a kubeconfig/context that passes the allowlists, and the API server endpoint inside that kubeconfig must be reachable from the container namespace. Local `localhost` kubeconfig server URLs generally fail inside containers unless rewritten to a container-reachable host, as the e2e scripts do for k3d.
 
 ### Local all-in-one topology
@@ -445,7 +424,6 @@ best attempt (or escalates if no attempt clears the policy floor).
 | Claude Code | `cli_executor.py` (`adapter="claudecode"`) | Anthropic CLI agent |
 | Codex | `cli_executor.py` (`adapter="codex"`) | OpenAI Codex CLI |
 | OpenClaw | `cli_executor.py` (`adapter="openclaw"`) | Open-source claw agent |
-| Evo | `evo_launcher.py` (`adapter="evo"` / `"native_contract"`) | Evolutionary plan search |
 | DeepAgents | `deepagents_adapter.py` | DeepAgents harness (subagent topology) |
 | LatentMAS | `latentmas_adapter.py`, `latentmas_server.py` | Rust sidecar for low-latency latent inference |
 
@@ -454,9 +432,8 @@ which agents are eligible for which task class. The reconciliation step compares
 attempt's `recommended_action`, `risk_flags`, and `selected_attempt_id`, then either
 promotes one winner or escalates.
 
-This is the headline differentiation against Resolve.ai's single-agent design. A hallucinating
-single agent has no defense; an ensemble + reconciliation has multiple distinct attempts to
-disagree.
+This section describes the code-backed proposal/reconciliation path. External comparison claims
+require current benchmark artifacts.
 
 ### 3a. Evaluation bridges
 
@@ -466,10 +443,11 @@ disagree.
 - `goose` mode uses `services/orchestrator/goose_bridge.py` to run a real Goose review step,
   capture structured review metadata, and then perform bounded local actuation.
 - Agent mesh tasks use `services/orchestrator/agent_mesh.py` and `shared/mesh_runtime/agent_workers.py`
-  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, and native
+  to record read-only worker proposals for Goose, Hermes, Codex, Claude Code, OpenClaw, and native
   orchestration platform lanes for Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes,
-  and n8n. These artifacts let agents and external orchestrators plug into Mesh without getting production
-  write access; Mesh still owns evaluation, tests, audit, Kubernetes actuation, and promotion gates.
+  and n8n. Model-bound lanes include DeepAgents and LatentMAS. These artifacts let agents and external
+  orchestrators plug into Mesh without getting production write access; Mesh still owns evaluation,
+  tests, audit, Kubernetes actuation, and promotion gates.
 
 ### 3b. Memory layer (history that informs future runs)
 
@@ -487,10 +465,10 @@ The memory layer is single-tenant by design — see invariant 3 above. It is als
 at the run level: every run writes new events, never mutates old ones. Replay is therefore
 deterministic.
 
-### 3c. Benchmark plane (head-to-head against competitors)
+### 3c. Benchmark plane
 
 `services/benchmark/` is a benchmark harness that lets Mesh run side-by-side against
-**registered competitor providers** on the same scenario set. The runner accepts:
+registered external providers on the same scenario set. The runner accepts:
 
 | Provider | Backend behavior |
 |---|---|
@@ -509,8 +487,8 @@ Subcommands:
 - `gaps` — generate a capability gap report (what does provider X get wrong that Mesh gets right?)
 - `extract-loghub` — pull scenarios from a local Loghub corpus
 
-The benchmark plane is what makes "compete with OpenSRE" a falsifiable claim, not marketing.
-A nightly run produces `benchmarks/benchmark_gates.json` with regression-capped scoring.
+The benchmark plane turns provider comparisons into falsifiable artifacts. A nightly run produces
+`benchmarks/benchmark_gates.json` with regression-capped scoring.
 
 ### 4. AI reasoning layer (LLM observer)
 
@@ -680,9 +658,9 @@ These schemas back the Python contract models in `shared/mesh_runtime/contracts.
 
 ### Raise
 
-- Multi-agent ensemble (Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents,
-  LatentMAS sidecar): **yes** for the adapter shells; per-agent CLI/runtime availability is
-  per-environment
+- Multi-agent ensemble (Goose, Hermes, Codex, Claude Code, OpenClaw, native orchestration
+  platform lanes, DeepAgents, LatentMAS sidecar): **yes** for the adapter shells; per-agent
+  CLI/runtime availability is per-environment
 - Reconciliation across competing agent attempts: **yes**
 - Service-agent capability registry: **yes**
 - ArgoCD GitOps actuator: **yes**
@@ -760,65 +738,11 @@ Key test coverage includes:
   like `oom` matching `boom`)
 - benchmark harness: provider matrix, gate thresholds, scoring, comparison, gap reports
 
-## Competitive deep-dive
+## Category Boundaries
 
-Mesh is positioned to displace OpenSRE for self-hosted SRE teams and Resolve.ai for teams that
-care about audit, multi-agent defense, or open-source data ownership. This section is the
-honest version — what each competitor has that Mesh doesn't, and where Mesh wins.
-
-### vs OpenSRE / opensre-cli
-
-OpenSRE is an open-source CLI agent for K8s troubleshooting. It's a **single-shot tool**: you
-invoke it, it reads cluster state, it suggests an action. No history, no event log, no
-multi-agent ensemble, no audit trail.
-
-Where OpenSRE wins:
-- Lower bar to install (single binary)
-- Simpler mental model (one tool, one process)
-- Faster cold start
-
-Where Mesh wins:
-- Closed-loop remediation, not just diagnosis
-- Audit-grade history with Merkle proofs (regulated environments need this)
-- Multi-agent ensemble + reconciliation (defense vs hallucination)
-- Falsifiable hypothesis engine (deterministic floor)
-- LLM observer with one-way safety promotion (extra layer of defense)
-- Long-tail incident corpus (gets smarter over time)
-- Per-target temporal memory (transient vs sustained)
-- Bench plane that can run OpenSRE itself as a registered provider — Mesh literally races OpenSRE
-  on the same scenarios and emits the comparison report
-
-The benchmark gap report (`services/benchmark/gaps.py`) is specifically designed to surface
-"what does provider X get wrong that Mesh gets right?" — turning the comparison into actionable
-gap categories.
-
-### vs Resolve.ai
-
-Resolve.ai is a closed-source SaaS SRE assistant. It's well-funded and has polished UX for
-PagerDuty/Slack integration. The architectural shape is different from Mesh in three ways
-that matter for trust:
-
-| | Resolve.ai | Mesh |
-|---|---|---|
-| Investigation agent | Single proprietary agent | Ensemble: 7+ agent adapters + reconciliation |
-| Where data lives | Resolve's SaaS | Customer's filesystem / Postgres |
-| Audit trail | Internal (you trust them) | Merkle-rooted, customer-verifiable |
-| Hypothesis layer | LLM-only | Deterministic falsification engine + LLM |
-| Open source | No | Yes |
-
-Where Resolve wins:
-- Slack/Teams polish and onboarding flow
-- Hosted infra — nothing to operate
-- A sales team
-- Better marketing surface; more enterprise logos
-
-Where Mesh wins:
-- You own your incident data; you can export the corpus as JSONL
-- Multi-agent ensemble = defense in depth against any single agent's hallucinations
-- Falsifiable hypothesis engine = deterministic safety floor under the LLM
-- One-way safety promotion at every layer = a hallucinating model can only escalate, never auto-act
-- Replayable runs with cryptographic audit trails = SOC2 / FedRAMP / on-prem-regulated friendly
-- HALO outer loop = the harness improves itself from your run history (proposal-only patches)
+Benchmark gap reports (`services/benchmark/gaps.py`) are the source of truth for external-provider
+comparisons. Without a current benchmark artifact, this architecture doc should describe internal
+capabilities and limitations only.
 
 ### What Mesh is NOT trying to be
 
@@ -830,14 +754,14 @@ This is as important as the differentiation. Mesh deliberately doesn't compete o
 - **Multi-cloud breadth.** Mesh today is K8s + bare-metal Reth + feature-flag tooling. Adding
   AWS Lambda / Cloud Run / serverless requires real work — not a plugin point that's "almost
   there."
-- **Pure RCA tools without remediation.** That's OpenSRE's space. Mesh doesn't ship an RCA
-  CLI; it ships a closed-loop harness where RCA is one stage of many.
+- **Pure RCA tools without remediation.** Mesh doesn't ship a standalone RCA CLI; it ships a
+  closed-loop harness where RCA is one stage of many.
 - **Multi-tenant SaaS.** Mesh is single-tenant by design (invariant 3). Adding multi-tenancy
   is a fork, not a feature flag.
 
 ### Roadmap pressure points
 
-Real gaps that competitors will exploit until closed:
+Real gaps that remain before broader production claims:
 
 1. **Detection breadth.** OpenTelemetry ingest works but the trigger thresholds are tuned for
    Reth/K8s. Generic webapp microservice signatures (`p99_latency_above`,
