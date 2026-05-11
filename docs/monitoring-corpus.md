@@ -228,7 +228,7 @@ Tables:
   refs.
 
 The production Postgres shape is in
-[`migrations/postgres/003_incident_corpus.sql`](../migrations/postgres/003_incident_corpus.sql).
+[`migrations/postgres/004_incident_corpus.sql`](../migrations/postgres/004_incident_corpus.sql).
 
 The importer is idempotent by `row_id`. Re-exporting a session refreshes rows
 instead of duplicating them. Database summaries expose counts by outcome,
@@ -262,6 +262,12 @@ offline evaluation but cannot satisfy Breakthrough.
 The SQLite store exposes this through
 `IncidentCorpusDatabase.breakthrough_report()` and includes the same payload
 under `IncidentCorpusDatabase.summary()["breakthrough"]`.
+
+Use `python3 scripts/verify_corpus_breakthrough.py --json` to verify the local
+SQLite store as a release gate. The utility reads
+`.mesh-runtime-state/corpus/incident_corpus.sqlite` by default, emits
+`mesh.corpus_breakthrough_verification.v1`, and exits non-zero until every
+measured Breakthrough threshold passes.
 
 Corpus rows preserve run measurements under
 `training_fact.quality_measurements`. Live runs should record concrete fields
