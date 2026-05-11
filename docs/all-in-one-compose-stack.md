@@ -374,6 +374,7 @@ Common failure modes:
 | File | Use |
 | --- | --- |
 | `docker-compose.stack.yml` | Full local stack: Mesh, sidecars, k3s, bootstrap, smoke |
+| `docker-compose.e2estack.yml` | Full-stack E2E overlay layered on `docker-compose.stack.yml` for authenticated ingress, telemetry, artifact, provider, audit, release-binding, evidence-packet, network-segmentation, and standalone frontend proof rehearsal |
 | `docker-compose.yml` | Lighter developer stack for manual Mesh API/UI work |
 | `docker-compose.e2e.yml` | Legacy host-driven k3d live Kubernetes overlay |
 | `docker-compose.latentmas.yml` | Optional LatentMAS overlay for the lighter developer stack |

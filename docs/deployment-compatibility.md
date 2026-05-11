@@ -49,7 +49,7 @@ The proof must show ECS health and readiness, proxy identity handling, Postgres 
 | Target | Category | Level | Product stance |
 | --- | --- | --- | --- |
 | Kubernetes | orchestration | validated | Primary production platform-team target. Live authority still requires allowlists, RBAC, policy, evaluation, approval, and rollback metadata. |
-| Orbital Mesh Kubernetes operator | orchestration and packaging | backlog | Fork candidate from `agentic-operator-core-main/`. Validated only after CRDs, controllers, Helm, Argo scheduling, tenant isolation, MCP, LiteLLM, metering, and network policy are renamed and wired through Orbital Mesh authority gates. |
+| Orbital Mesh Kubernetes operator | orchestration and packaging | backlog | Fork candidate from the provenance-recorded `agentic-operator-core-main/` source input when available. Validated only after CRDs, controllers, Helm, Argo scheduling, tenant isolation, MCP, LiteLLM, metering, and network policy are renamed and wired through Orbital Mesh authority gates. |
 | K3s | Kubernetes distribution | recipe | Valid local or edge shape; not a separate orchestration abstraction. |
 | OpenShift | Kubernetes platform | recipe | Treat as Kubernetes plus stricter image, SCC, route, and identity constraints. |
 | Rancher-managed Kubernetes | Kubernetes management plane | recipe | Rancher manages clusters; Mesh still targets the underlying Kubernetes API and ingress boundary. |

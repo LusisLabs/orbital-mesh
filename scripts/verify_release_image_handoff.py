@@ -38,7 +38,7 @@ def main() -> int:
     parser.add_argument(
         "--require-artifacts",
         action="store_true",
-        help="Require and verify referenced CI attestation, release provenance, SBOM, and vulnerability scan paths.",
+        help="Require and verify referenced CI attestation, release provenance, migration rehearsal, SBOM, and vulnerability scan paths.",
     )
     parser.add_argument("--json", action="store_true", help="Print machine-readable result JSON.")
     args = parser.parse_args()
@@ -230,7 +230,7 @@ def _artifact_checks(
     resolved: dict[str, str | None] = {}
     raw_artifacts = packet.get("artifacts")
     artifacts = raw_artifacts if isinstance(raw_artifacts, dict) else {}
-    for name in ("release_provenance", "ci_attestation", "sbom", "vulnerability_scan"):
+    for name in ("release_provenance", "ci_attestation", "migration_rehearsal", "sbom", "vulnerability_scan"):
         raw = artifacts.get(name)
         path = _resolve_recorded_path(str(raw), manifest_path=manifest_path, artifact_root=artifact_root) if raw else None
         resolved[name] = str(path) if path else None

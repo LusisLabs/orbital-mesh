@@ -13,7 +13,7 @@ The first production test must prove:
 - every proposed action is constrained by policy, evidence, evaluation, allowlists, and rollback metadata;
 - production integrations are classified honestly as ready, proposal-only, safety-default, or unfinished adapter;
 - deployment compatibility is classified honestly as validated, supported, recipe, or not planned;
-- forked Kubernetes operator work from `agentic-operator-core-main/` is imported through contract, provenance, and validation gates, not copied wholesale;
+- forked Kubernetes operator work from the provenance-recorded `agentic-operator-core-main/` source input is imported through contract, provenance, and validation gates, not copied wholesale;
 - state, events, artifacts, Merkle proofs, and feedback survive restart and can be reviewed after the fact.
 
 ## Current Integrated Surface
@@ -39,7 +39,7 @@ The first production test must prove:
 | Persistence | `.mesh-runtime-state`, Postgres-backed stores, optional HelixDB memory projection | JSON state is replay-friendly; Postgres persistence is required before multi-operator production reliance. HelixDB is a graph-vector projection for verified memory, not canonical run-state proof. |
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
 | Deployment compatibility | `docker-compose.stack.yml`, `docker-compose.prod.yml`, `docs/deployment-compatibility.md`, `docs/reference-architectures.md` | Open by contract. Docker Compose and Kubernetes are validated paths; other container and orchestrator targets are supported, recipes, backlog, or not planned according to evidence. |
-| Agentic operator fork source | `agentic-operator-core-main/`, `docs/agentic-operator-core-import-plan.md` | Source input for CRDs, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. Must be adapted to Orbital Mesh authority gates before runtime use. |
+| Agentic operator fork source | `config/agentic-operator-source.provenance.json`, `docs/agentic-operator-core-import-plan.md` | Provenance-recorded source input for future CRD, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. The source tree may be absent from a checkout and must be adapted to Orbital Mesh authority gates before runtime use. |
 
 ## Release Phases
 
@@ -92,12 +92,12 @@ Required features:
 - authenticated reverse proxy with TLS;
 - operator identity propagated into run creation, steering commands, notes, approvals, and audit events;
 - app-level role enforcement for viewer, launcher, approver, and admin once proxy identity is present;
-- tiered readiness profiles for `local`, `staging`, `pilot`, and `prod`, with required and optional integrations separated;
+- tiered readiness profiles for `local`, `staging`, `pilot`, and `expansion`, with required and optional integrations separated;
 - threat model and abuse-case review for every authority boundary: HTTP API, SSE, webhooks, OTel ingest, kubeconfig, LLM keys, proposal lanes, state store, and exported run bundles;
 - data classification, retention, redaction, and deletion rules for signals, logs, traces, prompts, model outputs, vault notes, and exported postmortem bundles;
 - supply-chain record for the built image: pinned dependencies, SBOM, vulnerability scan, base-image digest, and build provenance;
 - deployment compatibility matrix that separates validated targets from supported contracts, recipes, backlog, and not-planned platforms;
-- import plan for `agentic-operator-core-main/` that maps AgentWorkload, Tenant, Argo, MCP, LiteLLM, Helm, cost, and network-isolation pieces into Orbital Mesh contracts;
+- import plan for the agentic-operator source provenance that maps AgentWorkload, Tenant, Argo, MCP, LiteLLM, Helm, cost, and network-isolation pieces into Orbital Mesh contracts;
 - least-privilege kubeconfig or in-cluster RBAC limited to staging namespaces;
 - webhook source registration per vendor with HMAC verification;
 - OTel ingest protected by bearer token or private ingress;
@@ -304,7 +304,7 @@ Required artifacts:
 - a design-partner pilot brief with scope, success metrics, timeline, staffing, support, rollback, data handling, and proof artifacts;
 - reference deployments for local compose, single VM, Kubernetes, private VPC, and air-gapped/offline-adjacent operation;
 - a deployment compatibility matrix that prevents Docker-alternative and Kubernetes-alternative names from becoming false support claims;
-- a fork-in plan for `agentic-operator-core-main/` that converts Kubernetes-agent-runtime assets into Orbital Mesh authority contracts;
+- a fork-in plan for the provenance-recorded `agentic-operator-core-main/` source input that converts Kubernetes-agent-runtime assets into Orbital Mesh authority contracts;
 - an OpenAPI or equivalent API contract bundle for platform teams that want to inspect integrations before running the stack;
 - a security review packet with threat model, SBOM, vulnerability scan, secret handling, auth boundary, audit model, and known limitations;
 - a public limitations statement that names what is not production-ready yet.
@@ -390,7 +390,7 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 - No autonomous action without allowlists, policy pass, evaluation pass, rollback metadata, and trust-ladder evidence.
 - No production claim for an adapter classified as unfinished in `docs/integrations.md`.
 - No validated deployment claim for a runtime, orchestrator, or managed platform without target-specific health, readiness, persistence, feedback, audit, rollback, and release-packet evidence.
-- No imported `agentic-operator-core-main/` code in the active runtime without source provenance, license preservation, renamed contracts, authority-gate adaptation, and focused tests.
+- No imported `agentic-operator-core-main/` code in the active runtime without source availability, source provenance, license preservation, renamed contracts, authority-gate adaptation, and focused tests.
 - No public kagent or competitor claim from the NineVigil source material until independently verified.
 - No broad blast-radius pilot. Start with one environment, one namespace, one service class, and approval gates.
 - No "best in the world" claim in public material unless backed by external benchmark evidence. Use the defensible claim: bounded, auditable, operator-steerable production remediation.
@@ -400,25 +400,27 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 Execution record for the first hardening slice: [`production-hardening-records.md`](production-hardening-records.md).
 Evaluation and pilot packets: [`evaluation-kits.md`](evaluation-kits.md), [`community-governance.md`](community-governance.md), [`design-partner-packet.md`](design-partner-packet.md), [`postgres-restart-proof.md`](postgres-restart-proof.md), and [`release-provenance.md`](release-provenance.md).
 
-1. Normalize orbital-mesh naming across docs and image tags.
-2. Add tiered readiness profiles: local, staging, pilot, expansion.
-3. Add operator identity and role checks around run creation and steering.
-4. Make the evidence graph the default run-inspection surface in the UI.
-5. Add a mutation-free policy simulator for fixture and captured signals.
-6. Add connector certification state to readiness and docs.
-7. Add executable invariant tests for authority boundaries and proposal-lane isolation.
-8. Add distributed-systems fault tests for duplicate, delayed, timed-out, and backpressured paths.
-9. Add threat model, data classification, and supply-chain provenance records.
-10. Add a pilot go/no-go packet generator.
-11. Make live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
-12. Prove Postgres-backed state for run events, memory, and Merkle roots under restart.
+This list is current-work guidance. Items already implemented stay here only as proof, drift, or target-environment tasks.
+
+1. Keep orbital-mesh naming synchronized across active docs, package metadata, images, and release packets.
+2. Keep readiness profiles aligned to code: `local`, `staging`, `pilot`, and `expansion`; `prod` and `production` are aliases for `pilot`.
+3. Capture target authenticated-ingress proof for operator identity and app-level role gates around run creation, steering, approval, simulation, and kill-switch paths.
+4. Verify the evidence graph remains the primary run-inspection surface where the UI claims it is primary.
+5. Keep the policy simulator mutation-free for fixture, captured-run, and inline-signal replay.
+6. Keep connector certification state visible in readiness, docs, release provenance, and operator surfaces.
+7. Keep executable invariant tests covering authority boundaries, role gates, simulator non-mutation, and proposal-lane isolation.
+8. Broaden distributed-systems fault coverage for duplicate, delayed, timed-out, clock-skewed, partially partitioned, and backpressured paths.
+9. Keep threat model, data classification, policy lifecycle, and supply-chain provenance records current.
+10. Generate pilot go/no-go packets only from observed evidence.
+11. Keep live Prometheus or Kubernetes re-harvest mandatory for pilot feedback.
+12. Prove Postgres-backed state for run events, memory, and Merkle roots under restart in the target environment.
 13. Keep feature-flag and incident adapters disabled unless certified provider proof is mounted; require external audit-sink proof only before expansion or compliance reliance.
-14. Add a consolidated kill-switch panel before any production pilot.
+14. Keep kill-switch controls available before any production pilot and rehearse them in the target environment.
 15. Package the enterprise evaluation kit and reference architectures from actual working paths, including `mesh.evaluation_kit_packet.v1` sample export and benchmark handoff evidence.
-16. Package the deployment compatibility matrix: Docker Compose and Kubernetes validated, OCI/container runtime compatibility supported by contract, non-core platforms documented as recipes or not planned until proven.
-17. Package the `agentic-operator-core-main/` fork-in plan and import the first contract slice only after provenance, rename, authority-gate, and test requirements are explicit.
-18. Package the startup/developer evaluation path with a five-minute demo, thirty-minute staging guide, and generated sample exported run packet.
-19. Write community/open-source contribution and governance docs that preserve the commercial boundary.
-20. Write the design-partner packet with pilot scope, success metrics, data handling, rollback, and support model.
+16. Keep the deployment compatibility matrix honest: Docker Compose and Kubernetes are validated paths; OCI/container runtime compatibility is supported by contract; non-core platforms remain recipes or not planned until proven.
+17. Package the provenance-recorded agentic-operator fork-in plan and import the first contract slice only after source availability, provenance, rename, authority-gate, and test requirements are explicit.
+18. Keep the startup/developer evaluation path reproducible with a five-minute demo, thirty-minute staging guide, and generated sample exported run packet.
+19. Keep community/open-source contribution and governance docs aligned with the commercial boundary.
+20. Complete target design-partner packets with pilot scope, success metrics, data handling, rollback, and support model.
 21. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
 22. Write the pilot go/no-go record from observed evidence, not intent.

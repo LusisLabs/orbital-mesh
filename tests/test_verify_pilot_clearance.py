@@ -28,15 +28,8 @@ class VerifyPilotClearanceTest(unittest.TestCase):
                     "status": "blocked",
                     "missing_evidence": list(DEFAULT_EXPECTED_GO_NO_GO_MISSING),
                     "checks": {
-                        "readiness_green": False,
-                        "mesh_brain_artifact_upload_proof_verified": False,
-                        "release_provenance_complete": False,
-                        "on_call_drill_verified": False,
+                        **{name: False for name in DEFAULT_EXPECTED_GO_NO_GO_MISSING},
                         "denied_action_proof_observed": True,
-                        "mesh_brain_model_kernel_gate_observed": True,
-                        "mesh_brain_live_canary_smoke_observed": True,
-                        "mesh_brain_single_crops_canary_lane_observed": True,
-                        "mesh_brain_rollback_drill_observed": True,
                     },
                     "observed": _observed_proofs(),
                     "mesh_brain_artifact_upload_proof": {"status": "missing", "required": True},
@@ -104,11 +97,8 @@ class VerifyPilotClearanceTest(unittest.TestCase):
                     "status": "blocked",
                     "missing_evidence": [*DEFAULT_EXPECTED_GO_NO_GO_MISSING, "unexpected_canary_gap"],
                     "checks": {
+                        **{name: False for name in DEFAULT_EXPECTED_GO_NO_GO_MISSING},
                         "denied_action_proof_observed": True,
-                        "mesh_brain_model_kernel_gate_observed": True,
-                        "mesh_brain_live_canary_smoke_observed": True,
-                        "mesh_brain_single_crops_canary_lane_observed": True,
-                        "mesh_brain_rollback_drill_observed": True,
                     },
                     "observed": _observed_proofs(),
                     "mesh_brain_artifact_upload_proof": {"status": "missing", "required": True},
@@ -169,11 +159,13 @@ def _requester(
 
 def _observed_proofs() -> dict[str, Any]:
     return {
+        "approved_run_ids": [],
         "denied_action_run_ids": ["run_denied"],
-        "mesh_brain_model_kernel_run_ids": ["run_kernel"],
-        "mesh_brain_live_canary_smoke_run_ids": ["run_canary"],
-        "mesh_brain_canary_lanes": [{"tenant_id": "tenant_a", "task_type": "crops"}],
-        "mesh_brain_rollback_drill_run_ids": ["run_rollback"],
+        "live_action_run_ids": [],
+        "mesh_brain_model_kernel_run_ids": [],
+        "mesh_brain_live_canary_smoke_run_ids": [],
+        "mesh_brain_canary_lanes": [],
+        "mesh_brain_rollback_drill_run_ids": [],
     }
 
 

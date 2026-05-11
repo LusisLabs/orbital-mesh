@@ -5,6 +5,7 @@ from unittest import mock
 
 import scripts.download_public_monitoring_corpus as downloader
 import scripts.export_monitoring_corpus as exporter
+from shared.mesh_runtime.corpus_store import IncidentCorpusDatabase
 from shared.mesh_runtime.monitoring_corpus import build_public_monitoring_corpus_rows
 
 
@@ -167,3 +168,95 @@ def test_exporter_attaches_raw_manifest_artifacts_to_public_rows(tmp_path: Path)
     assert loghub["labels"]["raw_artifact_count"] == 1
     assert str(artifact) in loghub["source"]["raw_artifact_paths"]
     assert str(manifest) in loghub["audit"]["artifact_files"]
+
+
+def test_exporter_require_breakthrough_fails_public_only_database(tmp_path: Path) -> None:
+    exit_code = exporter.main(
+        [
+            "--reth-loop-dir",
+            str(tmp_path / "missing-loop"),
+            "--database",
+            str(tmp_path / "corpus.sqlite"),
+            "--public-fixture",
+            str(tmp_path / "public_sources.json"),
+            "--raw-manifest",
+            str(tmp_path / "raw_manifest.json"),
+            "--clean-manifest",
+            str(tmp_path / "clean_manifest.json"),
+            "--require-breakthrough",
+        ]
+    )
+
+    assert exit_code == 1
+
+
+def test_exporter_require_breakthrough_passes_measured_internal_database(tmp_path: Path) -> None:
+    database = IncidentCorpusDatabase(tmp_path / "corpus.sqlite")
+    rows = [_breakthrough_row(index) for index in range(100)]
+    rows[0]["training_fact"]["quality_measurements"] = {"false_positive_reduction_pct": 0.31}
+    rows[1]["evidence_envelope"]["decision"] = {"retrieval_improved_decision": True}
+    rows[2]["labels"]["coverage"] = ["reth", "geth"]
+    rows[3]["labels"]["coverage"] = ["lighthouse", "validator"]
+    rows[4]["labels"]["coverage"] = ["rpc_gateway", "indexer"]
+    rows[5]["labels"]["coverage"] = ["kubernetes_service"]
+    for index in (7, 8, 9):
+        rows[index]["training_fact"].update(
+            {
+                "outcome": "successful",
+                "decision_type": "restart_systemd_service" if index < 9 else "escalate",
+                "promotion_candidate": True,
+            }
+        )
+        rows[index]["source"]["profile"] = "peer_starvation_restart" if index < 9 else "disk_pressure_escalate"
+    database.import_rows(rows)
+
+    exit_code = exporter.main(
+        [
+            "--reth-loop-dir",
+            str(tmp_path / "missing-loop"),
+            "--database",
+            str(database.path),
+            "--public-fixture",
+            str(tmp_path / "public_sources.json"),
+            "--raw-manifest",
+            str(tmp_path / "raw_manifest.json"),
+            "--clean-manifest",
+            str(tmp_path / "clean_manifest.json"),
+            "--skip-public-bootstrap",
+            "--require-breakthrough",
+        ]
+    )
+
+    assert exit_code == 0
+
+
+def _breakthrough_row(index: int) -> dict[str, object]:
+    return {
+        "schema_version": "mesh.incident_corpus.v1",
+        "row_id": f"row_{index}",
+        "created_at": "2026-04-27T00:00:00Z",
+        "source": {
+            "kind": "internal_corpus",
+            "collector": "test",
+            "session_id": "session",
+            "cycle_dir": f"{index:06d}_cycle",
+            "profile": "healthy_baseline",
+            "cycle": index,
+            "run_id": f"run_{index}",
+        },
+        "domain": "crypto",
+        "environment": "production",
+        "service": "service",
+        "target_class": "ethereum_execution_client",
+        "labels": {"fault_profile": "healthy_baseline", "error_signatures": []},
+        "evidence_envelope": {},
+        "training_fact": {
+            "outcome": "false_positive",
+            "decision_type": "no_action",
+            "evaluation_recommendation": "hold",
+            "execution_status": None,
+            "feedback_outcome": None,
+            "promotion_candidate": False,
+        },
+        "audit": {"artifact_files": []},
+    }

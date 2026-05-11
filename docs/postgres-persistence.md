@@ -54,6 +54,21 @@ To exercise Postgres-backed runtime state in the stack:
 MESH_STATE_BACKEND=postgres docker compose -f docker-compose.stack.yml up --build
 ```
 
+## Migration Rehearsal
+
+Release provenance requires a rollback-verified `mesh.migration_rehearsal.v1` proof for the current Postgres migration inventory. For disposable CI or staging databases, run:
+
+```bash
+MESH_MIGRATION_REHEARSAL_DATABASE_URL=postgresql://mesh:mesh@127.0.0.1:5432/mesh \
+  python3 scripts/run_postgres_migration_rehearsal.py \
+    --output dist/migration-rehearsal.json \
+    --operator-id "$MESH_OPERATOR_ID" \
+    --environment "$MESH_ENVIRONMENT" \
+    --json
+```
+
+The runner requires an empty public schema unless `--allow-existing-schema` is set, applies every SQL file under `migrations/postgres` inside a transaction, checks that schema objects were created, rolls the transaction back, and verifies that the schema returned to its pre-migration snapshot. It fails closed on destructive migration statements unless `--allow-destructive-statements` is set after operator review.
+
 ## Schema
 
 The initial schema is in `migrations/postgres/001_live_persistence.sql`.
@@ -74,7 +89,7 @@ Additional migrations extend the same production store:
 
 - `002_memory_substrate.sql`: canonical observations, claims, relationships,
   supersessions, retrieval records, and memory packets.
-- `003_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
+- `004_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
   refs, text indexes, and row-to-memory projection refs.
 
 Incident-corpus payloads keep the full JSON row as the compatibility boundary.

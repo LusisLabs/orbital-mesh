@@ -18,15 +18,16 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Runtime contracts and persistence: `shared/mesh_runtime/`, with `shared/mesh_runtime/schemas/` as schema source.
 - Model lifecycle plane: `mesh_brain/`.
 - Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `web/` remains the Vite reference surface during migration.
+- Branding system: `web/branding/` owns the brand guide, mark, and reusable CSS tokens; map those tokens into an explicit UI state slice instead of rewriting unrelated app styles in broad patches.
 - Deployment and validation: `docker-compose.stack.yml`, `docker-compose.prod.yml`, `scripts/`, `config/`, and `policies/`.
-- Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, and `agentic-operator-core-main/`.
+- Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, and the `agentic-operator-core-main/` provenance record.
 - Archived UI: `docs/history/gpui/`.
 
 ## Product And Authority Invariants
 
 - Mesh owns policy, evaluation, approval, audit, execution, promotion, run events, and proof continuity.
 - External agents, orchestrators, evaluators, model runtimes, and imported source trees are advisory, proposal, review, or source-input lanes unless current code, connector certification, credentials boundary, and tests prove bounded authority.
-- `agentic-operator-core-main/` is source input only until forked through provenance, license, renamed contracts, authority gates, and tests.
+- `agentic-operator-core-main/` is source input only when present. The tracked provenance record remains source-input-only until forked through license, renamed contracts, authority gates, and tests.
 - Promptfoo is a compatibility mode name and advisory integration lane. Mesh-native evaluation decides pass/fail.
 - Hermes is first-class for explanation and interaction. In `auto` orchestration mode the adapter prefers Hermes when ready, then Goose, then native fallback. Hermes does not replace Mesh authority.
 - Postgres is the compose production default and required for multi-operator production reliance. File-backed state remains supported and is the library default.
@@ -124,7 +125,7 @@ Run focused Python tests only when the change touches executable behavior, gener
 - Do not assume the all-in-one compose stack proves external TLS, SSO, cloud IAM, audit sink, target backup/restore, or production network isolation.
 - Do not assume local Grype/SBOM artifacts are current release proof.
 - Do not assume historical `.mesh-runtime-state/` files clear current gates.
-- Do not assume `agentic-operator-core-main/` code is active runtime because the directory exists.
+- Do not assume `agentic-operator-core-main/` code is active runtime because the provenance record references it or because a local source directory exists.
 - Do not assume `deepagents/` or `latent-mesh/LatentMAS/` are safe refactor targets.
 - Do not assume user dirty changes are yours to stage, format, or rewrite.
 - Do not assume generated contracts are current after backend model changes; run the contract check.
@@ -142,5 +143,5 @@ Run focused Python tests only when the change touches executable behavior, gener
 
 - `deepagents/`: vendored dependency path used by `pyproject.toml`; do not refactor or modernize it during first-party cleanup.
 - `latent-mesh/LatentMAS/`: vendored Rust/Python source input; run Rust validation only when touching it.
-- `agentic-operator-core-main/`: source input only. Use `config/agentic-operator-source.provenance.json` and `scripts/verify_agentic_operator_source_provenance.py --json` before any fork work.
+- `agentic-operator-core-main/`: source input only when present; absence is represented by provenance checks rather than active runtime failure. Use `config/agentic-operator-source.provenance.json` and `python3 scripts/verify_agentic_operator_source_provenance.py --json` before any fork work.
 - Archived `docs/history/gpui/`: provenance only. Do not treat it as active UI code.

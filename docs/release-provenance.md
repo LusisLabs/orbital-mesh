@@ -63,10 +63,11 @@ Run the final pilot-clearance audit only after deployment binding is in place:
 scripts/verify_pilot_clearance.py \
   --base-url https://<mesh-host> \
   --timeout-seconds 30 \
+  --expected-head "$(git rev-parse HEAD)" \
   --json
 ```
 
-The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, and runtime commit/image-digest binding all pass together.
+The audit emits `mesh.pilot_clearance_audit.v1` and fails unless health, pilot readiness, go/no-go evidence, complete release provenance, runtime commit/image-digest binding, and the live `/api/health.commit` to `--expected-head` binding all pass together. Omit `--expected-head` only for explicit historical release-bound audits that are not current-head pilot clearance.
 
 To prove a live runtime is booted but intentionally blocked on missing pilot evidence, use the blocked-state mode:
 
@@ -78,7 +79,7 @@ scripts/verify_pilot_clearance.py \
   --json
 ```
 
-This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` are reachable and explicitly blocked on the expected evidence/config gaps with no unexpected extra blocker names. It also fails if expected observed proofs such as denied-action and Mesh Brain kernel/canary/rollback evidence regress. Its JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details for the required state slices, env vars, evidence paths, remediation, and source endpoints. It is not a release-clearance signal.
+This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` are reachable and explicitly blocked on the expected evidence/config gaps with no unexpected extra blocker names. It also fails if expected observed proofs such as denied-action evidence regress. Mesh Brain kernel, canary, and rollback proofs remain expected missing evidence until a live canary lane produces them. Its JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details for the required state slices, env vars, evidence paths, remediation, and source endpoints. It is not a release-clearance signal.
 
 ## Pilot Completeness Gate
 
@@ -107,7 +108,20 @@ scripts/generate_release_provenance.py \
 
 `--allow-dirty` exists only for local rehearsals and tests. Do not use it for a signed pilot packet.
 
-`--migration-rehearsal` must point at a `mesh.migration_rehearsal.v1` packet verified by `scripts/verify_migration_rehearsal.py`. The proof must match the release packet's latest migration version and combined migration hash, include pre-migration snapshot and post-migration validation refs, and prove rollback was rehearsed. Use `scripts/generate_migration_rehearsal.py` after a real Postgres rehearsal to compute the repo migration version/hash and package the operator-supplied snapshot, rollback, validation, review, and timing evidence.
+`--migration-rehearsal` must point at a `mesh.migration_rehearsal.v1` packet verified by `scripts/verify_migration_rehearsal.py`. The proof must match the release packet's latest migration version and combined migration hash, include pre-migration snapshot and post-migration validation refs, and prove rollback was rehearsed.
+
+Use `scripts/run_postgres_migration_rehearsal.py` against a disposable Postgres database when the operator can run the migration rehearsal directly:
+
+```bash
+MESH_MIGRATION_REHEARSAL_DATABASE_URL=postgresql://mesh:mesh@127.0.0.1:5432/mesh \
+  python3 scripts/run_postgres_migration_rehearsal.py \
+    --output dist/migration-rehearsal.json \
+    --operator-id "$MESH_OPERATOR_ID" \
+    --environment "$MESH_ENVIRONMENT" \
+    --json
+```
+
+The runner refuses non-empty public schemas by default, applies every SQL file under `migrations/postgres` in one transaction, records pre- and post-migration schema hashes, rolls the transaction back, and verifies the generated proof. Use `--allow-destructive-statements` only after reviewing destructive migration SQL for the target release. Use `scripts/generate_migration_rehearsal.py` only when an external operator-controlled rehearsal already produced snapshot, rollback, validation, review, and timing evidence that must be packaged into the same proof schema.
 
 The SBOM artifact must be JSON with `bomFormat: "CycloneDX"`. The vulnerability scan artifact must be normalized JSON with a `scanner` string and a `findings`, `vulnerabilities`, or `results` array. Any unaccepted `high` or `critical` severity finding keeps `vulnerability_scan_path` incomplete with `no_high_or_critical_findings`.
 
@@ -158,7 +172,7 @@ The collector writes `MESH_IMAGE_DIGEST` and base-image digest args for the atte
 
 The current CI workflow builds and attests the image, but it does not upload a runnable private image artifact. That is intentional: uploading the built image exports private repo contents into GitHub Actions artifact storage.
 
-Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web reference, meshapp operator, release-cut, and security gates, builds the image, records release image metadata, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`. Release provenance hashes both `web/package-lock.json` and `meshapp/frontend/package-lock.json` because the production image now serves the meshapp static export.
+Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web reference, meshapp operator, release-cut, and security gates, builds the image, records release image metadata, rehearses Postgres migrations, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`. Release provenance hashes both `web/package-lock.json` and `meshapp/frontend/package-lock.json` because the production image now serves the meshapp static export.
 
 The uploaded artifact includes:
 
@@ -166,6 +180,7 @@ The uploaded artifact includes:
 - `release-image-handoff/release-image-handoff.json`;
 - `release-image-metadata.json`;
 - `ci-attestation.json`;
+- `migration-rehearsal.json`;
 - `release-provenance-draft.json`;
 - normalized and raw release assurance artifacts.
 
@@ -205,7 +220,7 @@ scripts/verify_release_runtime_binding.py \
   --json
 ```
 
-`scripts/verify_release_image_handoff.py` checks the handoff manifest hash, explicit operator confirmation marker, archive byte count and SHA-256, referenced JSON artifacts, CI attestation commit and image digest, and release provenance commit and image digest. With `--require-artifacts`, `--image-ref`, `--complete-release-provenance`, and `--env-output`, it also verifies the downloaded artifact set, loaded image, and final complete release packet before writing runtime binding env. Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
+`scripts/verify_release_image_handoff.py` checks the handoff manifest hash, explicit operator confirmation marker, archive byte count and SHA-256, referenced JSON artifacts including the migration rehearsal proof, CI attestation commit and image digest, and release provenance commit and image digest. With `--require-artifacts`, `--image-ref`, `--complete-release-provenance`, and `--env-output`, it also verifies the downloaded artifact set, loaded image, and final complete release packet before writing runtime binding env. Do not treat the handoff manifest as pilot clearance. It is only proof that a runnable image artifact was exported under explicit operator confirmation.
 
 Generate the CI attestation artifact inside the CI job that owns the release image:
 

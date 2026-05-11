@@ -79,6 +79,7 @@ REQUIRED_SCRIPTS = (
     "scripts/verify_orchestration_topology_drill.py",
     "scripts/verify_provider_adapter_proof.py",
     "scripts/generate_migration_rehearsal.py",
+    "scripts/run_postgres_migration_rehearsal.py",
     "scripts/verify_migration_rehearsal.py",
     "scripts/verify_on_call_drill.py",
     "scripts/verify_pilot_signoff.py",
@@ -363,6 +364,8 @@ REQUIRED_MARKERS = {
         "release_provenance_complete",
         "runtime_build_commit_match",
         "runtime_image_digest_match",
+        "runtime_expected_head_valid",
+        "runtime_build_commit_matches_expected_head",
     ),
     "docs/release-provenance.md": (
         "MESH_IMAGE_DIGEST",
@@ -1133,6 +1136,14 @@ REQUIRED_MARKERS = {
         "--rolled-back",
         "--destructive-changes-reviewed",
         "build_migration_rehearsal_packet",
+        "verify_migration_rehearsal",
+    ),
+    "scripts/run_postgres_migration_rehearsal.py": (
+        "mesh.migration_rehearsal.v1",
+        "MESH_MIGRATION_REHEARSAL_DATABASE_URL",
+        "--allow-existing-schema",
+        "--allow-destructive-statements",
+        "run_rehearsal",
         "verify_migration_rehearsal",
     ),
     "scripts/verify_migration_rehearsal.py": (

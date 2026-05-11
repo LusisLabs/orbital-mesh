@@ -17,16 +17,18 @@ DEFAULT_EXPECTED_READINESS_BLOCKERS = (
 )
 DEFAULT_EXPECTED_GO_NO_GO_MISSING = (
     "readiness_green",
+    "operator_approval_observed",
+    "live_action_proof_observed",
+    "mesh_brain_model_kernel_gate_observed",
+    "mesh_brain_live_canary_smoke_observed",
+    "mesh_brain_single_crops_canary_lane_observed",
+    "mesh_brain_rollback_drill_observed",
     "mesh_brain_artifact_upload_proof_verified",
     "release_provenance_complete",
     "on_call_drill_verified",
 )
 DEFAULT_EXPECTED_GO_NO_GO_TRUE_CHECKS = (
     "denied_action_proof_observed",
-    "mesh_brain_model_kernel_gate_observed",
-    "mesh_brain_live_canary_smoke_observed",
-    "mesh_brain_single_crops_canary_lane_observed",
-    "mesh_brain_rollback_drill_observed",
 )
 
 
@@ -36,6 +38,11 @@ def main() -> int:
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8787", help="Control-plane base URL.")
     parser.add_argument("--timeout-seconds", type=float, default=30.0, help="HTTP request timeout.")
+    parser.add_argument(
+        "--expected-head",
+        default="",
+        help="Require /api/health commit to match this git commit for current-head pilot proof.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable result JSON.")
     parser.add_argument(
         "--expect-blocked",
@@ -65,6 +72,7 @@ def main() -> int:
     result = verify_pilot_clearance(
         base_url=args.base_url,
         timeout_seconds=args.timeout_seconds,
+        expected_head=args.expected_head,
         expect_blocked=args.expect_blocked,
         expected_readiness_blockers=tuple(args.expected_readiness_blocker or DEFAULT_EXPECTED_READINESS_BLOCKERS),
         expected_go_no_go_missing=tuple(args.expected_go_no_go_missing or DEFAULT_EXPECTED_GO_NO_GO_MISSING),
@@ -83,6 +91,7 @@ def verify_pilot_clearance(
     base_url: str,
     timeout_seconds: float = 30.0,
     requester: Callable[[str, float], dict[str, Any]] | None = None,
+    expected_head: str = "",
     expect_blocked: bool = False,
     expected_readiness_blockers: tuple[str, ...] = DEFAULT_EXPECTED_READINESS_BLOCKERS,
     expected_go_no_go_missing: tuple[str, ...] = DEFAULT_EXPECTED_GO_NO_GO_MISSING,
@@ -98,7 +107,7 @@ def verify_pilot_clearance(
     health_record = _health_record(health)
     readiness_record = _readiness_record(readiness)
     go_no_go_record = _go_no_go_record(go_no_go)
-    runtime_record = _runtime_binding_record(health=health, release=release)
+    runtime_record = _runtime_binding_record(health=health, release=release, expected_head=expected_head)
 
     clearance_checks = {
         "health_status_ok": health_record["status_ok"],
@@ -116,6 +125,8 @@ def verify_pilot_clearance(
         "runtime_image_digest": bool(runtime_record["image_digest"]),
         "runtime_build_commit_match": runtime_record["build_commit_match"],
         "runtime_image_digest_match": runtime_record["image_digest_match"],
+        "runtime_expected_head_valid": runtime_record["expected_head_valid"],
+        "runtime_build_commit_matches_expected_head": runtime_record["build_commit_matches_expected_head"],
     }
     expected_blocked = _expected_blocked_record(
         health=health_record,
@@ -320,6 +331,19 @@ def _go_no_go_missing_detail_map(
     details: dict[str, Any] = {}
     readiness_details = readiness.get("blocker_details")
     readiness_details = readiness_details if isinstance(readiness_details, dict) else {}
+    check_results = go_no_go.get("check_results") if isinstance(go_no_go.get("check_results"), dict) else {}
+    observed = go_no_go.get("observed") if isinstance(go_no_go.get("observed"), dict) else {}
+    evidence_keys = {
+        "operator_approval_observed": ("approved_run_ids",),
+        "live_action_proof_observed": ("live_action_run_ids",),
+        "mesh_brain_model_kernel_gate_observed": ("mesh_brain_model_kernel_run_ids",),
+        "mesh_brain_live_canary_smoke_observed": (
+            "mesh_brain_live_canary_smoke_run_ids",
+            "mesh_brain_canary_lanes",
+        ),
+        "mesh_brain_single_crops_canary_lane_observed": ("mesh_brain_canary_lanes",),
+        "mesh_brain_rollback_drill_observed": ("mesh_brain_rollback_drill_run_ids",),
+    }
     for name in names:
         if name == "readiness_green":
             details[name] = {
@@ -349,6 +373,17 @@ def _go_no_go_missing_detail_map(
             details[name] = {
                 "source": "/api/pilot/go-no-go.on_call_drill",
                 "on_call_drill": go_no_go["on_call_drill"],
+            }
+        elif name in check_results:
+            details[name] = {
+                "source": "/api/pilot/go-no-go.checks",
+                "check": name,
+                "passed": check_results.get(name),
+                "observed": {
+                    key: observed.get(key)
+                    for key in evidence_keys.get(name, ())
+                    if key in observed
+                },
             }
     return details
 
@@ -406,11 +441,13 @@ def _release_record(go_no_go: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any]) -> dict[str, Any]:
+def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any], expected_head: str = "") -> dict[str, Any]:
     release_commit = _normalized_git_commit(release.get("git_commit"))
     release_digest = _normalized_digest(release.get("image_digest"))
     runtime_commit = _normalized_git_commit(health.get("commit"))
     runtime_digest = _normalized_digest(health.get("image_digest"))
+    expected_head_required = bool(expected_head.strip())
+    expected_head_commit = _normalized_git_commit(expected_head)
     return {
         "build_commit": runtime_commit,
         "image_digest": runtime_digest,
@@ -418,6 +455,13 @@ def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any]) 
         "expected_image_digest": release_digest,
         "build_commit_match": bool(runtime_commit and release_commit and runtime_commit == release_commit),
         "image_digest_match": bool(runtime_digest and release_digest and runtime_digest == release_digest),
+        "expected_head_required": expected_head_required,
+        "expected_head": expected_head_commit,
+        "expected_head_valid": not expected_head_required or bool(expected_head_commit),
+        "build_commit_matches_expected_head": (
+            not expected_head_required
+            or bool(runtime_commit and expected_head_commit and runtime_commit == expected_head_commit)
+        ),
     }
 
 
@@ -535,6 +579,8 @@ def _prompt_to_artifact_checklist(
 def _go_no_go_requirement_name(name: str) -> str:
     labels = {
         "readiness_green": "readiness green",
+        "operator_approval_observed": "operator approval proof",
+        "live_action_proof_observed": "live-action proof",
         "mesh_brain_artifact_upload_proof_verified": "Mesh Brain artifact upload proof",
         "release_provenance_complete": "release provenance",
         "on_call_drill_verified": "on-call drill proof",
@@ -573,6 +619,8 @@ def _checklist(checks: dict[str, bool]) -> list[dict[str, Any]]:
                 "runtime_image_digest",
                 "runtime_build_commit_match",
                 "runtime_image_digest_match",
+                "runtime_expected_head_valid",
+                "runtime_build_commit_matches_expected_head",
             ),
         ),
     ]

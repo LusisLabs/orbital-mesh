@@ -89,6 +89,23 @@ task and embeds the result under `task_trace.mesh_eval.latent_mesh.tokenizer_pro
 Probe failure records an error artifact and never replaces deterministic
 contract, verifier, or trajectory gates.
 
+## HelixDB Memory Projection
+
+HelixDB is an optional projection target for verified memory records, not a
+canonical runtime state backend. Set `MESH_MEMORY_GRAPH_BACKEND=helix` to mirror
+observations, claims, relationships, supersessions, retrievals, and memory
+packets into HelixDB through the replayable projection outbox. Keep run
+sessions, event streams, Merkle roots, approvals, pilot persistence, and release
+proof on `MESH_STATE_BACKEND=file` or `MESH_STATE_BACKEND=postgres`.
+
+The checked-in Helix project lives under `helix/mesh-memory/`. Configure the
+projection with:
+
+- `MESH_MEMORY_GRAPH_BACKEND`
+- `MESH_HELIX_API_ENDPOINT`
+- `MESH_HELIX_PORT`
+- `MESH_HELIX_QUERY_NAMESPACE`
+
 ## Docker Compose defaults
 
 The one-command all-in-one stack is `docker-compose.stack.yml`:
@@ -98,6 +115,17 @@ docker compose -f docker-compose.stack.yml up --build
 ```
 
 This is the preferred local whole-system validation path. It is documented in detail in [`docs/all-in-one-compose-stack.md`](./all-in-one-compose-stack.md).
+
+For a pilot-like local proof rehearsal, layer `docker-compose.e2estack.yml` on
+top of the all-in-one stack. That overlay wires authenticated ingress,
+telemetry, artifact, provider, audit, release-binding, evidence-packet,
+network-segmentation, and standalone frontend services into the same Compose
+graph:
+
+```bash
+docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml config --quiet
+docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml up --build
+```
 
 It starts:
 

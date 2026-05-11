@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--confirmation", required=True, help=f"Must be {CONFIRMATION}.")
     parser.add_argument("--release-provenance", default="", help="Optional release provenance draft path.")
     parser.add_argument("--ci-attestation", default="", help="Optional CI attestation path.")
+    parser.add_argument("--migration-rehearsal", default="", help="Optional migration rehearsal proof path.")
     parser.add_argument("--sbom", default="", help="Optional SBOM path.")
     parser.add_argument("--vulnerability-scan", default="", help="Optional vulnerability scan path.")
     args = parser.parse_args()
@@ -91,6 +92,7 @@ def _artifact_paths(args: argparse.Namespace) -> dict[str, str | None]:
     return {
         "release_provenance": _optional_path(args.release_provenance),
         "ci_attestation": _optional_path(args.ci_attestation),
+        "migration_rehearsal": _optional_path(args.migration_rehearsal),
         "sbom": _optional_path(args.sbom),
         "vulnerability_scan": _optional_path(args.vulnerability_scan),
     }

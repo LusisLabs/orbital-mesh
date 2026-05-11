@@ -171,6 +171,16 @@ Rebuild only internal rows while still refreshing the public fixture:
 python3 scripts/export_monitoring_corpus.py --skip-public-bootstrap
 ```
 
+Require the rebuilt database to satisfy measured Breakthrough thresholds:
+
+```bash
+python3 scripts/export_monitoring_corpus.py --require-breakthrough
+```
+
+This exits non-zero when the database is public/bootstrap-only or when any
+Breakthrough gate is still missing. It does not relax the rule that only
+`internal_corpus` rows from `production`, `development`, or `testnet` count.
+
 Download raw public bootstrap artifacts into ignored runtime state:
 
 ```bash

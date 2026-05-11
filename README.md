@@ -73,7 +73,12 @@ Steering is bounded. Supported commands are:
 - `set_auto_mode`
 - `override_decision`
 - `override_execution_parameters`
+- `explain_blockers`
+- `chat_with_hermes`
 - `attach_note`
+- `handoff`
+- `override_review`
+- `postmortem_review`
 
 Overrides always re-enter evaluation before execution. Approval never bypasses policy validation or rollback constraints.
 Recoverable blockers such as low confidence or failed trajectory scorers can trigger one or more bounded child retries in `interruptible_auto`. Terminal blockers still stop at human review.
@@ -119,6 +124,7 @@ orbital-mesh/
 ├── Dockerfile                       # production image (meshapp operator UI + Python server)
 ├── docker-compose.yml               # persisted state volume + health checks
 ├── docker-compose.stack.yml         # all-in-one local Mesh + sidecars + k3s + smoke stack
+├── docker-compose.e2estack.yml      # full-stack E2E overlay for pilot-like local proof rehearsal
 ├── .env.example                     # configuration template
 ├── control_plane_server.py          # local HTTP + SSE server
 ├── run_server.py                    # browser control-plane entrypoint
@@ -146,7 +152,7 @@ orbital-mesh/
 │   └── state.py
 ├── meshapp/                         # zero-native shell + Next production operator app
 ├── web/                             # React/Vite reference control plane during migration
-├── branding/                        # brand guide, SVG mark, and reusable design tokens
+│   └── branding/                    # brand guide, SVG mark, and reusable design tokens
 ├── docs/post-training/              # Mesh Brain PRD and runtime architecture imported from post-training
 ├── fixtures/
 ├── policies/
@@ -641,6 +647,8 @@ Supported configuration variables:
 - `MESH_DEEPAGENTS_MODEL`: provider/model string for the Deep Agents proposal fabric.
 - `MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH`: versioned profile used to map organization/infra/model evidence to agent topology.
 - `MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH`: optional proof packet used by expansion readiness to verify topology routing with real run evidence.
+- `MESH_BACKUP_RESTORE_REHEARSAL_PATH` — proof packet used by staging and pilot readiness to verify backup/restore rehearsal for the active profile and state backend.
+- `MESH_ON_CALL_DRILL_PATH` — proof packet used by pilot go/no-go to verify the staffed on-call drill, kill switch, forced approval gate, bad-target revocation, stuck-run recovery, provider-key rotation, and restore path.
 - `MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE`
 - `MESH_INCIDENT_CREDENTIALS_AVAILABLE`
 - `MESH_AUDIT_LOGGING_AVAILABLE`
@@ -817,7 +825,7 @@ Full operational context, topology, variables, volumes, teardown, and troublesho
 That stack starts:
 
 1. **`k3s`** — local Kubernetes API on **6443** inside the compose graph.
-2. **`postgres`** — local Postgres on **5432** for production-style persistence testing. Mesh still defaults to `MESH_STATE_BACKEND=file`; set `MESH_STATE_BACKEND=postgres` to use it.
+2. **`postgres`** — local Postgres on **5432** for production-style persistence testing. `RuntimeConfig` still defaults to `MESH_STATE_BACKEND=file`, but this stack sets Mesh to `MESH_STATE_BACKEND=postgres`.
 3. **`mesh-kube-bootstrap`** — one-shot job that rewrites kubeconfig to `https://k3s:6443`, creates namespace `search`, deploys `semantic-search`, and normalizes the kube context to `mesh-compose`.
 4. **`mesh`** — browser control plane and Python backend on **8787**, with live Kubernetes execution enabled and deterministic native agent-task lanes enabled by default in this topology.
 5. **`hermes`** — dedicated Hermes runtime sidecar reached through `docker exec`.
