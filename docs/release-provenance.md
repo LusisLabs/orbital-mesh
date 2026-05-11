@@ -245,10 +245,10 @@ Mesh Brain artifact durability is a separate rollout gate. After the model-kerne
 
 ```bash
 scripts/verify_mesh_brain_artifact_registry.py \
-  --artifacts-json .mesh-runtime-state/artifacts.json \
-  --proof-manifest dist/mesh-brain-artifact-upload-proof.json \
+  --artifacts-json "$MESH_BRAIN_ARTIFACT_REGISTRY_PATH" \
+  --proof-manifest "$MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH" \
   --require-upload-proof \
   --json
 ```
 
-This verifier checks that every Mesh Brain production artifact record uses a durable object-storage URI, keeps immutable production metadata, and has matching upload proof for hash and byte count.
+This verifier checks that every Mesh Brain production artifact record uses a durable object-storage URI, keeps immutable production metadata, and has matching upload proof for hash and byte count. Pilot readiness and go/no-go require `MESH_BRAIN_ARTIFACT_REGISTRY_PATH` and `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH` to point at the verified registry export and proof manifest.

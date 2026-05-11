@@ -135,6 +135,59 @@ def _write_on_call_drill(path: Path) -> None:
     )
 
 
+def _write_mesh_brain_artifact_upload_proof(tmp: str) -> tuple[Path, Path]:
+    artifacts = Path(tmp) / "mesh-brain-artifacts.json"
+    proof = Path(tmp) / "mesh-brain-upload-proof.json"
+    uri = "s3://mesh-prod-artifacts/mesh-brain/kernel/hash/kernel-summary.json"
+    sha256 = "e" * 64
+    byte_count = 42
+    artifacts.write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {
+                        "run_id": "mb_kernel_checkpoint",
+                        "artifact_key": "mesh_brain_model_kernel_probe_summary",
+                        "uri": uri,
+                        "path": "/workspace/artifacts/kernel-summary.json",
+                        "content_hash": sha256,
+                        "metadata": {
+                            "production_artifact": {
+                                "blob_uri": uri,
+                                "sha256": sha256,
+                                "byte_count": byte_count,
+                                "immutable": True,
+                            }
+                        },
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    proof.write_text(
+        json.dumps(
+            {
+                "schema_version": "mesh.artifact_upload_proof.v1",
+                "uploads": [
+                    {
+                        "blob_uri": uri,
+                        "sha256": sha256,
+                        "byte_count": byte_count,
+                        "provider": "s3",
+                        "uploaded_at": "2026-05-05T00:00:00+00:00",
+                        "etag": "etag-darkharness-fixture",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return artifacts, proof
+
+
 class DarkharnessExportPathTests(unittest.TestCase):
     def test_coordinator_builds_schema_valid_packet_for_allowed_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -477,11 +530,14 @@ class DarkharnessExportPathTests(unittest.TestCase):
             _write_complete_release_provenance(release_provenance)
             on_call_drill = Path(tmp) / "on-call-drill.json"
             _write_on_call_drill(on_call_drill)
+            artifact_registry, upload_proof = _write_mesh_brain_artifact_upload_proof(tmp)
             coordinator = RunCoordinator(
                 _config(
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    mesh_brain_artifact_registry_path=str(artifact_registry),
+                    mesh_brain_artifact_upload_proof_path=str(upload_proof),
                     build_commit=RELEASE_GIT_COMMIT,
                     build_image_digest=RELEASE_IMAGE_DIGEST,
                 )

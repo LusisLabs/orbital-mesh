@@ -91,12 +91,70 @@ def _pilot_ready_config(tmp: str) -> RuntimeConfig:
         feedback_prometheus_enabled=True,
         prometheus_url="http://prometheus.local",
         mesh_brain_artifact_uri_prefix="s3://mesh-prod-artifacts/mesh-brain",
+        mesh_brain_artifact_registry_path=str(Path(tmp) / "artifacts.json"),
+        mesh_brain_artifact_upload_proof_path=_write_mesh_brain_artifact_upload_proof(tmp),
         mesh_brain_serving_base_url="http://mesh-brain-serving.private:8000",
         mesh_brain_serving_model="nvidia/nemotron-3-nano-4b",
         run_export_retention_reviewed=True,
         feature_flag_credentials_available=False,
         incident_credentials_available=False,
     )
+
+
+def _write_mesh_brain_artifact_upload_proof(tmp: str) -> str:
+    artifacts_path = Path(tmp) / "artifacts.json"
+    proof_path = Path(tmp) / "mesh-brain-artifact-upload-proof.json"
+    uri = "s3://mesh-prod-artifacts/mesh-brain/mesh_brain_model_kernel_probe_summary/eeeeeeeeeeeeeeee/artifact.json"
+    sha256 = "e" * 64
+    byte_count = 42
+    artifacts_path.write_text(
+        json.dumps(
+            {
+                "artifacts": [
+                    {
+                        "run_id": "mesh_brain_artifact_upload_proof_run",
+                        "artifact_key": "mesh_brain_model_kernel_probe_summary",
+                        "uri": uri,
+                        "path": str(Path(tmp) / "artifact.json"),
+                        "content_hash": sha256,
+                        "metadata": {
+                            "production_artifact": {
+                                "blob_uri": uri,
+                                "sha256": sha256,
+                                "byte_count": byte_count,
+                                "immutable": True,
+                            }
+                        },
+                    }
+                ]
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    proof_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "mesh.artifact_upload_proof.v1",
+                "uploads": [
+                    {
+                        "blob_uri": uri,
+                        "sha256": sha256,
+                        "byte_count": byte_count,
+                        "provider": "s3",
+                        "uploaded_at": "2026-05-10T00:00:00+00:00",
+                    }
+                ],
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return str(proof_path)
 
 
 def _record_generic_pilot_evidence(coordinator: RunCoordinator) -> None:
@@ -627,29 +685,11 @@ class ReadinessProfileTests(unittest.TestCase):
 
     def test_pilot_profile_requires_postgres_live_feedback_and_disabled_unfinished_adapters(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            readiness = build_readiness(
-                _config(
-                    tmp,
-                    readiness_profile="pilot",
-                    operator_identity_required=True,
-                    state_backend="postgres",
-                    database_url="postgresql://mesh:mesh@localhost:5432/mesh",
-                    force_approval_gate=True,
-                    live_feedback_required=True,
-                    feedback_prometheus_enabled=True,
-                    prometheus_url="http://prometheus.local",
-                    mesh_brain_artifact_uri_prefix="s3://mesh-prod-artifacts/mesh-brain",
-                    mesh_brain_serving_base_url="http://mesh-brain-serving.private:8000",
-                    mesh_brain_serving_model="nvidia/nemotron-3-nano-4b",
-                    run_export_retention_reviewed=True,
-                    feature_flag_credentials_available=False,
-                    incident_credentials_available=False,
-                ),
-                force=True,
-            ).to_dict()
+            readiness = build_readiness(_pilot_ready_config(tmp), force=True).to_dict()
 
         self.assertEqual(readiness["status"], "ready")
         self.assertTrue(readiness["required_checks"]["mesh_brain_artifact_uri_prefix_configured"])
+        self.assertTrue(readiness["required_checks"]["mesh_brain_artifact_upload_proof_verified"])
         self.assertTrue(readiness["required_checks"]["mesh_brain_serving_backend_configured"])
         self.assertTrue(readiness["required_checks"]["run_export_retention_reviewed"])
         self.assertEqual(readiness["connector_certification"]["feature_flag_adapter"]["state"], "staging-ready")
@@ -657,55 +697,38 @@ class ReadinessProfileTests(unittest.TestCase):
 
     def test_pilot_profile_blocks_unreviewed_run_export_retention(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            readiness = build_readiness(
-                _config(
-                    tmp,
-                    readiness_profile="pilot",
-                    operator_identity_required=True,
-                    state_backend="postgres",
-                    database_url="postgresql://mesh:mesh@localhost:5432/mesh",
-                    force_approval_gate=True,
-                    live_feedback_required=True,
-                    feedback_prometheus_enabled=True,
-                    prometheus_url="http://prometheus.local",
-                    mesh_brain_artifact_uri_prefix="s3://mesh-prod-artifacts/mesh-brain",
-                    mesh_brain_serving_base_url="http://mesh-brain-serving.private:8000",
-                    mesh_brain_serving_model="nvidia/nemotron-3-nano-4b",
-                    feature_flag_credentials_available=False,
-                    incident_credentials_available=False,
-                ),
-                force=True,
-            ).to_dict()
+            config = _pilot_ready_config(tmp)
+            config.run_export_retention_reviewed = False
+            readiness = build_readiness(config, force=True).to_dict()
 
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("run_export_retention_reviewed", readiness["blockers"])
 
     def test_pilot_profile_blocks_local_mesh_brain_artifact_prefix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            readiness = build_readiness(
-                _config(
-                    tmp,
-                    readiness_profile="pilot",
-                    operator_identity_required=True,
-                    state_backend="postgres",
-                    database_url="postgresql://mesh:mesh@localhost:5432/mesh",
-                    force_approval_gate=True,
-                    live_feedback_required=True,
-                    feedback_prometheus_enabled=True,
-                    prometheus_url="http://prometheus.local",
-                    mesh_brain_artifact_uri_prefix=f"file://{tmp}/mesh-brain",
-                    run_export_retention_reviewed=True,
-                    feature_flag_credentials_available=False,
-                    incident_credentials_available=False,
-                ),
-                force=True,
-            ).to_dict()
+            config = _pilot_ready_config(tmp)
+            config.mesh_brain_artifact_uri_prefix = f"file://{tmp}/mesh-brain"
+            readiness = build_readiness(config, force=True).to_dict()
 
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("mesh_brain_artifact_uri_prefix_configured", readiness["blockers"])
         detail = readiness["blocker_details"]["mesh_brain_artifact_uri_prefix_configured"]
         self.assertEqual(detail["env"], ["MESH_BRAIN_ARTIFACT_URI_PREFIX"])
         self.assertEqual(detail["observed"], f"file://{tmp}/mesh-brain")
+
+    def test_pilot_profile_blocks_missing_mesh_brain_artifact_upload_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = _pilot_ready_config(tmp)
+            Path(cast(str, config.mesh_brain_artifact_upload_proof_path)).unlink()
+
+            readiness = build_readiness(config, force=True).to_dict()
+
+        self.assertEqual(readiness["status"], "blocked")
+        self.assertIn("mesh_brain_artifact_upload_proof_verified", readiness["blockers"])
+        detail = readiness["blocker_details"]["mesh_brain_artifact_upload_proof_verified"]
+        self.assertEqual(detail["env"], ["MESH_BRAIN_ARTIFACT_REGISTRY_PATH", "MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH"])
+        self.assertEqual(detail["observed"]["status"], "missing")
+        self.assertIn("mesh_brain_artifact_upload_proof_path", detail["observed"]["missing"])
 
     def test_readiness_blocker_details_include_proof_path_and_provider_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -777,6 +800,8 @@ class ProductionComposeContractTests(unittest.TestCase):
             'MESH_FEEDBACK_PROMETHEUS_ENABLED: "${MESH_FEEDBACK_PROMETHEUS_ENABLED:-1}"',
             'MESH_PROMETHEUS_URL: "${MESH_PROMETHEUS_URL:?set production Prometheus URL for feedback and telemetry}"',
             'MESH_BRAIN_ARTIFACT_URI_PREFIX: "${MESH_BRAIN_ARTIFACT_URI_PREFIX:?set durable object-storage URI prefix for Mesh Brain artifacts}"',
+            'MESH_BRAIN_ARTIFACT_REGISTRY_PATH: "${MESH_BRAIN_ARTIFACT_REGISTRY_PATH:?set Mesh Brain artifact registry export path}"',
+            'MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH: "${MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH:?set Mesh Brain artifact upload proof manifest path}"',
             'MESH_BRAIN_SERVING_BASE_URL: "${MESH_BRAIN_SERVING_BASE_URL:?set OpenAI-compatible Mesh Brain serving backend URL}"',
             'MESH_BRAIN_SERVING_MODEL: "${MESH_BRAIN_SERVING_MODEL:?set Mesh Brain serving model name}"',
             'MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH: "${MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH:-/app/config/deployment-compatibility.registry.json}"',
@@ -824,6 +849,8 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    mesh_brain_artifact_registry_path=str(Path(tmp) / "artifacts.json"),
+                    mesh_brain_artifact_upload_proof_path=_write_mesh_brain_artifact_upload_proof(tmp),
                     build_commit=RELEASE_GIT_COMMIT,
                     build_image_digest=RELEASE_IMAGE_DIGEST,
                 )
@@ -867,10 +894,49 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                 self.assertEqual(packet["release_provenance"]["packet_sha256"], "b" * 64)
                 self.assertEqual(packet["on_call_drill"]["status"], "pass")
                 self.assertEqual(packet["on_call_drill"]["drill_id"], "on_call_drill_test")
+                self.assertEqual(packet["mesh_brain_artifact_upload_proof"]["status"], "pass")
                 self.assertEqual(packet["observed"]["mesh_brain_canary_lanes"], [{"tenant_id": "tenant_a", "task_type": "crops"}])
                 self.assertEqual(len(packet["observed"]["mesh_brain_model_kernel_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_live_canary_smoke_run_ids"]), 1)
                 self.assertEqual(len(packet["observed"]["mesh_brain_rollback_drill_run_ids"]), 1)
+            finally:
+                coordinator.stop_background_workers()
+
+    def test_pilot_go_no_go_requires_mesh_brain_artifact_upload_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            release_provenance = Path(tmp) / "release-provenance.json"
+            on_call_drill = Path(tmp) / "on-call-drill.json"
+            coordinator = RunCoordinator(
+                _config(
+                    tmp,
+                    release_provenance_path=str(release_provenance),
+                    on_call_drill_path=str(on_call_drill),
+                    build_commit=RELEASE_GIT_COMMIT,
+                    build_image_digest=RELEASE_IMAGE_DIGEST,
+                )
+            )
+            coordinator._readiness_cache = (time.monotonic(), build_readiness(_pilot_ready_config(tmp), force=True).to_dict())
+            try:
+                _record_generic_pilot_evidence(coordinator)
+                _record_mesh_brain_gate_evidence(coordinator)
+                release_provenance.write_text(
+                    json.dumps(_complete_release_provenance("b" * 64)) + "\n",
+                    encoding="utf-8",
+                )
+                on_call_drill.write_text(
+                    json.dumps(_on_call_drill(), indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+                packet = coordinator.generate_pilot_go_no_go()
+
+                self.assertEqual(packet["status"], "blocked")
+                self.assertIn("mesh_brain_artifact_upload_proof_verified", packet["missing_evidence"])
+                self.assertEqual(packet["mesh_brain_artifact_upload_proof"]["status"], "missing")
+                self.assertIn(
+                    "mesh_brain_artifact_upload_proof_path",
+                    packet["mesh_brain_artifact_upload_proof"]["missing"],
+                )
             finally:
                 coordinator.stop_background_workers()
 
@@ -926,6 +992,8 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                     tmp,
                     release_provenance_path=str(release_provenance),
                     on_call_drill_path=str(on_call_drill),
+                    mesh_brain_artifact_registry_path=str(Path(tmp) / "artifacts.json"),
+                    mesh_brain_artifact_upload_proof_path=_write_mesh_brain_artifact_upload_proof(tmp),
                     build_commit=RELEASE_GIT_COMMIT,
                     build_image_digest=RELEASE_IMAGE_DIGEST,
                 )

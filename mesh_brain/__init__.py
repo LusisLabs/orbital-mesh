@@ -15,6 +15,7 @@ from .artifact_registry import (
     build_production_artifact_ref,
     production_blob_uri,
     validate_durable_artifact_uri,
+    verify_artifact_upload_registry,
     verify_production_artifact_record,
 )
 from .backend_matrix import (

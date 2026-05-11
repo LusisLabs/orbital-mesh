@@ -25,7 +25,7 @@ MESH_LIVE_FEEDBACK_REQUIRED=1
 MESH_FEEDBACK_PROMETHEUS_ENABLED=1
 ```
 
-It requires deployment-specific `MESH_DATABASE_URL`, `MESH_PROMETHEUS_URL`, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_SERVING_BASE_URL`, and `MESH_BRAIN_SERVING_MODEL` values before startup.
+It requires deployment-specific `MESH_DATABASE_URL`, `MESH_PROMETHEUS_URL`, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_ARTIFACT_REGISTRY_PATH`, `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH`, `MESH_BRAIN_SERVING_BASE_URL`, and `MESH_BRAIN_SERVING_MODEL` values before startup.
 
 Staging and pilot readiness require `MESH_AUTHENTICATED_INGRESS_PROOF_PATH` to point at a passing `mesh.authenticated_ingress_deployment_proof.v1` packet. Production compose refuses to start without that path because `MESH_OPERATOR_IDENTITY_REQUIRED=1` is not enough by itself; Mesh also needs evidence that the deployed proxy terminates TLS, enforces identity, strips client-supplied Mesh headers, stamps trusted role headers, keeps the raw upstream private, and records operator/source identity for audit.
 

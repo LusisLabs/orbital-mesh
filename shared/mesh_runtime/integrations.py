@@ -17,6 +17,8 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from mesh_brain.artifact_registry import verify_artifact_upload_registry
+
 from .config import RuntimeConfig
 from .control_plane_models import IntegrationReadiness, IntegrationStatus
 from .agentic_operator_provenance import agentic_operator_source_provenance_ready
@@ -164,6 +166,8 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.prometheus_url,
         runtime_config.live_feedback_required,
         runtime_config.mesh_brain_artifact_uri_prefix,
+        runtime_config.mesh_brain_artifact_registry_path,
+        runtime_config.mesh_brain_artifact_upload_proof_path,
         runtime_config.mesh_brain_serving_base_url,
         runtime_config.mesh_brain_serving_model,
         runtime_config.feature_flag_credentials_available,
@@ -511,6 +515,9 @@ def _profile_checks(
                 "mesh_brain_artifact_uri_prefix_configured": _durable_artifact_uri_prefix_configured(
                     runtime_config.mesh_brain_artifact_uri_prefix
                 ),
+                "mesh_brain_artifact_upload_proof_verified": mesh_brain_artifact_upload_proof_ready(
+                    runtime_config
+                ),
                 "mesh_brain_serving_backend_configured": bool(
                     runtime_config.mesh_brain_serving_base_url and runtime_config.mesh_brain_serving_model
                 ),
@@ -666,6 +673,14 @@ def _blocker_detail(
             "observed": runtime_config.mesh_brain_artifact_uri_prefix or "missing",
             "remediation": "Set MESH_BRAIN_ARTIFACT_URI_PREFIX to durable artifact storage.",
         },
+        "mesh_brain_artifact_upload_proof_verified": {
+            "state_slice": "RuntimeConfig.mesh_brain_artifact_registry_path + RuntimeConfig.mesh_brain_artifact_upload_proof_path",
+            "env": ["MESH_BRAIN_ARTIFACT_REGISTRY_PATH", "MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH"],
+            "expected": "passing mesh.mesh_brain_artifact_registry_proof.v1 with upload proofs",
+            "observed": mesh_brain_artifact_upload_proof_record(runtime_config),
+            "evidence_path": runtime_config.mesh_brain_artifact_upload_proof_path,
+            "remediation": "Run scripts/verify_mesh_brain_artifact_registry.py with --require-upload-proof and set MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH to the matching manifest.",
+        },
         "mesh_brain_serving_backend_configured": {
             "state_slice": "RuntimeConfig Mesh Brain serving backend",
             "env": ["MESH_BRAIN_SERVING_BASE_URL", "MESH_BRAIN_SERVING_MODEL"],
@@ -751,6 +766,65 @@ def _provider_blocker_detail(
 
 def _profile_at_least(profile: str, minimum: str) -> bool:
     return _PROFILE_ORDER.get(profile, 0) >= _PROFILE_ORDER.get(minimum, 0)
+
+
+def mesh_brain_artifact_upload_proof_ready(runtime_config: RuntimeConfig) -> bool:
+    return mesh_brain_artifact_upload_proof_record(runtime_config)["status"] == "pass"
+
+
+def mesh_brain_artifact_upload_proof_record(runtime_config: RuntimeConfig, profile: str | None = None) -> dict[str, Any]:
+    artifacts_json_path_raw = runtime_config.mesh_brain_artifact_registry_path
+    artifacts_json_path = Path(artifacts_json_path_raw) if artifacts_json_path_raw else None
+    proof_path_raw = runtime_config.mesh_brain_artifact_upload_proof_path
+    proof_path = Path(proof_path_raw) if proof_path_raw else None
+    required = _profile_at_least(profile or runtime_config.readiness_profile, "pilot")
+    artifacts_json_exists = bool(artifacts_json_path and artifacts_json_path.is_file())
+    proof_manifest_exists = bool(proof_path and proof_path.is_file())
+    record: dict[str, Any] = {
+        "required": required,
+        "artifacts_json_path": str(artifacts_json_path) if artifacts_json_path else None,
+        "proof_manifest_path": str(proof_path) if proof_path else None,
+        "artifacts_json_exists": artifacts_json_exists,
+        "proof_manifest_exists": proof_manifest_exists,
+        "status": "not_required" if not required else "missing",
+        "missing": [],
+        "checks": {},
+        "artifact_count": 0,
+    }
+    if not required:
+        return record
+    if artifacts_json_path is None:
+        record["missing"].append("mesh_brain_artifact_registry_path")
+    elif not artifacts_json_exists:
+        record["missing"].append("mesh_brain_artifacts_json")
+    if not proof_manifest_exists:
+        record["missing"].append("mesh_brain_artifact_upload_proof_path")
+    if record["missing"]:
+        return record
+    assert artifacts_json_path is not None
+    assert proof_path is not None
+    try:
+        verification = verify_artifact_upload_registry(
+            artifacts_json=artifacts_json_path,
+            proof_manifest=proof_path,
+            require_upload_proof=True,
+        )
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        record["status"] = "invalid"
+        record["missing"] = ["mesh_brain_artifact_upload_proof_invalid"]
+        record["error"] = str(exc)
+        return record
+    checks = verification.get("checks") if isinstance(verification.get("checks"), dict) else {}
+    record.update(
+        {
+            "schema_version": verification.get("schema_version"),
+            "status": "pass" if verification.get("status") == "pass" else "fail",
+            "checks": checks,
+            "artifact_count": verification.get("artifact_count", 0),
+        }
+    )
+    record["missing"] = [name for name, passed in checks.items() if passed is not True]
+    return record
 
 
 def _durable_artifact_uri_prefix_configured(uri_prefix: str | None) -> bool:

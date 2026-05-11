@@ -107,7 +107,7 @@ Before pilot:
 5. Run `scripts/verify_run_export_retrieval.py --package <path> --archive <path> --json` against at least one generated pilot run export.
 6. Run `scripts/verify_run_export_upload.py --package <path> --archive <path> --proof <path> --json` after the package and archive are replicated to durable storage.
 7. Run the Mesh Brain model-kernel probe, live-serving smoke, and rollback drill. The pilot go/no-go packet requires a passed model-kernel gate, a canary live-serving smoke run, a single CROPS canary lane, and rollback-drill evidence.
-8. Run `scripts/verify_mesh_brain_artifact_registry.py --artifacts-json .mesh-runtime-state/artifacts.json --proof-manifest dist/mesh-brain-artifact-upload-proof.json --require-upload-proof --json`.
+8. Run `scripts/verify_mesh_brain_artifact_registry.py --artifacts-json "$MESH_BRAIN_ARTIFACT_REGISTRY_PATH" --proof-manifest "$MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH" --require-upload-proof --json`, then keep both Mesh Brain artifact proof paths set for readiness and go/no-go capture.
 9. Run `scripts/generate_release_provenance.py --require-complete --json`, write the packet to a deployment-readable path, and set `MESH_RELEASE_PROVENANCE_PATH` to that file before go/no-go capture.
 10. Before expansion or compliance reliance, run `scripts/verify_audit_sink_contract.py --proof "$MESH_AUDIT_SINK_PROOF_PATH" --json` and set `MESH_AUDIT_SINK_PROOF_PATH` for readiness.
 11. Run `scripts/verify_credential_rotation.py --connector-id <id> --proof <path> --json` for every pilot connector with runtime-secret or read-only-secret credentials.

@@ -114,7 +114,11 @@ from shared.mesh_runtime.infra_graph import InfraGraph
 from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from shared.mesh_runtime.state_store_factory import build_mesh_state_store
-from shared.mesh_runtime.integrations import GitNexusSidecarManager, build_readiness
+from shared.mesh_runtime.integrations import (
+    GitNexusSidecarManager,
+    build_readiness,
+    mesh_brain_artifact_upload_proof_record,
+)
 from shared.mesh_runtime.on_call_drill import verify_on_call_drill
 from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
@@ -876,6 +880,8 @@ class RunCoordinator:
         readiness = self.build_readiness()
         release_provenance = self._release_provenance_record(readiness)
         on_call_drill = self._on_call_drill_record(readiness)
+        profile = readiness.get("profile") if isinstance(readiness.get("profile"), str) else self.config.readiness_profile
+        mesh_brain_artifact_upload_proof = mesh_brain_artifact_upload_proof_record(self.config, profile=profile)
         runs = self.state_store.list_run_sessions(limit=max(_PILOT_GO_NO_GO_EVIDENCE_LIMIT, 100))
         observed_runs = [session for session in runs if session.latest_event_sequence > 0]
         approved_run_id_set = set(
@@ -931,6 +937,8 @@ class RunCoordinator:
             "mesh_brain_live_canary_smoke_observed": bool(live_smoke_runs),
             "mesh_brain_single_crops_canary_lane_observed": len(live_smoke_lanes) == 1 and live_smoke_lanes[0][1] == "crops",
             "mesh_brain_rollback_drill_observed": bool(rollback_drill_runs),
+            "mesh_brain_artifact_upload_proof_verified": mesh_brain_artifact_upload_proof.get("required") is False
+            or mesh_brain_artifact_upload_proof.get("status") == "pass",
             "release_provenance_complete": release_provenance.get("required") is False
             or release_provenance.get("status") == "complete",
             "on_call_drill_verified": on_call_drill.get("required") is False
@@ -965,6 +973,7 @@ class RunCoordinator:
             },
             "release_provenance": release_provenance,
             "on_call_drill": on_call_drill,
+            "mesh_brain_artifact_upload_proof": mesh_brain_artifact_upload_proof,
         }
 
     def _release_provenance_record(self, readiness: dict[str, Any]) -> dict[str, Any]:

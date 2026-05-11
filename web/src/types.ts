@@ -336,6 +336,9 @@ export interface PilotGoNoGoPacket {
   checks: Record<string, boolean>;
   missing_evidence: string[];
   readiness: IntegrationReadiness;
+  release_provenance?: Record<string, any>;
+  on_call_drill?: Record<string, any>;
+  mesh_brain_artifact_upload_proof?: Record<string, any>;
   observed: {
     run_count: number;
     approved_run_ids: string[];

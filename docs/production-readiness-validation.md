@@ -124,6 +124,8 @@ service container and succeeded.
   `MESH_BACKUP_RESTORE_REHEARSAL_PATH`, `MESH_STATE_BACKEND=postgres`,
   `MESH_DATABASE_URL`, either Prometheus feedback config or enabled Kubernetes
   live execution, durable `MESH_BRAIN_ARTIFACT_URI_PREFIX`,
+  `MESH_BRAIN_ARTIFACT_REGISTRY_PATH`,
+  `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH`,
   `MESH_BRAIN_SERVING_BASE_URL`, `MESH_BRAIN_SERVING_MODEL`,
   `MESH_RUN_EXPORT_RETENTION_REVIEWED=1`, `MESH_DESIGN_PARTNER_PACKET_PATH`,
   and either disabled unfinished adapter credentials or valid provider proof

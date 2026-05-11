@@ -134,6 +134,8 @@ class RuntimeConfig:
     darkharness_classical_signing_key_pem: str | None = None
     darkharness_classical_signing_key_id: str = "darkharness-ed25519"
     mesh_brain_artifact_uri_prefix: str | None = None
+    mesh_brain_artifact_registry_path: str | None = None
+    mesh_brain_artifact_upload_proof_path: str | None = None
     mesh_brain_serving_base_url: str | None = None
     mesh_brain_serving_model: str | None = None
     default_steering_mode: str = "approval_gate"
@@ -551,6 +553,16 @@ class RuntimeConfig:
                 "darkharness-ed25519",
             ),
             mesh_brain_artifact_uri_prefix=os.getenv("MESH_BRAIN_ARTIFACT_URI_PREFIX") or None,
+            mesh_brain_artifact_registry_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_BRAIN_ARTIFACT_REGISTRY_PATH"), default="")
+                if os.getenv("MESH_BRAIN_ARTIFACT_REGISTRY_PATH")
+                else None
+            ),
+            mesh_brain_artifact_upload_proof_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH"), default="")
+                if os.getenv("MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH")
+                else None
+            ),
             mesh_brain_serving_base_url=os.getenv("MESH_BRAIN_SERVING_BASE_URL") or None,
             mesh_brain_serving_model=os.getenv("MESH_BRAIN_SERVING_MODEL") or None,
             default_steering_mode=os.getenv("MESH_DEFAULT_STEERING_MODE", "approval_gate"),
