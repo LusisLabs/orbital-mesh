@@ -495,6 +495,14 @@ class ReadinessProfileTests(unittest.TestCase):
         self.assertEqual(readiness["profile"], "staging")
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("operator_identity_required", readiness["blockers"])
+        self.assertEqual(
+            readiness["blocker_details"]["operator_identity_required"]["env"],
+            ["MESH_OPERATOR_IDENTITY_REQUIRED"],
+        )
+        self.assertEqual(
+            readiness["blocker_details"]["operator_identity_required"]["state_slice"],
+            "RuntimeConfig.operator_identity_required",
+        )
         self.assertTrue(readiness["required_checks"]["ownership_registry_configured"])
         self.assertTrue(readiness["required_checks"]["failure_mode_library_configured"])
         self.assertTrue(readiness["required_checks"]["threat_model_register_reviewed"])
@@ -695,6 +703,29 @@ class ReadinessProfileTests(unittest.TestCase):
 
         self.assertEqual(readiness["status"], "blocked")
         self.assertIn("mesh_brain_artifact_uri_prefix_configured", readiness["blockers"])
+        detail = readiness["blocker_details"]["mesh_brain_artifact_uri_prefix_configured"]
+        self.assertEqual(detail["env"], ["MESH_BRAIN_ARTIFACT_URI_PREFIX"])
+        self.assertEqual(detail["observed"], f"file://{tmp}/mesh-brain")
+
+    def test_readiness_blocker_details_include_proof_path_and_provider_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_ingress = Path(tmp) / "missing-ingress.json"
+            config = _pilot_ready_config(tmp)
+            config.authenticated_ingress_proof_path = str(missing_ingress)
+            config.feature_flag_credentials_available = True
+            config.feature_flag_provider_proof_path = str(Path(tmp) / "missing-feature-proof.json")
+
+            readiness = build_readiness(config, force=True).to_dict()
+
+        ingress = readiness["blocker_details"]["authenticated_ingress_deployment_verified"]
+        self.assertEqual(ingress["evidence_path"], str(missing_ingress))
+        self.assertEqual(ingress["env"], ["MESH_AUTHENTICATED_INGRESS_PROOF_PATH"])
+        feature_flag = readiness["blocker_details"]["unfinished_feature_flag_adapter_disabled"]
+        self.assertEqual(feature_flag["env"], ["MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE", "MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH"])
+        self.assertEqual(
+            feature_flag["observed"],
+            {"credentials_available": True, "proof_path_configured": True, "readiness_profile": "pilot"},
+        )
 
     def test_readiness_cache_key_tracks_mesh_brain_runtime_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

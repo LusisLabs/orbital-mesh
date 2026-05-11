@@ -2501,7 +2501,7 @@ function ControlPlaneView({
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Required Gate Matrix" />
-        <ReadinessGateList checks={requiredChecks} blockers={readiness?.blockers ?? []} />
+        <ReadinessGateList checks={requiredChecks} blockers={readiness?.blockers ?? []} blockerDetails={readiness?.blocker_details ?? {}} />
       </section>
       <section className="mesh-card">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Kill Switch" />
@@ -2659,10 +2659,12 @@ function RoadmapProofStrip({
 function ReadinessGateList({
   checks,
   blockers,
+  blockerDetails,
   compact,
 }: {
   checks: Array<[string, any]>;
   blockers: string[];
+  blockerDetails?: Record<string, any>;
   compact?: boolean;
 }) {
   if (checks.length === 0) return <EmptyState text="No gate data returned by readiness." />;
@@ -2676,10 +2678,14 @@ function ReadinessGateList({
           typeof value === "boolean"
             ? (value ? "pass" : "fail")
             : [record.certification, record.detail].filter(Boolean).map(String).join(" / ") || summarizeRecord(record);
+        const blockerDetail = blocked ? asRecord(blockerDetails?.[name]) : {};
+        const remediation = typeof blockerDetail.remediation === "string" ? blockerDetail.remediation : "";
+        const env = stringList(blockerDetail.env);
+        const operatorDetail = [remediation, env.length ? `Inputs: ${env.join(", ")}` : ""].filter(Boolean).join(" / ");
         return (
           <div key={name} className={`gate-matrix-row ${blocked ? "blocked" : ""}`}>
             <span>{humanize(name)}</span>
-            <strong>{detail || "recorded"}</strong>
+            <strong>{operatorDetail || detail || "recorded"}</strong>
             <StatusPill state={blocked ? "degraded" : "ready"} label={blocked ? "blocked" : "pass"} />
           </div>
         );

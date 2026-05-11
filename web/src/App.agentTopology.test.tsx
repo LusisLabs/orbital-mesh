@@ -95,6 +95,7 @@ describe("AgentMeshPanel topology", () => {
       required_checks: {},
       optional_checks: {},
       blockers: [],
+      blocker_details: {},
       connector_certification: {
         airflow: {
           state: "proposal-only",
