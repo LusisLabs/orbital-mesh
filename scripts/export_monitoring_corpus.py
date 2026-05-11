@@ -25,7 +25,7 @@ DEFAULT_RAW_MANIFEST = REPO_ROOT / ".mesh-runtime-state" / "monitoring-corpus" /
 DEFAULT_CLEAN_MANIFEST = REPO_ROOT / ".mesh-runtime-state" / "monitoring-corpus" / "clean" / "clean_manifest.json"
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--reth-loop-dir", type=Path, default=DEFAULT_RETH_LOOP_DIR)
     parser.add_argument("--session", action="append", default=[], help="Specific session directory name or path to export.")
@@ -38,7 +38,12 @@ def main() -> None:
         action="store_true",
         help="Write the public-source fixture but do not import public bootstrap rows into the corpus database.",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--require-breakthrough",
+        action="store_true",
+        help="Exit non-zero unless the resulting corpus database satisfies measured Breakthrough thresholds.",
+    )
+    args = parser.parse_args(argv)
 
     public_fixture = _resolve_path(args.public_fixture)
     public_fixture.parent.mkdir(parents=True, exist_ok=True)
@@ -72,19 +77,17 @@ def main() -> None:
     imported = database.import_jsonl_files(jsonl_paths)
     public_imported = 0 if args.skip_public_bootstrap else database.import_rows(public_rows)
 
-    print(
-        json.dumps(
-            {
-                "database": database.summary(),
-                "database_imported_rows": imported,
-                "public_bootstrap_imported_rows": public_imported,
-                "public_fixture": str(public_fixture),
-                "session_exports": exports,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    summary = database.summary()
+    payload = {
+        "database": summary,
+        "database_imported_rows": imported,
+        "public_bootstrap_imported_rows": public_imported,
+        "public_fixture": str(public_fixture),
+        "require_breakthrough": args.require_breakthrough,
+        "session_exports": exports,
+    }
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 1 if args.require_breakthrough and summary["breakthrough"]["ready"] is not True else 0
 
 
 def _session_dirs(loop_dir: Path, selectors: list[str]) -> tuple[Path, ...]:
@@ -216,4 +219,4 @@ def _relative_artifact_refs(paths: list[str], manifest_path: Path) -> list[str]:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
