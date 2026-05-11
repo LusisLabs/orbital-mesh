@@ -66,6 +66,21 @@ def test_breakthrough_report_excludes_public_bootstrap_rows() -> None:
     assert report["retrieval_improved_decision_count"] == 0
 
 
+def test_measured_operational_reduction_requires_numeric_delta() -> None:
+    boolean_row = _row(1)
+    boolean_row["training_fact"]["quality_measurements"] = {"unsafe_actions_prevented": True}
+    numeric_row = _row(2)
+    numeric_row["training_fact"]["quality_measurements"] = {"unsafe_actions_prevented": 1}
+
+    boolean_report = breakthrough_threshold_report([boolean_row])
+    numeric_report = breakthrough_threshold_report([numeric_row])
+
+    assert boolean_report["measured_delta_count"] == 0
+    assert boolean_report["criteria"]["measured_operational_reduction"]["observed"] == 0
+    assert numeric_report["measured_delta_count"] == 1
+    assert numeric_report["criteria"]["measured_operational_reduction"]["observed"] == 1
+
+
 def test_corpus_database_summary_includes_breakthrough_report(tmp_path) -> None:
     database = IncidentCorpusDatabase(tmp_path / "corpus.sqlite")
     rows = [_row(index) for index in range(3)]

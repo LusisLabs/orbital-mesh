@@ -277,7 +277,7 @@ def _row_ids(rows: list[dict[str, Any]]) -> tuple[str, ...]:
 
 
 def _positive_number(value: Any) -> bool:
-    return isinstance(value, int | float) and value > 0
+    return not isinstance(value, bool) and isinstance(value, int | float) and value > 0
 
 
 def _walk_items(value: Any) -> list[tuple[str, Any]]:
