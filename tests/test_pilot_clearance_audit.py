@@ -88,6 +88,57 @@ class PilotClearanceAuditTests(unittest.TestCase):
         self.assertEqual(result["missing"], [])
         self.assertTrue(result["checks"]["runtime_build_commit_match"])
         self.assertTrue(result["checks"]["runtime_image_digest_match"])
+        self.assertTrue(result["checks"]["runtime_expected_head_valid"])
+        self.assertTrue(result["checks"]["runtime_build_commit_matches_expected_head"])
+        self.assertFalse(result["artifacts"]["runtime_binding"]["expected_head_required"])
+
+    def test_passes_when_expected_head_matches_live_runtime_commit(self) -> None:
+        result = verify_pilot_clearance.verify_pilot_clearance(
+            base_url="http://mesh.local",
+            expected_head=RELEASE_COMMIT,
+            requester=_requester(
+                health=health_packet(),
+                readiness=readiness_packet(),
+                go_no_go=go_no_go_packet(),
+            ),
+        )
+
+        self.assertEqual(result["status"], "pass", result)
+        self.assertTrue(result["checks"]["runtime_build_commit_matches_expected_head"])
+        self.assertEqual(result["artifacts"]["runtime_binding"]["expected_head"], RELEASE_COMMIT)
+        self.assertTrue(result["artifacts"]["runtime_binding"]["expected_head_required"])
+
+    def test_fails_when_expected_head_does_not_match_live_runtime_commit(self) -> None:
+        result = verify_pilot_clearance.verify_pilot_clearance(
+            base_url="http://mesh.local",
+            expected_head="d" * 40,
+            requester=_requester(
+                health=health_packet(),
+                readiness=readiness_packet(),
+                go_no_go=go_no_go_packet(),
+            ),
+        )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("runtime_build_commit_matches_expected_head", result["missing"])
+        self.assertTrue(result["checks"]["runtime_build_commit_match"])
+        self.assertEqual(result["artifacts"]["runtime_binding"]["expected_head"], "d" * 40)
+
+    def test_fails_when_expected_head_is_not_a_git_commit(self) -> None:
+        result = verify_pilot_clearance.verify_pilot_clearance(
+            base_url="http://mesh.local",
+            expected_head="not-a-sha",
+            requester=_requester(
+                health=health_packet(),
+                readiness=readiness_packet(),
+                go_no_go=go_no_go_packet(),
+            ),
+        )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("runtime_expected_head_valid", result["missing"])
+        self.assertIn("runtime_build_commit_matches_expected_head", result["missing"])
+        self.assertEqual(result["artifacts"]["runtime_binding"]["expected_head"], None)
 
     def test_fails_current_runtime_binding_blocker(self) -> None:
         result = verify_pilot_clearance.verify_pilot_clearance(

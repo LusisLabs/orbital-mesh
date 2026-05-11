@@ -17,10 +17,19 @@ def main() -> int:
     )
     parser.add_argument("--base-url", default="http://127.0.0.1:8787", help="Control-plane base URL.")
     parser.add_argument("--timeout-seconds", type=float, default=30.0, help="HTTP request timeout.")
+    parser.add_argument(
+        "--expected-head",
+        default="",
+        help="Require /api/health commit to match this git commit for current-head pilot proof.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable result JSON.")
     args = parser.parse_args()
 
-    result = verify_pilot_clearance(base_url=args.base_url, timeout_seconds=args.timeout_seconds)
+    result = verify_pilot_clearance(
+        base_url=args.base_url,
+        timeout_seconds=args.timeout_seconds,
+        expected_head=args.expected_head,
+    )
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
@@ -33,6 +42,7 @@ def verify_pilot_clearance(
     base_url: str,
     timeout_seconds: float = 30.0,
     requester: Callable[[str, float], dict[str, Any]] | None = None,
+    expected_head: str = "",
 ) -> dict[str, Any]:
     normalized_base_url = base_url.rstrip("/")
     fetch = requester or _request_json
@@ -44,7 +54,7 @@ def verify_pilot_clearance(
     health_record = _health_record(health)
     readiness_record = _readiness_record(readiness)
     go_no_go_record = _go_no_go_record(go_no_go)
-    runtime_record = _runtime_binding_record(health=health, release=release)
+    runtime_record = _runtime_binding_record(health=health, release=release, expected_head=expected_head)
 
     checks = {
         "health_status_ok": health_record["status_ok"],
@@ -62,6 +72,8 @@ def verify_pilot_clearance(
         "runtime_image_digest": bool(runtime_record["image_digest"]),
         "runtime_build_commit_match": runtime_record["build_commit_match"],
         "runtime_image_digest_match": runtime_record["image_digest_match"],
+        "runtime_expected_head_valid": runtime_record["expected_head_valid"],
+        "runtime_build_commit_matches_expected_head": runtime_record["build_commit_matches_expected_head"],
     }
     result = {
         "schema_version": SCHEMA_VERSION,
@@ -176,11 +188,13 @@ def _release_record(go_no_go: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any]) -> dict[str, Any]:
+def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any], expected_head: str = "") -> dict[str, Any]:
     release_commit = _normalized_git_commit(release.get("git_commit"))
     release_digest = _normalized_digest(release.get("image_digest"))
     runtime_commit = _normalized_git_commit(health.get("commit"))
     runtime_digest = _normalized_digest(health.get("image_digest"))
+    expected_head_required = bool(expected_head.strip())
+    expected_head_commit = _normalized_git_commit(expected_head)
     return {
         "build_commit": runtime_commit,
         "image_digest": runtime_digest,
@@ -188,6 +202,13 @@ def _runtime_binding_record(*, health: dict[str, Any], release: dict[str, Any]) 
         "expected_image_digest": release_digest,
         "build_commit_match": bool(runtime_commit and release_commit and runtime_commit == release_commit),
         "image_digest_match": bool(runtime_digest and release_digest and runtime_digest == release_digest),
+        "expected_head_required": expected_head_required,
+        "expected_head": expected_head_commit,
+        "expected_head_valid": not expected_head_required or bool(expected_head_commit),
+        "build_commit_matches_expected_head": (
+            not expected_head_required
+            or bool(runtime_commit and expected_head_commit and runtime_commit == expected_head_commit)
+        ),
     }
 
 
@@ -217,6 +238,8 @@ def _checklist(checks: dict[str, bool]) -> list[dict[str, Any]]:
                 "runtime_image_digest",
                 "runtime_build_commit_match",
                 "runtime_image_digest_match",
+                "runtime_expected_head_valid",
+                "runtime_build_commit_matches_expected_head",
             ),
         ),
     ]
