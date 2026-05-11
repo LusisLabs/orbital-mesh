@@ -68,7 +68,7 @@ scripts/verify_authenticated_ingress.py --json
 scripts/prod_smoke.sh
 scripts/verify_postgres_restart_proof.py --json
 scripts/generate_release_provenance.py --require-complete --json
-scripts/verify_mesh_brain_artifact_registry.py --require-upload-proof --json
+scripts/verify_mesh_brain_artifact_registry.py --artifacts-json "$MESH_BRAIN_ARTIFACT_REGISTRY_PATH" --proof-manifest "$MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH" --require-upload-proof --json
 npm --prefix web run lint
 ```
 

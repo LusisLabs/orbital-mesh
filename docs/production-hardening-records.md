@@ -53,7 +53,7 @@ Deferred from the immediate list:
 
 - `local` checks that local state, vault paths, and security headers are present. Promptfoo, Hermes, Goose, LatentMAS, and Deep Agents are optional lanes.
 - `staging` additionally requires proxy-propagated operator identity, configured ownership registry, configured connector certification registry, signed policy lifecycle hashes, protected OTel ingest when enabled, live Kubernetes allowlists when live execution is enabled, and audit logging availability.
-- `pilot` additionally requires Postgres state, `MESH_DATABASE_URL`, forced approval gate, live feedback source configuration, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_SERVING_BASE_URL`, `MESH_BRAIN_SERVING_MODEL`, and disabled unfinished feature-flag and incident adapters unless a matching real-provider proof passes.
+- `pilot` additionally requires Postgres state, `MESH_DATABASE_URL`, forced approval gate, live feedback source configuration, `MESH_BRAIN_ARTIFACT_URI_PREFIX`, `MESH_BRAIN_ARTIFACT_REGISTRY_PATH`, `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH`, `MESH_BRAIN_SERVING_BASE_URL`, `MESH_BRAIN_SERVING_MODEL`, and disabled unfinished feature-flag and incident adapters unless a matching real-provider proof passes.
 - `pilot` also requires `MESH_DESIGN_PARTNER_PACKET_PATH` to point at a passing `mesh.design_partner_packet.v1` packet.
 - `expansion` keeps pilot checks and adds the external audit-sink certification requirement.
 - `expansion` also requires `MESH_AUDIT_SINK_PROOF_PATH` to point at a passing external audit sink append-only proof before compliance reliance.

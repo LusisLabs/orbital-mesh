@@ -160,9 +160,11 @@ Production artifact refs must use durable object-storage URIs, not local file pa
 
 ```bash
 MESH_BRAIN_ARTIFACT_URI_PREFIX=s3://mesh-prod-artifacts/mesh-brain
+MESH_BRAIN_ARTIFACT_REGISTRY_PATH=.mesh-runtime-state/artifacts.json
+MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH=.mesh-runtime-state/mesh-brain-artifact-upload-proof.json
 ```
 
-Supported durable URI schemes are `s3`, `gs`, `az`, `azblob`, `r2`, and `https`. When this prefix is configured, Mesh Brain run artifact records keep the local `path` for audit/debug access but store the canonical `uri` under the durable prefix and attach immutable `production_artifact` metadata with content hash, byte count, source path, and run provenance. Misconfigured prefixes, missing source files, or missing SHA-256 values fail the run instead of silently registering a local-only production artifact. The prefix does not upload blobs by itself; the deployment must run object-storage upload/replication for the recorded URI and hash.
+Supported durable URI schemes are `s3`, `gs`, `az`, `azblob`, `r2`, and `https`. When this prefix is configured, Mesh Brain run artifact records keep the local `path` for audit/debug access but store the canonical `uri` under the durable prefix and attach immutable `production_artifact` metadata with content hash, byte count, source path, and run provenance. Misconfigured prefixes, missing source files, or missing SHA-256 values fail the run instead of silently registering a local-only production artifact. The prefix does not upload blobs by itself; the deployment must run object-storage upload/replication for the recorded URI and hash, then point `MESH_BRAIN_ARTIFACT_REGISTRY_PATH` at the exported artifact registry JSON and `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH` at the matching `mesh.artifact_upload_proof.v1` manifest before pilot readiness or go/no-go can pass.
 
 Posttraining proof can be recorded as a Mesh run with:
 
@@ -476,8 +478,8 @@ Before rollout, verify the artifact table against the object-storage upload mani
 
 ```bash
 scripts/verify_mesh_brain_artifact_registry.py \
-  --artifacts-json .mesh-runtime-state/artifacts.json \
-  --proof-manifest dist/mesh-brain-artifact-upload-proof.json \
+  --artifacts-json "$MESH_BRAIN_ARTIFACT_REGISTRY_PATH" \
+  --proof-manifest "$MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH" \
   --require-upload-proof \
   --json
 ```

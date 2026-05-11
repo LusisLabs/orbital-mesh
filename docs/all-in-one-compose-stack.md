@@ -212,6 +212,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STATE_BACKEND` | `file` | `file` or `postgres` runtime state backend |
 | `MESH_DATABASE_URL` | `postgresql://mesh:mesh@postgres:5432/mesh` | Postgres/Supabase connection URL |
 | `MESH_BRAIN_ARTIFACT_URI_PREFIX` | empty | Durable Mesh Brain artifact URI prefix passed through to Mesh for pilot-readiness rehearsals |
+| `MESH_BRAIN_ARTIFACT_REGISTRY_PATH` | empty | Exported Mesh Brain artifact registry JSON consumed by pilot readiness and go/no-go |
+| `MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH` | empty | Mesh Brain artifact upload-proof manifest consumed by pilot readiness and go/no-go |
 | `MESH_BRAIN_SERVING_BASE_URL` | empty | OpenAI-compatible Mesh Brain serving backend passed through to Mesh for live-serving smoke |
 | `MESH_BRAIN_SERVING_MODEL` | empty | Mesh Brain serving model name used by live-serving smoke |
 | `MESH_RUN_EXPORT_RETENTION_REVIEWED` | `0` | Set to `1` only after export retention/deletion rules have been reviewed for the rehearsal |
