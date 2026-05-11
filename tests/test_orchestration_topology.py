@@ -27,6 +27,8 @@ class OrchestrationTopologyTests(unittest.TestCase):
     def test_profile_schema_is_loadable(self) -> None:
         schema = load_schema(ORCHESTRATION_TOPOLOGY_PROFILE_SCHEMA)
         self.assertEqual(schema["properties"]["version"]["enum"], ["mesh.orchestration_topology_profile.v1"])
+        self.assertIn("organization_profile", schema["required"])
+        self.assertIn("model_provider_policy", schema["required"])
 
     def test_default_profile_resolves_centralized(self) -> None:
         trigger = self._trigger()
@@ -54,6 +56,8 @@ class OrchestrationTopologyTests(unittest.TestCase):
         readiness = build_readiness(self._config(readiness_profile="staging"), force=True).to_dict()
 
         self.assertTrue(readiness["orchestration_topology"]["ready"])
+        self.assertTrue(readiness["orchestration_topology"]["org_profile_ready"])
+        self.assertEqual(readiness["orchestration_topology"]["organization_profile"]["domain"], "platform_sre")
         self.assertTrue(readiness["required_checks"]["orchestration_topology_profile_configured"])
 
     def test_source_evidence_records_service_agent_registry_route(self) -> None:
@@ -94,6 +98,11 @@ class OrchestrationTopologyTests(unittest.TestCase):
                     "topology": "hybrid",
                     "match": {"services": ["search-api"], "action_classes": ["rollback_deployment"]},
                     "lanes": ["temporal", "kubernetes", "hermes"],
+                    "lane_overrides": {
+                        "temporal": {"topology_role": "supervisor_lane"},
+                        "kubernetes": {"topology_role": "bounded_actuator_lane", "authority": "bounded_action"},
+                        "hermes": {"topology_role": "peer_proposal_lane"},
+                    },
                     "reason": "search rollback uses durable workflow plus Kubernetes actuator lane",
                 }
             ]
@@ -115,6 +124,10 @@ class OrchestrationTopologyTests(unittest.TestCase):
         self.assertEqual(task.agents, ["temporal", "kubernetes", "hermes"])
         kubernetes_lane = self._lane(task.orchestration_topology, "kubernetes")
         self.assertEqual(kubernetes_lane["authority"], "bounded_action")
+        self.assertEqual(kubernetes_lane["topology_role"], "bounded_actuator_lane")
+        self.assertIn("model_binding", kubernetes_lane)
+        self.assertIn("source_evidence", kubernetes_lane)
+        self.assertIn("reconciliation_mode", kubernetes_lane)
 
     def test_hierarchical_records_supervisor_and_workers(self) -> None:
         profile_path = self._write_profile(
@@ -185,6 +198,80 @@ class OrchestrationTopologyTests(unittest.TestCase):
 
         self.assertEqual(resolution["active_topology"], "hybrid")
         self.assertEqual(resolution["rule_id"], "high-risk-hybrid")
+
+    def test_org_infra_profile_fields_drive_rule_matching(self) -> None:
+        profile_path = self._write_profile(
+            [
+                {
+                    "rule_id": "org-infra-match",
+                    "topology": "hybrid",
+                    "match": {
+                        "org_domains": ["platform_sre"],
+                        "teams": ["platform.search"],
+                        "deployment_substrates": ["kubernetes"],
+                        "data_boundaries": ["operational"],
+                        "autonomy_tiers": ["approval_required"],
+                        "allowed_model_providers": ["openai-compatible"],
+                    },
+                    "lanes": ["hermes", "temporal"],
+                }
+            ]
+        )
+        resolution = self._resolve(
+            profile_path,
+            source="kubernetes",
+            candidates=["hermes", "temporal"],
+        )
+
+        self.assertEqual(resolution["rule_id"], "org-infra-match")
+        self.assertEqual(resolution["context"]["org_domain"], "platform_sre")
+        self.assertIn("platform.search", resolution["context"]["team_ids"])
+
+    def test_model_bindings_are_recorded_without_secret_material(self) -> None:
+        profile_path = self._write_profile(
+            [
+                {
+                    "rule_id": "model-bound",
+                    "topology": "centralized",
+                    "match": {"signal_sources": ["otel"]},
+                    "lanes": ["codex", "latentmas", "hermes"],
+                }
+            ]
+        )
+        config = self._config(profile_path=profile_path)
+        config.latentmas_enabled = True
+        task = AgentMeshService(config=config).build_tasks(
+            run_id="run_topology_models",
+            trigger=self._trigger(source="otel"),
+            decision=self._decision(),
+            evaluation=self._evaluation(),
+            integration_readiness=build_readiness(config, force=True).to_dict(),
+        )[0]
+
+        codex = self._lane(task.orchestration_topology, "codex")
+        latentmas = self._lane(task.orchestration_topology, "latentmas")
+        self.assertEqual(codex["model_binding"]["provider"], "openai")
+        self.assertEqual(codex["model_binding"]["model"], "MiniMax-M2.7")
+        self.assertFalse(codex["model_binding"]["secret_material_present"])
+        self.assertEqual(latentmas["model_binding"]["provider"], "huggingface")
+        self.assertFalse(latentmas["model_binding"]["secret_material_present"])
+
+    def test_shipped_profile_hybrid_mixes_supervisor_peer_federated_and_actuator_roles(self) -> None:
+        resolution = self._resolve(
+            Path(self._config().orchestration_topology_profile_path),
+            source="kubernetes",
+            action="rollback_deployment",
+            risk="high",
+            candidates=["temporal", "kubernetes", "hermes", "dagster"],
+            parameters={"tenant_id": "tenant_a"},
+        )
+
+        roles = {lane["lane_id"]: lane["topology_role"] for lane in resolution["selected_lanes"]}
+        self.assertEqual(resolution["rule_id"], "tenant-search-hybrid")
+        self.assertEqual(roles["temporal"], "supervisor_lane")
+        self.assertEqual(roles["hermes"], "peer_proposal_lane")
+        self.assertEqual(roles["dagster"], "federated_tenant_lane")
+        self.assertEqual(roles["kubernetes"], "bounded_actuator_lane")
 
     def test_configured_filter_is_preserved(self) -> None:
         config = self._config()
@@ -296,6 +383,7 @@ class OrchestrationTopologyTests(unittest.TestCase):
         self.assertEqual(
             [rule["rule_id"] for rule in profile["rules"]],
             [
+                "tenant-search-hybrid",
                 "search-kubernetes-hybrid",
                 "workflow-supervisor-hierarchy",
                 "data-pipeline-peer-proposals",
@@ -333,7 +421,7 @@ class OrchestrationTopologyTests(unittest.TestCase):
         )
 
         self.assertEqual(resolution["active_topology"], "hybrid")
-        self.assertEqual(resolution["rule_id"], "search-kubernetes-hybrid")
+        self.assertEqual(resolution["rule_id"], "tenant-search-hybrid")
 
     def test_shipped_profile_routes_compose_search_rollbacks_to_hybrid(self) -> None:
         resolution = self._resolve(
@@ -346,7 +434,7 @@ class OrchestrationTopologyTests(unittest.TestCase):
         )
 
         self.assertEqual(resolution["active_topology"], "hybrid")
-        self.assertEqual(resolution["rule_id"], "search-kubernetes-hybrid")
+        self.assertEqual(resolution["rule_id"], "tenant-search-hybrid")
 
     def test_latentmas_enabled_lane_is_topology_governed(self) -> None:
         config = self._config()
@@ -397,12 +485,13 @@ class OrchestrationTopologyTests(unittest.TestCase):
         action: str = "investigate",
         risk: str = "low",
         candidates: list[str] | None = None,
+        parameters: dict[str, object] | None = None,
     ) -> dict[str, object]:
         config = self._config(profile_path=profile_path)
         return resolve_orchestration_topology(
             profile_path=profile_path,
             trigger=self._trigger(service=service, source=source),
-            decision=self._decision(action=action, risk=risk),
+            decision=self._decision(action=action, risk=risk, parameters=parameters),
             candidate_lanes=candidates or list(DEFAULT_AGENT_WORKERS),
             configured_filter=[],
             ownership_registry_path=config.ownership_registry_path,
@@ -427,6 +516,37 @@ class OrchestrationTopologyTests(unittest.TestCase):
                         "readiness": "/api/readiness",
                         "historical_outcomes": "state://runs",
                         "trust_ladder": "state://learning/trust_ladder.json",
+                    },
+                    "organization_profile": {
+                        "domain": "platform_sre",
+                        "teams": [{"team_id": "platform.search", "owned_services": ["search-api"]}],
+                        "tenants": [{"tenant_id": "tenant_a"}],
+                        "ownership_boundaries": [{"source_ref": "config/ownership.registry.json"}],
+                        "deployment_substrates": [{"substrate": "kubernetes"}, {"substrate": "workflow"}, {"substrate": "data"}, {"substrate": "ml"}],
+                        "data_boundaries": [{"boundary_id": "tenant_a_operational", "classification": "operational"}],
+                        "preferred_agents": ["hermes", "goose", "temporal", "kubernetes", "dagster", "latentmas"],
+                        "allowed_model_providers": ["openai-compatible", "openai", "huggingface"],
+                        "allowed_models": [
+                            {"provider": "openai-compatible", "model": "MiniMax-M2.7"},
+                            {"provider": "openai-compatible", "model": "MiniMax-M2.5"},
+                            {"provider": "huggingface", "model": "Qwen/Qwen3-4B"},
+                        ],
+                        "autonomy_tier": "approval_required",
+                        "risk_thresholds": {"bounded_action_maximum": "high"},
+                        "required_evidence_refs": ["config/ownership.registry.json", "config/connector-certification.registry.json"],
+                    },
+                    "model_provider_policy": {
+                        "allowed_providers": ["openai-compatible", "openai", "huggingface"],
+                        "allowed_models": [
+                            {"provider": "openai-compatible", "model": "MiniMax-M2.7"},
+                            {"provider": "openai-compatible", "model": "MiniMax-M2.5"},
+                            {"provider": "huggingface", "model": "Qwen/Qwen3-4B"},
+                        ],
+                        "lane_defaults": {
+                            "hermes": {"provider": "openai-compatible", "model": "MiniMax-M2.5", "route": "hermes_bridge", "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"]},
+                            "deepagents": {"provider": "openai-compatible", "model": "MiniMax-M2.7", "route": "deepagents_sandbox", "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"]},
+                            "latentmas": {"provider": "huggingface", "model": "Qwen/Qwen3-4B", "route": "latentmas_http", "secret_ref_envs": []},
+                        },
                     },
                     "rules": rules,
                 },
@@ -471,6 +591,7 @@ class OrchestrationTopologyTests(unittest.TestCase):
         action: str = "investigate",
         system: str = "noop",
         risk: str = "low",
+        parameters: dict[str, object] | None = None,
     ) -> Decision:
         return Decision(
             decision_id="dec_topology",
@@ -482,7 +603,7 @@ class OrchestrationTopologyTests(unittest.TestCase):
             expected_outcome={},
             risk={"level": risk},
             confidence=0.8,
-            execution_plan={"system": system, "action": action, "parameters": {}},
+            execution_plan={"system": system, "action": action, "parameters": parameters or {}},
         )
 
     def _evaluation(self) -> EvaluationResult:

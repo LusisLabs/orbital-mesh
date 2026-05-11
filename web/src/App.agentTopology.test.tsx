@@ -44,15 +44,35 @@ describe("AgentMeshPanel topology", () => {
           {
             lane_id: "temporal",
             role: "hybrid_lane",
+            topology_role: "supervisor_lane",
+            model_binding: {
+              supported: false,
+              provider: "none",
+              model: "none",
+            },
             authority: "proposal_only",
             certified_state: "proposal-only",
+            source_evidence: {
+              profile_rule_ref: "config/orchestration-topology.profile.json#rules.search-hybrid",
+            },
+            reconciliation_mode: "supervisor_summary_before_mesh_reconciliation",
             blockers: [],
           },
           {
             lane_id: "kubernetes",
             role: "hybrid_lane",
+            topology_role: "bounded_actuator_lane",
+            model_binding: {
+              supported: false,
+              provider: "none",
+              model: "none",
+            },
             authority: "bounded_action",
             certified_state: "pilot-ready",
+            source_evidence: {
+              profile_rule_ref: "config/orchestration-topology.profile.json#rules.search-hybrid",
+            },
+            reconciliation_mode: "bounded_action_evidence",
             blockers: ["operator_approval_required"],
           },
         ],
@@ -82,6 +102,8 @@ describe("AgentMeshPanel topology", () => {
     expect(html).toContain("search rollback uses durable workflow plus Kubernetes actuator lane");
     expect(html).toContain("Temporal");
     expect(html).toContain("Kubernetes");
+    expect(html).toContain("Bounded Actuator Lane");
+    expect(html).toContain("Bounded Action Evidence");
     expect(html).toContain("Bounded Action");
     expect(html).toContain("Operator Approval Required");
     expect(html).toContain("own_search_api_pilot");

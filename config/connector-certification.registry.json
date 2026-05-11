@@ -160,6 +160,72 @@
       "blockers": []
     },
     {
+      "connector_id": "codex",
+      "display_name": "Codex patch proposal lane",
+      "domain": "agent",
+      "state": "staging-ready",
+      "required_before": "staging",
+      "authority_posture": "sandboxed patch proposals only; Mesh owns repo writes, tests, policy, and promotion",
+      "credential_policy": "no repository write credentials or production actuator credentials in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "skip code proposal lane and keep deterministic evaluation online",
+      "allowed_scopes": ["patch-proposal", "review", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "claudecode",
+      "display_name": "Claude Code review lane",
+      "domain": "agent",
+      "state": "staging-ready",
+      "required_before": "staging",
+      "authority_posture": "review and risk analysis only; Mesh owns policy and promotion",
+      "credential_policy": "no repository write credentials or production actuator credentials in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "skip review lane and keep deterministic evaluation online",
+      "allowed_scopes": ["review", "risk-analysis", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "openclaw",
+      "display_name": "OpenClaw staging validation lane",
+      "domain": "agent",
+      "state": "staging-ready",
+      "required_before": "staging",
+      "authority_posture": "staging validation proposals only; no direct cluster actuation",
+      "credential_policy": "no production actuator credentials or kubeconfig material in run artifacts",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "skip staging validation lane and rely on Mesh readiness and Kubernetes evidence",
+      "allowed_scopes": ["staging-validation", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
       "connector_id": "deepagents",
       "display_name": "Deep Agents fabric",
       "domain": "agent",

@@ -2,6 +2,17 @@
 
 Mesh Intelligence exposes a supervised worker contract so external agents can participate in incident response without owning production side effects.
 
+## State Slice
+
+The agent-routing state slice is explicit:
+
+- `mesh.orchestration_topology_profile.v1` in `config/orchestration-topology.profile.json`
+- `mesh.orchestration_topology_resolution.v1` on each `AgentTask`
+- `lane_routing` on run exports
+
+Do not infer topology ownership from adapter imports. The topology resolver owns lane selection, lane roles, authority posture, blockers, source evidence, and reconciliation mode before proposal attempts are collected.
+The same state slice now carries the organization profile and model-provider policy used for lane personalization; raw provider secrets stay in environment/runtime secret stores and are never copied into run artifacts.
+
 ## Boundary
 
 Mesh owns:
@@ -34,6 +45,28 @@ Each run that reaches evaluation records an `agent_tasks` artifact.
 - `MESH_AGENT_FABRIC_MODE=deepagents` routes those lanes through `services/orchestrator/deepagents_adapter.py`. Mesh creates a per-run sandbox workspace under `MESH_DEEPAGENTS_WORKSPACE_ROOT`, copies only allowed files into that workspace for patch-shaped tasks, and records Deep Agents output as proposal artifacts. Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
 
 LatentMAS can be enabled as a first-class full-inference worker lane. It runs through a separate PyTorch/Hugging Face sidecar and records an additional `latentmas_http` attempt ahead of the native lanes. LatentMAS output is advisory only: Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
+
+## Topology-Aware Personalization
+
+Mesh personalizes the agent mesh from domain and infrastructure evidence rather than from a fixed adapter list. The resolver reads the topology profile, then matches run context such as service, signal source, action class, risk tier, tenant, organization domain, team, deployment substrate, namespace, data boundary, ownership boundary, connector certification, readiness, historical outcomes, and trust-ladder state.
+
+The shipped profile includes a versioned organization/infra profile with domain, teams, tenants, ownership boundaries, deployment substrates, data boundaries, preferred agents, allowed model providers, allowed models, autonomy tier, risk thresholds, and required evidence refs. `GET /api/readiness` exposes that profile summary under `orchestration_topology.organization_profile` plus `org_profile_ready`.
+
+Supported topologies:
+
+| Topology | Role model | Default reconciliation |
+| --- | --- | --- |
+| `centralized` | Mesh-assigned workers | `mesh_authoritative_single_decision` |
+| `hierarchical` | Supervisor plus workers | `mesh_reconciles_supervisor_and_worker_outputs` |
+| `decentralized` | Peer proposals | `mesh_reconciles_parallel_peer_proposals` |
+| `federated` | Tenant or ownership-bounded lanes | `mesh_reconciles_with_tenant_data_and_credential_boundaries` |
+| `hybrid` | Rule-specific mixed topology | `mesh_reconciles_per_rule_topology_outputs` |
+
+The shipped profile declares all five modes as active routing choices: centralized default, tenant-aware hybrid search rollback routing, generic hybrid Kubernetes rollback routing, hierarchical workflow supervision, decentralized data-pipeline peer proposals, and federated tenant model-workflow evidence. Hybrid is expected to be common because real organizations rarely map cleanly to one topology. For example, a tenant search rollback can route through a Temporal supervisor lane, a Hermes peer-proposal lane, a Dagster federated-tenant evidence lane, and a Kubernetes bounded-actuator lane at the same time while Mesh remains the final reconciler.
+
+Every selected lane records `role`, `topology_role`, `model_binding`, `authority`, `authority_posture`, `credential_boundary`, `source_evidence`, blockers, and a lane-level `reconciliation_mode`. Model bindings include provider/model/route/config-source metadata and env-var names for secrets, not secret values.
+
+`MESH_AGENT_MESH_AGENTS` is a hard runtime filter. If it excludes lanes requested by a profile rule, the resolver records blockers such as `topology_rule_lanes_filtered_by_agent_mesh_agents`; profile rules cannot silently re-enable excluded lanes.
 
 API:
 
@@ -86,6 +119,8 @@ Artifact shape:
 }
 ```
 
+The task also carries `orchestration_topology` and `lane_routing`. Those artifacts are `mesh.orchestration_topology_resolution.v1` records with `active_topology`, `selected_lanes`, lane-level model bindings, connector-derived credential boundaries, source evidence refs, blockers, and reconciliation mode.
+
 With LatentMAS enabled, the first attempt may look like:
 
 ```json
@@ -134,6 +169,14 @@ With Deep Agents enabled, a lane attempt looks like:
   ],
   "output": {
     "workspace_path": "/app/.mesh-runtime-state/deepagents/run_.../task_.../codex",
+    "effective_model": "openai:MiniMax-M2.7",
+    "model_binding": {
+      "provider": "openai",
+      "model": "MiniMax-M2.7",
+      "route": "deepagents_sandbox",
+      "secret_ref_envs": ["OPENAI_API_KEY", "MINIMAX_API_KEY"],
+      "secret_material_present": false
+    },
     "diff": "--- a/...\n+++ b/...\n@@ ...",
     "deepagents_final_message": "{...}"
   }
@@ -255,6 +298,9 @@ Open the `Agents` tab on any run. The panel shows:
 
 - task kind and scope
 - participating worker lanes
+- topology role and lane reconciliation mode
+- per-lane model/provider binding without raw secret values
+- connector certification and lane source-evidence refs
 - selected attempt
 - adapter
 - recommended action
