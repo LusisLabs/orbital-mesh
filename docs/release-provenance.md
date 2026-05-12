@@ -123,6 +123,8 @@ MESH_MIGRATION_REHEARSAL_DATABASE_URL=postgresql://mesh:mesh@127.0.0.1:5432/mesh
 
 The runner refuses non-empty public schemas by default, applies every SQL file under `migrations/postgres` in one transaction, records pre- and post-migration schema hashes, rolls the transaction back, and verifies the generated proof. Use `--allow-destructive-statements` only after reviewing destructive migration SQL for the target release. Use `scripts/generate_migration_rehearsal.py` only when an external operator-controlled rehearsal already produced snapshot, rollback, validation, review, and timing evidence that must be packaged into the same proof schema.
 
+When `MESH_MEMORY_GRAPH_BACKEND=helix` is used with the Postgres backend, migration `005_helix_projection_outbox.sql` must be included in the schema requirements. This migration creates the `helix_memory_projection_outbox` table required for the HelixDB projection outbox pattern.
+
 The SBOM artifact must be JSON with `bomFormat: "CycloneDX"`. The vulnerability scan artifact must be normalized JSON with a `scanner` string and a `findings`, `vulnerabilities`, or `results` array. Any unaccepted `high` or `critical` severity finding keeps `vulnerability_scan_path` incomplete with `no_high_or_critical_findings`.
 
 `config/release-vulnerability-exceptions.json` is the only in-repo release-image exception policy. It must use `mesh.release_vulnerability_exceptions.v1`; each accepted finding needs an owner, expiry, decision, reason, and compensating control. The normalizer annotates matching findings with `accepted_exception` metadata and still records the total `blocking_finding_count`. Expired, ownerless, or unmatched high/critical findings remain blocking.

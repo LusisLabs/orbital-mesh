@@ -91,6 +91,8 @@ Additional migrations extend the same production store:
   supersessions, retrieval records, and memory packets.
 - `004_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
   refs, text indexes, and row-to-memory projection refs.
+- `005_helix_projection_outbox.sql`:HelixDB projection outbox for async event
+  replay when `MESH_MEMORY_GRAPH_BACKEND=helix` with Postgres backend.
 
 Incident-corpus payloads keep the full JSON row as the compatibility boundary.
 Prefer explicit `labels.coverage` and `training_fact.quality_measurements`
