@@ -49,13 +49,21 @@ def _build_kubernetes_feedback_observer(config: RuntimeConfig) -> KubernetesFeed
     return KubernetesFeedbackObserver(kubectl_command=config.kubectl_command)
 
 
-def _register_root_diagnostic_packs(root_registry: object, config: RuntimeConfig) -> None:
+def _register_root_diagnostic_packs(
+    root_registry: object,
+    config: RuntimeConfig,
+    *,
+    infra_graph: object | None = None,
+) -> None:
     """Auto-register always-on diagnostic packs onto the engine root.
 
     Single entrypoint into ``services.investigation.tools`` —
-    ``register_root_packs`` walks every always-on pack
-    (Prometheus, AWS, kubectl, GitHub, Loki, Jaeger, Postgres) and
+    ``register_root_packs`` walks every always-on pack (Prometheus,
+    AWS, kubectl, GitHub, Loki, Jaeger, Postgres, topology) and
     registers each one whose backing config/env signal is present.
+    ``topology`` registers unconditionally when ``infra_graph`` is
+    supplied — the graph may be empty per-run but the tools are
+    always callable so the LLM sees the same surface every run.
 
     Failures inside any single pack are logged and swallowed: one
     misconfigured Prometheus URL must never keep the engine from
@@ -64,7 +72,7 @@ def _register_root_diagnostic_packs(root_registry: object, config: RuntimeConfig
     """
     from services.investigation.tools import register_root_packs
 
-    register_root_packs(root_registry, config)  # type: ignore[arg-type]
+    register_root_packs(root_registry, config, infra_graph=infra_graph)  # type: ignore[arg-type]
 
 
 def _overlay_root_registry(per_run_registry: object, root_registry: object | None) -> object:
@@ -259,19 +267,32 @@ class MeshRuntimeEngine:
         self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
         self.investigation = investigation or InvestigationService()
         self.reth_planner = RethInvestigationPlanner(self.config)
+        # InfraGraph is the typed view of K8s relationships (service →
+        # pod → node → secret/configmap → ...). The control plane
+        # historically owned the only instance; benchmark and
+        # standalone runs left it empty. We default-construct one here
+        # so every engine — production, benchmark, in-process test —
+        # has a graph the topology tools can read and the populator
+        # can write to per-run.
+        from shared.mesh_runtime.infra_graph import InfraGraph as _InfraGraph
+
+        self.infra_graph: _InfraGraph = infra_graph or _InfraGraph(self.config.state_directory)
         # Root tool registry. Always-on diagnostic packs (Prometheus,
-        # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, MCP) auto-
-        # register here at engine construction time, gated on config
-        # / env presence. Per-run domain packs (CloudOps snapshot,
-        # Reth live probes) are overlaid on top of a clone in
-        # ``_auto_wire_investigation_harness``. Mesh deployments
+        # AWS, kubectl, GitHub, Loki, Jaeger, Postgres, topology) auto-
+        # register here at engine construction time, gated on config /
+        # env presence (topology registers unconditionally because the
+        # graph is always present). Per-run domain packs (CloudOps
+        # snapshot, Reth live probes) are overlaid on top of a clone
+        # in ``_auto_wire_investigation_harness``. Mesh deployments
         # without a given backend pay zero cost for it — the registry
         # stays empty for that domain and the planner never sees its
         # tools. See docs/investigation-harness.md for the full map.
         from services.investigation.harness import ToolRegistry as _ToolRegistry
 
         self.root_registry: _ToolRegistry = _ToolRegistry()
-        _register_root_diagnostic_packs(self.root_registry, self.config)
+        _register_root_diagnostic_packs(
+            self.root_registry, self.config, infra_graph=self.infra_graph,
+        )
         escalation_reasoner = None
         if self.config.llm_escalation_enabled and (learning_store or context_store):
             from services.decision.llm_reasoning import EscalationReasoner
@@ -287,7 +308,7 @@ class MeshRuntimeEngine:
         # store presence. Construction itself is cheap (no I/O).
         from services.decision.hypothesis_engine import HypothesisEngine
         hypothesis_engine = HypothesisEngine(
-            infra_graph=infra_graph,
+            infra_graph=self.infra_graph,
             alert_store=alert_store,
             context_store=context_store,
         )
@@ -396,6 +417,30 @@ class MeshRuntimeEngine:
             )
             result["run_metadata"] = run_record.__dict__
             return result
+
+        # Populate the topology graph from this trigger's signal so
+        # the always-on ``topology`` tool pack has data to query.
+        # Idempotent and best-effort: failures are swallowed so a bad
+        # snapshot never breaks the run, and signals without parseable
+        # structure leave the graph empty (the topology tools return
+        # empty results in that case, never crash).
+        try:
+            from services.investigation.topology_builder import populate as _populate_topology
+
+            _populate_topology(
+                self.infra_graph,
+                snapshot=raw_signal.get("cloudopsbench_snapshot") if isinstance(raw_signal, dict) else None,
+                namespace_hint=(
+                    raw_signal.get("related_context", {}).get("cloudopsbench_namespace")
+                    if isinstance(raw_signal, dict) and isinstance(raw_signal.get("related_context"), dict)
+                    else None
+                ),
+            )
+        except Exception:
+            import logging
+            logging.getLogger("mesh.runtime").exception(
+                "topology populator failed (non-fatal)",
+            )
 
         # Auto-wire the investigation harness when the caller didn't
         # supply one. Without this, every benchmark/test/ad-hoc call hit
