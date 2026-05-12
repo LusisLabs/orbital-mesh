@@ -15,26 +15,32 @@ SCRIPT = "scripts/generate_release_provenance.py"
 
 
 def sbom_json(image_digest: str, *, bom_format: str = "CycloneDX") -> str:
-    return json.dumps(
-        {
-            "bomFormat": bom_format,
-            "metadata": {
-                "properties": [
-                    {"name": "mesh:image_digest", "value": image_digest},
-                ]
-            },
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "bomFormat": bom_format,
+                "metadata": {
+                    "properties": [
+                        {"name": "mesh:image_digest", "value": image_digest},
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
 
 
 def vulnerability_scan_json(image_digest: str, *, findings: list[dict[str, object]] | None = None) -> str:
-    return json.dumps(
-        {
-            "scanner": "test",
-            "image_digest": image_digest,
-            "findings": findings or [],
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "scanner": "test",
+                "image_digest": image_digest,
+                "findings": findings or [],
+            }
+        )
+        + "\n"
+    )
 
 
 def write_ci_attestation(
@@ -51,6 +57,7 @@ def write_ci_attestation(
     checks: list[str] | None = None,
     check_records: list[dict[str, str]] | None = None,
 ) -> None:
+    attested_image_digest = image_digest or f"sha256:{'a' * 64}"
     packet: dict[str, object] = {
         "schema_version": "mesh.ci_attestation.v1",
         "generated_at": "2026-05-05T00:00:00Z",
@@ -62,17 +69,14 @@ def write_ci_attestation(
         "ref": "refs/heads/main",
         "sha": sha or current_git_commit(),
         "server_url": "https://github.com",
-        "image": {"tag": "orbital-mesh:ci", "digest": image_digest},
+        "image": {"tag": "orbital-mesh:ci", "digest": attested_image_digest},
         "build": {
             "command": build_command,
             "base_images": base_images or [],
         },
         "checks": check_records
         if check_records is not None
-        else [
-            {"name": name, "status": "passed"}
-            for name in (checks or ["python-test", "web", "docker-build"])
-        ],
+        else [{"name": name, "status": "passed"} for name in (checks or ["python-test", "web", "docker-build"])],
     }
     packet["attestation_sha256"] = payload_hash(packet)
     path.write_text(json.dumps(packet) + "\n", encoding="utf-8")
@@ -103,27 +107,30 @@ def migration_rehearsal_json(discovered: dict[str, object]) -> str:
     combined_sha256 = str(migrations["combined_sha256"])
     hashes = migrations["hashes"]
     assert isinstance(hashes, list)
-    return json.dumps(
-        {
-            "schema_version": "mesh.migration_rehearsal.v1",
-            "rehearsal_id": "migration_rehearsal_test",
-            "generated_at": "2026-05-05T23:30:00Z",
-            "operator_id": "platform@example.com",
-            "environment": "staging",
-            "database_engine": "postgres",
-            "migration_directory": "migrations/postgres",
-            "migration_version": version,
-            "migration_combined_sha256": combined_sha256,
-            "applied_migration_count": len(hashes),
-            "rolled_back": True,
-            "rollback_ref": "restore://postgres/migration-rehearsal/test",
-            "pre_migration_snapshot_ref": "snapshot://postgres/pre-migration/test",
-            "post_migration_validation_ref": "validation://postgres/post-migration/test",
-            "destructive_changes_reviewed": True,
-            "measured_apply_seconds": 12.5,
-            "measured_rollback_seconds": 18.25,
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "schema_version": "mesh.migration_rehearsal.v1",
+                "rehearsal_id": "migration_rehearsal_test",
+                "generated_at": "2026-05-05T23:30:00Z",
+                "operator_id": "platform@example.com",
+                "environment": "staging",
+                "database_engine": "postgres",
+                "migration_directory": "migrations/postgres",
+                "migration_version": version,
+                "migration_combined_sha256": combined_sha256,
+                "applied_migration_count": len(hashes),
+                "rolled_back": True,
+                "rollback_ref": "restore://postgres/migration-rehearsal/test",
+                "pre_migration_snapshot_ref": "snapshot://postgres/pre-migration/test",
+                "post_migration_validation_ref": "validation://postgres/post-migration/test",
+                "destructive_changes_reviewed": True,
+                "measured_apply_seconds": 12.5,
+                "measured_rollback_seconds": 18.25,
+            }
+        )
+        + "\n"
+    )
 
 
 class ReleaseProvenanceTests(unittest.TestCase):
@@ -397,6 +404,7 @@ class ReleaseProvenanceTests(unittest.TestCase):
                     "workflow",
                     "job",
                     "sha",
+                    "image_digest_match",
                     "check:docker-build",
                     "check:python-test",
                     "check:web",
@@ -597,6 +605,73 @@ class ReleaseProvenanceTests(unittest.TestCase):
             self.assertEqual(packet["ci"]["attestation"]["passed_checks"], ["python-test", "web"])
             self.assertEqual(packet["ci"]["attestation"]["missing_checks"], ["docker-build"])
             self.assertEqual(packet["ci"]["attestation"]["missing"], ["check:docker-build"])
+
+    def test_release_provenance_rejects_ci_attestation_for_different_image_digest(self) -> None:
+        discovery = subprocess.run(
+            [sys.executable, SCRIPT, "--json"],
+            cwd=REPO_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        discovered = json.loads(discovery.stdout)
+        base_args: list[str] = []
+        for index, item in enumerate(discovered["base_images"], start=1):
+            image = item["image"]
+            digest = f"sha256:{index:064x}"[-71:]
+            base_args.extend(["--base-image-digest", f"{image}={digest}"])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            sbom = Path(tmp) / "sbom.json"
+            vuln = Path(tmp) / "vulnerability-scan.json"
+            ci_attestation = Path(tmp) / "ci-attestation.json"
+            migration_rehearsal = Path(tmp) / "migration-rehearsal.json"
+            release_digest = f"sha256:{'a' * 64}"
+            attested_digest = f"sha256:{'b' * 64}"
+            sbom.write_text(sbom_json(release_digest), encoding="utf-8")
+            vuln.write_text(vulnerability_scan_json(release_digest), encoding="utf-8")
+            migration_rehearsal.write_text(migration_rehearsal_json(discovered), encoding="utf-8")
+            write_ci_attestation(ci_attestation, image_digest=attested_digest)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--json",
+                    "--require-complete",
+                    "--allow-dirty",
+                    "--image-digest",
+                    release_digest,
+                    "--sbom",
+                    str(sbom),
+                    "--vulnerability-scan",
+                    str(vuln),
+                    "--ci-attestation",
+                    str(ci_attestation),
+                    "--migration-rehearsal",
+                    str(migration_rehearsal),
+                    "--build-command",
+                    "docker buildx build --provenance=true",
+                    "--builder-identity",
+                    "ci:test",
+                    "--policy-signing-key",
+                    "test-policy-signing-key",
+                    *base_args,
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            packet = json.loads(result.stdout)
+            self.assertIn("ci_attestation", packet["missing"])
+            self.assertFalse(packet["ci"]["attestation"]["valid"])
+            self.assertEqual(packet["ci"]["attestation"]["image_digest"], attested_digest)
+            self.assertEqual(packet["ci"]["attestation"]["expected_image_digest"], release_digest)
+            self.assertFalse(packet["ci"]["attestation"]["image_digest_matches"])
+            self.assertEqual(packet["ci"]["attestation"]["missing"], ["image_digest_match"])
 
     def test_require_complete_passes_with_release_artifacts_and_base_digests(self) -> None:
         discovery = subprocess.run(

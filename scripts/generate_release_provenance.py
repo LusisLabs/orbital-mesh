@@ -42,9 +42,7 @@ DOCKERFILES = (
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Generate the orbital-mesh release provenance packet."
-    )
+    parser = argparse.ArgumentParser(description="Generate the orbital-mesh release provenance packet.")
     parser.add_argument("--json", action="store_true", help="Print the packet as JSON.")
     parser.add_argument("--output", help="Write the packet to this JSON path.")
     parser.add_argument("--require-complete", action="store_true", help="Exit non-zero unless every pilot provenance gate passes.")
@@ -52,10 +50,7 @@ def main() -> int:
     parser.add_argument("--image-tag", default=os.getenv("MESH_STACK_IMAGE") or os.getenv("MESH_IMAGE") or DEFAULT_IMAGE_TAG)
     parser.add_argument(
         "--image-digest",
-        default=os.getenv("MESH_IMAGE_DIGEST")
-        or os.getenv("MESH_STACK_IMAGE_DIGEST")
-        or os.getenv("MESH_BUILD_IMAGE_DIGEST")
-        or "",
+        default=os.getenv("MESH_IMAGE_DIGEST") or os.getenv("MESH_STACK_IMAGE_DIGEST") or os.getenv("MESH_BUILD_IMAGE_DIGEST") or "",
     )
     parser.add_argument("--sbom", default=os.getenv("MESH_SBOM_PATH") or "")
     parser.add_argument("--vulnerability-scan", default=os.getenv("MESH_VULNERABILITY_SCAN_PATH") or "")
@@ -106,10 +101,19 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
 
     git = _git_snapshot()
     ci_attestation_payload = _json_artifact_payload(args.ci_attestation)
+    provisional_ci_attestation = _ci_attestation_record(
+        args.ci_attestation,
+        ci_attestation_payload,
+        expected_git_commit=str(git.get("commit") or ""),
+        expected_image_digest="",
+    )
+    provisional_trusted_ci_attestation_payload = ci_attestation_payload if provisional_ci_attestation.get("valid") else {}
+    image_digest = args.image_digest.strip() or _attested_image_digest(provisional_trusted_ci_attestation_payload)
     ci_attestation = _ci_attestation_record(
         args.ci_attestation,
         ci_attestation_payload,
         expected_git_commit=str(git.get("commit") or ""),
+        expected_image_digest=image_digest,
     )
     trusted_ci_attestation_payload = ci_attestation_payload if ci_attestation.get("valid") else {}
     base_digest_overrides = _parse_base_digest_overrides(args.base_image_digest)
@@ -132,7 +136,6 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     migration_rehearsal = _migration_rehearsal_record(args.migration_rehearsal, migrations)
     dependency_locks = _hash_paths(DEPENDENCY_LOCKFILES)
     build_inputs = _hash_paths(BUILD_INPUTS)
-    image_digest = args.image_digest.strip() or _attested_image_digest(trusted_ci_attestation_payload)
     sbom = _sbom_record(args.sbom, image_digest)
     vulnerability_scan = _vulnerability_scan_record(args.vulnerability_scan, image_digest)
     build_command = args.build_command or _attested_build_command(trusted_ci_attestation_payload)
@@ -370,9 +373,7 @@ def _hash_directory(rel_dir: str, pattern: str) -> list[dict[str, str]]:
     if not directory.exists():
         return []
     return [
-        {"path": str(path.relative_to(REPO_ROOT)), "sha256": _sha256(path)}
-        for path in sorted(directory.glob(pattern))
-        if path.is_file()
+        {"path": str(path.relative_to(REPO_ROOT)), "sha256": _sha256(path)} for path in sorted(directory.glob(pattern)) if path.is_file()
     ]
 
 
@@ -394,11 +395,7 @@ def _migration_rehearsal_record(raw_path: str, migrations: list[dict[str, str]])
             "rehearsal_id": verification.get("rehearsal_id"),
             "migration_version": verification.get("migration_version"),
             "checks": verification.get("checks", {}),
-            "missing": [
-                name
-                for name, passed in (verification.get("checks") or {}).items()
-                if passed is not True
-            ],
+            "missing": [name for name, passed in (verification.get("checks") or {}).items() if passed is not True],
             "error": verification.get("error"),
         }
     )
@@ -427,6 +424,7 @@ def _ci_attestation_record(
     payload: dict[str, Any],
     *,
     expected_git_commit: str,
+    expected_image_digest: str,
 ) -> dict[str, Any]:
     record = _artifact_record(raw_path)
     schema_valid = payload.get("schema_version") == "mesh.ci_attestation.v1"
@@ -439,17 +437,19 @@ def _ci_attestation_record(
     sha = _string_field(payload, "sha")
     expected_sha = expected_git_commit.strip()
     sha_matches_git_commit = bool(sha and expected_sha and sha == expected_sha)
-    missing_metadata = [
-        field
-        for field in REQUIRED_CI_ATTESTATION_FIELDS
-        if not _string_field(payload, field)
-    ]
+    attested_image_digest = _attested_image_digest(payload)
+    normalized_expected_image_digest = expected_image_digest.strip()
+    image_digest_matches = bool(
+        not _valid_digest(normalized_expected_image_digest) or attested_image_digest == normalized_expected_image_digest
+    )
+    missing_metadata = [field for field in REQUIRED_CI_ATTESTATION_FIELDS if not _string_field(payload, field)]
     valid = bool(
         record.get("exists")
         and schema_valid
         and hash_valid
         and provider_valid
         and sha_matches_git_commit
+        and image_digest_matches
         and not missing_metadata
         and not missing_checks
     )
@@ -463,16 +463,22 @@ def _ci_attestation_record(
             "run_id": _string_field(payload, "run_id"),
             "sha": sha,
             "expected_sha": expected_sha or None,
+            "image_digest": attested_image_digest or None,
+            "expected_image_digest": normalized_expected_image_digest or None,
+            "image_digest_matches": image_digest_matches,
             "hash_valid": hash_valid,
             "sha_matches_git_commit": sha_matches_git_commit,
             "passed_checks": sorted(passed_checks),
             "missing_checks": missing_checks,
-            "missing": [] if valid else _missing_ci_attestation_fields(
+            "missing": []
+            if valid
+            else _missing_ci_attestation_fields(
                 record,
                 schema_valid,
                 hash_valid,
                 provider_valid,
                 sha_matches_git_commit,
+                image_digest_matches,
                 missing_metadata,
                 missing_checks,
             ),
@@ -510,6 +516,7 @@ def _missing_ci_attestation_fields(
     hash_valid: bool,
     provider_valid: bool,
     sha_matches_git_commit: bool,
+    image_digest_matches: bool,
     missing_metadata: list[str],
     missing_checks: list[str],
 ) -> list[str]:
@@ -525,6 +532,8 @@ def _missing_ci_attestation_fields(
     missing.extend(missing_metadata)
     if "sha" not in missing_metadata and not sha_matches_git_commit:
         missing.append("sha_matches_git_commit")
+    if not image_digest_matches:
+        missing.append("image_digest_match")
     missing.extend(f"check:{name}" for name in missing_checks)
     return missing
 
@@ -640,14 +649,12 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
     blocking_findings = [
         finding
         for finding in findings
-        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
-        and not _valid_accepted_exception(finding)
+        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high") and not _valid_accepted_exception(finding)
     ]
     accepted_blocking_findings = [
         finding
         for finding in findings
-        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
-        and _valid_accepted_exception(finding)
+        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high") and _valid_accepted_exception(finding)
     ]
     valid = bool(record.get("exists") and scanner and not blocking_findings and not rehearsal and image_digest_matches)
     record.update(
@@ -660,7 +667,9 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
             "finding_count": len(findings),
             "blocking_finding_count": len(blocking_findings),
             "accepted_exception_count": len(accepted_blocking_findings),
-            "missing": [] if valid else _missing_vulnerability_scan_fields(
+            "missing": []
+            if valid
+            else _missing_vulnerability_scan_fields(
                 record,
                 scanner,
                 blocking_findings,
