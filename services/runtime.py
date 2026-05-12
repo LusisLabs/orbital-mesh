@@ -105,6 +105,7 @@ def _auto_wire_investigation_harness(
     config: RuntimeConfig | None = None,
     *,
     root_registry: object | None = None,
+    infra_graph: object | None = None,
 ) -> tuple[object | None, object | None]:
     """Auto-wire harness for **every** trigger, not just CloudOpsBench.
 
@@ -148,7 +149,14 @@ def _auto_wire_investigation_harness(
         from services.investigation.tools import cloudops as cloudops_pack
 
         registry = ToolRegistry()
-        cloudops_pack.register(registry, CloudOpsSnapshotTools(snapshot))
+        # ``infra_graph`` is consulted by the service-routing analyzer
+        # when the populator has covered the trigger namespace — saves
+        # two snapshot calls per service and uses graph edges for the
+        # ``Endpoints: <none>`` signal. Falls back to kubectl text
+        # parsing cleanly when the graph is empty or ``None``.
+        cloudops_pack.register(
+            registry, CloudOpsSnapshotTools(snapshot), infra_graph=infra_graph
+        )
         _overlay_root_registry(registry, root_registry)
 
         if decision_provider is not None:
@@ -452,6 +460,7 @@ class MeshRuntimeEngine:
             auto_registry, auto_planner = _auto_wire_investigation_harness(
                 raw_signal, trigger, self.config,
                 root_registry=self.root_registry,
+                infra_graph=self.infra_graph,
             )
             registry = auto_registry
             planner = auto_planner

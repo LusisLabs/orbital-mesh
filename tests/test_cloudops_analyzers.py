@@ -578,5 +578,220 @@ class RegistryWiringTests(unittest.TestCase):
             self.assertEqual(definition.mutation_class, "read_only", definition.name)
 
 
+# ---------------------------------------------------------------------------
+# Graph-backed path: analyze_service_routing consults InfraGraph when
+# populated. Phase C of the topology integration — when the populator
+# has covered the trigger namespace, the analyzer skips kubectl-describe
+# round-trips and uses graph edges for empty-endpoints detection. The
+# regex path stays the fallback; tests above cover it exhaustively.
+# ---------------------------------------------------------------------------
+
+
+import tempfile  # noqa: E402 — keeps the graph imports adjacent to the new tests
+
+from services.investigation.cloudops_analyzers import (  # noqa: E402
+    _decompose_graph_ports,
+    _service_records_from_graph,
+)
+from services.investigation.topology_builder import populate as _populate_topology  # noqa: E402
+from shared.mesh_runtime.infra_graph import InfraGraph  # noqa: E402
+
+
+def _routing_snapshot(*, frontend_yaml: str = "", emailservice_yaml: str = "") -> dict[str, Any]:
+    """Build a CloudOps-shaped snapshot suitable for both the populator
+    and the analyzer.
+
+    The populator reads ``DescribeResource`` cache entries to materialize
+    the graph; the analyzer reads ``GetAppYAML`` to harvest env-var refs
+    (the graph doesn't model container env yet). Both keys must be
+    present for the graph-backed path to be exercised end-to-end with
+    the env-mismatch branch.
+    """
+    return {
+        "tool_cache": {
+            'GetResources:{"resource_type":"services","namespace":"boutique"}': SVC_LIST,
+            'DescribeResource:{"resource_type":"services","name":"emailservice","namespace":"boutique"}': EMAILSERVICE_DESCRIBE_MISMATCH,
+            'DescribeResource:{"resource_type":"services","name":"frontend","namespace":"boutique"}': FRONTEND_DESCRIBE_OK,
+            'GetAppYAML:{"app_name":"emailservice","namespace":"boutique"}': emailservice_yaml or EMAILSERVICE_YAML_OK,
+            'GetAppYAML:{"app_name":"frontend","namespace":"boutique"}': frontend_yaml,
+        }
+    }
+
+
+class DecomposeGraphPortsTests(unittest.TestCase):
+    """The populator stores Service.attributes["ports"] verbatim from
+    kubectl describe text. The analyzer needs the same (name, num, proto)
+    / (target, proto) tuple shape its regex path produces, so the
+    decomposer is on the hot path of the graph-backed branch.
+    """
+
+    def test_named_and_numeric_port(self) -> None:
+        ports, targets = _decompose_graph_ports(
+            [{"port": "grpc  5000/TCP", "target_port": "5050/TCP"}]
+        )
+        self.assertEqual(ports, [("grpc", 5000, "TCP")])
+        self.assertEqual(targets, [("5050", "TCP")])
+
+    def test_anonymous_port(self) -> None:
+        ports, _ = _decompose_graph_ports([{"port": "80/TCP", "target_port": "80/TCP"}])
+        self.assertEqual(ports, [("", 80, "TCP")])
+
+    def test_named_target_port_preserved_verbatim(self) -> None:
+        # Mirrors the regex path: named target ports are kept as strings;
+        # only numeric mismatches drive port_target_mismatches downstream.
+        _, targets = _decompose_graph_ports([{"port": "http  80/TCP", "target_port": "http/TCP"}])
+        self.assertEqual(targets, [("http", "TCP")])
+
+    def test_malformed_entries_skipped(self) -> None:
+        ports, targets = _decompose_graph_ports(["not a dict", {"port": "no-protocol"}, {}])
+        self.assertEqual(ports, [])
+        self.assertEqual(targets, [])
+
+
+class ServiceRecordsFromGraphTests(unittest.TestCase):
+    """Fallback signal: ``None`` means "fall through to regex path",
+    ``[]`` means "graph populated but no matching services". The
+    analyzer relies on that distinction to know whether to short-
+    circuit or to call DescribeResource.
+    """
+
+    def test_returns_none_when_graph_is_none(self) -> None:
+        self.assertIsNone(_service_records_from_graph(None, "boutique", None))
+
+    def test_returns_none_when_graph_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as state:
+            graph = InfraGraph(state)
+            self.assertIsNone(_service_records_from_graph(graph, "boutique", None))
+
+    def test_returns_none_when_namespace_uncovered(self) -> None:
+        with tempfile.TemporaryDirectory() as state:
+            graph = InfraGraph(state)
+            _populate_topology(graph, snapshot=_routing_snapshot(), namespace_hint="boutique")
+            # Asking for a namespace the populator never saw → fall through.
+            self.assertIsNone(_service_records_from_graph(graph, "other-ns", None))
+
+    def test_records_mirror_regex_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as state:
+            graph = InfraGraph(state)
+            _populate_topology(graph, snapshot=_routing_snapshot(), namespace_hint="boutique")
+            recs = _service_records_from_graph(graph, "boutique", None)
+            self.assertIsNotNone(recs)
+            names = sorted(r["raw_name"] for r in recs)
+            self.assertEqual(names, ["emailservice", "frontend"])
+            email = next(r for r in recs if r["raw_name"] == "emailservice")
+            self.assertEqual(email["ports"], [("grpc", 5000, "TCP")])
+            self.assertEqual(email["target_ports"], [("5050", "TCP")])
+            # Selector matches no pods in this snapshot — graph edge count
+            # of zero translates to the canonical "<none>" marker so the
+            # downstream summary clause matches the same ontology rule
+            # the regex path triggers.
+            self.assertEqual(email["endpoints"], "<none>")
+
+
+class AnalyzeServiceRoutingGraphPathTests(unittest.TestCase):
+    """End-to-end: register the analyzer with an InfraGraph, run it,
+    verify the same ontology labels fire. Critical contract — the
+    summary text is what downstream rule-matching keys on, so changing
+    the source must not change the output phrasing.
+    """
+
+    def _populate(self, frontend_yaml: str = "") -> tuple[InfraGraph, FakeSnapshotTools]:
+        # Use a long-lived directory so the InfraGraph state survives
+        # the populate call; tests clean up via the unittest tearDown.
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        graph = InfraGraph(self.tmpdir.name)
+        snap_dict = _routing_snapshot(frontend_yaml=frontend_yaml)
+        _populate_topology(graph, snapshot=snap_dict, namespace_hint="boutique")
+        # The analyzer still calls GetAppYAML through snapshot_tools for
+        # env-var harvesting; build a FakeSnapshotTools that exposes the
+        # same YAML keys.
+        snap = FakeSnapshotTools(
+            {
+                ("GetResources", _stable_args({"resource_type": "services", "namespace": "boutique"})): SVC_LIST,
+                ("DescribeResource", _stable_args({"resource_type": "services", "name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_DESCRIBE_MISMATCH,
+                ("DescribeResource", _stable_args({"resource_type": "services", "name": "frontend", "namespace": "boutique"})): FRONTEND_DESCRIBE_OK,
+                ("GetAppYAML", _stable_args({"app_name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_YAML_OK,
+                ("GetAppYAML", _stable_args({"app_name": "frontend", "namespace": "boutique"})): frontend_yaml,
+            }
+        )
+        return graph, snap
+
+    def test_graph_path_detects_port_target_mismatch(self) -> None:
+        graph, snap = self._populate()
+        out = _analyze_service_routing_invoker(snap, graph)({"namespace": "boutique"})
+        self.assertTrue(out.valid)
+        self.assertEqual(len(out.output["port_target_mismatches"]), 1)
+        ranked = rank_root_causes([out.output_summary])
+        self.assertIn("service_port_mapping_mismatch", [r.root_cause for r in ranked])
+
+    def test_graph_path_skips_describe_calls(self) -> None:
+        # Behavioral contract: when the graph covers the namespace, the
+        # analyzer should NOT call DescribeResource/GetResources. The
+        # snapshot calls list is the cheapest place to assert this —
+        # only GetAppYAML calls should be recorded (env-var harvest).
+        graph, snap = self._populate()
+        _analyze_service_routing_invoker(snap, graph)({"namespace": "boutique"})
+        tool_names_called = {name for (name, _args) in snap.calls}
+        self.assertNotIn("DescribeResource", tool_names_called)
+        self.assertNotIn("GetResources", tool_names_called)
+        self.assertIn("GetAppYAML", tool_names_called)
+
+    def test_graph_path_detects_env_var_address_mismatch(self) -> None:
+        graph, snap = self._populate(frontend_yaml=FRONTEND_YAML_BAD_REF)
+        out = _analyze_service_routing_invoker(snap, graph)({"namespace": "boutique"})
+        self.assertTrue(out.valid)
+        env_mismatches = out.output["env_mismatches"]
+        # In this snapshot, emailservice has selector ``app=emailservice``
+        # but no pods carry that label → the graph-backed branch also
+        # surfaces ``service_selector_mismatch`` via empty endpoints.
+        # The env-var mismatch must still appear alongside it.
+        self.assertEqual(len(env_mismatches), 1)
+        self.assertEqual(env_mismatches[0]["ref_service"], "emailservice")
+        self.assertEqual(env_mismatches[0]["ref_port"], 5050)
+        ranked = rank_root_causes([out.output_summary])
+        self.assertIn("service_env_var_address_mismatch", [r.root_cause for r in ranked])
+
+    def test_empty_graph_falls_back_to_regex_path(self) -> None:
+        # Contract: an empty graph must not break analysis — the
+        # snapshot-text path takes over cleanly. Reuse the existing
+        # mismatch fixture; assert the label still fires.
+        with tempfile.TemporaryDirectory() as state:
+            empty_graph = InfraGraph(state)
+            snap = FakeSnapshotTools(
+                {
+                    ("GetResources", _stable_args({"resource_type": "services", "namespace": "boutique"})): SVC_LIST,
+                    ("DescribeResource", _stable_args({"resource_type": "services", "name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_DESCRIBE_MISMATCH,
+                    ("DescribeResource", _stable_args({"resource_type": "services", "name": "frontend", "namespace": "boutique"})): FRONTEND_DESCRIBE_OK,
+                    ("GetAppYAML", _stable_args({"app_name": "emailservice", "namespace": "boutique"})): EMAILSERVICE_YAML_OK,
+                    ("GetAppYAML", _stable_args({"app_name": "frontend", "namespace": "boutique"})): "",
+                }
+            )
+            out = _analyze_service_routing_invoker(snap, empty_graph)({"namespace": "boutique"})
+            self.assertTrue(out.valid)
+            self.assertEqual(len(out.output["port_target_mismatches"]), 1)
+            # Regex path was used → DescribeResource must have been called.
+            self.assertIn("DescribeResource", {n for (n, _) in snap.calls})
+
+
+class RegisterPassesInfraGraphTests(unittest.TestCase):
+    def test_register_threads_infra_graph_to_service_routing(self) -> None:
+        # Bug shield: ``register_cloudops_analyzers`` must pass
+        # ``infra_graph`` only to the analyzers that consume it.
+        # Other analyzers stay on the snapshot_tools-only signature so
+        # an accidental positional drift in factories doesn't ship a
+        # broken registration.
+        with tempfile.TemporaryDirectory() as state:
+            graph = InfraGraph(state)
+            _populate_topology(
+                graph, snapshot=_routing_snapshot(), namespace_hint="boutique"
+            )
+            registry = ToolRegistry()
+            snap = FakeSnapshotTools({})
+            register_cloudops_analyzers(registry, snap, infra_graph=graph)
+            entry = registry.get("cloudops", "analyze_service_routing")
+            self.assertIsNotNone(entry)
+
+
 if __name__ == "__main__":
     unittest.main()

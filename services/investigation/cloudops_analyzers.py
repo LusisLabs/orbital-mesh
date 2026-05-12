@@ -348,6 +348,123 @@ _ENV_NAME_HINTS = (
 )
 _ENV_VALUE_RE = re.compile(r"^\s*-\s*name:\s*(\S+)\s*\n\s+value:\s*\"?([^\"\n]+)\"?", re.MULTILINE)
 
+# Decompose populator-stamped port strings like "grpc  5000/TCP" or "5000/TCP".
+# The populator captures the raw value from kubectl describe, so we re-parse
+# here to get (port_name, port_number, proto) — the same tuple shape
+# ``_parse_service_describe`` already returns from the regex path.
+_GRAPH_PORT_VALUE_RE = re.compile(r"(?:(\S+)\s+)?(\d+)/(TCP|UDP|SCTP)")
+# TargetPort values can be numeric (``5050/TCP``) or named (``http/TCP``);
+# keep the raw value + protocol so the analyzer can decide whether to flag
+# numeric mismatches.
+_GRAPH_TARGET_PORT_RE = re.compile(r"(\S+)/(TCP|UDP|SCTP)")
+
+
+def _service_records_from_graph(
+    infra_graph: Any,
+    namespace: str,
+    target: str | None,
+) -> list[dict[str, Any]] | None:
+    """Return service records sourced from ``InfraGraph``, or ``None``.
+
+    Mirrors the shape that ``_parse_service_describe`` produces from
+    kubectl text, so the rest of the analyzer is source-agnostic.
+    Returns ``None`` when the graph is empty or has no service nodes
+    in the requested namespace — callers fall through to the snapshot
+    text path. An empty list means "graph populated, no services in
+    namespace" (a real answer, not a fallback signal); callers must
+    distinguish.
+
+    Empty-endpoints detection: a service with a selector but zero
+    outgoing ``selects`` edges is reported with ``endpoints="<none>"``,
+    which matches the exact ontology trigger phrase the snapshot-text
+    path emits. Services without selectors leave ``endpoints=None`` —
+    selector-less services do not have selector-driven endpoints, so
+    we cannot infer emptiness from the graph alone.
+    """
+    if infra_graph is None:
+        return None
+    snapshot = infra_graph.snapshot()
+    if snapshot is None:
+        return None
+    services_in_ns = [
+        n for n in snapshot.nodes if n.kind == "service" and n.namespace == namespace
+    ]
+    if not services_in_ns:
+        return None
+    records: list[dict[str, Any]] = []
+    for svc in services_in_ns:
+        if target and svc.name != target:
+            continue
+        ports, target_ports = _decompose_graph_ports(svc.attributes.get("ports") or [])
+        endpoints_value = _service_endpoints_marker(infra_graph, svc)
+        records.append(
+            {
+                "name": svc.name,
+                "raw_name": svc.name,
+                "ports": ports,
+                "target_ports": target_ports,
+                "endpoints": endpoints_value,
+            }
+        )
+    if target and not records:
+        return None
+    return records
+
+
+def _decompose_graph_ports(
+    ports: list[Any],
+) -> tuple[list[tuple[str, int, str]], list[tuple[str, str]]]:
+    """Split populator's port dicts into (ports, target_ports) tuples.
+
+    The populator stamps Service.attributes["ports"] as a list of
+    ``{"port": "<raw>", "target_port": "<raw>"}`` dicts, where each
+    raw value is the trailing-whitespace-stripped text from kubectl
+    describe. We re-parse to the same tuple shape the regex path
+    produces so the downstream analyzer never branches on source.
+    """
+    port_tuples: list[tuple[str, int, str]] = []
+    target_tuples: list[tuple[str, str]] = []
+    for entry in ports:
+        if not isinstance(entry, dict):
+            continue
+        port_str = str(entry.get("port") or "")
+        match = _GRAPH_PORT_VALUE_RE.search(port_str)
+        if match:
+            pname = match.group(1) or ""
+            pnum = int(match.group(2))
+            proto = match.group(3)
+            port_tuples.append((pname, pnum, proto))
+        tp_str = str(entry.get("target_port") or "")
+        tp_match = _GRAPH_TARGET_PORT_RE.search(tp_str)
+        if tp_match:
+            target_tuples.append((tp_match.group(1), tp_match.group(2)))
+    return port_tuples, target_tuples
+
+
+def _service_endpoints_marker(infra_graph: Any, svc_node: Any) -> str | None:
+    """Return ``"<none>"`` if the service has no ``selects`` edges, else ``None``.
+
+    Translates "selector matches zero pods" into the canonical kubectl
+    text ``Endpoints: <none>`` so downstream detection logic is
+    text-equivalent across both code paths. Selector-less services
+    cannot be evaluated from the graph alone (their endpoints are
+    manually managed), so we return ``None`` and let the snapshot-text
+    path handle them if the user really cares.
+    """
+    has_selector = bool(svc_node.attributes.get("selector"))
+    if not has_selector:
+        return None
+    pods = infra_graph.neighbors(
+        "service",
+        svc_node.name,
+        svc_node.namespace,
+        edge_kinds=["selects"],
+        direction="out",
+    )
+    if not pods:
+        return "<none>"
+    return None
+
 
 def _parse_service_describe(text: str) -> dict[str, Any]:
     """Extract the routing-relevant fields from a kubectl describe svc output."""
@@ -388,56 +505,73 @@ def _parse_env_service_refs(yaml_text: str) -> list[tuple[str, str]]:
     return out
 
 
-def _analyze_service_routing_invoker(snapshot_tools: Any):
+def _analyze_service_routing_invoker(snapshot_tools: Any, infra_graph: Any = None):
     def invoke(args: dict[str, Any]) -> RawToolOutput:
         namespace = (args or {}).get("namespace")
         if not namespace:
             return _failure("analyze_service_routing", "missing required arg: namespace")
         target = (args or {}).get("service_name")
 
-        # Step 1: enumerate services. If the caller named one, we still
-        # list services so we can flag empty-endpoints across the namespace.
-        svc_list_text = _safe_invoke(
-            snapshot_tools,
-            "GetResources",
-            {"resource_type": "services", "namespace": namespace},
-        )
-        if svc_list_text is None or _is_error_payload(svc_list_text):
-            return _failure(
-                "analyze_service_routing",
-                f"GetResources(services) unavailable for namespace={namespace}",
-            )
-        # Pull service names from the first column of kubectl get output,
-        # skipping the header line.
-        service_names: list[str] = []
-        for line in str(svc_list_text).splitlines()[1:]:
-            line = line.strip()
-            if not line:
-                continue
-            first = line.split()[0]
-            if first and first not in {"NAME", "kubernetes"}:
-                service_names.append(first)
-
-        if target:
-            service_names = [s for s in service_names if s == target] or [target]
-
-        # Step 2: describe each service, parse its port spec.
-        service_records: list[dict[str, Any]] = []
-        for svc in service_names:
-            describe_text = _safe_invoke(
+        # Source preference: ``InfraGraph`` if the populator has covered
+        # this namespace, otherwise the snapshot-text path. Both produce
+        # the same record shape and the same ontology-trigger phrases,
+        # so the rest of this function is source-agnostic.
+        #
+        # The graph path skips two snapshot calls per service (list +
+        # describe) when populator data is fresh. The text path stays
+        # the canonical fallback — and the only path when running
+        # outside CloudOpsBench (no populator) or before the populator
+        # has run on this trigger.
+        graph_records = _service_records_from_graph(infra_graph, namespace, target)
+        service_names: list[str]
+        service_records: list[dict[str, Any]]
+        if graph_records is not None:
+            service_records = graph_records
+            service_names = [r["raw_name"] for r in graph_records]
+        else:
+            # Step 1: enumerate services. If the caller named one, we still
+            # list services so we can flag empty-endpoints across the namespace.
+            svc_list_text = _safe_invoke(
                 snapshot_tools,
-                "DescribeResource",
-                {"resource_type": "services", "name": svc, "namespace": namespace},
+                "GetResources",
+                {"resource_type": "services", "namespace": namespace},
             )
-            if describe_text is None or _is_error_payload(describe_text):
-                continue
-            parsed = _parse_service_describe(
-                describe_text if isinstance(describe_text, str) else str(describe_text)
-            )
-            if not parsed:
-                continue
-            parsed["raw_name"] = svc
-            service_records.append(parsed)
+            if svc_list_text is None or _is_error_payload(svc_list_text):
+                return _failure(
+                    "analyze_service_routing",
+                    f"GetResources(services) unavailable for namespace={namespace}",
+                )
+            # Pull service names from the first column of kubectl get output,
+            # skipping the header line.
+            service_names = []
+            for line in str(svc_list_text).splitlines()[1:]:
+                line = line.strip()
+                if not line:
+                    continue
+                first = line.split()[0]
+                if first and first not in {"NAME", "kubernetes"}:
+                    service_names.append(first)
+
+            if target:
+                service_names = [s for s in service_names if s == target] or [target]
+
+            # Step 2: describe each service, parse its port spec.
+            service_records = []
+            for svc in service_names:
+                describe_text = _safe_invoke(
+                    snapshot_tools,
+                    "DescribeResource",
+                    {"resource_type": "services", "name": svc, "namespace": namespace},
+                )
+                if describe_text is None or _is_error_payload(describe_text):
+                    continue
+                parsed = _parse_service_describe(
+                    describe_text if isinstance(describe_text, str) else str(describe_text)
+                )
+                if not parsed:
+                    continue
+                parsed["raw_name"] = svc
+                service_records.append(parsed)
 
         # Step 3: for each service, also pull the matching deployment
         # YAML and harvest service-ref env vars across deployments. We
@@ -626,8 +760,20 @@ _INVOKER_FACTORIES: dict[str, Any] = {
 }
 
 
-def register_cloudops_analyzers(registry: ToolRegistry, snapshot_tools: Any) -> None:
+def register_cloudops_analyzers(
+    registry: ToolRegistry,
+    snapshot_tools: Any,
+    *,
+    infra_graph: Any = None,
+) -> None:
     """Register the K8sGPT-style analyzer tools alongside the raw cloudops tools.
+
+    ``infra_graph`` is optional. When supplied AND the populator has
+    written nodes for the namespace under investigation, analyzers
+    that have a graph-aware path (currently ``analyze_service_routing``)
+    consult the graph for service enumeration / port spec / empty-
+    endpoints detection instead of re-parsing kubectl text. Analyzers
+    without a graph path ignore the argument cleanly.
 
     Idempotent on the same registry — re-registering a tool overwrites
     the previous entry, which is fine since both registrations point at
@@ -638,7 +784,10 @@ def register_cloudops_analyzers(registry: ToolRegistry, snapshot_tools: Any) -> 
         factory = _INVOKER_FACTORIES.get(definition.name)
         if factory is None:  # pragma: no cover — defensive
             continue
-        registry.register(definition, factory(snapshot_tools))
+        if definition.name == "analyze_service_routing":
+            registry.register(definition, factory(snapshot_tools, infra_graph))
+        else:
+            registry.register(definition, factory(snapshot_tools))
 
 
 # ----------------------------------------------------------------------
