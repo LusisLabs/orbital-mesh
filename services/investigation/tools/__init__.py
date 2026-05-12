@@ -33,7 +33,12 @@ from typing import Any
 from ..harness import ToolRegistry
 
 
-def register_root_packs(registry: ToolRegistry, config: Any) -> dict[str, bool]:
+def register_root_packs(
+    registry: ToolRegistry,
+    config: Any,
+    *,
+    infra_graph: Any = None,
+) -> dict[str, bool]:
     """Auto-register every always-on diagnostic pack onto ``registry``.
 
     Single entrypoint replaces the per-pack ``maybe_register_X_at_root``
@@ -52,6 +57,11 @@ def register_root_packs(registry: ToolRegistry, config: Any) -> dict[str, bool]:
     * ``mcp``         — ``MESH_MCP_SERVERS`` set + caller-supplied
       ``client_factory`` (registered separately by the caller — MCP
       transport is opaque to Mesh)
+    * ``topology``    — always registered when ``infra_graph`` is
+      supplied. The graph may be empty (no populator data yet for
+      this run) and the tools return empty results in that case —
+      they are always callable so the LLM sees the same tool surface
+      on every run.
 
     Per-pack failures are swallowed and logged; one mis-configured
     Prometheus URL must never keep the engine from starting. Returns
@@ -118,6 +128,14 @@ def register_root_packs(registry: ToolRegistry, config: Any) -> dict[str, bool]:
     except Exception:
         log.exception("root tool registration: postgres failed (non-fatal)")
         results["postgres"] = False
+
+    try:
+        from . import topology
+
+        results["topology"] = topology.maybe_register_at_root(registry, infra_graph)
+    except Exception:
+        log.exception("root tool registration: topology failed (non-fatal)")
+        results["topology"] = False
 
     return results
 

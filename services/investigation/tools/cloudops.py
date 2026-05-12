@@ -96,7 +96,12 @@ TOOL_DEFINITIONS: tuple[ToolDefinition, ...] = tuple(_build_tool_definitions())
 TOOL_NAMES: tuple[str, ...] = tuple(d.name for d in TOOL_DEFINITIONS)
 
 
-def register(registry: ToolRegistry, snapshot_tools: Any) -> None:
+def register(
+    registry: ToolRegistry,
+    snapshot_tools: Any,
+    *,
+    infra_graph: Any = None,
+) -> None:
     """Register CloudOps tool definitions, backed by ``snapshot_tools``.
 
     Each tool's invoke function calls ``snapshot_tools.invoke(name, args)``
@@ -110,6 +115,12 @@ def register(registry: ToolRegistry, snapshot_tools: Any) -> None:
     calls into pre-canned investigation recipes whose summaries match
     the cloudops ontology, addressing the failure modes documented in
     ``cloudops_analyzers.py``.
+
+    ``infra_graph`` is threaded into the analyzers so the
+    service-routing analyzer can consult the topology graph (populated
+    per-run from the same snapshot) instead of re-parsing kubectl text.
+    Optional: when ``None`` or empty for the queried namespace, the
+    analyzer falls back to the snapshot-text path unchanged.
     """
     for definition in TOOL_DEFINITIONS:
         registry.register(definition, _make_cloudops_invoker(definition.name, snapshot_tools))
@@ -120,7 +131,7 @@ def register(registry: ToolRegistry, snapshot_tools: Any) -> None:
     # not a domain pack.
     from ..cloudops_analyzers import register_cloudops_analyzers
 
-    register_cloudops_analyzers(registry, snapshot_tools)
+    register_cloudops_analyzers(registry, snapshot_tools, infra_graph=infra_graph)
 
 
 def _make_cloudops_invoker(tool_name: str, snapshot_tools: Any):
