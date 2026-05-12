@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orbital Mesh Brand Guide</title>
+  <link rel="stylesheet" href="./mesh-tokens.css">
+  <style>
+    * { box-sizing: border-box; }
+
+    html {
+      background: #0f1014;
+      color: var(--om-color-text);
+      font-family: var(--om-font-sans);
+      line-height: 1.5;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 420px),
+        #0f1014;
+    }
+
+    a { color: inherit; }
+
+    .layout {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 232px minmax(0, 1fr);
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      padding: 1.25rem;
+      border-right: 1px solid #272d37;
+      background: #121419;
+    }
+
+    .rail-brand {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 0.72rem;
+      align-items: center;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid #272d37;
+    }
+
+    .rail-brand img {
+      width: 34px;
+      height: 34px;
+    }
+
+    .rail-brand h1 {
+      margin: 0;
+      color: #f3f4f6;
+      font-size: 0.98rem;
+      line-height: 1.1;
+    }
+
+    .rail-brand p {
+      margin: 0.14rem 0 0;
+      color: #8c96a5;
+      font-size: 0.72rem;
+    }
+
+    .nav {
+      display: grid;
+      align-content: start;
+      gap: 0.1rem;
+      margin-top: 1.2rem;
+    }
+
+    .nav a {
+      display: grid;
+      grid-template-columns: 1.8rem 1fr;
+      align-items: center;
+      padding: 0.46rem 0;
+      color: #aeb6c3;
+      font-size: 0.82rem;
+      text-decoration: none;
+    }
+
+    .nav a span:first-child {
+      color: #697386;
+      font-family: var(--om-font-mono);
+      font-size: 0.66rem;
+    }
+
+    .nav a:hover { color: #f2f4f7; }
+
+    .rail-note {
+      color: #697386;
+      font-family: var(--om-font-mono);
+      font-size: 0.68rem;
+      line-height: 1.45;
+    }
+
+    main {
+      width: min(1180px, calc(100vw - 232px));
+      min-width: 0;
+      margin: 0 auto;
+      padding: 3rem 3rem 4rem;
+    }
+
+    .section {
+      padding: 3.25rem 0;
+      border-top: 1px solid #272d37;
+    }
+
+    .section:first-child { border-top: 0; }
+
+    .section-head {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 680px);
+      gap: 2rem;
+      align-items: start;
+      margin-bottom: 1.5rem;
+    }
+
+    .index {
+      color: #7d8797;
+      font-family: var(--om-font-mono);
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h2,
+    h3,
+    p { margin-top: 0; }
+
+    h2 {
+      margin-bottom: 0.55rem;
+      color: #f2f4f7;
+      font-size: clamp(1.85rem, 4vw, 3.15rem);
+      font-weight: 760;
+      letter-spacing: 0;
+      line-height: 1.02;
+    }
+
+    .section-head p,
+    .muted {
+      color: #b5bdc9;
+      font-size: 0.98rem;
+    }
+
+    .hero {
+      min-height: auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 360px;
+      gap: 2.6rem;
+      align-items: end;
+      padding: 1.2rem 0 3.5rem;
+    }
+
+    .hero-meta {
+      margin-bottom: 1rem;
+      color: #8c96a5;
+      font-family: var(--om-font-mono);
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .hero h2 {
+      max-width: 720px;
+      margin-bottom: 1rem;
+      font-size: clamp(3rem, 7vw, 5.25rem);
+      line-height: 0.94;
+    }
+
+    .hero h2 span {
+      display: block;
+      color: #aeb6c3;
+      font-size: clamp(1.55rem, 3vw, 2.35rem);
+      font-weight: 600;
+      line-height: 1.1;
+    }
+
+    .lede {
+      max-width: 680px;
+      color: #c7cdd6;
+      font-size: 1.05rem;
+      line-height: 1.65;
+    }
+
+    .proof-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-top: 1.25rem;
+    }
+
+    .identity-card {
+      display: grid;
+      gap: 1rem;
+      padding: 1rem;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #181a1f;
+    }
+
+    .mark-stage {
+      display: grid;
+      place-items: center;
+      min-height: 280px;
+      border: 1px solid #272d37;
+      border-radius: 6px;
+      background: #101217;
+    }
+
+    .mark-stage img {
+      width: 188px;
+      height: auto;
+    }
+
+    .spec-list {
+      display: grid;
+      border-top: 1px solid #303746;
+    }
+
+    .spec-row {
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 1rem;
+      padding: 0.66rem 0;
+      border-bottom: 1px solid #303746;
+      font-size: 0.78rem;
+    }
+
+    .spec-row span:first-child {
+      color: #7d8797;
+      font-family: var(--om-font-mono);
+    }
+
+    .spec-row span:last-child { color: #d6dbe3; }
+
+    .principles {
+      display: grid;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .principle {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 1.4rem;
+      padding: 1rem 1.1rem;
+      border-bottom: 1px solid #303746;
+      background: #171a20;
+    }
+
+    .principle:last-child { border-bottom: 0; }
+
+    .principle h3 {
+      margin-bottom: 0;
+      color: #f2f4f7;
+      font-size: 0.96rem;
+    }
+
+    .principle p {
+      margin-bottom: 0;
+      color: #b5bdc9;
+      font-size: 0.88rem;
+    }
+
+    .palette-board {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .palette-group {
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #171a20;
+      overflow: hidden;
+    }
+
+    .palette-group.wide {
+      grid-column: 1 / -1;
+    }
+
+    .palette-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: baseline;
+      padding: 0.82rem 1rem;
+      border-bottom: 1px solid #303746;
+      background: #14171d;
+    }
+
+    .palette-title h3 {
+      margin: 0;
+      color: #f2f4f7;
+      font-size: 0.92rem;
+    }
+
+    .palette-title span {
+      color: #7d8797;
+      font-family: var(--om-font-mono);
+      font-size: 0.68rem;
+    }
+
+    .color-row {
+      display: grid;
+      grid-template-columns: 44px minmax(180px, 1fr) 86px minmax(160px, 1.1fr);
+      gap: 0.9rem;
+      align-items: center;
+      min-height: 66px;
+      padding: 0.7rem 1rem;
+      border-bottom: 1px solid #303746;
+    }
+
+    .color-row:last-child { border-bottom: 0; }
+
+    .chip {
+      width: 44px;
+      height: 34px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 4px;
+    }
+
+    .token {
+      color: #aeb6c3;
+      font-family: var(--om-font-mono);
+      font-size: 0.76rem;
+    }
+
+    .hex {
+      color: #f2f4f7;
+      font-family: var(--om-font-mono);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    .use {
+      color: #8c96a5;
+      font-size: 0.78rem;
+    }
+
+    .type-spec {
+      display: grid;
+      grid-template-columns: 0.8fr 1.2fr;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #171a20;
+    }
+
+    .type-column {
+      display: grid;
+      gap: 1rem;
+      padding: 1.2rem;
+    }
+
+    .type-column:first-child {
+      border-right: 1px solid #303746;
+      background: #14171d;
+    }
+
+    .sample-display {
+      color: #f2f4f7;
+      font-size: clamp(2.1rem, 5vw, 4.25rem);
+      font-weight: 800;
+      line-height: 0.95;
+    }
+
+    .sample-heading {
+      color: #f2f4f7;
+      font-size: 1.45rem;
+      font-weight: 720;
+      line-height: 1.15;
+    }
+
+    .sample-body {
+      color: #c7cdd6;
+      font-size: 0.96rem;
+      line-height: 1.65;
+    }
+
+    .sample-mono {
+      color: #80d7df;
+      font-family: var(--om-font-mono);
+      font-size: 0.8rem;
+      overflow-wrap: anywhere;
+    }
+
+    .logo-section {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 1rem;
+    }
+
+    .logo-box {
+      display: grid;
+      place-items: center;
+      min-height: 310px;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #171a20;
+    }
+
+    .logo-box img {
+      width: 180px;
+      height: auto;
+    }
+
+    .rule-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .rule-card {
+      padding: 1rem;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #171a20;
+    }
+
+    .rule-card h3 {
+      margin-bottom: 0.72rem;
+      font-size: 0.98rem;
+    }
+
+    .rule-card ul {
+      display: grid;
+      gap: 0.5rem;
+      margin: 0;
+      padding-left: 1rem;
+      color: #b5bdc9;
+      font-size: 0.86rem;
+    }
+
+    .console {
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #171a20;
+      overflow: hidden;
+    }
+
+    .console-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.82rem 1rem;
+      border-bottom: 1px solid #303746;
+      background: #14171d;
+    }
+
+    .console-brand {
+      display: flex;
+      gap: 0.72rem;
+      align-items: center;
+    }
+
+    .console-brand img {
+      width: 26px;
+      height: 26px;
+    }
+
+    .console-brand strong {
+      display: block;
+      font-size: 0.92rem;
+    }
+
+    .console-body {
+      display: grid;
+      gap: 0;
+    }
+
+    .run-table {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-bottom: 1px solid #303746;
+    }
+
+    .run-cell {
+      min-height: 84px;
+      padding: 0.9rem 1rem;
+      border-right: 1px solid #303746;
+      background: #101217;
+    }
+
+    .run-cell:last-child { border-right: 0; }
+
+    .run-cell span {
+      display: block;
+      color: #7d8797;
+      font-family: var(--om-font-mono);
+      font-size: 0.68rem;
+    }
+
+    .run-cell strong {
+      display: block;
+      margin-top: 0.24rem;
+      color: #f2f4f7;
+      font-size: 1.12rem;
+      line-height: 1.1;
+    }
+
+    .stage-line {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(110px, 1fr));
+      overflow-x: auto;
+      border-bottom: 1px solid #303746;
+    }
+
+    .stage {
+      min-height: 82px;
+      padding: 0.85rem 1rem;
+      border-right: 1px solid #303746;
+      background: #171a20;
+    }
+
+    .stage:last-child { border-right: 0; }
+
+    .stage strong {
+      display: block;
+      margin-top: 0.52rem;
+      color: #f2f4f7;
+      font-size: 0.88rem;
+    }
+
+    .stage[data-state="pass"] { background: rgba(115, 176, 10, 0.1); }
+    .stage[data-state="wait"] { background: rgba(232, 163, 62, 0.12); }
+    .stage[data-state="proof"] { background: rgba(42, 172, 184, 0.12); }
+
+    .proof-table {
+      display: grid;
+      padding: 0.88rem 1rem;
+      background: #101217;
+    }
+
+    .proof-line {
+      display: grid;
+      grid-template-columns: 140px minmax(0, 1fr);
+      gap: 1rem;
+      padding: 0.36rem 0;
+      color: #c7cdd6;
+      font-family: var(--om-font-mono);
+      font-size: 0.78rem;
+    }
+
+    .proof-line span:first-child { color: #7d8797; }
+    .proof-line span:last-child { color: #80d7df; overflow-wrap: anywhere; }
+
+    .message-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+    }
+
+    .message-card {
+      padding: 1rem;
+      border: 1px solid #303746;
+      border-radius: 8px;
+      background: #171a20;
+    }
+
+    .message-card h3 {
+      margin-bottom: 0.75rem;
+      font-size: 0.98rem;
+    }
+
+    .message-card ul {
+      display: grid;
+      gap: 0.52rem;
+      margin: 0;
+      padding-left: 1rem;
+      color: #b5bdc9;
+      font-size: 0.87rem;
+    }
+
+    footer {
+      padding-top: 2.5rem;
+      color: #7d8797;
+      font-family: var(--om-font-mono);
+      font-size: 0.68rem;
+    }
+
+    @media (max-width: 1120px) {
+      .layout { grid-template-columns: 1fr; }
+      .rail {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid #272d37;
+      }
+      .nav {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      main {
+        width: min(100%, 980px);
+      }
+      .hero,
+      .section-head,
+      .logo-section,
+      .type-spec {
+        grid-template-columns: 1fr;
+      }
+      .palette-board,
+      .message-grid,
+      .rule-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 700px) {
+      main { padding: 1.25rem; }
+      .nav { grid-template-columns: 1fr; }
+      .hero h2 { font-size: 3rem; }
+      .identity-card,
+      .mark-stage,
+      .logo-box,
+      .console,
+      .palette-group,
+      .principles,
+      .type-spec,
+      .rule-card,
+      .message-card {
+        border-radius: 6px;
+      }
+      .color-row {
+        grid-template-columns: 44px 1fr;
+      }
+      .color-row .hex,
+      .color-row .use {
+        grid-column: 2;
+      }
+      .principle,
+      .run-table,
+      .proof-line {
+        grid-template-columns: 1fr;
+      }
+      .run-cell {
+        border-right: 0;
+        border-bottom: 1px solid #303746;
+      }
+      .run-cell:last-child { border-bottom: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="rail">
+      <div>
+        <div class="rail-brand">
+          <img src="./logo.svg" alt="Orbital Mesh mark">
+          <div>
+            <h1>Orbital Mesh</h1>
+            <p>Identity system v2.1</p>
+          </div>
+        </div>
+        <nav class="nav" aria-label="Brand guide sections">
+          <a href="#principles"><span>01</span><span>Principles</span></a>
+          <a href="#palette"><span>02</span><span>Palette</span></a>
+          <a href="#type"><span>03</span><span>Typography</span></a>
+          <a href="#logo"><span>04</span><span>Logo</span></a>
+          <a href="#ui"><span>05</span><span>Console</span></a>
+          <a href="#messaging"><span>06</span><span>Language</span></a>
+        </nav>
+      </div>
+      <div></div>
+      <div class="rail-note">
+        Local, offline-safe guide.<br>
+        State slice: branding.brand_system.v1
+      </div>
+    </aside>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="hero-meta">Brand kit / operator control plane</p>
+          <h2>Orbital Mesh <span>Policy-guided remediation control plane</span></h2>
+          <p class="lede">
+            A restrained identity for private infrastructure work: bounded action, operator steering, evaluation gates, and replayable proof.
+          </p>
+          <div class="proof-row">
+            <span class="om-status-pill" data-state="success">approval-gated</span>
+            <span class="om-status-pill" data-state="proof">audit evidence</span>
+            <span class="om-status-pill" data-state="warning">operator steering</span>
+            <span class="om-status-pill">CROPS scope</span>
+          </div>
+        </div>
+        <aside class="identity-card" aria-label="Orbital Mesh identity sample">
+          <div class="mark-stage">
+            <img src="./logo.svg" alt="Orbital Mesh mark">
+          </div>
+          <div class="spec-list">
+            <div class="spec-row"><span>Product</span><span>Orbital Mesh</span></div>
+            <div class="spec-row"><span>Parent</span><span>Purna Labs</span></div>
+            <div class="spec-row"><span>Category</span><span>CROPS Mesh</span></div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="section" id="principles">
+        <div class="section-head">
+          <div class="index">01 / Principles</div>
+          <div>
+            <h2>Designed for repeated operation.</h2>
+            <p>Use the same restraint expected from a production console. Decoration should never compete with state, risk, evidence, or authority.</p>
+          </div>
+        </div>
+        <div class="principles">
+          <article class="principle">
+            <h3>Dense, not crowded</h3>
+            <p>Panels should carry enough operational detail for scanning. Space is used to separate decisions, not to create a marketing layout.</p>
+          </article>
+          <article class="principle">
+            <h3>Semantic by default</h3>
+            <p>Green, amber, and red are reserved for state. Proof cyan is reserved for hashes, roots, signed packets, and exported evidence.</p>
+          </article>
+          <article class="principle">
+            <h3>No implied autonomy</h3>
+            <p>Copy and visuals must reinforce gates, allowlists, scoped actuators, and human steering before production mutation.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="palette">
+        <div class="section-head">
+          <div class="index">02 / Palette</div>
+          <div>
+            <h2>Operational color, grouped by job.</h2>
+            <p>Neutral structure does most of the work. Strong colors appear only when the interface needs to communicate action, proof, topology, memory, or state.</p>
+          </div>
+        </div>
+        <div class="palette-board">
+          <section class="palette-group wide" aria-labelledby="foundation-colors">
+            <div class="palette-title">
+              <h3 id="foundation-colors">Foundation</h3>
+              <span>surface / text / lines</span>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#111217"></div>
+              <div class="token">--om-color-bg</div>
+              <div class="hex">#111217</div>
+              <div class="use">Application and guide background</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#181A1F"></div>
+              <div class="token">--om-color-surface</div>
+              <div class="hex">#181A1F</div>
+              <div class="use">Panels, cards, sidebars</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#20242C"></div>
+              <div class="token">--om-color-surface-raised</div>
+              <div class="hex">#20242C</div>
+              <div class="use">Selected rows, nested controls</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#2C323D"></div>
+              <div class="token">--om-color-border</div>
+              <div class="hex">#2C323D</div>
+              <div class="use">Default dividers and container edges</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#F2F4F7"></div>
+              <div class="token">--om-color-text</div>
+              <div class="hex">#F2F4F7</div>
+              <div class="use">Primary foreground text</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#8C96A5"></div>
+              <div class="token">--om-color-text-muted</div>
+              <div class="hex">#8C96A5</div>
+              <div class="use">Metadata, labels, secondary chrome</div>
+            </div>
+          </section>
+
+          <section class="palette-group" aria-labelledby="signal-colors">
+            <div class="palette-title">
+              <h3 id="signal-colors">Signals</h3>
+              <span>action / proof / topology</span>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#548AF7"></div>
+              <div class="token">--om-color-action</div>
+              <div class="hex">#548AF7</div>
+              <div class="use">Primary action and active focus</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#2AACB8"></div>
+              <div class="token">--om-color-proof</div>
+              <div class="hex">#2AACB8</div>
+              <div class="use">Merkle roots, hashes, proof packets</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#A982C0"></div>
+              <div class="token">--om-color-topology</div>
+              <div class="hex">#A982C0</div>
+              <div class="use">Agent topology and lane routing</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#6FAE8D"></div>
+              <div class="token">--om-color-memory</div>
+              <div class="hex">#6FAE8D</div>
+              <div class="use">Model lifecycle and memory context</div>
+            </div>
+          </section>
+
+          <section class="palette-group" aria-labelledby="state-colors">
+            <div class="palette-title">
+              <h3 id="state-colors">State</h3>
+              <span>semantic only</span>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#73B00A"></div>
+              <div class="token">--om-color-success</div>
+              <div class="hex">#73B00A</div>
+              <div class="use">Ready, approved, passed</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#E8A33E"></div>
+              <div class="token">--om-color-warning</div>
+              <div class="hex">#E8A33E</div>
+              <div class="use">Awaiting operator, deferred, caution</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#F75464"></div>
+              <div class="token">--om-color-danger</div>
+              <div class="hex">#F75464</div>
+              <div class="use">Blocked, failed, unsafe</div>
+            </div>
+            <div class="color-row">
+              <div class="chip" style="background:#8AA4C8"></div>
+              <div class="token">--om-color-info</div>
+              <div class="hex">#8AA4C8</div>
+              <div class="use">Neutral informational state</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="section" id="type">
+        <div class="section-head">
+          <div class="index">03 / Typography</div>
+          <div>
+            <h2>Readable before expressive.</h2>
+            <p>System fonts keep private deployments offline-safe. Large type appears only in the guide and decks, not inside dense operator panels.</p>
+          </div>
+        </div>
+        <div class="type-spec">
+          <div class="type-column">
+            <div>
+              <div class="token">Display / 800</div>
+              <div class="sample-display">Orbital Mesh</div>
+            </div>
+            <div>
+              <div class="token">Mono / machine values</div>
+              <div class="sample-mono">run_id=mesh_4f8a3b9c<br>stage=evaluation_ready<br>root=0xf3a9b2c1</div>
+            </div>
+          </div>
+          <div class="type-column">
+            <div>
+              <div class="token">Heading / 720</div>
+              <div class="sample-heading">Policy evaluation before bounded action</div>
+            </div>
+            <div>
+              <div class="token">Body / 400</div>
+              <p class="sample-body">Runs move through ingest, trigger, decision, evaluation, operator steering, execution, feedback, and proof. Typography must make the state chain easy to inspect.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="logo">
+        <div class="section-head">
+          <div class="index">04 / Logo</div>
+          <div>
+            <h2>Bounded mesh, central policy gate.</h2>
+            <p>The mark is useful when it stays quiet. It should identify the product, not behave like an animated status indicator.</p>
+          </div>
+        </div>
+        <div class="logo-section">
+          <div class="logo-box">
+            <img src="./logo.svg" alt="Orbital Mesh mark">
+          </div>
+          <div class="rule-grid">
+            <article class="rule-card">
+              <h3>Use</h3>
+              <ul>
+                <li>Use `logo.svg` unchanged for docs, decks, and repo identity.</li>
+                <li>Minimum size: 24px UI, 48px docs and decks.</li>
+                <li>Use on dark neutral surfaces first.</li>
+                <li>Keep clearspace equal to half the mark width.</li>
+              </ul>
+            </article>
+            <article class="rule-card">
+              <h3>Do not</h3>
+              <ul>
+                <li>Do not animate the mark in production surfaces.</li>
+                <li>Do not use semantic state colors as decoration.</li>
+                <li>Do not place the mark inside oversized badges.</li>
+                <li>Do not use it as a progress spinner.</li>
+              </ul>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="ui">
+        <div class="section-head">
+          <div class="index">05 / Console</div>
+          <div>
+            <h2>Brand applied to the control plane.</h2>
+            <p>The visual system should make the next safe action obvious without hiding evidence, policy state, or proof lineage.</p>
+          </div>
+        </div>
+        <div class="console">
+          <div class="console-head">
+            <div class="console-brand">
+              <img src="./logo.svg" alt="">
+              <div>
+                <div class="token">orbital-mesh</div>
+                <strong>Operator Console</strong>
+              </div>
+            </div>
+            <span class="om-status-pill" data-state="warning">awaiting operator</span>
+          </div>
+          <div class="console-body">
+            <div class="run-table">
+              <div class="run-cell"><span>evaluation</span><strong>native</strong></div>
+              <div class="run-cell"><span>action</span><strong>rollback</strong></div>
+              <div class="run-cell"><span>authority</span><strong>gated</strong></div>
+              <div class="run-cell"><span>proof</span><strong>ready</strong></div>
+            </div>
+            <div class="stage-line">
+              <div class="stage" data-state="pass"><span class="om-status-pill" data-state="success">pass</span><strong>ingest</strong></div>
+              <div class="stage" data-state="pass"><span class="om-status-pill" data-state="success">pass</span><strong>decision</strong></div>
+              <div class="stage" data-state="pass"><span class="om-status-pill" data-state="success">pass</span><strong>evaluation</strong></div>
+              <div class="stage" data-state="wait"><span class="om-status-pill" data-state="warning">wait</span><strong>approval</strong></div>
+              <div class="stage"><span class="om-status-pill">pending</span><strong>execution</strong></div>
+              <div class="stage" data-state="proof"><span class="om-status-pill" data-state="proof">proof</span><strong>Merkle</strong></div>
+            </div>
+            <div class="proof-table">
+              <div class="proof-line"><span>run_id</span><span>mesh_4f8a3b9c</span></div>
+              <div class="proof-line"><span>merkle_root</span><span>0xf3a9b2c1d4e78a9b</span></div>
+              <div class="proof-line"><span>policy_gate</span><span>approval_required</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="messaging">
+        <div class="section-head">
+          <div class="index">06 / Language</div>
+          <div>
+            <h2>Precise claims only.</h2>
+            <p>Public language should sound like a control plane with proof, not a general AI automation pitch.</p>
+          </div>
+        </div>
+        <div class="message-grid">
+          <article class="message-card">
+            <h3>Use</h3>
+            <ul>
+              <li>Policy-guided operator control plane.</li>
+              <li>Bounded remediation for private infrastructure.</li>
+              <li>Operator-steerable runs with evaluation gates.</li>
+              <li>Audit-ready run evidence and Merkle-backed event history.</li>
+              <li>CROPS: Cloud, Reliability, Ops, Platform, and Security.</li>
+            </ul>
+          </article>
+          <article class="message-card">
+            <h3>Avoid</h3>
+            <ul>
+              <li>Self-healing infrastructure.</li>
+              <li>Autonomous production AI.</li>
+              <li>AI-powered as a generic value claim.</li>
+              <li>Best, first, or safest without measured proof.</li>
+              <li>Protocol language where no protocol contract is being described.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        <div>Files: logo.svg / mesh-tokens.css / brand-guide.html / README.md</div>
+        <div>State slice: branding.brand_system.v1</div>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

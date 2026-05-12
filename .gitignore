@@ -6,6 +6,7 @@ build/
 target/
 *.egg-info/
 .eggs/
+*.tsbuildinfo
 
 # Python
 __pycache__/
@@ -62,3 +63,6 @@ lusisOS-main/
 e2e-reports/
 web/test-results/
 web/playwright-report/
+meshapp/frontend/out/
+meshapp/.zig-cache/
+meshapp/zig-out/

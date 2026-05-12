@@ -2,6 +2,6 @@
   "name": "orbital-mesh",
   "private": true,
   "scripts": {
-    "lint": "npm --prefix web run lint"
+    "lint": "npm --prefix web run lint && npm --prefix meshapp/frontend run lint"
   }
 }

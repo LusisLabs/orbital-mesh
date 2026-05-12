@@ -71,6 +71,7 @@ jobs:
             --output-file /src/dist/security/osv-lockfile-scan.json \
             --lockfile=/src/uv.lock \
             --lockfile=/src/web/package-lock.json \
+            --lockfile=/src/meshapp/frontend/package-lock.json \
             --lockfile=/src/latent-mesh/LatentMAS/Cargo.lock
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -87,18 +88,24 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            meshapp/frontend/package-lock.json
       - run: npm ci
         working-directory: web
+      - run: npm ci
+        working-directory: meshapp/frontend
       - run: mkdir -p ../dist/security
         working-directory: web
       - run: npm audit --audit-level=high --json > ../dist/security/npm-audit.json
         working-directory: web
+      - run: npm audit --audit-level=high --json > ../../dist/security/npm-audit-meshapp.json
+        working-directory: meshapp/frontend
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: npm-audit
-          path: dist/security/npm-audit.json
+          path: dist/security/npm-audit*.json
           retention-days: 30
 
   codeql:

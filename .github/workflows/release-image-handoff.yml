@@ -81,7 +81,9 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            meshapp/frontend/package-lock.json
       - name: Install Python test dependency
         run: python -m pip install "cryptography>=44,<47" "psycopg[binary]>=3.2,<4"
       - name: Run Python tests
@@ -93,6 +95,10 @@ jobs:
           npm --prefix web run lint
           npm --prefix web run build
           npm --prefix web test --silent
+          npm --prefix meshapp/frontend ci
+          npm --prefix meshapp/frontend run lint
+          npm --prefix meshapp/frontend run build
+          npm --prefix meshapp/frontend test --silent
       - name: Run release static gates
         run: |
           set -euo pipefail

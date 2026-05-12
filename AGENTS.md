@@ -7,6 +7,10 @@ Before non-trivial repo-wide work, read:
 - `docs/repo-truth-audit.md` for current/stale/conflicting/historical repo claims.
 - `docs/future-agent-operating-guide.md` for source-of-truth order, active runtime boundaries, validation gates, and dirty-worktree handling.
 
+## Main rules
+
+- Every mutation must name the state slice it touches. Do not infer state ownership from imports; identify the explicit slice, store, schema, runtime state file, API resource, or persisted artifact before editing.
+
 ## Stack
 
 | Area | Stack |

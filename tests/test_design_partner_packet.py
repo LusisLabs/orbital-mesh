@@ -137,6 +137,19 @@ class DesignPartnerPacketTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
 
+    def test_missing_design_partner_packet_reports_required_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing-design-partner-packet.json"
+
+            result = verify_design_partner_packet(path)
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["error"], "packet_missing")
+        self.assertIn("packet_present", result["missing"])
+        self.assertIn("schema_valid", result["missing"])
+        self.assertFalse(result["checks"]["packet_present"])
+        self.assertFalse(result["checks"]["schema_valid"])
+
     def test_design_partner_packet_blocks_missing_real_user_consent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "design-partner-packet.json"

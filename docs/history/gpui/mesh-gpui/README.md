@@ -1,7 +1,8 @@
 # Mesh GPUI Operator Console
 
 Archived under `docs/history/gpui/mesh-gpui/`. The active operator surface is
-the browser UI in `web/`.
+the `meshapp/` Next static app. `web/` remains the Vite reference surface during
+migration.
 
 This is the first-party Rust desktop surface for Orbital Mesh. It uses GPUI plus `gpui-component` and talks to the existing control-plane HTTP API instead of duplicating runtime logic.
 

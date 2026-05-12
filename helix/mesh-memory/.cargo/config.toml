@@ -1,0 +1,7 @@
+# Helix CLI 2.3.4 vendors a metrics crate that uses let-chain syntax without
+# enabling the feature gate. Scope the workaround to this generated project.
+[env]
+RUSTC_BOOTSTRAP = { value = "1", force = true }
+
+[build]
+rustflags = ["-Zcrate-attr=feature(let_chains)"]

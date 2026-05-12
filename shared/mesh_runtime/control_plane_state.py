@@ -19,6 +19,7 @@ from .contracts import ClaimRecord, MemoryPacket, ObservationRecord, Relationshi
 from .control_plane_models import GoalRecord, RunEvent, RunSession
 from .json_store import LockedJsonFile
 from .learning_logic import historical_success_rate, learning_context_from_outcomes, recovery_patterns
+from .helix_memory import build_helix_memory_projection
 from .mesh_state_store import RunFilters
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .state import RuntimeStateStore
@@ -45,6 +46,7 @@ class FileStateStore:
         self.state_directory.mkdir(parents=True, exist_ok=True)
         self.runtime_store = RuntimeStateStore(self.state_directory)
         self.vault = VaultManager(config.vault_path, runtime_config=config)
+        self.helix_memory = build_helix_memory_projection(config)
         self._goals_path = self.state_directory / "goals.json"
         self._run_sessions_path = self.state_directory / "run_sessions.json"
         self._run_sessions_archive_path = self.state_directory / "run_sessions.archive.jsonl"
@@ -461,11 +463,13 @@ class FileStateStore:
 
     def append_observation(self, record: dict[str, Any]) -> dict[str, Any]:
         observation = ObservationRecord.from_dict(record)
-        with LockedJsonFile(self._observations_path) as payload:
-            records = payload.setdefault("observations", [])
-            records.append(observation.to_dict())
-        self.vault.write_memory_observation(observation.to_dict())
-        return observation.to_dict()
+        record_payload = observation.to_dict()
+        with LockedJsonFile(self._observations_path) as state_payload:
+            records = state_payload.setdefault("observations", [])
+            records.append(record_payload)
+        self.vault.write_memory_observation(record_payload)
+        self.helix_memory.upsert_observation(record_payload)
+        return record_payload
 
     def list_observations(self, scope: dict[str, Any], filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         filters = filters or {}
@@ -476,16 +480,18 @@ class FileStateStore:
 
     def save_claim(self, record: dict[str, Any]) -> dict[str, Any]:
         claim = ClaimRecord.from_dict(record)
-        with LockedJsonFile(self._claims_path) as payload:
-            records = payload.setdefault("claims", [])
+        record_payload = claim.to_dict()
+        with LockedJsonFile(self._claims_path) as state_payload:
+            records = state_payload.setdefault("claims", [])
             for index, existing in enumerate(records):
                 if existing.get("claim_id") == claim.claim_id:
-                    records[index] = claim.to_dict()
+                    records[index] = record_payload
                     break
             else:
-                records.append(claim.to_dict())
-        self.vault.write_memory_claim(claim.to_dict())
-        return claim.to_dict()
+                records.append(record_payload)
+        self.vault.write_memory_claim(record_payload)
+        self.helix_memory.upsert_claim(record_payload)
+        return record_payload
 
     def get_claim(self, claim_id: str) -> dict[str, Any] | None:
         for record in self.list_claims({}, {"limit": 1000}):
@@ -503,15 +509,17 @@ class FileStateStore:
 
     def save_relationship(self, record: dict[str, Any]) -> dict[str, Any]:
         relationship = RelationshipRecord.from_dict(record)
-        with LockedJsonFile(self._relationships_path) as payload:
-            records = payload.setdefault("relationships", [])
+        record_payload = relationship.to_dict()
+        with LockedJsonFile(self._relationships_path) as state_payload:
+            records = state_payload.setdefault("relationships", [])
             for index, existing in enumerate(records):
                 if existing.get("relationship_id") == relationship.relationship_id:
-                    records[index] = relationship.to_dict()
+                    records[index] = record_payload
                     break
             else:
-                records.append(relationship.to_dict())
-        return relationship.to_dict()
+                records.append(record_payload)
+        self.helix_memory.upsert_relationship(record_payload)
+        return record_payload
 
     def list_relationships(
         self,
@@ -530,16 +538,18 @@ class FileStateStore:
 
     def save_supersession(self, record: dict[str, Any]) -> dict[str, Any]:
         supersession = SupersessionRecord.from_dict(record)
-        with LockedJsonFile(self._supersessions_path) as payload:
-            records = payload.setdefault("supersessions", [])
-            records.append(supersession.to_dict())
+        record_payload = supersession.to_dict()
+        with LockedJsonFile(self._supersessions_path) as state_payload:
+            records = state_payload.setdefault("supersessions", [])
+            records.append(record_payload)
         old_claim = self.get_claim(supersession.old_claim_id)
         if old_claim is not None:
             old_claim["state"] = "superseded"
             old_claim["superseded_by"] = supersession.new_claim_id
             old_claim["updated_at"] = supersession.created_at
             self.save_claim(old_claim)
-        return supersession.to_dict()
+        self.helix_memory.upsert_supersession(record_payload)
+        return record_payload
 
     def retrieve_memory(self, request: dict[str, Any]) -> dict[str, Any]:
         from .memory_retrieval import MemoryRetrievalService
@@ -548,23 +558,27 @@ class FileStateStore:
 
     def record_memory_retrieval(self, record: dict[str, Any]) -> dict[str, Any]:
         retrieval = RetrievalRecord.from_dict(record)
-        with LockedJsonFile(self._retrievals_path) as payload:
-            records = payload.setdefault("retrievals", [])
-            records.append(retrieval.to_dict())
-        self.vault.write_memory_retrieval(retrieval.to_dict())
-        return retrieval.to_dict()
+        record_payload = retrieval.to_dict()
+        with LockedJsonFile(self._retrievals_path) as state_payload:
+            records = state_payload.setdefault("retrievals", [])
+            records.append(record_payload)
+        self.vault.write_memory_retrieval(record_payload)
+        self.helix_memory.record_retrieval(record_payload)
+        return record_payload
 
     def save_memory_packet(self, packet: dict[str, Any]) -> dict[str, Any]:
         model = MemoryPacket.from_dict(packet)
-        with LockedJsonFile(self._packets_path) as payload:
-            records = payload.setdefault("packets", [])
+        record_payload = model.to_dict()
+        with LockedJsonFile(self._packets_path) as state_payload:
+            records = state_payload.setdefault("packets", [])
             for index, existing in enumerate(records):
                 if existing.get("packet_id") == model.packet_id:
-                    records[index] = model.to_dict()
+                    records[index] = record_payload
                     break
             else:
-                records.append(model.to_dict())
-        return model.to_dict()
+                records.append(record_payload)
+        self.helix_memory.upsert_memory_packet(record_payload)
+        return record_payload
 
     def get_memory_packet(self, packet_id: str) -> dict[str, Any] | None:
         with LockedJsonFile(self._packets_path) as payload:

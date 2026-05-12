@@ -38,6 +38,7 @@ def verify_on_call_drill(path: str | Path | None, *, expected_environment: str |
         checks["proof_present"] = False
     if load_error:
         checks["schema_valid"] = False
+    missing = [name for name, passed in checks.items() if not passed]
     return {
         "schema_version": ON_CALL_DRILL_VERIFICATION_VERSION,
         "generated_at": _timestamp(),
@@ -46,7 +47,8 @@ def verify_on_call_drill(path: str | Path | None, *, expected_environment: str |
         "drill_id": proof.get("drill_id") if proof else None,
         "environment": proof.get("environment") if proof else None,
         "checks": checks,
-        "error": load_error,
+        "missing": missing,
+        "error": load_error or ("proof_missing" if proof is None else None),
     }
 
 

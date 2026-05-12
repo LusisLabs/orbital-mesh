@@ -1,11 +1,11 @@
-FROM node:22-bookworm-slim AS web
-WORKDIR /repo/web
+FROM node:22-bookworm-slim AS operator-ui
+WORKDIR /repo/meshapp/frontend
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 \
   && rm -rf /var/lib/apt/lists/*
-COPY web/package.json web/package-lock.json ./
+COPY meshapp/frontend/package.json meshapp/frontend/package-lock.json ./
 RUN npm ci
-COPY web/ ./
+COPY meshapp/frontend/ ./
 COPY scripts/generate_control_plane_contracts.py /repo/scripts/generate_control_plane_contracts.py
 COPY shared /repo/shared
 RUN npm run build
@@ -107,7 +107,7 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
 
 ENV MESH_SERVER_HOST=0.0.0.0 \
     MESH_SERVER_PORT=8787 \
-    MESH_WEB_ASSET_PATH=/app/web/dist \
+    MESH_WEB_ASSET_PATH=/app/meshapp/frontend/out \
     MESH_ENVIRONMENT=production \
     MESH_ACCESS_LOG=1 \
     MESH_STRUCTURED_LOGS=1 \
@@ -115,7 +115,7 @@ ENV MESH_SERVER_HOST=0.0.0.0 \
     MESH_BUILD_COMMIT=$MESH_BUILD_COMMIT \
     MESH_BUILD_IMAGE_DIGEST=$MESH_BUILD_IMAGE_DIGEST
 
-COPY --from=web /repo/web/dist ./web/dist
+COPY --from=operator-ui /repo/meshapp/frontend/out ./meshapp/frontend/out
 COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py setup_integrations.py ./
 COPY scripts/compose_mesh_entrypoint.sh /usr/local/bin/compose_mesh_entrypoint.sh
 COPY shared ./shared
@@ -123,7 +123,7 @@ COPY services ./services
 COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies

@@ -23,7 +23,7 @@ These are the dimensions this codebase is built to support; they match a discipl
 | Dimension | Mesh behavior |
 |-----------|----------------|
 | Execution safety | Approval gate by default; optional interruptible auto; Kubernetes live execution off by default; allowlists when live |
-| Operator surface | Browser-first Vite control plane served by `run_server.py`; curses TUI served by `run_tui.py` for terminal-native inspection |
+| Operator surface | `meshapp/` Next static operator app served by `run_server.py` or the zero-native shell; legacy `web/` remains the Vite reference surface during migration; curses TUI served by `run_tui.py` for terminal-native inspection |
 | Model lifecycle | `mesh_brain` package for post-training, eval, serving, model management, and hardware-routing primitives |
 | Agent topology | Profile-driven lane routing across centralized, hierarchical, decentralized, federated, and hybrid governance structures |
 
@@ -121,9 +121,10 @@ Proposal lanes are selected by the topology resolver and connector certification
 
 ```text
 orbital-mesh/
-├── Dockerfile                       # production image (Vite UI + Python server)
+├── Dockerfile                       # production image (meshapp operator UI + Python server)
 ├── docker-compose.yml               # persisted state volume + health checks
 ├── docker-compose.stack.yml         # all-in-one local Mesh + sidecars + k3s + smoke stack
+├── docker-compose.e2estack.yml      # full-stack E2E overlay for pilot-like local proof rehearsal
 ├── .env.example                     # configuration template
 ├── control_plane_server.py          # local HTTP + SSE server
 ├── run_server.py                    # browser control-plane entrypoint
@@ -149,7 +150,9 @@ orbital-mesh/
 │   ├── merkle.py
 │   ├── vault.py
 │   └── state.py
-├── web/                             # React/Vite browser control plane
+├── meshapp/                         # zero-native shell + Next production operator app
+├── web/                             # React/Vite reference control plane during migration
+│   └── branding/                    # brand guide, SVG mark, and reusable design tokens
 ├── docs/post-training/              # Mesh Brain PRD and runtime architecture imported from post-training
 ├── fixtures/
 ├── policies/
@@ -166,7 +169,7 @@ Use this path when you want Mesh, the local sidecars, a live Kubernetes cluster,
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API and browser UI are available at `http://127.0.0.1:8787`.
+This starts Mesh, a dedicated Hermes sidecar, embedded k3s, a bootstrap job that seeds `search/semantic-search`, and `mesh-smoke`, which seeds a CrashLoop and launches a live Mesh recovery run. The Mesh API and static `meshapp` operator UI are available at `http://127.0.0.1:8787`.
 
 Optional lanes:
 
@@ -199,12 +202,13 @@ This writes integration configuration to:
 
 The saved commands point at bridge entrypoints inside `orbital-mesh`, not raw vendor binaries. That keeps the control plane contract stable while still exercising the real Promptfoo, Goose, and Hermes CLIs. Agent lane routing is controlled by `config/orchestration-topology.profile.json` and connector certification, not by importing adapter modules.
 
-### 2. Install the browser UI dependencies
+### 2. Install the operator UI dependencies
 
 ```bash
-cd web
+cd meshapp/frontend
 npm install
 npm run build
+cd ..
 cd ..
 ```
 
@@ -220,12 +224,19 @@ Default server address:
 http://127.0.0.1:8787
 ```
 
-### 4. Open the browser
+### 4. Open the operator app
 
-Point the browser at:
+Point the browser at the server-hosted operator app:
 
 ```text
 http://127.0.0.1:8787
+```
+
+For the zero-native shell:
+
+```bash
+cd meshapp
+zig build dev
 ```
 
 ### 5. Launch a run
@@ -238,12 +249,15 @@ Use the left rail to:
 - select an orchestration mode: `native`, `goose`, or `hermes`
 - choose `approval_gate` or `interruptible_auto`
 
-## Web Control Plane
+## Operator App
 
-The browser UI is a React/Vite application under [`web/`](./web) using:
+The production pilot-serving operator UI is a Next static app under [`meshapp/frontend`](./meshapp/frontend), with a zero-native shell under [`meshapp/`](./meshapp). It carries forward the active Mesh console from [`web/`](./web), including:
 
 - a dense operator shell and graph-driven center stage inspired by `mesh-llm`
 - server connection, status, and side-panel patterns tuned for the operator workflow
+- readiness, pilot go/no-go, Mesh Brain, run evidence, connector certification, topology, audit/provenance, and critical action surfaces
+
+`web/` remains the Vite reference surface while the migration is validated. Generated control-plane TypeScript contracts are checked in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`; `scripts/generate_control_plane_contracts.py --types-path <path>` can target one UI contract file when repairing a single surface.
 
 **Unified canvas** (center stage) composes run flow, Kubernetes context, Merkle, and artifacts on one graph; the graph panel has a **fullscreen** control (top-right) for focused inspection. Below: local control plane with the **Unified** tab active (example scenario `kubernetes_crashloop_patch`).
 
@@ -614,11 +628,15 @@ Supported configuration variables:
 - `MESH_ORCHESTRATION_MODE`
 - `MESH_STATE_BACKEND` — `file` (default) keeps local `.mesh-runtime-state`; `postgres` stores canonical run state in Postgres.
 - `MESH_DATABASE_URL` — Postgres/Supabase connection string used when `MESH_STATE_BACKEND=postgres`.
+- `MESH_MEMORY_GRAPH_BACKEND` — `local` (default) uses Mesh's verified in-process memory retrieval; `helix` mirrors memory records to HelixDB as an explicit graph-vector projection.
+- `MESH_HELIX_API_ENDPOINT` — optional HelixDB endpoint used when `MESH_MEMORY_GRAPH_BACKEND=helix`; unset uses the local Helix client path.
+- `MESH_HELIX_PORT` — local HelixDB port for the Helix client path; defaults to `6969`.
+- `MESH_HELIX_QUERY_NAMESPACE` — prefix for compiled HelixQL projection queries; defaults to `mesh`.
 - `MESH_STATE_DIRECTORY`
 - `MESH_RESEARCH_DIRECTORY` — autoresearch import root for `/api/research-sessions` and `/api/research-corpus`; defaults to `<state>/research`.
 - `MESH_SERVER_HOST`
 - `MESH_SERVER_PORT`
-- `MESH_WEB_ASSET_PATH`
+- `MESH_WEB_ASSET_PATH` (default: `meshapp/frontend/out`)
 - `MESH_VAULT_PATH`
 - `MESH_INTEGRATIONS_CONFIG_PATH`
 - `MESH_DEFAULT_STEERING_MODE`
@@ -629,6 +647,8 @@ Supported configuration variables:
 - `MESH_DEEPAGENTS_MODEL`: provider/model string for the Deep Agents proposal fabric.
 - `MESH_ORCHESTRATION_TOPOLOGY_PROFILE_PATH`: versioned profile used to map organization/infra/model evidence to agent topology.
 - `MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH`: optional proof packet used by expansion readiness to verify topology routing with real run evidence.
+- `MESH_BACKUP_RESTORE_REHEARSAL_PATH` — proof packet used by staging and pilot readiness to verify backup/restore rehearsal for the active profile and state backend.
+- `MESH_ON_CALL_DRILL_PATH` — proof packet used by pilot go/no-go to verify the staffed on-call drill, kill switch, forced approval gate, bad-target revocation, stuck-run recovery, provider-key rotation, and restore path.
 - `MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE`
 - `MESH_INCIDENT_CREDENTIALS_AVAILABLE`
 - `MESH_AUDIT_LOGGING_AVAILABLE`
@@ -692,7 +712,7 @@ Then run the first slice against that signal:
 python3 run_first_slice.py < /tmp/semantic-search-signal.json
 ```
 
-The browser UI can also launch a run directly from a live deployment now. In the launch form, change the signal source to `Live Kubernetes Deployment`, enter the deployment and namespace, and launch the run. The backend will harvest the deployment signal first, then execute the normal Mesh pipeline.
+The operator UI can also launch a run directly from a live deployment now. In the launch form, change the signal source to `Live Kubernetes Deployment`, enter the deployment and namespace, and launch the run. The backend will harvest the deployment signal first, then execute the normal Mesh pipeline.
 
 ### Docker-Native Local E2E
 
@@ -899,7 +919,7 @@ The image currently runs as root because the bundled Goose profile path and kube
 ### Bare metal
 
 1. Build the browser bundle: `cd web && npm ci && npm run build`.
-2. Set `MESH_WEB_ASSET_PATH` to the absolute path of `web/dist` if it is not adjacent to the Python tree.
+2. Set `MESH_WEB_ASSET_PATH` to the absolute path of `meshapp/frontend/out` if it is not adjacent to the Python tree.
 3. Bind `MESH_SERVER_HOST` to `0.0.0.0` only on trusted networks; otherwise keep the default loopback binding and front with a reverse proxy on the same host.
 4. Enable access logs in production if desired: `MESH_ACCESS_LOG=1` (Python logging; ensure your process supervisor captures stdout/stderr).
 

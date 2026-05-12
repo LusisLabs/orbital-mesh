@@ -29,6 +29,20 @@ class OnCallDrillTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
 
+    def test_missing_on_call_drill_reports_required_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "missing-on-call-drill.json"
+
+            result = verify_on_call_drill(proof_path, expected_environment="pilot")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["error"], "proof_missing")
+        self.assertIn("proof_present", result["missing"])
+        self.assertIn("schema_valid", result["missing"])
+        self.assertIn("environment_matches_expected", result["missing"])
+        self.assertFalse(result["checks"]["proof_present"])
+        self.assertFalse(result["checks"]["schema_valid"])
+
     def test_on_call_drill_blocks_slow_recovery_missing_rotation_and_unpaused_watchers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             proof_path = Path(tmp) / "on-call-drill.json"

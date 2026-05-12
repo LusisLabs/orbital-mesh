@@ -35,6 +35,81 @@ Mesh now treats memory as a verified substrate instead of a loose search sidecar
 6. Supersession and contradiction filtering.
 7. Memory-packet assembly for downstream consumers.
 
+## HelixDB Projection
+
+`MESH_MEMORY_GRAPH_BACKEND=helix` enables an optional HelixDB projection for
+verified memory records. The canonical source of truth remains the configured
+Mesh state backend (`file` or `postgres`); HelixDB receives observations,
+claims, relationships, supersessions, retrieval records, and memory packets as
+a graph-vector substrate for agent walkability, RAG, and MCP-facing exploration.
+
+### Protocol Interface
+
+The projection implements `HelixMemoryProjectionProtocol` with these methods:
+
+- `upsert_observation(record)`: Insert or update an observation.
+- `upsert_claim(record)`: Insert or update a claim.
+- `upsert_relationship(record)`: Insert or update a relationship edge.
+- `upsert_supersession(record)`: Record claim supersession.
+- `record_retrieval(record)`: Log memory read events.
+- `upsert_memory_packet(record)`: Persist context bundles.
+- `replay_pending(limit)`: Replay failed outbox entries.
+- `projection_status()`: Return projection health.
+
+The outbox implements `HelixMemoryProjectionOutboxProtocol`:
+
+- `enqueue(operation, record)`: Queue projection operation.
+- `mark_applied(event_id)`: Mark operation successful.
+- `mark_failed(event_id, error)`: Mark operation failed.
+- `pending_events(limit)`: List pending operations.
+- `status()`: Return outbox health.
+
+Required configuration:
+
+```bash
+MESH_MEMORY_GRAPH_BACKEND=helix
+MESH_HELIX_API_ENDPOINT=http://localhost:6969
+MESH_HELIX_QUERY_NAMESPACE=mesh
+```
+
+The adapter calls `MESH_HELIX_API_ENDPOINT` directly when it is set. If the
+endpoint is unset, it uses the optional `helix` Python extra when available and
+otherwise falls back to `http://localhost:${MESH_HELIX_PORT}` (default `6969`).
+Customize the namespace with `MESH_HELIX_QUERY_NAMESPACE` (default `mesh`);
+it must start with a letter or underscore and contain only letters, numbers,
+and underscores.
+Enabling this mode requires compiled HelixQL queries matching the configured
+namespace, for example `mesh_upsert_observation`, `mesh_upsert_claim`,
+`mesh_upsert_relationship`, `mesh_upsert_supersession`, `mesh_record_retrieval`,
+and `mesh_upsert_memory_packet`.
+
+The checked-in Helix project lives under `helix/mesh-memory/`:
+
+```bash
+cd helix/mesh-memory
+helix check
+helix push dev
+```
+
+The projection is recoverable when enabled. Canonical writes land in the
+configured Mesh state backend first, then the Helix operation is recorded in a
+projection outbox before the query is attempted. File-backed state stores the
+outbox at `helix_memory_projection_outbox.json` under `state_directory`;
+Postgres-backed state stores it in `helix_memory_projection_outbox`. Endpoint
+or query failures leave `failed` outbox entries for replay instead of silently
+forking memory state. Record-shape errors still raise because they indicate a
+contract bug before the projection boundary.
+
+It is not a replacement for Postgres pilot persistence until equivalent
+restart, migration, backup/restore, load, and release provenance gates exist
+and pass.
+
+Focused proof:
+
+```bash
+scripts/verify_helix_memory_projection.py --json --require-enabled --replay-pending
+```
+
 ## Lifecycle
 
 - Scenario analysis appends analyzer observations and supporting semantic claims.

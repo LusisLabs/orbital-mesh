@@ -29,7 +29,7 @@ Expected result:
 - Python unit suite passes.
 - TypeScript lint/typecheck passes.
 - Vitest suite passes.
-- `web/dist/index.html` points at the newly built asset names.
+- `meshapp/frontend/out/index.html` points at the newly built asset names.
 
 ## 3. Start Docker-Native E2E
 
@@ -258,3 +258,30 @@ docker compose -f docker-compose.stack.yml down -v
 ```
 
 This stops the all-in-one Compose stack and removes its named volumes. Use `./scripts/e2e_down.sh` only for the legacy host-driven `k3d` path.
+
+## 15. HelixDB Memory Projection Troubleshooting
+
+When `MESH_MEMORY_GRAPH_BACKEND=helix` is enabled, the runtime projects memory records to a HelixDB backend. The projection uses an outbox pattern to ensure atomic writes.
+
+Outbox location:
+
+- File backend: `<state_directory>/helix_memory_projection_outbox.json`
+- Postgres backend: table `helix_memory_projection_outbox`
+
+Diagnosing failed outbox events:
+
+```bash
+# Check file-based outbox
+cat <state_directory>/helix_memory_projection_outbox.json | jq '.[] | select(.status == "failed")'
+
+# Check Postgres outbox (requires database access)
+psql -d mesh -c "SELECT event_id, operation, status, attempts, last_error FROM helix_memory_projection_outbox WHERE status = 'failed';"
+```
+
+Replaying failed events:
+
+```bash
+python3 scripts/verify_helix_memory_projection.py --json --replay-pending
+```
+
+The `--replay-pending` flag replays any events with `status = 'failed'` before running the verification probe. This is useful after fixing network connectivity to HelixDB or after schema migrations.

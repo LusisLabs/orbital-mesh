@@ -108,6 +108,20 @@ class AuthenticatedIngressDeploymentTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
 
+    def test_missing_authenticated_ingress_deployment_proof_reports_required_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing-authenticated-ingress-deployment-proof.json"
+
+            result = verify_authenticated_ingress_deployment_proof(path, expected_environment="staging")
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["error"], "proof_missing")
+        self.assertIn("proof_present", result["missing"])
+        self.assertIn("schema_valid", result["missing"])
+        self.assertIn("environment_matches_expected", result["missing"])
+        self.assertFalse(result["checks"]["proof_present"])
+        self.assertFalse(result["checks"]["schema_valid"])
+
     def test_authenticated_ingress_deployment_blocks_wrong_expected_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "authenticated-ingress-deployment-proof.json"

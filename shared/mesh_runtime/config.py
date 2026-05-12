@@ -9,7 +9,7 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_STATE_DIRECTORY = _REPO_ROOT / ".mesh-runtime-state"
 DEFAULT_RESEARCH_DIRECTORY = DEFAULT_STATE_DIRECTORY / "research"
-DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "web" / "dist"
+DEFAULT_WEB_ASSET_PATH = _REPO_ROOT / "meshapp" / "frontend" / "out"
 DEFAULT_VAULT_PATH = DEFAULT_STATE_DIRECTORY / "vault"
 DEFAULT_INTEGRATIONS_CONFIG_PATH = DEFAULT_STATE_DIRECTORY / "integrations.json"
 DEFAULT_OWNERSHIP_REGISTRY_PATH = _REPO_ROOT / "config" / "ownership.registry.json"
@@ -96,6 +96,10 @@ class RuntimeConfig:
     goose_timeout_seconds: int = 180
     state_backend: str = "file"
     database_url: str | None = None
+    memory_graph_backend: str = "local"
+    helix_api_endpoint: str | None = None
+    helix_port: int = 6969
+    helix_query_namespace: str = "mesh"
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
@@ -360,6 +364,10 @@ class RuntimeConfig:
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
         self.readiness_profile = _normalize_readiness_profile(self.readiness_profile, self.environment)
+        self.memory_graph_backend = _normalize_memory_graph_backend(self.memory_graph_backend)
+        if self.helix_port <= 0:
+            raise ValueError(f"helix_port must be > 0, got {self.helix_port}")
+        self.helix_query_namespace = _normalize_helix_query_namespace(self.helix_query_namespace)
         if self.darkharness_packet_persistence_mode != "ephemeral":
             raise ValueError("darkharness_packet_persistence_mode only supports ephemeral in this phase")
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
@@ -390,6 +398,10 @@ class RuntimeConfig:
             goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
             state_backend=_normalize_state_backend(os.getenv("MESH_STATE_BACKEND", "file")),
             database_url=os.getenv("MESH_DATABASE_URL") or None,
+            memory_graph_backend=_normalize_memory_graph_backend(os.getenv("MESH_MEMORY_GRAPH_BACKEND", "local")),
+            helix_api_endpoint=os.getenv("MESH_HELIX_API_ENDPOINT") or None,
+            helix_port=int(os.getenv("MESH_HELIX_PORT", "6969")),
+            helix_query_namespace=os.getenv("MESH_HELIX_QUERY_NAMESPACE", "mesh"),
             state_directory=state_directory,
             research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),
@@ -809,6 +821,26 @@ def _normalize_state_backend(raw: str) -> str:
     if backend not in ("file", "postgres"):
         raise ValueError(f"MESH_STATE_BACKEND must be 'file' or 'postgres', got {raw!r}")
     return backend
+
+
+def _normalize_memory_graph_backend(raw: str) -> str:
+    backend = (raw or "local").strip().lower()
+    if backend in {"off", "none", "disabled"}:
+        return "local"
+    if backend not in {"local", "helix"}:
+        raise ValueError(f"MESH_MEMORY_GRAPH_BACKEND must be 'local' or 'helix', got {raw!r}")
+    return backend
+
+
+def _normalize_helix_query_namespace(raw: str) -> str:
+    namespace = (raw or "mesh").strip()
+    if not namespace:
+        return "mesh"
+    if not (namespace[0].isalpha() or namespace[0] == "_"):
+        raise ValueError("MESH_HELIX_QUERY_NAMESPACE must start with a letter or underscore")
+    if not all(char.isalnum() or char == "_" for char in namespace):
+        raise ValueError("MESH_HELIX_QUERY_NAMESPACE may contain only letters, numbers, and underscores")
+    return namespace
 
 
 def _normalize_readiness_profile(raw: str, environment: str = "local") -> str:

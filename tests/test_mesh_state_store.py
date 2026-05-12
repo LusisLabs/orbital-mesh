@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from shared.mesh_runtime import FileStateStore, RuntimeConfig, build_mesh_state_store
+from shared.mesh_runtime import FileStateStore, HelixMemoryProjection, RuntimeConfig, build_mesh_state_store
+from shared.mesh_runtime.helix_memory import HelixMemoryQueryNames, build_helix_memory_projection
 from shared.mesh_runtime.json_store import LockedJsonFile
 from shared.mesh_runtime.mesh_state_store import RunFilters
 
@@ -229,6 +232,95 @@ class MeshStateStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_mesh_state_store(RuntimeConfig(state_backend="postgres", database_url=None))
 
+    def test_helix_projection_uses_namespaced_query_payloads(self) -> None:
+        client = _FakeHelixClient()
+        projection = HelixMemoryProjection(
+            RuntimeConfig(memory_graph_backend="helix", helix_query_namespace="meshTest"),
+            client=client,
+        )
+        projection.upsert_claim(_claim())
+
+        self.assertEqual(client.calls[0][0], "meshTest_upsert_claim")
+        self.assertEqual(client.calls[0][1]["claim_id"], "claim_1")
+        self.assertEqual(client.calls[0][1]["entity_refs_json"], '["search"]')
+
+    def test_file_store_projects_memory_records_to_helix_when_enabled(self) -> None:
+        projection = _FakeHelixProjection()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "shared.mesh_runtime.control_plane_state.build_helix_memory_projection",
+                return_value=projection,
+            ):
+                store = FileStateStore(
+                    RuntimeConfig(
+                        state_directory=tmp,
+                        vault_path=f"{tmp}/vault",
+                        memory_graph_backend="helix",
+                    )
+                )
+            store.append_observation(_observation())
+            store.save_claim(_claim())
+            store.save_relationship(_relationship())
+
+        self.assertEqual(
+            [call[0] for call in projection.calls],
+            ["observation", "claim", "relationship"],
+        )
+        self.assertEqual(projection.calls[0][1]["observation_id"], "obs_1")
+        self.assertEqual(projection.calls[1][1]["claim_id"], "claim_1")
+        self.assertEqual(projection.calls[2][1]["relationship_id"], "rel_1")
+
+    def test_file_store_buffers_helix_projection_failures_in_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("shared.mesh_runtime.helix_memory._build_helix_client", return_value=_FailingHelixClient()):
+                store = FileStateStore(
+                    RuntimeConfig(
+                        state_directory=tmp,
+                        vault_path=f"{tmp}/vault",
+                        memory_graph_backend="helix",
+                    )
+                )
+                observation = store.append_observation(_observation())
+
+            self.assertEqual(observation["observation_id"], "obs_1")
+            outbox = json.loads((Path(tmp) / "helix_memory_projection_outbox.json").read_text(encoding="utf-8"))
+
+        events = outbox["events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["operation"], "upsert_observation")
+        self.assertEqual(events[0]["record"]["observation_id"], "obs_1")
+        self.assertEqual(events[0]["status"], "failed")
+        self.assertIn("offline", events[0]["last_error"])
+
+    def test_helix_projection_replays_failed_outbox_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault", memory_graph_backend="helix")
+            failing_projection = build_helix_memory_projection(config, client=_FailingHelixClient())
+            failing_projection.upsert_claim(_claim())
+
+            self.assertEqual(failing_projection.projection_status()["failed"], 1)
+
+            client = _FakeHelixClient()
+            replaying_projection = build_helix_memory_projection(config, client=client)
+            replay = replaying_projection.replay_pending()
+
+            self.assertEqual(replay["attempted"], 1)
+            self.assertEqual(replay["applied"], 1)
+            self.assertEqual(replay["failed"], 0)
+            self.assertEqual(client.calls[0][0], "mesh_upsert_claim")
+            self.assertEqual(replaying_projection.projection_status()["failed"], 0)
+
+    def test_helix_query_assets_define_projection_queries(self) -> None:
+        queries = Path("helix/mesh-memory/db/queries.hx").read_text(encoding="utf-8")
+        asset_names = set(re.findall(r"^QUERY\s+([A-Za-z_][A-Za-z0-9_]*)\(", queries, flags=re.MULTILINE))
+        expected_names = set(vars(HelixMemoryQueryNames.from_namespace("mesh")).values())
+        self.assertEqual(asset_names, expected_names)
+
+    def test_postgres_migrations_define_helix_projection_outbox(self) -> None:
+        migration = Path("migrations/postgres/005_helix_projection_outbox.sql").read_text(encoding="utf-8")
+        self.assertIn("CREATE TABLE IF NOT EXISTS helix_memory_projection_outbox", migration)
+        self.assertIn("idx_helix_memory_projection_outbox_status", migration)
+
     def test_file_store_persists_verified_memory_records_and_packets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store = FileStateStore(RuntimeConfig(state_directory=tmp, vault_path=f"{tmp}/vault"))
@@ -286,6 +378,97 @@ class MeshStateStoreTests(unittest.TestCase):
             self.assertIn("MemoryObservations/obs_1.md", flat_paths)
             self.assertIn("MemoryClaims/claim_1.md", flat_paths)
             self.assertTrue(any(path.startswith("MemoryRetrievals/ret_") for path in flat_paths))
+
+
+class _FakeHelixClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def query(self, name: str, payload: dict[str, object]) -> list[dict[str, object]]:
+        self.calls.append((name, payload))
+        return [{"ok": True}]
+
+
+class _FailingHelixClient:
+    def query(self, name: str, payload: dict[str, object]) -> list[dict[str, object]]:
+        del name, payload
+        raise RuntimeError("helix offline")
+
+
+class _FakeHelixProjection:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def upsert_observation(self, record: dict[str, object]) -> None:
+        self.calls.append(("observation", record))
+
+    def upsert_claim(self, record: dict[str, object]) -> None:
+        self.calls.append(("claim", record))
+
+    def upsert_relationship(self, record: dict[str, object]) -> None:
+        self.calls.append(("relationship", record))
+
+    def upsert_supersession(self, record: dict[str, object]) -> None:
+        self.calls.append(("supersession", record))
+
+    def record_retrieval(self, record: dict[str, object]) -> None:
+        self.calls.append(("retrieval", record))
+
+    def upsert_memory_packet(self, record: dict[str, object]) -> None:
+        self.calls.append(("packet", record))
+
+
+def _observation() -> dict[str, object]:
+    return {
+        "observation_id": "obs_1",
+        "scope": {"service": "search"},
+        "kind": "incident_summary",
+        "content": "Search latency spiked after rollout.",
+        "service": "search",
+        "run_id": "run_1",
+        "source_type": "run_event",
+        "source_refs": [{"run_id": "run_1", "event_id": "evt_1"}],
+        "created_at": "2026-04-16T00:00:00+00:00",
+        "author": "mesh",
+        "tags": ["search"],
+        "metadata": {},
+    }
+
+
+def _claim() -> dict[str, object]:
+    return {
+        "claim_id": "claim_1",
+        "statement": "Search rollout regression requires investigation.",
+        "entity_refs": ["search"],
+        "supporting_observation_ids": ["obs_1"],
+        "contradicting_claim_ids": [],
+        "superseded_by": None,
+        "confidence": 0.81,
+        "confidence_factors": {
+            "support_score": 0.7,
+            "recency_score": 0.8,
+            "authority_score": 0.9,
+            "consistency_score": 0.8,
+            "verification_score": 0.85,
+        },
+        "freshness": 0.8,
+        "tier": "semantic",
+        "state": "active",
+        "created_at": "2026-04-16T00:00:00+00:00",
+        "updated_at": "2026-04-16T00:00:00+00:00",
+    }
+
+
+def _relationship() -> dict[str, object]:
+    return {
+        "relationship_id": "rel_1",
+        "from_id": "claim_1",
+        "to_id": "obs_1",
+        "type": "supported_by",
+        "confidence": 0.9,
+        "supporting_observation_ids": ["obs_1"],
+        "state": "active",
+    }
 
 
 def _flatten_tree(nodes: list[dict[str, object]]) -> list[str]:

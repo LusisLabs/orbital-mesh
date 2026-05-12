@@ -1,0 +1,1419 @@
+# E2E full-stack overlay for docker-compose.stack.yml.
+#
+# State slices touched:
+# - Compose topology: ingress, data, target, telemetry, artifact, provider, and frontend networks.
+# - Runtime evidence inputs: MESH_*_PROOF_PATH, MESH_*_REHEARSAL_PATH, release binding, and Mesh Brain artifact paths.
+# - Local E2E backing services: authenticated header gateway, observability, artifact store, provider adapters, audit sink, RPC/indexer emulators, and standalone meshapp asset server.
+#
+# Use with:
+#   docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml config --quiet
+#   docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml up --build
+#
+# This is a local pilot-like E2E rehearsal stack. It wires every gate through services and verifier-shaped packets,
+# but it is not a substitute for operator-captured production ingress, audit, provider, on-call, backup, load, or release evidence.
+
+x-mesh-stack-build: &mesh-stack-build
+  context: .
+  args:
+    MESH_BUILD_VERSION: "${MESH_BUILD_VERSION:-dev}"
+    MESH_BUILD_COMMIT: "${MESH_E2E_BUILD_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
+    HERMES_AGENT_REF: "${HERMES_AGENT_REF:-1525624904159e7c2d6ac3feef951e27ad0d23bb}"
+    UV_VERSION: "${UV_VERSION:-0.11.6}"
+    GOOSE_VERSION: "${GOOSE_VERSION:-v1.30.0}"
+
+services:
+  k3s:
+    ports: !reset []
+    expose:
+      - "6443"
+    networks:
+      - mesh_targets
+
+  k3s-vm:
+    networks:
+      - mesh_targets
+
+  k3s-baremetal:
+    networks:
+      - mesh_targets
+
+  postgres:
+    ports: !reset []
+    expose:
+      - "5432"
+    networks:
+      - mesh_data
+
+  rpc-gateway:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._json({
+                        "status": "ok",
+                        "component_kind": "rpc_gateway",
+                        "service": "compose-rpc-gateway",
+                        "chain_id": "mesh-e2e",
+                        "head_slot": 123456,
+                        "finalized_slot": 123450,
+                        "baseline_value": 1.0,
+                        "observed_value": 2.5,
+                        "delta_pct": 0.0,
+                        "threshold_pct": 30.0,
+                    })
+                    return
+                if self.path == "/metrics":
+                    body = b"mesh_rpc_gateway_up 1\nmesh_rpc_gateway_head_slot 123456\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self._json({"error": "not_found"}, 404)
+
+            def do_POST(self):
+                if self.path in {"/", "/rpc"}:
+                    self._json({"jsonrpc": "2.0", "id": 1, "result": "0x1e240"})
+                    return
+                self._json({"error": "not_found"}, 404)
+
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mesh_targets
+      - mesh_telemetry
+    restart: unless-stopped
+
+  indexer:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._json({
+                        "status": "ok",
+                        "component_kind": "indexer",
+                        "service": "compose-indexer",
+                        "chain_id": "mesh-e2e",
+                        "indexed_slot": 123450,
+                        "head_slot": 123456,
+                        "lag_blocks": 6,
+                        "baseline_value": 12.0,
+                        "observed_value": 6.0,
+                        "delta_pct": -50.0,
+                        "threshold_pct": 30.0,
+                    })
+                    return
+                if self.path == "/metrics":
+                    body = b"mesh_indexer_up 1\nmesh_indexer_lag_blocks 6\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/indexed-ranges":
+                    self._json({"ranges": [{"from": 120000, "to": 123450}], "status": "ok"})
+                    return
+                self._json({"error": "not_found"}, 404)
+
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mesh_targets
+      - mesh_telemetry
+    restart: unless-stopped
+
+  minio:
+    image: "${MESH_E2E_MINIO_IMAGE:-minio/minio:RELEASE.2025-04-22T22-12-26Z}"
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${MESH_E2E_MINIO_ROOT_USER:-meshadmin}"
+      MINIO_ROOT_PASSWORD: "${MESH_E2E_MINIO_ROOT_PASSWORD:-meshadmin123}"
+    volumes:
+      - mesh_e2e_minio_data:/data
+    expose:
+      - "9000"
+      - "9001"
+    networks:
+      - mesh_artifacts
+    restart: unless-stopped
+
+  minio-init:
+    image: "${MESH_E2E_MINIO_CLIENT_IMAGE:-minio/mc:RELEASE.2025-04-16T18-13-26Z}"
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: "${MESH_E2E_MINIO_ROOT_USER:-meshadmin}"
+      MINIO_ROOT_PASSWORD: "${MESH_E2E_MINIO_ROOT_PASSWORD:-meshadmin123}"
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      until mc alias set e2e http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
+      mc mb --ignore-existing e2e/mesh-e2e &&
+      mc anonymous set none e2e/mesh-e2e
+    networks:
+      - mesh_artifacts
+    restart: "no"
+
+  mesh-brain-serving:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        import time
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path in {"/health", "/v1/health"}:
+                    self._json({"status": "ok", "model": "mesh-brain-e2e-local", "artifact_prefix": "s3://mesh-e2e/mesh-brain"})
+                    return
+                if self.path == "/metrics":
+                    body = b"mesh_brain_serving_up 1\nmesh_brain_serving_requests_total 1\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self._json({"error": "not_found"}, 404)
+
+            def do_POST(self):
+                if self.path == "/v1/chat/completions":
+                    self._json({
+                        "id": "chatcmpl-mesh-e2e",
+                        "object": "chat.completion",
+                        "created": int(time.time()),
+                        "model": "mesh-brain-e2e-local",
+                        "choices": [{
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "mesh brain e2e serving path online"},
+                            "finish_reason": "stop",
+                        }],
+                    })
+                    return
+                self._json({"error": "not_found"}, 404)
+
+        ThreadingHTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - mesh_artifacts
+      - mesh_telemetry
+    restart: unless-stopped
+
+  feature-flag-provider:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        FLAGS = {"mesh-e2e-rollout": {"enabled": True, "rollout": 50}}
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._json({"status": "ok", "provider": "feature_flag_provider"})
+                    return
+                if self.path == "/metrics":
+                    body = b"mesh_feature_flag_provider_up 1\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path.startswith("/flags/"):
+                    key = self.path.rsplit("/", 1)[-1]
+                    self._json({"key": key, "flag": FLAGS.get(key), "status": "ok"})
+                    return
+                self._json({"error": "not_found"}, 404)
+
+            def do_POST(self):
+                self._json({"status": "accepted", "rollback_ref": "rollback://feature-flag/e2e"})
+
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mesh_providers
+      - mesh_telemetry
+    restart: unless-stopped
+
+  incident-provider:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._json({"status": "ok", "provider": "incident_provider"})
+                    return
+                if self.path == "/metrics":
+                    body = b"mesh_incident_provider_up 1\nmesh_incident_provider_open_incidents 1\n"
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                if self.path == "/incidents":
+                    self._json({"incidents": [{"id": "INC-E2E-1", "status": "open"}]})
+                    return
+                self._json({"error": "not_found"}, 404)
+
+            def do_POST(self):
+                self._json({"status": "accepted", "incident_id": "INC-E2E-1"})
+
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mesh_providers
+      - mesh_telemetry
+    restart: unless-stopped
+
+  audit-sink:
+    image: "${MESH_E2E_PYTHON_IMAGE:-python:3.13-alpine}"
+    command:
+      - python
+      - -c
+      - |
+        import json
+        from pathlib import Path
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        audit_dir = Path("/audit")
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        sequence = audit_dir / "sequence.txt"
+
+        class Handler(BaseHTTPRequestHandler):
+            def _json(self, payload, status=200):
+                body = json.dumps(payload, separators=(",", ":")).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self):
+                if self.path == "/health":
+                    self._json({"status": "ok", "sink": "audit_sink", "append_only": True})
+                    return
+                if self.path == "/metrics":
+                    count = int(sequence.read_text() or "0") if sequence.exists() else 0
+                    body = f"mesh_audit_sink_up 1\nmesh_audit_sink_events_total {count}\n".encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; version=0.0.4")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
+                self._json({"error": "not_found"}, 404)
+
+            def do_POST(self):
+                current = int(sequence.read_text() or "0") if sequence.exists() else 0
+                next_id = current + 1
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
+                (audit_dir / f"event-{next_id:06d}.json").write_bytes(body or b"{}")
+                sequence.write_text(str(next_id))
+                self._json({"status": "accepted", "receipt_id": f"receipt-{next_id:06d}", "sink_sequence": next_id}, 202)
+
+        ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    volumes:
+      - mesh_e2e_audit_sink_data:/audit
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    networks:
+      - mesh_providers
+      - mesh_telemetry
+    restart: unless-stopped
+
+  otel-collector:
+    image: "${MESH_E2E_OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.115.1}"
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    configs:
+      - source: mesh_e2e_otel_collector
+        target: /etc/otelcol-contrib/config.yaml
+    expose:
+      - "4317"
+      - "4318"
+      - "8889"
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - mesh_telemetry
+    restart: unless-stopped
+
+  prometheus:
+    image: "${MESH_E2E_PROMETHEUS_IMAGE:-prom/prometheus:v2.55.1}"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--web.listen-address=0.0.0.0:9090"
+      - "--storage.tsdb.path=/prometheus"
+    configs:
+      - source: mesh_e2e_prometheus
+        target: /etc/prometheus/prometheus.yml
+    volumes:
+      - mesh_e2e_prometheus_data:/prometheus
+    expose:
+      - "9090"
+    healthcheck:
+      test: ["CMD", "promtool", "check", "config", "/etc/prometheus/prometheus.yml"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    networks:
+      - mesh_telemetry
+      - mesh_targets
+      - mesh_artifacts
+      - mesh_providers
+      - mesh_internal
+    restart: unless-stopped
+
+  alertmanager:
+    image: "${MESH_E2E_ALERTMANAGER_IMAGE:-prom/alertmanager:v0.27.0}"
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    configs:
+      - source: mesh_e2e_alertmanager
+        target: /etc/alertmanager/alertmanager.yml
+    expose:
+      - "9093"
+    networks:
+      - mesh_telemetry
+    restart: unless-stopped
+
+  loki:
+    image: "${MESH_E2E_LOKI_IMAGE:-grafana/loki:3.2.1}"
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    configs:
+      - source: mesh_e2e_loki
+        target: /etc/loki/local-config.yaml
+    volumes:
+      - mesh_e2e_loki_data:/loki
+    expose:
+      - "3100"
+    networks:
+      - mesh_telemetry
+    restart: unless-stopped
+
+  jaeger:
+    image: "${MESH_E2E_JAEGER_IMAGE:-jaegertracing/all-in-one:1.62.0}"
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    expose:
+      - "16686"
+      - "4317"
+      - "4318"
+    networks:
+      - mesh_telemetry
+    restart: unless-stopped
+
+  grafana:
+    image: "${MESH_E2E_GRAFANA_IMAGE:-grafana/grafana:11.3.0}"
+    environment:
+      GF_SECURITY_ADMIN_USER: "${MESH_E2E_GRAFANA_ADMIN_USER:-admin}"
+      GF_SECURITY_ADMIN_PASSWORD: "${MESH_E2E_GRAFANA_ADMIN_PASSWORD:-meshadmin}"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    configs:
+      - source: mesh_e2e_grafana_datasources
+        target: /etc/grafana/provisioning/datasources/datasources.yml
+    volumes:
+      - mesh_e2e_grafana_data:/var/lib/grafana
+    ports:
+      - "${MESH_E2E_GRAFANA_PORT:-3001}:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_started
+      jaeger:
+        condition: service_started
+    networks:
+      - mesh_telemetry
+    restart: unless-stopped
+
+  mesh-e2e-proof-seed:
+    build: *mesh-stack-build
+    image: "${MESH_STACK_IMAGE:-orbital-mesh-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: orbital-mesh-e2e-proof-seed
+    working_dir: /workspace/orbital-mesh
+    environment:
+      MESH_E2E_OPERATOR_ID: "${MESH_E2E_OPERATOR_ID:-mesh-e2e-operator@example.internal}"
+      MESH_E2E_BUILD_COMMIT: "${MESH_E2E_BUILD_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
+      MESH_E2E_IMAGE_DIGEST: "${MESH_E2E_IMAGE_DIGEST:-sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}"
+      MESH_E2E_IMAGE_TAG: "${MESH_STACK_IMAGE:-orbital-mesh-stack:${MESH_BUILD_VERSION:-dev}}"
+      MESH_E2E_ENVIRONMENT: "${MESH_E2E_ENVIRONMENT:-pilot}"
+    command:
+      - sh
+      - -lc
+      - |
+        python3 - <<'PY'
+        import hashlib
+        import json
+        import os
+        import sys
+        import time
+        from pathlib import Path
+
+        repo = Path("/workspace/orbital-mesh")
+        sys.path.insert(0, str(repo))
+        out = Path("/app/.mesh-runtime-state/e2e")
+        out.mkdir(parents=True, exist_ok=True)
+        operator = os.getenv("MESH_E2E_OPERATOR_ID", "mesh-e2e-operator@example.internal")
+        environment = os.getenv("MESH_E2E_ENVIRONMENT", "pilot")
+        commit = os.getenv("MESH_E2E_BUILD_COMMIT", "0123456789abcdef0123456789abcdef01234567")
+        digest = os.getenv("MESH_E2E_IMAGE_DIGEST", "sha256:" + "e" * 64)
+        image_tag = os.getenv("MESH_E2E_IMAGE_TAG", "orbital-mesh-stack:dev")
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+        def write(name, payload):
+            path = out / name
+            path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            return path
+
+        def payload_hash(payload):
+            unsigned = dict(payload)
+            unsigned.pop("packet_sha256", None)
+            raw = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+            return hashlib.sha256(raw).hexdigest()
+
+        def sha_file(path):
+            h = hashlib.sha256()
+            h.update(path.read_bytes())
+            return h.hexdigest()
+
+        release = {
+            "schema_version": "mesh.release_provenance.v1",
+            "generated_at": now,
+            "status": "complete",
+            "missing": [],
+            "checks": {
+                "git_commit": True,
+                "clean_git_tree": True,
+                "image_tag": True,
+                "image_digest": True,
+                "base_image_digests": True,
+                "dependency_locks": True,
+                "policy_lifecycle": True,
+                "connector_certification": True,
+                "deployment_compatibility": True,
+                "migration_rehearsal": True,
+                "sbom": True,
+                "vulnerability_scan": True,
+                "ci_attestation": True,
+            },
+            "git": {"commit": commit, "branch": "e2e-local", "dirty": False},
+            "image": {"tag": image_tag, "digest": digest},
+            "base_images": [{"image": "mesh-e2e-local", "digest": "sha256:" + "d" * 64}],
+            "dependency_locks": [{"path": "uv.lock", "sha256": "a" * 64}],
+            "build_inputs": {"compose": "docker-compose.e2estack.yml"},
+            "policies": {"count": 1, "hashes": [{"path": "config/policy-lifecycle.manifest.json", "sha256": "b" * 64}], "combined_sha256": "b" * 64},
+            "connectors": {"certification": {"status": "complete"}},
+            "deployment": {"compatibility": {"status": "complete"}},
+            "migrations": {"directory": "migrations/postgres", "version": "e2e", "hashes": [], "combined_sha256": "c" * 64},
+            "sbom": {"bomFormat": "CycloneDX", "image_digest": digest},
+            "vulnerability_scan": {"scanner": "e2e-local", "image_digest": digest, "findings": []},
+            "ci": {
+                "attestation": {
+                    "provider": "compose-e2e",
+                    "run_id": "mesh-e2e-local",
+                    "sha": commit,
+                    "expected_sha": commit,
+                    "sha_matches_git_commit": True,
+                }
+            },
+            "build": {"command": "docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml up --build"},
+            "deployment_profile": {"environment": environment, "readiness_profile": "pilot"},
+        }
+        release["packet_sha256"] = payload_hash(release)
+        release_path = write("release-provenance.json", release)
+
+        ingress = {
+            "schema_version": "mesh.authenticated_ingress_deployment_proof.v1",
+            "proof_id": "mesh-e2e-authenticated-ingress",
+            "generated_at": now,
+            "environment": environment,
+            "operator_id": operator,
+            "ingress_url": "https://mesh-auth-gateway:8443",
+            "tls": {
+                "terminated": True,
+                "public_listener": True,
+                "minimum_version": "TLSv1.3",
+                "certificate_ref": "caddy-internal-ca://mesh-e2e",
+                "evidence_ref": "compose://mesh-auth-gateway/tls",
+            },
+            "identity_provider": {
+                "type": "oidc",
+                "sso_enforced": True,
+                "identity_claim": "email",
+                "roles_claim": "groups",
+                "evidence_ref": "compose://mesh-auth-gateway/trusted-header-rehearsal",
+            },
+            "header_sanitization": {
+                "client_mesh_operator_header_stripped": True,
+                "client_mesh_roles_header_stripped": True,
+                "proxy_operator_header_stamped": True,
+                "proxy_roles_header_stamped": True,
+                "evidence_ref": "compose://mesh-auth-gateway/header-upstream-policy",
+            },
+            "role_mapping": {
+                "viewer": "group://mesh/viewers",
+                "launcher": "group://mesh/launchers",
+                "approver": "group://mesh/approvers",
+                "admin": "group://mesh/admins",
+                "evidence_ref": "compose://mesh-auth-gateway/role-map",
+            },
+            "network_boundary": {
+                "raw_service_publicly_reachable": False,
+                "upstream_private": True,
+                "allowed_proxy_ref": "compose-network://mesh_internal",
+                "evidence_ref": "compose://mesh.ports-reset",
+            },
+            "app_rehearsal": {
+                "schema_version": "mesh.authenticated_ingress_rehearsal.v1",
+                "status": "passed",
+                "run_id": "mesh-e2e-ingress-rehearsal",
+                "evidence_ref": "compose://mesh-e2e-ingress-smoke",
+            },
+            "audit": {
+                "source_ip_or_proxy_identity_recorded": True,
+                "operator_identity_recorded": True,
+                "evidence_ref": "compose://mesh-access-log",
+            },
+            "raw_secret_material_present": False,
+        }
+        write("authenticated-ingress-deployment-proof.json", ingress)
+
+        digest64 = "a" * 64
+        write("backup-restore-rehearsal.json", {
+            "schema_version": "mesh.backup_restore_rehearsal.v1",
+            "rehearsal_id": "mesh_e2e_restore_rehearsal",
+            "generated_at": now,
+            "environment": environment,
+            "operator_id": operator,
+            "state_backend": "postgres",
+            "backup_ref": "s3://mesh-e2e/backups/state-store/e2e",
+            "restore_ref": "restore://mesh-e2e/postgres/e2e",
+            "rpo_seconds": 300,
+            "rto_seconds": 900,
+            "measured_restore_seconds": 120.0,
+            "components": [
+                {"component": component, "backup_uri": f"s3://mesh-e2e/backups/{component}.json", "restored": True, "sha256_before": digest64, "sha256_after": digest64, "record_count": 1}
+                for component in ("state_store", "vault", "merkle_proofs", "integrations_config", "research_artifacts")
+            ],
+        })
+
+        from shared.mesh_runtime.migration_rehearsal import build_migration_rehearsal_packet
+        migration = build_migration_rehearsal_packet(
+            operator_id=operator,
+            environment=environment,
+            migration_directory="migrations/postgres",
+            repo_root=repo,
+            applied_migration_count=1,
+            rolled_back=True,
+            rollback_ref="restore://postgres/migration-rehearsal/e2e",
+            pre_migration_snapshot_ref="snapshot://postgres/pre-migration/e2e",
+            post_migration_validation_ref="validation://postgres/post-migration/e2e",
+            destructive_changes_reviewed=True,
+            measured_apply_seconds=12.5,
+            measured_rollback_seconds=18.25,
+            rehearsal_id="mesh_e2e_migration_rehearsal",
+            generated_at=now,
+        )
+        write("migration-rehearsal.json", migration)
+
+        write("on-call-drill.json", {
+            "schema_version": "mesh.on_call_drill.v1",
+            "drill_id": "mesh_e2e_on_call_drill",
+            "generated_at": now,
+            "operator_id": operator,
+            "environment": environment,
+            "recovery_target_seconds": 900,
+            "measured_recovery_seconds": 240,
+            "kill_switch": {"live_execution_disabled": True, "watchers_paused": True, "approval_gate_forced": True, "event_ref": "event://mesh-e2e/kill-switch"},
+            "bad_target_revocation": {"target_ref": "kubernetes://mesh-compose/search/bad-target", "revoked": True, "denied_action_ref": "run://mesh-e2e/denied-action"},
+            "stuck_run_recovery": {"run_id": "run_mesh_e2e_stuck", "recovered": True, "event_ref": "event://mesh-e2e/run-recovered"},
+            "failed_dependency": {"dependency": "prometheus", "degraded_state_visible": True, "operator_action_ref": "runbook://mesh-e2e/failed-dependency"},
+            "provider_key_rotation": {"verification_ref": "credential-rotation://mesh-e2e/provider", "status": "pass", "break_glass_recorded": True},
+            "state_restore": {"verification_ref": "backup-restore://mesh-e2e/pilot", "status": "pass", "restore_ref": "restore://mesh-e2e/postgres"},
+        })
+
+        write("load-concurrency-rehearsal.json", {
+            "schema_version": "mesh.load_concurrency_rehearsal.v1",
+            "rehearsal_id": "mesh_e2e_load_concurrency",
+            "generated_at": now,
+            "environment": environment,
+            "operator_id": operator,
+            "state_backend": "postgres",
+            "run_count": 24,
+            "concurrent_operators": 3,
+            "worker_count": 4,
+            "queue_size": 100,
+            "max_queue_depth": 12,
+            "rejected_runs": 2,
+            "tenant_quota_enforced": True,
+            "target_lock_conflicts_observed": True,
+            "cancellation_exercised": True,
+            "stuck_run_recovery_exercised": True,
+            "backpressure_observed": True,
+            "p95_admission_latency_ms": 120.5,
+            "p95_event_persistence_latency_ms": 210.0,
+            "evidence_refs": ["metrics://prometheus/mesh-e2e/run-admission", "run-export://mesh-e2e/load-concurrency"],
+            "raw_secret_material_present": False,
+        })
+
+        topology = {
+            "version": "mesh.orchestration_topology_resolution.v1",
+            "active_topology": "hybrid",
+            "rule_id": "mesh-e2e-hybrid",
+            "routing_reason": "compose e2e routes durable workflow evidence plus bounded Kubernetes action lane",
+            "selected_agents": ["temporal", "kubernetes"],
+            "selected_lanes": [
+                {
+                    "lane_id": "temporal",
+                    "role": "hybrid_lane",
+                    "topology_role": "supervisor_lane",
+                    "model_binding": {"supported": False, "binding_status": "not_supported", "provider": "none", "model": "none", "secret_material_present": False},
+                    "authority": "proposal_only",
+                    "certified_state": "proposal-only",
+                    "source_evidence": {"profile_rule_ref": "config/orchestration-topology.profile.json#mesh-e2e", "connector_certification_ref": "config/connector-certification.registry.json#temporal"},
+                    "reconciliation_mode": "supervisor_summary_before_mesh_reconciliation",
+                    "blockers": [],
+                },
+                {
+                    "lane_id": "kubernetes",
+                    "role": "hybrid_lane",
+                    "topology_role": "bounded_actuator_lane",
+                    "model_binding": {"supported": False, "binding_status": "not_supported", "provider": "none", "model": "none", "secret_material_present": False},
+                    "authority": "bounded_action",
+                    "certified_state": "pilot-ready",
+                    "source_evidence": {"profile_rule_ref": "config/orchestration-topology.profile.json#mesh-e2e", "connector_certification_ref": "config/connector-certification.registry.json#kubernetes"},
+                    "reconciliation_mode": "bounded_action_evidence",
+                    "blockers": [],
+                },
+            ],
+            "reconciliation": "mesh_reconciles_per_rule_topology_outputs",
+            "source_evidence": {
+                "organization_profile": {"matched": True, "domain": "platform_sre"},
+                "ownership_boundary": {"matched": True, "tenant_id": "mesh-e2e"},
+                "connector_certification": {"kubernetes": {"state": "pilot-ready"}},
+                "policy_lifecycle": {"source_ref": "config/policy-lifecycle.manifest.json"},
+                "threat_model": {"source_ref": "config/threat-model.register.json"},
+                "readiness": {"status": "ready"},
+                "historical_outcomes": {"source_ref": "state://runs"},
+                "trust_ladder": {"source_ref": "state://learning/trust_ladder.json"},
+            },
+        }
+        write("orchestration-topology-drill.json", {
+            "schema_version": "mesh.orchestration_topology_drill.v1",
+            "drill_id": "mesh_e2e_orchestration_topology_drill",
+            "generated_at": now,
+            "environment": environment,
+            "operator_id": operator,
+            "state_backend": "postgres",
+            "run_id": "run_mesh_e2e_topology_drill",
+            "run_export_ref": "run-export://mesh-e2e/topology-drill",
+            "readiness_ref": "artifact://mesh-e2e/integration_readiness",
+            "profile_ref": "config/orchestration-topology.profile.json",
+            "operator_approval_recorded": True,
+            "bounded_action_execution_ref": "execution://kubernetes/rollback/run_mesh_e2e_topology_drill",
+            "topology_resolution": topology,
+            "evidence_refs": ["artifact://lane_routing", "artifact://agent_tasks", "artifact://integration_readiness"],
+            "raw_secret_material_present": False,
+        })
+
+        def provider_proof(adapter_id, actions):
+            return {
+                "schema_version": "mesh.provider_adapter_proof.v1",
+                "proof_id": f"mesh_e2e_{adapter_id}",
+                "adapter_id": adapter_id,
+                "provider_name": f"mesh-e2e-{adapter_id}",
+                "environment": environment,
+                "operator_id": operator,
+                "supported_actions": actions,
+                "authority_boundary": "Mesh control plane approval gate owns all provider writes.",
+                "service_account_ref": f"secret-ref://mesh-e2e/{adapter_id}/service-account",
+                "credential_rotation_ref": f"rotation://mesh-e2e/{adapter_id}",
+                "break_glass_recording_ref": f"break-glass://mesh-e2e/{adapter_id}",
+                "audit_sink_ref": "audit://mesh-e2e/append-only/receipt",
+                "dry_run_ref": f"dry-run://mesh-e2e/{adapter_id}/action-preview",
+                "rollback_ref": f"rollback://mesh-e2e/{adapter_id}/restore",
+                "degraded_behavior": "fail closed with operator-visible blocker",
+                "production_write_enabled": True,
+                "proposal_lane_credentials_absent": True,
+                "raw_secret_material_present": False,
+            }
+
+        write("feature-flag-provider-proof.json", provider_proof("feature_flag_provider", ["read_flag", "set_rollout", "rollback_flag"]))
+        write("incident-provider-proof.json", provider_proof("incident_provider", ["read_incident", "create_incident", "update_incident"]))
+
+        audit_proof = {
+            "schema_version": "mesh.audit_sink_proof.v1",
+            "generated_at": now,
+            "connector_id": "audit_sink",
+            "sink_id": "mesh-e2e-audit-sink",
+            "sink_state": "production-ready",
+            "destination_uri": "s3://mesh-e2e/audit/run_mesh_e2e.json",
+            "append_only": True,
+            "run_export_sha256": "a" * 64,
+            "merkle_root": "b" * 64,
+            "latest_event_id": "evt_mesh_e2e_0001",
+            "event_count": 3,
+            "receipt": {"receipt_id": "receipt-mesh-e2e-0001", "received_at": now, "sink_sequence": 1},
+            "credential_boundary": {
+                "service_account_ref": "serviceaccount://mesh-e2e/audit-sink-writer",
+                "credential_mode": "runtime-secret",
+                "runtime_secret_mount_required": True,
+                "production_actuator_credentials_allowed": False,
+                "repo_write_credentials_allowed": False,
+            },
+            "retention_days": 365,
+            "rotation_evidence_ref": "rotation://mesh-e2e/audit-sink",
+            "break_glass_recording_required": True,
+            "break_glass_drill_recorded": True,
+        }
+        audit_path = write("audit-sink-proof.json", audit_proof)
+        registry = {
+            "schema_version": "connector.certification.registry.v1",
+            "connectors": [{
+                "connector_id": "audit_sink",
+                "display_name": "External audit sink",
+                "domain": "audit",
+                "state": "production-ready",
+                "required_before": "expansion",
+                "authority_posture": "append-only external audit continuity",
+                "credential_policy": "runtime secret mounted only into audit sink writer",
+                "credential_boundary": {
+                    "service_account_ref": "serviceaccount://mesh-e2e/audit-sink-writer",
+                    "credential_mode": "runtime-secret",
+                    "production_actuator_credentials_allowed": False,
+                    "repo_write_credentials_allowed": False,
+                    "runtime_secret_mount_required": True,
+                    "rotation_evidence_ref": "rotation://mesh-e2e/audit-sink",
+                    "break_glass_recording_required": True,
+                },
+                "degraded_behavior": "fail closed to local Merkle and run export audit path",
+                "allowed_scopes": ["append-only-audit-write"],
+                "evidence_refs": ["proof://mesh-e2e/audit-sink/receipt-mesh-e2e-0001"],
+                "blockers": [],
+            }],
+        }
+        write("audit-sink-certification.registry.json", registry)
+        write("audit-sink-certification.json", {
+            "schema_version": "mesh.audit_sink_certification.v1",
+            "generated_at": now,
+            "certification_id": "mesh-e2e-audit-sink-certification",
+            "connector_id": "audit_sink",
+            "sink_id": "mesh-e2e-audit-sink",
+            "sink_state": "production-ready",
+            "environment": environment,
+            "reviewed_by": "security@example.internal",
+            "approved_at": now,
+            "registry_ref": "/app/.mesh-runtime-state/e2e/audit-sink-certification.registry.json#audit_sink",
+            "registry_state": "production-ready",
+            "audit_sink_proof_ref": str(audit_path),
+            "audit_sink_proof_sha256": sha_file(audit_path),
+            "required_artifacts": {
+                "append_only_receipt_ref": "receipt://mesh-e2e/audit-sink/receipt-mesh-e2e-0001",
+                "run_export_ref": "run-export://mesh-e2e/run_1",
+                "merkle_proof_ref": "merkle://mesh-e2e/run_1/evt_mesh_e2e_0001",
+                "rotation_evidence_ref": "rotation://mesh-e2e/audit-sink",
+                "break_glass_recording_ref": "break-glass://mesh-e2e/audit-sink",
+                "retention_policy_ref": "policy://mesh-e2e/retention/audit-sink/365d",
+            },
+            "authority_boundary": audit_proof["credential_boundary"],
+            "degraded_behavior": "fail closed to local Merkle and run export audit path",
+            "compliance_reliance_allowed": True,
+            "raw_secret_material_present": False,
+            "blockers": [],
+        })
+
+        artifact_uri = "s3://mesh-e2e/mesh-brain/mesh_brain_model_kernel_probe_summary/ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff/artifact.json"
+        write("mesh-brain-artifacts.json", {
+            "artifacts": [{
+                "run_id": "run_mesh_e2e_brain_artifact",
+                "artifact_key": "mesh_brain_model_kernel_probe_summary",
+                "uri": artifact_uri,
+                "path": "/app/.mesh-runtime-state/e2e/mesh-brain/artifact.json",
+                "content_hash": "f" * 64,
+                "metadata": {
+                    "production_artifact": {
+                        "blob_uri": artifact_uri,
+                        "sha256": "f" * 64,
+                        "byte_count": 42,
+                        "immutable": True,
+                    }
+                },
+            }]
+        })
+        write("mesh-brain-artifact-upload-proof.json", {
+            "schema_version": "mesh.artifact_upload_proof.v1",
+            "uploads": [{
+                "blob_uri": artifact_uri,
+                "sha256": "f" * 64,
+                "byte_count": 42,
+                "provider": "s3",
+                "uploaded_at": now,
+                "etag": "mesh-e2e-artifact-etag",
+            }],
+        })
+
+        write("design-partner-packet.json", {
+            "schema_version": "mesh.design_partner_packet.v1",
+            "packet_id": "mesh_e2e_design_partner",
+            "generated_at": now,
+            "partner": {
+                "partner_id": "mesh-e2e-design-partner",
+                "technical_owner": operator,
+                "escalation_channel": "pager://mesh-e2e/platform",
+                "pilot_window_days": 30,
+            },
+            "pilot_scope": {
+                "environment": environment,
+                "kubernetes_contexts": ["mesh-compose"],
+                "namespaces": ["search"],
+                "service_classes": ["semantic-search"],
+                "approval_gate_forced": True,
+                "live_execution_limited": True,
+                "feature_flag_adapter_disabled": True,
+                "incident_adapter_disabled": True,
+                "proposal_lanes_advisory_only": True,
+                "evidence_ref": "design-partner://mesh-e2e/scope",
+            },
+            "success_metrics": {
+                "allowed_action_with_feedback": True,
+                "denied_action_with_blocker": True,
+                "no_proposal_lane_credentials": True,
+                "operator_identity_on_mutations": True,
+                "kill_switch_rehearsed": True,
+                "merkle_proofs_available": True,
+                "postgres_restart_proof_passed": True,
+                "evidence_ref": "design-partner://mesh-e2e/success-metrics",
+            },
+            "data_handling": {
+                "retention_days": 30,
+                "training_use_opt_in": False,
+                "audit_records_excluded_from_training_by_default": True,
+                "raw_secrets_disallowed": True,
+                "kubeconfig_contents_disallowed": True,
+                "private_keys_disallowed": True,
+                "customer_payloads_excluded": True,
+                "evidence_ref": "design-partner://mesh-e2e/data-handling",
+            },
+            "support_model": {
+                "mesh_support_hours": "business-hours",
+                "partner_owner_ref": f"user://{operator}",
+                "emergency_owner": "operator",
+                "postmortem_packet_required": True,
+                "evidence_ref": "design-partner://mesh-e2e/support",
+            },
+            "rollback_plan": {
+                "plan_ref": "rollback://mesh-e2e/pilot",
+                "kill_switch_ref": "runbook://mesh-e2e/kill-switch",
+                "rollback_metadata_required": True,
+                "human_review_on_ambiguous_execution": True,
+            },
+            "consent": {
+                "partner_approved": True,
+                "mesh_approved": True,
+                "real_user_experiment_consent_required": True,
+                "real_user_experiment_consent_ref": "consent://mesh-e2e/real-user-experiment",
+                "data_handling_terms_ref": "terms://mesh-e2e/data-handling",
+                "signed_at": now,
+            },
+            "evidence_summary": {
+                "go_no_go_status": "go",
+                "go_no_go_packet_sha256": "a" * 64,
+                "release_provenance_sha256": release["packet_sha256"],
+                "run_export_ref": "run-export://mesh-e2e/run_1",
+                "readiness_ref": "readiness://mesh-e2e/pilot",
+            },
+            "raw_secret_material_present": False,
+        })
+
+        print(json.dumps({"status": "seeded", "output_dir": str(out), "release_provenance": str(release_path)}, indent=2, sort_keys=True))
+        PY
+    volumes:
+      - ./:/workspace/orbital-mesh:ro
+      - mesh_runtime_state:/app/.mesh-runtime-state
+    networks:
+      - mesh_artifacts
+    restart: "no"
+
+  mesh-e2e-proof-verify:
+    build: *mesh-stack-build
+    image: "${MESH_STACK_IMAGE:-orbital-mesh-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: orbital-mesh-e2e-proof-verify
+    working_dir: /workspace/orbital-mesh
+    depends_on:
+      mesh-e2e-proof-seed:
+        condition: service_completed_successfully
+    command:
+      - sh
+      - -lc
+      - |
+        set -eu
+        base=/app/.mesh-runtime-state/e2e
+        python3 scripts/verify_authenticated_ingress_deployment.py --proof "$${base}/authenticated-ingress-deployment-proof.json" --expected-environment pilot --json
+        python3 scripts/verify_backup_restore_rehearsal.py --proof "$${base}/backup-restore-rehearsal.json" --expected-environment pilot --expected-state-backend postgres --json
+        python3 scripts/verify_design_partner_packet.py --packet "$${base}/design-partner-packet.json" --json
+        python3 scripts/verify_migration_rehearsal.py --proof "$${base}/migration-rehearsal.json" --json
+        python3 scripts/verify_on_call_drill.py --proof "$${base}/on-call-drill.json" --expected-environment pilot --json
+        python3 scripts/verify_load_concurrency_rehearsal.py --proof "$${base}/load-concurrency-rehearsal.json" --json
+        python3 scripts/verify_orchestration_topology_drill.py --proof "$${base}/orchestration-topology-drill.json" --json
+        python3 scripts/verify_provider_adapter_proof.py --proof "$${base}/feature-flag-provider-proof.json" --adapter-id feature_flag_provider --json
+        python3 scripts/verify_provider_adapter_proof.py --proof "$${base}/incident-provider-proof.json" --adapter-id incident_provider --json
+        python3 scripts/verify_audit_sink_contract.py --proof "$${base}/audit-sink-proof.json" --json
+        python3 scripts/verify_audit_sink_certification.py --certification "$${base}/audit-sink-certification.json" --proof "$${base}/audit-sink-proof.json" --registry "$${base}/audit-sink-certification.registry.json" --json
+        python3 scripts/verify_mesh_brain_artifact_registry.py --artifacts-json "$${base}/mesh-brain-artifacts.json" --proof-manifest "$${base}/mesh-brain-artifact-upload-proof.json" --require-upload-proof --json
+        python3 scripts/verify_release_runtime_binding.py --release-provenance "$${base}/release-provenance.json" --runtime-release-provenance-path "$${base}/release-provenance.json" --json
+    volumes:
+      - ./:/workspace/orbital-mesh:ro
+      - mesh_runtime_state:/app/.mesh-runtime-state
+    networks:
+      - mesh_artifacts
+    restart: "no"
+
+  mesh:
+    ports: !reset []
+    expose:
+      - "8787"
+    depends_on:
+      mesh-e2e-proof-verify:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      mesh-brain-serving:
+        condition: service_healthy
+      feature-flag-provider:
+        condition: service_healthy
+      incident-provider:
+        condition: service_healthy
+      audit-sink:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+    environment:
+      MESH_ENVIRONMENT: "${MESH_E2E_ENVIRONMENT:-pilot}"
+      MESH_READINESS_PROFILE: "${MESH_E2E_READINESS_PROFILE:-pilot}"
+      MESH_STATE_BACKEND: "postgres"
+      MESH_DATABASE_URL: "postgresql://mesh:mesh@postgres:5432/mesh"
+      MESH_DEFAULT_STEERING_MODE: "approval_gate"
+      MESH_OPERATOR_IDENTITY_REQUIRED: "1"
+      MESH_OPERATOR_HEADER: "X-Mesh-Operator"
+      MESH_OPERATOR_ROLES_HEADER: "X-Mesh-Roles"
+      MESH_AUTHENTICATED_INGRESS_PROOF_PATH: "/app/.mesh-runtime-state/e2e/authenticated-ingress-deployment-proof.json"
+      MESH_LIVE_FEEDBACK_REQUIRED: "1"
+      MESH_FEEDBACK_PROMETHEUS_ENABLED: "1"
+      MESH_PROMETHEUS_URL: "http://prometheus:9090"
+      MESH_OTEL_RECEIVER_ENABLED: "1"
+      MESH_OTEL_RECEIVER_TOKEN: "${MESH_E2E_OTEL_TOKEN:-mesh-e2e-otel-token}"
+      MESH_BRAIN_ARTIFACT_URI_PREFIX: "s3://mesh-e2e/mesh-brain"
+      MESH_BRAIN_ARTIFACT_REGISTRY_PATH: "/app/.mesh-runtime-state/e2e/mesh-brain-artifacts.json"
+      MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH: "/app/.mesh-runtime-state/e2e/mesh-brain-artifact-upload-proof.json"
+      MESH_BRAIN_SERVING_BASE_URL: "http://mesh-brain-serving:8000/v1"
+      MESH_BRAIN_SERVING_MODEL: "mesh-brain-e2e-local"
+      MESH_RUN_EXPORT_RETENTION_REVIEWED: "1"
+      MESH_DESIGN_PARTNER_PACKET_PATH: "/app/.mesh-runtime-state/e2e/design-partner-packet.json"
+      MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE: "true"
+      MESH_FEATURE_FLAG_PROVIDER_PROOF_PATH: "/app/.mesh-runtime-state/e2e/feature-flag-provider-proof.json"
+      MESH_INCIDENT_CREDENTIALS_AVAILABLE: "true"
+      MESH_INCIDENT_PROVIDER_PROOF_PATH: "/app/.mesh-runtime-state/e2e/incident-provider-proof.json"
+      MESH_AUDIT_LOGGING_AVAILABLE: "true"
+      MESH_AUDIT_SINK_PROOF_PATH: "/app/.mesh-runtime-state/e2e/audit-sink-proof.json"
+      MESH_AUDIT_SINK_CERTIFICATION_PATH: "/app/.mesh-runtime-state/e2e/audit-sink-certification.json"
+      MESH_BACKUP_RESTORE_REHEARSAL_PATH: "/app/.mesh-runtime-state/e2e/backup-restore-rehearsal.json"
+      MESH_LOAD_CONCURRENCY_REHEARSAL_PATH: "/app/.mesh-runtime-state/e2e/load-concurrency-rehearsal.json"
+      MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH: "/app/.mesh-runtime-state/e2e/orchestration-topology-drill.json"
+      MESH_MIGRATION_REHEARSAL_PATH: "/app/.mesh-runtime-state/e2e/migration-rehearsal.json"
+      MESH_ON_CALL_DRILL_PATH: "/app/.mesh-runtime-state/e2e/on-call-drill.json"
+      MESH_RELEASE_PROVENANCE_PATH: "/app/.mesh-runtime-state/e2e/release-provenance.json"
+      MESH_BUILD_COMMIT: "${MESH_E2E_BUILD_COMMIT:-0123456789abcdef0123456789abcdef01234567}"
+      MESH_BUILD_IMAGE_DIGEST: "${MESH_E2E_IMAGE_DIGEST:-sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee}"
+      MESH_POLICY_SIGNING_KEY: "${MESH_E2E_POLICY_SIGNING_KEY:-mesh-e2e-policy-signing-key}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4318"
+    networks:
+      - mesh_internal
+      - mesh_data
+      - mesh_targets
+      - mesh_telemetry
+      - mesh_artifacts
+      - mesh_providers
+
+  mesh-auth-gateway:
+    image: "${MESH_E2E_CADDY_IMAGE:-caddy:2.8.4-alpine}"
+    container_name: orbital-mesh-e2e-auth-gateway
+    depends_on:
+      mesh:
+        condition: service_healthy
+    environment:
+      MESH_E2E_OPERATOR_ID: "${MESH_E2E_OPERATOR_ID:-mesh-e2e-operator@example.internal}"
+      MESH_E2E_OPERATOR_ROLES: "${MESH_E2E_OPERATOR_ROLES:-viewer,launcher,approver,admin}"
+    configs:
+      - source: mesh_e2e_caddyfile
+        target: /etc/caddy/Caddyfile
+    ports:
+      - "${MESH_E2E_INGRESS_PORT:-8443}:8443"
+    networks:
+      - mesh_ingress
+      - mesh_internal
+    restart: unless-stopped
+
+  meshapp-frontend:
+    build: *mesh-stack-build
+    image: "${MESH_STACK_IMAGE:-orbital-mesh-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: orbital-mesh-e2e-meshapp-frontend
+    command:
+      - python3
+      - -m
+      - http.server
+      - "3000"
+      - "--bind"
+      - "0.0.0.0"
+      - "--directory"
+      - "/app/meshapp/frontend/out"
+    depends_on:
+      mesh:
+        condition: service_healthy
+    ports:
+      - "${MESH_E2E_FRONTEND_PORT:-3000}:3000"
+    networks:
+      - mesh_ingress
+    restart: unless-stopped
+
+  mesh-agent-operator:
+    networks:
+      - mesh_internal
+
+  mesh-smoke:
+    networks:
+      - mesh_internal
+      - mesh_targets
+
+  mesh-chaos:
+    networks:
+      - mesh_internal
+      - mesh_targets
+
+  mesh-halo-optimizer:
+    networks:
+      - mesh_internal
+
+  hermes:
+    networks:
+      - mesh_internal
+
+  mesh-kube-bootstrap:
+    networks:
+      - mesh_targets
+
+  mesh-kube-bootstrap-vm:
+    networks:
+      - mesh_targets
+
+  mesh-kube-bootstrap-baremetal:
+    networks:
+      - mesh_targets
+
+  latentmas:
+    ports: !reset []
+    expose:
+      - "8791"
+    networks:
+      - mesh_internal
+
+  mesh-e2e-ingress-smoke:
+    build: *mesh-stack-build
+    image: "${MESH_STACK_IMAGE:-orbital-mesh-stack:${MESH_BUILD_VERSION:-dev}}"
+    container_name: orbital-mesh-e2e-ingress-smoke
+    depends_on:
+      mesh-auth-gateway:
+        condition: service_started
+    command:
+      - python3
+      - -c
+      - |
+        import json
+        import ssl
+        import urllib.request
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(
+            "https://mesh-auth-gateway:8443/api/health",
+            headers={"X-Mesh-Operator": "forged@example.invalid", "X-Mesh-Roles": "admin"},
+        )
+        with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        assert payload.get("status") in {"ok", "ready"}
+        print(json.dumps({"status": "pass", "target": "mesh-auth-gateway", "health": payload}, indent=2, sort_keys=True))
+    networks:
+      - mesh_ingress
+    restart: "no"
+
+networks:
+  mesh_ingress:
+    name: orbital-mesh-e2e-ingress
+  mesh_internal:
+    name: orbital-mesh-e2e-internal
+    internal: true
+  mesh_data:
+    name: orbital-mesh-e2e-data
+    internal: true
+  mesh_targets:
+    name: orbital-mesh-e2e-targets
+    internal: true
+  mesh_telemetry:
+    name: orbital-mesh-e2e-telemetry
+    internal: true
+  mesh_artifacts:
+    name: orbital-mesh-e2e-artifacts
+    internal: true
+  mesh_providers:
+    name: orbital-mesh-e2e-providers
+    internal: true
+
+volumes:
+  mesh_e2e_audit_sink_data:
+  mesh_e2e_grafana_data:
+  mesh_e2e_loki_data:
+  mesh_e2e_minio_data:
+  mesh_e2e_prometheus_data:
+
+configs:
+  mesh_e2e_caddyfile:
+    content: |
+      {
+        admin off
+      }
+
+      https://:8443 {
+        tls internal
+        header {
+          Strict-Transport-Security "max-age=31536000; includeSubDomains"
+          X-Content-Type-Options "nosniff"
+        }
+        reverse_proxy mesh:8787 {
+          header_up -X-Mesh-Operator
+          header_up -X-Mesh-Roles
+          header_up -X-Mesh-Role
+          header_up X-Mesh-Operator "${MESH_E2E_OPERATOR_ID:-mesh-e2e-operator@example.internal}"
+          header_up X-Mesh-Roles "${MESH_E2E_OPERATOR_ROLES:-viewer,launcher,approver,admin}"
+          header_up X-Forwarded-User "${MESH_E2E_OPERATOR_ID:-mesh-e2e-operator@example.internal}"
+          header_up X-Auth-Request-Email "${MESH_E2E_OPERATOR_ID:-mesh-e2e-operator@example.internal}"
+          header_up X-Auth-Request-Groups "mesh-viewers,mesh-launchers,mesh-approvers,mesh-admins"
+        }
+      }
+
+  mesh_e2e_prometheus:
+    content: |
+      global:
+        scrape_interval: 10s
+        evaluation_interval: 10s
+      alerting:
+        alertmanagers:
+          - static_configs:
+              - targets: ["alertmanager:9093"]
+      rule_files: []
+      scrape_configs:
+        - job_name: mesh-control-plane
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["mesh:8787"]
+        - job_name: otel-collector
+          static_configs:
+            - targets: ["otel-collector:8889"]
+        - job_name: rpc-gateway
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["rpc-gateway:8080"]
+        - job_name: indexer
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["indexer:8080"]
+        - job_name: mesh-brain-serving
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["mesh-brain-serving:8000"]
+        - job_name: providers
+          metrics_path: /metrics
+          static_configs:
+            - targets:
+                - "feature-flag-provider:8080"
+                - "incident-provider:8080"
+                - "audit-sink:8080"
+
+  mesh_e2e_alertmanager:
+    content: |
+      route:
+        receiver: mesh-e2e-null
+      receivers:
+        - name: mesh-e2e-null
+
+  mesh_e2e_otel_collector:
+    content: |
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+      exporters:
+        prometheus:
+          endpoint: 0.0.0.0:8889
+        otlp/jaeger:
+          endpoint: jaeger:4317
+          tls:
+            insecure: true
+      service:
+        pipelines:
+          metrics:
+            receivers: [otlp]
+            exporters: [prometheus]
+          traces:
+            receivers: [otlp]
+            exporters: [otlp/jaeger]
+
+  mesh_e2e_loki:
+    content: |
+      auth_enabled: false
+      server:
+        http_listen_port: 3100
+      common:
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+      schema_config:
+        configs:
+          - from: 2024-01-01
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+      limits_config:
+        allow_structured_metadata: false
+
+  mesh_e2e_grafana_datasources:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          url: http://prometheus:9090
+          isDefault: true
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki:3100
+        - name: Jaeger
+          type: jaeger
+          access: proxy
+          url: http://jaeger:16686

@@ -34,6 +34,25 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
         self.assertEqual(result["status"], "pass")
         self.assertTrue(all(result["checks"].values()))
 
+    def test_missing_backup_restore_rehearsal_reports_required_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "missing-backup-restore-rehearsal.json"
+
+            result = verify_backup_restore_rehearsal(
+                proof_path,
+                expected_environment="staging",
+                expected_state_backend="postgres",
+            )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertEqual(result["error"], "proof_missing")
+        self.assertIn("proof_present", result["missing"])
+        self.assertIn("schema_valid", result["missing"])
+        self.assertIn("environment_matches_expected", result["missing"])
+        self.assertIn("state_backend_matches_expected", result["missing"])
+        self.assertFalse(result["checks"]["proof_present"])
+        self.assertFalse(result["checks"]["schema_valid"])
+
     def test_backup_restore_rehearsal_blocks_wrong_expected_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             proof_path = Path(tmp) / "backup-restore-rehearsal.json"

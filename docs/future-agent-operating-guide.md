@@ -4,9 +4,9 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 
 ## Source-Of-Truth Hierarchy
 
-1. Current code and config win over prose: `control_plane_server.py`, `services/`, `shared/mesh_runtime/`, `mesh_brain/`, `web/`, `scripts/`, `config/`, `policies/`, and `docker-compose*.yml`.
+1. Current code and config win over prose: `control_plane_server.py`, `services/`, `shared/mesh_runtime/`, `mesh_brain/`, `meshapp/`, `web/`, `scripts/`, `config/`, `policies/`, and `docker-compose*.yml`.
 2. Contracts win over inferred shapes: JSON Schemas in `shared/mesh_runtime/schemas/` plus Python dataclasses and validators in `shared/mesh_runtime/contracts.py` and related modules.
-3. Generated web contracts must match backend contracts. Use `npm run lint` or `npm --prefix web run contracts:check`.
+3. Generated UI contracts must match backend contracts in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`. Use `npm run lint`, `npm --prefix web run contracts:check`, or `npm --prefix meshapp/frontend run contracts:check`; use `scripts/generate_control_plane_contracts.py --types-path <path>` only when intentionally checking or updating one UI surface.
 4. Roadmap and evidence docs are evidence indexes, not truth by themselves: `docs/production-deployment-roadmap.md`, `docs/production-hardening-records.md`, and `docs/production-readiness-validation.md`.
 5. Historical docs and archived trees are provenance only unless the task explicitly revives them.
 6. External product, competitor, market, or certification claims require independent verification and explicit evidence.
@@ -17,7 +17,8 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Runtime loop and services: `services/runtime.py`, `services/pipeline.py`, `services/ingest/`, `services/trigger/`, `services/evidence/`, `services/investigation/`, `services/decision/`, `services/evaluation/`, `services/orchestrator/`, `services/actuators/`, `services/feedback/`, `services/observer/`, and watchers.
 - Runtime contracts and persistence: `shared/mesh_runtime/`, with `shared/mesh_runtime/schemas/` as schema source.
 - Model lifecycle plane: `mesh_brain/`.
-- Operator UI: `web/`, especially `web/src/App.tsx`, `web/src/api.ts`, `web/src/types.ts`, and `web/src/lib/`.
+- Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `web/` remains the Vite reference surface during migration.
+- Branding system: `web/branding/` owns the brand guide, mark, and reusable CSS tokens; map those tokens into an explicit UI state slice instead of rewriting unrelated app styles in broad patches.
 - Deployment and validation: `docker-compose.stack.yml`, `docker-compose.prod.yml`, `scripts/`, `config/`, and `policies/`.
 - Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, and the `agentic-operator-core-main/` provenance record.
 - Archived UI: `docs/history/gpui/`.
@@ -30,10 +31,11 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Promptfoo is a compatibility mode name and advisory integration lane. Mesh-native evaluation decides pass/fail.
 - Hermes is first-class for explanation and interaction. In `auto` orchestration mode the adapter prefers Hermes when ready, then Goose, then native fallback. Hermes does not replace Mesh authority.
 - Postgres is the compose production default and required for multi-operator production reliance. File-backed state remains supported and is the library default.
+- HelixDB memory projection is an optional graph-vector overlay for verified memory records, with a replayable projection outbox for failed Helix writes. Do not treat `MESH_MEMORY_GRAPH_BACKEND=helix` as a replacement for `MESH_STATE_BACKEND=postgres` pilot persistence or release proof.
 - Local smoke evidence is not production proof.
 - Synthetic, fixture, local-only, or `--allow-dirty` release evidence is not pilot-signing proof.
 - Raw secrets, kubeconfigs, tokens, API keys, SSH keys, and service account credentials must not enter run artifacts, docs examples, or committed fixtures.
-- The browser UI is the active operator surface. GPUI is archived unless explicitly revived.
+- `meshapp/` is the active production pilot-serving operator surface. `web/` is the browser/Vite reference surface during migration. GPUI is archived unless explicitly revived.
 
 ## Validation Commands By Change Type
 
@@ -75,6 +77,9 @@ Web UI or generated contract changes:
 npm --prefix web run lint
 npm --prefix web run test
 npm --prefix web run build
+npm --prefix meshapp/frontend run lint
+npm --prefix meshapp/frontend run test
+npm --prefix meshapp/frontend run build
 ```
 
 Live UI e2e, when browser and localhost bind are available:
