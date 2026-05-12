@@ -43,6 +43,27 @@ Mesh state backend (`file` or `postgres`); HelixDB receives observations,
 claims, relationships, supersessions, retrieval records, and memory packets as
 a graph-vector substrate for agent walkability, RAG, and MCP-facing exploration.
 
+### Protocol Interface
+
+The projection implements `HelixMemoryProjectionProtocol` with these methods:
+
+- `upsert_observation(record)`: Insert or update an observation.
+- `upsert_claim(record)`: Insert or update a claim.
+- `upsert_relationship(record)`: Insert or update a relationship edge.
+- `upsert_supersession(record)`: Record claim supersession.
+- `record_retrieval(record)`: Log memory read events.
+- `upsert_memory_packet(record)`: Persist context bundles.
+- `replay_pending(limit)`: Replay failed outbox entries.
+- `projection_status()`: Return projection health.
+
+The outbox implements `HelixMemoryProjectionOutboxProtocol`:
+
+- `enqueue(operation, record)`: Queue projection operation.
+- `mark_applied(event_id)`: Mark operation successful.
+- `mark_failed(event_id, error)`: Mark operation failed.
+- `pending_events(limit)`: List pending operations.
+- `status()`: Return outbox health.
+
 Required configuration:
 
 ```bash
@@ -54,9 +75,13 @@ MESH_HELIX_QUERY_NAMESPACE=mesh
 The adapter calls `MESH_HELIX_API_ENDPOINT` directly when it is set. If the
 endpoint is unset, it uses the optional `helix` Python extra when available and
 otherwise falls back to `http://localhost:${MESH_HELIX_PORT}` (default `6969`).
+Customize the namespace with `MESH_HELIX_QUERY_NAMESPACE` (default `mesh`);
+it must start with a letter or underscore and contain only letters, numbers,
+and underscores.
 Enabling this mode requires compiled HelixQL queries matching the configured
-namespace, for example `mesh_upsert_observation`, `mesh_upsert_claim`, and
-`mesh_upsert_relationship`.
+namespace, for example `mesh_upsert_observation`, `mesh_upsert_claim`,
+`mesh_upsert_relationship`, `mesh_upsert_supersession`, `mesh_record_retrieval`,
+and `mesh_upsert_memory_packet`.
 
 The checked-in Helix project lives under `helix/mesh-memory/`:
 

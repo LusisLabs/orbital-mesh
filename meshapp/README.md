@@ -48,6 +48,18 @@ Set `NEXT_PUBLIC_MESH_API_URL` at build time or pass `?server=<url>` at runtime 
 
 Local browser sessions on `localhost`, `127.0.0.1`, or `::1` send `X-Mesh-Operator: local-operator` and `X-Mesh-Roles: viewer,launcher,approver` by default so protected read paths such as `/api/approvals` do not stall the console. Override with `NEXT_PUBLIC_MESH_OPERATOR_ID` and `NEXT_PUBLIC_MESH_OPERATOR_ROLES`, `?operator=<id>&roles=<csv>`, `?operator_id=<id>&operator_roles=<csv>`, or `localStorage` keys `mesh.operator.id` and `mesh.operator.roles`. Production ingress must still strip client-supplied identity headers and stamp trusted identity, as documented in `docs/authenticated-ingress.md`.
 
+## HelixDB Memory Projection
+
+Enable HelixDB projection for the verified memory backend:
+
+```bash
+MESH_MEMORY_GRAPH_BACKEND=helix
+MESH_HELIX_API_ENDPOINT=http://localhost:6969
+MESH_HELIX_QUERY_NAMESPACE=mesh
+```
+
+See `docs/memory-architecture.md` for fullHelixDB projection configuration and the HelixQL query schema under `helix/mesh-memory/`.
+
 ## Web Engines
 
 The generated app defaults to the system WebView. On macOS you can switch to Chromium/CEF with:
