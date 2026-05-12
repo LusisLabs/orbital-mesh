@@ -15,26 +15,32 @@ SCRIPT = "scripts/generate_release_provenance.py"
 
 
 def sbom_json(image_digest: str, *, bom_format: str = "CycloneDX") -> str:
-    return json.dumps(
-        {
-            "bomFormat": bom_format,
-            "metadata": {
-                "properties": [
-                    {"name": "mesh:image_digest", "value": image_digest},
-                ]
-            },
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "bomFormat": bom_format,
+                "metadata": {
+                    "properties": [
+                        {"name": "mesh:image_digest", "value": image_digest},
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
 
 
 def vulnerability_scan_json(image_digest: str, *, findings: list[dict[str, object]] | None = None) -> str:
-    return json.dumps(
-        {
-            "scanner": "test",
-            "image_digest": image_digest,
-            "findings": findings or [],
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "scanner": "test",
+                "image_digest": image_digest,
+                "findings": findings or [],
+            }
+        )
+        + "\n"
+    )
 
 
 def write_ci_attestation(
@@ -70,10 +76,7 @@ def write_ci_attestation(
         },
         "checks": check_records
         if check_records is not None
-        else [
-            {"name": name, "status": "passed"}
-            for name in (checks or ["python-test", "web", "docker-build"])
-        ],
+        else [{"name": name, "status": "passed"} for name in (checks or ["python-test", "web", "docker-build"])],
     }
     packet["attestation_sha256"] = payload_hash(packet)
     path.write_text(json.dumps(packet) + "\n", encoding="utf-8")
@@ -104,27 +107,30 @@ def migration_rehearsal_json(discovered: dict[str, object]) -> str:
     combined_sha256 = str(migrations["combined_sha256"])
     hashes = migrations["hashes"]
     assert isinstance(hashes, list)
-    return json.dumps(
-        {
-            "schema_version": "mesh.migration_rehearsal.v1",
-            "rehearsal_id": "migration_rehearsal_test",
-            "generated_at": "2026-05-05T23:30:00Z",
-            "operator_id": "platform@example.com",
-            "environment": "staging",
-            "database_engine": "postgres",
-            "migration_directory": "migrations/postgres",
-            "migration_version": version,
-            "migration_combined_sha256": combined_sha256,
-            "applied_migration_count": len(hashes),
-            "rolled_back": True,
-            "rollback_ref": "restore://postgres/migration-rehearsal/test",
-            "pre_migration_snapshot_ref": "snapshot://postgres/pre-migration/test",
-            "post_migration_validation_ref": "validation://postgres/post-migration/test",
-            "destructive_changes_reviewed": True,
-            "measured_apply_seconds": 12.5,
-            "measured_rollback_seconds": 18.25,
-        }
-    ) + "\n"
+    return (
+        json.dumps(
+            {
+                "schema_version": "mesh.migration_rehearsal.v1",
+                "rehearsal_id": "migration_rehearsal_test",
+                "generated_at": "2026-05-05T23:30:00Z",
+                "operator_id": "platform@example.com",
+                "environment": "staging",
+                "database_engine": "postgres",
+                "migration_directory": "migrations/postgres",
+                "migration_version": version,
+                "migration_combined_sha256": combined_sha256,
+                "applied_migration_count": len(hashes),
+                "rolled_back": True,
+                "rollback_ref": "restore://postgres/migration-rehearsal/test",
+                "pre_migration_snapshot_ref": "snapshot://postgres/pre-migration/test",
+                "post_migration_validation_ref": "validation://postgres/post-migration/test",
+                "destructive_changes_reviewed": True,
+                "measured_apply_seconds": 12.5,
+                "measured_rollback_seconds": 18.25,
+            }
+        )
+        + "\n"
+    )
 
 
 class ReleaseProvenanceTests(unittest.TestCase):
