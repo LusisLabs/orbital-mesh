@@ -98,7 +98,6 @@ class DisabledHelixMemoryProjection:
         del record
 
     def replay_pending(self, limit: int | None = None) -> dict[str, Any]:
-        del limit
         return {"enabled": False, "outbox_enabled": False, "attempted": 0, "applied": 0, "failed": 0, "failures": []}
 
     def projection_status(self) -> dict[str, Any]:
@@ -202,7 +201,6 @@ class HelixMemoryProjection:
         )
 
     def replay_pending(self, limit: int | None = None) -> dict[str, Any]:
-        del limit
         return {"enabled": True, "outbox_enabled": False, "attempted": 0, "applied": 0, "failed": 0, "failures": []}
 
     def projection_status(self) -> dict[str, Any]:
