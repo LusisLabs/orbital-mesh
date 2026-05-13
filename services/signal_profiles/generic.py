@@ -20,6 +20,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import GENERIC_PROFILE_KEY, SignalProfile
 
+from ._evidence_strategies import GenericSignalEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -31,10 +32,10 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
     """Construct the generic agentic-fallback profile."""
     return SignalProfile(
         signal_type=GENERIC_PROFILE_KEY,
-        # No trigger_type collision possible — the registry's
-        # trigger-keyed index never sees this sentinel because
-        # registry.register() rejects the generic sentinel.
-        trigger_type=GENERIC_PROFILE_KEY,
+        # Generic triggers are still routed as the fallback profile
+        # because the registry does not index the generic profile, but
+        # using a real trigger type keeps artifacts and schemas explicit.
+        trigger_type="generic_signal_firing",
         # No declared schema — the generic profile accepts any
         # well-formed payload. Per-field validation happens at the
         # ingest stage via duck-typing when a real schema is unknown.
@@ -49,7 +50,7 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "aws/github/postgres/mcp/topology)."
             ),
         ),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:generic"),
+        evidence_strategy=GenericSignalEvidenceStrategy(),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:generic"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:generic"),

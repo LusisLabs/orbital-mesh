@@ -388,6 +388,7 @@ class EvidenceService:
         probe_runner: ProbeRunner | None = None,
         required_fields: tuple[str, ...] | None = None,
         max_null_fields: int | None = None,
+        signal_profiles: Any = None,
     ) -> None:
         self._probe_runner = probe_runner or _identity_runner
         # Resolution order for sufficiency thresholds:
@@ -408,6 +409,7 @@ class EvidenceService:
             if max_null_fields is not None
             else (policy_max_null if policy_max_null is not None else _DEFAULT_MAX_NULL_FIELDS)
         )
+        self._signal_profiles = signal_profiles
 
     def assemble(
         self,
@@ -418,11 +420,25 @@ class EvidenceService:
     ) -> EvidencePack:
         """Build a pack from the inbound signal and optional probes.
 
-        Currently scoped to ``reth_node`` signals; other signal types
-        return a no-op pack with ``source="inline_signal"`` and the input
-        payload as the pack. This keeps the service safe to wire on the
-        default path even before non-Reth handlers are added.
+        When a signal-profile registry is bound, dispatch through the
+        active profile's evidence strategy. Direct tests and legacy callers
+        that construct ``EvidenceService`` without a registry keep the old
+        compatibility path.
         """
+        if self._signal_profiles is not None:
+            signal_type_for_lookup = (
+                signal_payload.get("signal_type") if isinstance(signal_payload, dict) else None
+            )
+            profile = (
+                self._signal_profiles.get_for_trigger(trigger.trigger_type)
+                or self._signal_profiles.get(signal_type_for_lookup)
+                or self._signal_profiles.get_or_generic(signal_type_for_lookup)
+            )
+            return profile.evidence_strategy.assemble(
+                trigger=trigger,
+                signal_payload=signal_payload,
+                investigation_plan=investigation_plan,
+            )
         signal_type = signal_payload.get("signal_type")
 
         # Non-Reth signals: no-op pack so the rest of the pipeline still
@@ -435,6 +451,21 @@ class EvidenceService:
                 probe_results=[],
                 sufficient=True,
             )
+
+        return self._assemble_reth(
+            trigger=trigger,
+            signal_payload=signal_payload,
+            investigation_plan=investigation_plan,
+        )
+
+    def _assemble_reth(
+        self,
+        *,
+        trigger: "Trigger",
+        signal_payload: dict[str, Any],
+        investigation_plan: dict[str, Any] | None = None,
+    ) -> EvidencePack:
+        """Build the specialised Reth evidence pack."""
 
         # Pre-fast-path scans. Two passes that can stamp escalation
         # signatures the trigger didn't carry:

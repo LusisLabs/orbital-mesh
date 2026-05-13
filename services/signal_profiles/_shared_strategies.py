@@ -188,18 +188,17 @@ class HarnessDrivenRcaBuilder:
         decision: Decision,
         evidence_pack: dict[str, Any] | None,
     ) -> RcaReport:
-        ranked = decision.reasoning.get("ranked_hypotheses")
-        ranked_list = ranked if isinstance(ranked, list) else []
+        ranked_list = _ranked_candidates(decision)
         top = ranked_list[0] if ranked_list and isinstance(ranked_list[0], dict) else {}
 
-        likely_cause = str(top.get("candidate_cause") or "unknown")
-        confidence = _safe_float(top.get("posterior_confidence"), decision.confidence)
-        supporting = [str(item) for item in top.get("supporting_evidence", []) if item]
+        likely_cause = _candidate_cause(top)
+        confidence = _safe_float(_candidate_confidence(top), decision.confidence)
+        supporting = _supporting_evidence(top)
         disconfirming = [str(item) for item in top.get("disconfirming_evidence", []) if item]
         ruled_out = [
-            str(item.get("candidate_cause"))
+            _candidate_cause(item)
             for item in ranked_list[1:]
-            if isinstance(item, dict) and item.get("candidate_cause") and item.get("disconfirming_evidence")
+            if isinstance(item, dict) and _candidate_cause(item) != "unknown" and item.get("disconfirming_evidence")
         ][:6]
         evidence_checked = _evidence_checked(evidence_pack)
         unknowns = _unknowns(ranked_list, evidence_pack)
@@ -236,6 +235,50 @@ def _safe_float(value: Any, fallback: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float(fallback)
+
+
+def _ranked_candidates(decision: Decision) -> list[dict[str, Any]]:
+    reasoning = decision.reasoning if isinstance(decision.reasoning, dict) else {}
+    evidence_pack = reasoning.get("evidence_pack") if isinstance(reasoning.get("evidence_pack"), dict) else {}
+    sources = (
+        reasoning.get("ranked_hypotheses"),
+        evidence_pack.get("hypotheses") if isinstance(evidence_pack, dict) else None,
+        (
+            evidence_pack.get("investigation_report", {}).get("root_cause_candidates")
+            if isinstance(evidence_pack, dict) and isinstance(evidence_pack.get("investigation_report"), dict)
+            else None
+        ),
+    )
+    for source in sources:
+        if isinstance(source, list):
+            candidates = [item for item in source if isinstance(item, dict)]
+            if candidates:
+                return candidates
+    return []
+
+
+def _candidate_cause(candidate: dict[str, Any]) -> str:
+    return str(
+        candidate.get("candidate_cause")
+        or candidate.get("root_cause")
+        or candidate.get("likely_cause")
+        or "unknown"
+    )
+
+
+def _candidate_confidence(candidate: dict[str, Any]) -> Any:
+    return candidate.get("posterior_confidence", candidate.get("confidence"))
+
+
+def _supporting_evidence(candidate: dict[str, Any]) -> list[str]:
+    evidence = [str(item) for item in candidate.get("supporting_evidence", []) if item]
+    if evidence:
+        return evidence
+    for key in ("matched_patterns", "supporting_tools", "citation_ids"):
+        values = candidate.get(key)
+        if isinstance(values, list) and values:
+            evidence.append(f"{key}={', '.join(str(item) for item in values if item)}")
+    return evidence
 
 
 def _evidence_checked(evidence_pack: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -286,7 +329,7 @@ def _unknowns(ranked: list[dict[str, Any]], evidence_pack: dict[str, Any] | None
             continue
         for predicate in predicates:
             if isinstance(predicate, dict) and predicate.get("result") == "unknown":
-                unknown.append(f"{hyp.get('candidate_cause', 'unknown')}: {predicate.get('kind')}")
+                unknown.append(f"{_candidate_cause(hyp)}: {predicate.get('kind')}")
             if len(unknown) >= 8:
                 return unknown
     return unknown

@@ -75,8 +75,10 @@ class TriggerService:
             trigger = self._detect_otel_metric_trigger(envelope)
         elif signal_type == "webhook_alert":
             trigger = self._detect_webhook_trigger(envelope)
-        else:
+        elif signal_type == "feature_flag":
             trigger = self._detect_feature_flag_trigger(envelope)
+        else:
+            trigger = self._detect_generic_signal_trigger(envelope)
         # Log the outcome in a single place so readers don't have to hunt
         # across three branch methods to see whether a trigger fired.
         if trigger is None:
@@ -167,6 +169,42 @@ class TriggerService:
                 "sample_size": telemetry["sample_size"],
             },
             related_context=trigger_context,
+        )
+        trigger.validate()
+        return trigger
+
+    def _detect_generic_signal_trigger(self, envelope: EventEnvelope) -> Trigger | None:
+        payload = envelope.payload
+        related_context = payload.get("related_context") if isinstance(payload.get("related_context"), dict) else {}
+        trigger = Trigger(
+            trigger_id=f"trg_{envelope.object_id}",
+            trigger_type="generic_signal_firing",
+            triggered_at=envelope.emitted_at,
+            environment=str(payload.get("environment") or "unknown"),
+            service=str(payload.get("service") or "unknown_service"),
+            endpoint=str(payload.get("endpoint") or "unknown"),
+            flag_key=None,
+            current_rollout_pct=None,
+            comparison_window=None,
+            segment=_generic_segment(payload.get("segment")),
+            metrics={
+                "baseline_p95_latency_ms": None,
+                "observed_p95_latency_ms": None,
+                "baseline_error_rate": None,
+                "observed_error_rate": None,
+                "baseline_timeout_rate": None,
+                "observed_timeout_rate": None,
+                "sample_size": None,
+            },
+            related_context={
+                "release_id": related_context.get("release_id"),
+                "active_incidents": int(related_context.get("active_incidents", 0) or 0),
+                "similar_prior_cases": int(related_context.get("similar_prior_cases", 0) or 0),
+                "signal_type": payload.get("signal_type"),
+                "severity": related_context.get("severity"),
+                "raw_signal_id": related_context.get("raw_signal_id"),
+                **related_context,
+            },
         )
         trigger.validate()
         return trigger
@@ -492,6 +530,14 @@ def _metric_projection(payload: dict, field: str, window: str) -> float | None:
     bucket = telemetry.get(window) or {}
     value = bucket.get(field)
     return float(value) if value is not None else None
+
+
+def _generic_segment(segment: object) -> dict[str, str]:
+    raw = segment if isinstance(segment, dict) else {}
+    return {
+        "customer_tier": str(raw.get("customer_tier") or "unknown"),
+        "region": str(raw.get("region") or "unknown"),
+    }
 
 
 def _jwt_mode_insecure(mode: object) -> bool:

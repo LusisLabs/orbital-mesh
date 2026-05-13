@@ -171,6 +171,14 @@ class ControlPlaneApiTests(unittest.TestCase):
             lambda payload: payload["stage"] == "awaiting_operator" and payload["pending_pause_stage"] == "evaluation_ready",
         )
         self.assertNotIn("execution", paused["artifacts"])
+        self.assertEqual(paused["artifacts"]["normalized_event"]["payload"]["signal_type"], "feature_flag")
+        self.assertEqual(
+            paused["artifacts"]["investigation_plan"]["probe_budget"]["planner"],
+            "harness",
+        )
+        self.assertEqual(paused["artifacts"]["evidence_pack"]["source"], "feature_flag_structured_signal")
+        self.assertTrue(paused["artifacts"]["evidence_pack"]["sufficient"])
+        self.assertEqual(paused["artifacts"]["rca_report"]["recommended_next_step"], "disable_flag")
         analysis = self._request("GET", f"/api/runs/{run['run_id']}/scenario-analysis")
         self.assertEqual(analysis["suggested_decision_type"], "disable_flag")
         self.assertIn("merkle_root", analysis)

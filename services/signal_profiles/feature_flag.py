@@ -18,6 +18,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
+from ._evidence_strategies import StructuredSignalEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -51,7 +52,17 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "always-on tool packs."
             ),
         ),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:feature_flag"),
+        evidence_strategy=StructuredSignalEvidenceStrategy(
+            signal_source="feature_flag",
+            required_paths=(
+                "signal_type",
+                "feature_flag.flag_key",
+                "feature_flag.current_rollout_pct",
+                "request_telemetry.sample_size",
+                "request_telemetry.baseline",
+                "request_telemetry.observed",
+            ),
+        ),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:feature_flag"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:feature_flag"),

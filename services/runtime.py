@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.decision.llm_fallback import LlmActionProposer
 from services.decision.service import DecisionService
@@ -10,7 +10,7 @@ from services.evidence import EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.feedback.service import FeedbackService, KubernetesFeedbackObserver
 from services.ingest.service import IngestService
-from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
+from services.investigation import InvestigationService, RethInvestigationPlanner
 from services.orchestrator.service import OrchestratorService
 from services.scenario_analysis.service import ScenarioAnalysisService
 from services.signal_history import SignalHistoryStore
@@ -222,6 +222,32 @@ def _auto_wire_investigation_harness(
     return registry, planner
 
 
+def _bind_profile_strategies(signal_profiles: Any, *, evidence_service: EvidenceService) -> None:
+    profiles = list(signal_profiles.profiles())
+    generic = signal_profiles.generic
+    if generic is not None:
+        profiles.append(generic)
+    for profile in profiles:
+        bind = getattr(profile.evidence_strategy, "bind", None)
+        if callable(bind):
+            bind(evidence_service)
+
+
+def resolve_signal_profile(signal_profiles: Any, trigger: object, signal_payload: dict | None) -> Any:
+    """Resolve the one signal profile every migrated stage should share."""
+    trigger_type = str(getattr(trigger, "trigger_type", "") or "")
+    if trigger_type:
+        profile = signal_profiles.get_for_trigger(trigger_type)
+        if profile is not None:
+            return profile
+    signal_type = signal_payload.get("signal_type") if isinstance(signal_payload, dict) else None
+    if signal_type:
+        profile = signal_profiles.get(signal_type)
+        if profile is not None:
+            return profile
+    return signal_profiles.get_or_generic(signal_type)
+
+
 class MeshRuntimeEngine:
     def __init__(
         self,
@@ -271,9 +297,6 @@ class MeshRuntimeEngine:
             learning_store=learning_store,
             signal_history=self.signal_history,
         )
-        self.trigger = trigger or TriggerService()
-        self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
-        self.investigation = investigation or InvestigationService()
         # Signal-profile registry — single source of truth for
         # per-signal-type pipeline behavior. Replaces the silent-skip
         # paths in the Reth-only investigation planner and RCA builder.
@@ -281,6 +304,13 @@ class MeshRuntimeEngine:
         from services.signal_profiles import build_default_registry
 
         self.signal_profiles = build_default_registry(self.config)
+        self.trigger = trigger or TriggerService()
+        self.evidence = evidence or EvidenceService(
+            probe_runner=build_configured_probe_runner(self.config),
+            signal_profiles=self.signal_profiles,
+        )
+        _bind_profile_strategies(self.signal_profiles, evidence_service=self.evidence)
+        self.investigation = investigation or InvestigationService()
         # Legacy attribute kept so existing callers (control_plane,
         # tests) that reach for ``self.reth_planner`` still work; the
         # profile's ``RethProfileInvestigationPlanner`` wraps the same
@@ -437,6 +467,10 @@ class MeshRuntimeEngine:
             result["run_metadata"] = run_record.__dict__
             return result
 
+        canonical_signal_payload = (
+            normalized_event.payload if isinstance(normalized_event.payload, dict) else raw_signal
+        )
+
         # Populate the topology graph from this trigger's signal so
         # the always-on ``topology`` tool pack has data to query.
         # Idempotent and best-effort: failures are swallowed so a bad
@@ -490,11 +524,13 @@ class MeshRuntimeEngine:
         # plan; K8s/OTel/feature-flag/webhook/generic get a
         # harness-driven empty-but-audited plan that signals "the
         # investigation harness owns probe selection for this run."
-        signal_profile = self.signal_profiles.get_or_generic(
-            raw_signal.get("signal_type") if isinstance(raw_signal, dict) else None
+        signal_profile = resolve_signal_profile(
+            self.signal_profiles,
+            trigger,
+            canonical_signal_payload if isinstance(canonical_signal_payload, dict) else None,
         )
         investigation_plan = signal_profile.investigation_planner.plan(
-            trigger=trigger, signal_payload=raw_signal
+            trigger=trigger, signal_payload=canonical_signal_payload
         )
         record_event(
             "evidence_pack_ready",
@@ -507,7 +543,7 @@ class MeshRuntimeEngine:
 
         evidence_pack = self.evidence.assemble(
             trigger=trigger,
-            signal_payload=raw_signal,
+            signal_payload=canonical_signal_payload,
             investigation_plan=investigation_plan.to_dict() if investigation_plan is not None else None,
         )
         record_event(

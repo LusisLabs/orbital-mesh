@@ -15,6 +15,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
+from ._evidence_strategies import StructuredSignalEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -37,7 +38,16 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "prometheus/loki/jaeger tool packs."
             ),
         ),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:otel"),
+        evidence_strategy=StructuredSignalEvidenceStrategy(
+            signal_source="otel",
+            required_paths=(
+                "signal_type",
+                "metric_regression.metric_name",
+                "metric_regression.observed_value",
+                "metric_regression.baseline_value",
+                "resource_attributes",
+            ),
+        ),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:otel"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:otel"),

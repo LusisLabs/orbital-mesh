@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from shared.mesh_runtime import EventEnvelope, validate_payload
@@ -139,6 +139,14 @@ class IngestService:
                     "deployment": deployment["name"],
                 },
             )
+        if raw_signal.get("signal_type") and signal_type not in {
+            "feature_flag",
+            "otel_metric_regression",
+            "reth_node",
+            "webhook_alert",
+            "kubernetes_deployment_issue",
+        }:
+            return self._normalize_generic_signal(raw_signal, signal_type=str(signal_type))
         feature_flag = raw_signal["feature_flag"]
         request_telemetry = raw_signal["request_telemetry"]
         related_context = {
@@ -168,6 +176,7 @@ class IngestService:
             schema_version="v1",
             emitted_at=raw_signal["observed_at"],
             payload={
+                "signal_type": "feature_flag",
                 "environment": raw_signal["environment"],
                 "service": raw_signal["service"],
                 "endpoint": raw_signal["endpoint"],
@@ -195,6 +204,46 @@ class IngestService:
                 "service": raw_signal["service"],
                 "endpoint": raw_signal["endpoint"],
                 "flag_key": feature_flag["flag_key"],
+            },
+        )
+
+    def _normalize_generic_signal(self, raw_signal: dict, *, signal_type: str) -> EventEnvelope:
+        observed_at = raw_signal.get("observed_at") or _now_iso()
+        service = str(raw_signal.get("service") or "unknown_service")
+        endpoint = str(raw_signal.get("endpoint") or raw_signal.get("resource") or "unknown")
+        raw_segment = raw_signal.get("segment") if isinstance(raw_signal.get("segment"), dict) else {}
+        related_context = {
+            "release_id": raw_signal.get("release_id"),
+            "active_incidents": int(raw_signal.get("active_incidents", 0) or 0),
+            "similar_prior_cases": int(raw_signal.get("similar_prior_cases", 0) or 0),
+            "signal_type": signal_type,
+            "severity": raw_signal.get("severity"),
+            "raw_signal_id": raw_signal.get("signal_id") or raw_signal.get("id"),
+        }
+        if isinstance(raw_signal.get("related_context"), dict):
+            related_context.update(raw_signal["related_context"])
+            related_context.setdefault("signal_type", signal_type)
+        return EventEnvelope(
+            event_type="normalized_signal",
+            object_id=str(raw_signal.get("signal_id") or raw_signal.get("id") or f"generic_{signal_type}"),
+            schema_version="v1",
+            emitted_at=str(observed_at),
+            payload={
+                "signal_type": signal_type,
+                "environment": str(raw_signal.get("environment") or "unknown"),
+                "service": service,
+                "endpoint": endpoint,
+                "segment": {
+                    "customer_tier": str(raw_segment.get("customer_tier") or "unknown"),
+                    "region": str(raw_segment.get("region") or raw_signal.get("region") or "unknown"),
+                },
+                "related_context": related_context,
+                "raw_signal": dict(raw_signal),
+            },
+            summary={
+                "service": service,
+                "endpoint": endpoint,
+                "signal_type": signal_type,
             },
         )
 
@@ -460,6 +509,10 @@ def _coerce_sample_size(raw_signal: dict) -> int:
     if isinstance(value, int) and value > 0:
         return value
     return 1000
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _parse_envelope_emitted_at(s: str) -> datetime:

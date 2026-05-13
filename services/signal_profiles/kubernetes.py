@@ -18,6 +18,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
+from ._evidence_strategies import StructuredSignalEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -40,7 +41,19 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "kubectl/topology/loki tool packs."
             ),
         ),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:kubernetes"),
+        evidence_strategy=StructuredSignalEvidenceStrategy(
+            signal_source="kubernetes",
+            required_paths=(
+                "signal_type",
+                "cluster",
+                "namespace",
+                "deployment.name",
+                "deployment.rollout_status",
+                "pods",
+                "events",
+                "log_summary",
+            ),
+        ),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:kubernetes"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:kubernetes"),

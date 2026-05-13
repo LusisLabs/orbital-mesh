@@ -16,6 +16,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
+from ._evidence_strategies import StructuredSignalEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -37,7 +38,16 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "Investigate webhook alert for {service} via the always-on tool packs."
             ),
         ),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:webhook"),
+        evidence_strategy=StructuredSignalEvidenceStrategy(
+            signal_source="webhook",
+            required_paths=(
+                "signal_type",
+                "webhook.action",
+                "webhook.severity",
+                "webhook.title",
+                "related_context.webhook_alert_id",
+            ),
+        ),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:webhook"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:webhook"),

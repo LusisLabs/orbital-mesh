@@ -28,6 +28,7 @@ from uuid import uuid4
 from shared.mesh_runtime import Decision, InvestigationPlan, RcaReport, RuntimeConfig, Trigger
 from shared.mesh_runtime.signal_profile import SignalProfile
 
+from ._evidence_strategies import RethEvidenceStrategy
 from ._shared_strategies import NotYetWiredStrategy
 
 
@@ -135,7 +136,7 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
         ingest_normalizer=NotYetWiredStrategy("ingest_normalizer:reth"),
         trigger_detector=NotYetWiredStrategy("trigger_detector:reth"),
         investigation_planner=RethProfileInvestigationPlanner(config),
-        evidence_strategy=NotYetWiredStrategy("evidence_strategy:reth"),
+        evidence_strategy=RethEvidenceStrategy(),
         rca_builder=RethProfileRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:reth"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:reth"),

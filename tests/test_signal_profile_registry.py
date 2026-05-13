@@ -253,7 +253,7 @@ class PR1WiredStrategiesTests(unittest.TestCase):
     profile. These two strategies must NOT be ``NotYetWiredStrategy``
     placeholders, and they must produce contract-valid output.
 
-    Other strategies (ingest/trigger/evidence/decision/scenario/feedback)
+    Other strategies (ingest/trigger/decision/scenario/feedback)
     are still placeholders until later PRs migrate them.
     """
 
@@ -305,7 +305,16 @@ class PR1WiredStrategiesTests(unittest.TestCase):
             self.assertEqual(report.trigger_id, trigger.trigger_id)
             report.validate()
 
-    def test_non_pr1_strategies_are_still_placeholders(self) -> None:
+    def test_every_profile_evidence_strategy_is_wired(self) -> None:
+        all_profiles = [*self.registry.profiles(), self.registry.generic]
+        for profile in all_profiles:
+            self.assertNotIsInstance(
+                profile.evidence_strategy,
+                NotYetWiredStrategy,
+                f"{profile.signal_type}: evidence_strategy is still NotYetWiredStrategy",
+            )
+
+    def test_non_migrated_strategies_are_still_placeholders(self) -> None:
         """Sanity check: the migration scaffold is still in place for
         the other 6 stages. Each PR removes some of these — when the
         full set is gone this test goes too.
@@ -313,7 +322,6 @@ class PR1WiredStrategiesTests(unittest.TestCase):
         unmigrated_fields = (
             "ingest_normalizer",
             "trigger_detector",
-            "evidence_strategy",
             "decision_strategy",
             "scenario_analyzer",
             "feedback_strategy",
@@ -331,12 +339,9 @@ class PR1WiredStrategiesTests(unittest.TestCase):
         """The placeholder MUST raise — silently no-op would defeat
         the whole point of invariant 1.
         """
-        placeholder = self.registry.generic.evidence_strategy
+        placeholder = self.registry.generic.ingest_normalizer
         with self.assertRaises(NotYetWired):
-            placeholder.assemble(
-                trigger=_make_trigger(),
-                signal_payload={"signal_type": "unknown"},
-            )
+            placeholder.normalize({"signal_type": "unknown"})
 
 
 class HarnessDrivenPlannerTests(unittest.TestCase):

@@ -28,7 +28,8 @@
         "kubernetes_deployment_unhealthy",
         "otel_metric_regression",
         "reth_node_degraded",
-        "webhook_alert_firing"
+        "webhook_alert_firing",
+        "generic_signal_firing"
       ]
     },
     "triggered_at": {
