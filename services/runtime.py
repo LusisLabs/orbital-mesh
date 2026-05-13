@@ -274,6 +274,17 @@ class MeshRuntimeEngine:
         self.trigger = trigger or TriggerService()
         self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
         self.investigation = investigation or InvestigationService()
+        # Signal-profile registry — single source of truth for
+        # per-signal-type pipeline behavior. Replaces the silent-skip
+        # paths in the Reth-only investigation planner and RCA builder.
+        # See docs/architecture/signal-profile-spec.md.
+        from services.signal_profiles import build_default_registry
+
+        self.signal_profiles = build_default_registry(self.config)
+        # Legacy attribute kept so existing callers (control_plane,
+        # tests) that reach for ``self.reth_planner`` still work; the
+        # profile's ``RethProfileInvestigationPlanner`` wraps the same
+        # instance internally.
         self.reth_planner = RethInvestigationPlanner(self.config)
         # InfraGraph is the typed view of K8s relationships (service →
         # pod → node → secret/configmap → ...). The control plane
@@ -473,16 +484,26 @@ class MeshRuntimeEngine:
             status="recorded",
         )
 
-        investigation_plan = self.reth_planner.plan(trigger=trigger, signal_payload=raw_signal)
-        if investigation_plan is not None:
-            record_event(
-                "evidence_pack_ready",
-                "integration_artifact_recorded",
-                investigation_plan.to_dict(),
-                artifact_key="investigation_plan",
-                integration_name="reth_planner",
-                status="recorded",
-            )
+        # Investigation plan: dispatched through the profile registry
+        # so every signal type produces a plan artifact (invariant 1
+        # — no silent skips). Reth gets its specialised multi-probe
+        # plan; K8s/OTel/feature-flag/webhook/generic get a
+        # harness-driven empty-but-audited plan that signals "the
+        # investigation harness owns probe selection for this run."
+        signal_profile = self.signal_profiles.get_or_generic(
+            raw_signal.get("signal_type") if isinstance(raw_signal, dict) else None
+        )
+        investigation_plan = signal_profile.investigation_planner.plan(
+            trigger=trigger, signal_payload=raw_signal
+        )
+        record_event(
+            "evidence_pack_ready",
+            "integration_artifact_recorded",
+            investigation_plan.to_dict(),
+            artifact_key="investigation_plan",
+            integration_name=f"{signal_profile.signal_source}_planner",
+            status="recorded",
+        )
 
         evidence_pack = self.evidence.assemble(
             trigger=trigger,
@@ -541,26 +562,30 @@ class MeshRuntimeEngine:
             evidence_pack=evidence_pack.to_dict(),
             investigation_report=investigation_report.to_dict(),
         )
-        rca_report = build_rca_report(
+        # RCA report: dispatched through the profile so every signal
+        # type emits a report (invariant 1). Reth still uses its
+        # specialised RCA builder; K8s/OTel/feature-flag/webhook/
+        # generic profiles synthesise from the investigation harness
+        # output via ``HarnessDrivenRcaBuilder``.
+        rca_report = signal_profile.rca_builder.build(
             trigger=trigger,
             decision=decision,
             evidence_pack=evidence_pack.to_dict(),
         )
-        if rca_report is not None:
-            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
-                "report_id": rca_report.report_id,
-                "likely_cause": rca_report.likely_cause,
-                "confidence": rca_report.confidence,
-                "recommended_next_step": rca_report.recommended_next_step,
-            }
-            record_event(
-                "decision_ready",
-                "integration_artifact_recorded",
-                rca_report.to_dict(),
-                artifact_key="rca_report",
-                integration_name="reth_rca",
-                status="recorded",
-            )
+        decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+            "report_id": rca_report.report_id,
+            "likely_cause": rca_report.likely_cause,
+            "confidence": rca_report.confidence,
+            "recommended_next_step": rca_report.recommended_next_step,
+        }
+        record_event(
+            "decision_ready",
+            "integration_artifact_recorded",
+            rca_report.to_dict(),
+            artifact_key="rca_report",
+            integration_name=f"{signal_profile.signal_source}_rca",
+            status="recorded",
+        )
         ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
         if ranked_hypotheses:
             record_event(
