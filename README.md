@@ -1,6 +1,6 @@
 # Mesh Intelligence
 
-A **local, policy-guided operator control plane** for **bounded** closed-loop remediation, with an **agentic SRE investigation harness** wired into every trigger.
+Agentic harness based the principal of unlocking ai to understand,read and remedy software production pipelines.
 
 Mesh ingests infrastructure signals → investigates with read-only tools (Prometheus, kubectl, AWS, GitHub, Loki, Jaeger, Postgres, MCP, topology graph) → proposes a decision → evaluates it against policy and quality gates → pauses for **operator approval** by default → executes through a bounded actuator → records feedback. Every step is captured in a Merkle-rooted event log and mirrored into an Obsidian-compatible vault for audit.
 
