@@ -62,6 +62,18 @@ class RuntimeConfig:
     goose_timeout_seconds: int = 180
     state_backend: str = "file"
     database_url: str | None = None
+    # Connection pool sizing for ``state_backend=postgres``. The pool is
+    # shared process-wide and keyed by ``database_url`` so a single mesh
+    # instance never opens more than ``postgres_pool_max_size`` concurrent
+    # connections regardless of how many ``PostgresStateStore`` objects
+    # exist. Pre-pool implementation opened a fresh TCP+TLS+auth handshake
+    # on every operation (27 sites in ``postgres_state.py``), so for any
+    # non-trivial deployment the pool is the difference between sub-10ms
+    # and ~100ms per-operation latency.
+    postgres_pool_min_size: int = 1
+    postgres_pool_max_size: int = 10
+    postgres_pool_max_idle_seconds: float = 600.0
+    postgres_pool_connect_timeout_seconds: float = 10.0
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
@@ -277,6 +289,24 @@ class RuntimeConfig:
             raise ValueError("reth_investigation_budget_seconds must be > 0")
         if self.reth_investigation_max_probes < 1:
             raise ValueError("reth_investigation_max_probes must be >= 1")
+        if self.postgres_pool_min_size < 1:
+            raise ValueError(
+                f"postgres_pool_min_size must be >= 1, got {self.postgres_pool_min_size}"
+            )
+        if self.postgres_pool_max_size < self.postgres_pool_min_size:
+            raise ValueError(
+                "postgres_pool_max_size must be >= postgres_pool_min_size, got "
+                f"max={self.postgres_pool_max_size} min={self.postgres_pool_min_size}"
+            )
+        if self.postgres_pool_max_idle_seconds <= 0:
+            raise ValueError(
+                f"postgres_pool_max_idle_seconds must be > 0, got {self.postgres_pool_max_idle_seconds}"
+            )
+        if self.postgres_pool_connect_timeout_seconds <= 0:
+            raise ValueError(
+                "postgres_pool_connect_timeout_seconds must be > 0, got "
+                f"{self.postgres_pool_connect_timeout_seconds}"
+            )
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
             self.observer_prompt_cache_mode
         )
@@ -305,6 +335,10 @@ class RuntimeConfig:
             goose_timeout_seconds=int(os.getenv("MESH_GOOSE_TIMEOUT_SECONDS", "180")),
             state_backend=_normalize_state_backend(os.getenv("MESH_STATE_BACKEND", "file")),
             database_url=os.getenv("MESH_DATABASE_URL") or None,
+            postgres_pool_min_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MIN_SIZE", "1"))),
+            postgres_pool_max_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MAX_SIZE", "10"))),
+            postgres_pool_max_idle_seconds=max(1.0, float(os.getenv("MESH_POSTGRES_POOL_MAX_IDLE_SECONDS", "600"))),
+            postgres_pool_connect_timeout_seconds=max(0.1, float(os.getenv("MESH_POSTGRES_POOL_CONNECT_TIMEOUT_SECONDS", "10"))),
             state_directory=state_directory,
             research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),

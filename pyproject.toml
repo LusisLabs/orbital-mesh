@@ -11,7 +11,11 @@ dependencies = [
   "deepagents",
   "halo-engine",
   "langchain-openai>=1.0.0,<2.0.0",
-  "psycopg[binary]>=3.2,<4",
+  # ``pool`` extra pulls in psycopg_pool, used by
+  # ``shared/mesh_runtime/postgres_state.py`` for connection pooling.
+  # Without it Postgres mode falls back to per-call handshake, which
+  # dominates per-op latency on TLS-terminated databases.
+  "psycopg[binary,pool]>=3.2,<4",
 ]
 
 [project.optional-dependencies]
