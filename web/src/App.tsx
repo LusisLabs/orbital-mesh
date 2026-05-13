@@ -50,23 +50,34 @@ import {
   type RunGraphNode,
 } from "./lib/runGraph";
 import type {
+  ApprovalQueueItem,
+  ApprovalQueuePacket,
+  BenchmarkRecord,
+  ConnectorCertificationPacket,
+  DarkharnessPilotPacket,
   HealthSnapshot,
+  KillSwitchStatus,
   ConnectionStatus,
   EvidenceGraph,
   GoalRecord,
   InspectorTab,
   IntegrationReadiness,
   MerkleProof,
+  PilotGoNoGoPacket,
+  PolicySimulationResult,
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
   RunDetail,
+  RunExportPackage,
   RunEventRecord,
   RunSessionRecord,
   AgentTask,
-  EvoLaunchRecord,
   ScenarioAnalysis,
   ScenarioRecord,
+  ServiceAgentRecord,
+  SimulationScenarioRecord,
+  TrustLadderEntry,
   VaultTreeEntry,
   WatcherStatus,
 } from "./types";
@@ -112,9 +123,27 @@ type AppView =
   | "automation"
   | "hermes"
   | "control-plane"
+  | "simulator"
+  | "trust"
+  | "packets"
+  | "roadmap"
   | "settings";
-type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "audit" | "agents" | "topology";
-type ConnectorState = "ready" | "degraded" | "config-only" | "unsafe" | "stub" | "disconnected";
+type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "darkharness" | "audit" | "agents" | "topology";
+type ConnectorState =
+  | "ready"
+  | "degraded"
+  | "config-only"
+  | "unsafe"
+  | "stub"
+  | "disconnected"
+  | "mock"
+  | "read-only"
+  | "staging-ready"
+  | "pilot-ready"
+  | "production-ready"
+  | "unfinished"
+  | "disabled"
+  | "proposal-only";
 
 interface AgentConnectorSummary {
   id: string;
@@ -148,14 +177,6 @@ interface DashboardMetric {
   tone: "good" | "warn" | "danger" | "neutral";
 }
 
-interface ApprovalQueueItem {
-  id: string;
-  title: string;
-  detail: string;
-  stage: string;
-  blocked: boolean;
-}
-
 interface ConfidencePoint {
   id: string;
   label: string;
@@ -168,6 +189,67 @@ interface RcaSnapshot extends RcaGraphInput {
   confidenceMovement: ConfidencePoint[];
   report: Record<string, any> | null;
 }
+
+const AUTHORITY_PIPELINE = [
+  "Signal",
+  "Trigger",
+  "Evidence",
+  "RCA",
+  "Policy",
+  "Model Review",
+  "Evaluation",
+  "Steering",
+  "Execution",
+  "Feedback",
+  "Memory",
+];
+
+const ROADMAP_PHASES = [
+  {
+    id: "phase-1",
+    title: "Local production-like E2E",
+    gate: "Evidence graph, simulator, failure library, live actuator blocks",
+    before: "local stack",
+  },
+  {
+    id: "phase-2",
+    title: "Private staging",
+    gate: "Identity, RBAC, tiered readiness, connector certification, kill switch",
+    before: "external operators",
+  },
+  {
+    id: "phase-3",
+    title: "Controlled pilot",
+    gate: "Go/no-go packet, live proof, approval split, rollback and drills",
+    before: "production pilot",
+  },
+  {
+    id: "phase-4",
+    title: "Expansion",
+    gate: "Postgres default, load, procurement, SLO dashboards, release train",
+    before: "repeatable production",
+  },
+];
+
+const ROADMAP_PRIORITY_SURFACES = [
+  ["Identity-first control plane", "Operator identity, roles, approvals, audit"],
+  ["Evidence graph", "Default run inspection surface"],
+  ["Policy simulator", "Mutation-free replay for fixtures and captured runs"],
+  ["Pilot packet", "Evidence-generated go/no-go artifact"],
+  ["Connector matrix", "Mock, read-only, staging, pilot, production states"],
+  ["Failure library", "Replayable denied and degraded states"],
+  ["Trust ladder", "Autonomy earned per service and action class"],
+  ["Run export", "Postmortem, audit, Merkle, decision, evaluation records"],
+  ["Kill switch", "Watcher, live execution, namespace, action gate controls"],
+];
+
+const EVIDENCE_PACKET_LINKS = [
+  ["Evaluation kit", "docs/evaluation-kits.md"],
+  ["Hardening records", "docs/production-hardening-records.md"],
+  ["Design partner packet", "docs/design-partner-packet.md"],
+  ["Community governance", "docs/community-governance.md"],
+  ["Postgres restart proof", "docs/postgres-restart-proof.md"],
+];
 
 const nodeTypes = {
   runEvent: RunEventNode,
@@ -283,11 +365,19 @@ export default function App() {
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
   const [readiness, setReadiness] = useState<IntegrationReadiness | null>(null);
+  const [connectorCertification, setConnectorCertification] = useState<ConnectorCertificationPacket | null>(null);
+  const [approvalPacket, setApprovalPacket] = useState<ApprovalQueuePacket | null>(null);
   const [scenarios, setScenarios] = useState<ScenarioRecord[]>([]);
   const [goals, setGoals] = useState<GoalRecord[]>([]);
   const [runs, setRuns] = useState<RunSessionRecord[]>([]);
   const [researchSessions, setResearchSessions] = useState<ResearchSessionRecord[]>([]);
   const [researchCorpus, setResearchCorpus] = useState<ResearchCorpusIntelligence | null>(null);
+  const [simulations, setSimulations] = useState<SimulationScenarioRecord[]>([]);
+  const [benchmarks, setBenchmarks] = useState<BenchmarkRecord[]>([]);
+  const [serviceAgents, setServiceAgents] = useState<ServiceAgentRecord[]>([]);
+  const [trustLadder, setTrustLadder] = useState<TrustLadderEntry[]>([]);
+  const [killSwitchStatus, setKillSwitchStatus] = useState<KillSwitchStatus | null>(null);
+  const [pilotPacket, setPilotPacket] = useState<PilotGoNoGoPacket | null>(null);
   const [activeResearchSessionId, setActiveResearchSessionId] = useState("");
   const [researchDetail, setResearchDetail] = useState<ResearchSessionDetail | null>(null);
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
@@ -307,19 +397,24 @@ export default function App() {
   const [hermesChatDraft, setHermesChatDraft] = useState("");
   const [overrideDecisionDraft, setOverrideDecisionDraft] = useState('{\n  "decision_type": "reduce_rollout"\n}');
   const [overrideParamsDraft, setOverrideParamsDraft] = useState('{\n  "rollout_pct": 5\n}');
+  const [policySimulationDraft, setPolicySimulationDraft] = useState('{\n  "scenario_key": ""\n}');
+  const [policySimulation, setPolicySimulation] = useState<PolicySimulationResult | null>(null);
+  const [selectedSimulationId, setSelectedSimulationId] = useState("");
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [showOverrides, setShowOverrides] = useState(false);
   const [leftRailOpen, setLeftRailOpen] = useState(true);
   const [rightRailOpen, setRightRailOpen] = useState(false);
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>("labyrinth");
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>("evidence");
   const [activeView, setActiveView] = useState<AppView>("overview");
-  const [runDetailTab, setRunDetailTab] = useState<RunDetailTab>("timeline");
+  const [runDetailTab, setRunDetailTab] = useState<RunDetailTab>("evidence");
 
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
   const [selectedEventId, setSelectedEventId] = useState("");
   const [vaultDocument, setVaultDocument] = useState("");
   const [vaultTree, setVaultTree] = useState<VaultTreeEntry[] | null>(null);
   const [merkleProof, setMerkleProof] = useState<MerkleProof | null>(null);
+  const [runExport, setRunExport] = useState<RunExportPackage | null>(null);
+  const [darkharnessPacket, setDarkharnessPacket] = useState<DarkharnessPilotPacket | null>(null);
 
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
@@ -328,6 +423,11 @@ export default function App() {
   const [launching, setLaunching] = useState(false);
   const [steering, setSteering] = useState("");
   const [creatingGoal, setCreatingGoal] = useState(false);
+  const [killSwitching, setKillSwitching] = useState(false);
+  const [simulatingPolicy, setSimulatingPolicy] = useState(false);
+  const [runningSimulation, setRunningSimulation] = useState("");
+  const [exportingRun, setExportingRun] = useState(false);
+  const [exportingArchive, setExportingArchive] = useState(false);
 
   const { toasts, addToast, dismissToast } = useToast();
 
@@ -382,6 +482,8 @@ export default function App() {
         setSystemConnection("connected");
         setRuns(snapshot.runs);
         setReadiness(snapshot.readiness);
+        void api.getConnectorCertification(baseUrl).then(setConnectorCertification).catch(() => setConnectorCertification(null));
+        void api.getApprovals(baseUrl).then(setApprovalPacket).catch(() => setApprovalPacket(null));
         void api.getWatchers(baseUrl).then(setWatchers).catch(() => setWatchers(null));
         if (!activeRunId && snapshot.runs.length > 0) {
           setActiveRunId(snapshot.runs[0].run_id);
@@ -400,6 +502,8 @@ export default function App() {
       setScenarioAnalysis(null);
       setEvidenceGraph(null);
       setMemoryCrystallization(null);
+      setRunExport(null);
+      setDarkharnessPacket(null);
       setRunConnection("disconnected");
       return;
     }
@@ -489,7 +593,23 @@ export default function App() {
     const boot = <T,>(request: Promise<T>, fallback: T, timeoutMs = 8_000) =>
       withTimeout(request, timeoutMs).catch(() => fallback);
     try {
-      const [healthRes, readinessRes, goalsRes, runsRes, researchRes, researchCorpusRes, watchersRes] = await Promise.all([
+      const [
+        healthRes,
+        readinessRes,
+        goalsRes,
+        runsRes,
+        researchRes,
+        researchCorpusRes,
+        watchersRes,
+        simulationsRes,
+        benchmarksRes,
+        serviceAgentsRes,
+        trustLadderRes,
+        killSwitchRes,
+        connectorCertificationRes,
+        approvalQueueRes,
+        pilotPacketRes,
+      ] = await Promise.all([
         boot(api.getHealth(baseUrl), null),
         boot(api.getReadiness(baseUrl), null),
         boot(api.getGoals(baseUrl), { goals: [] }),
@@ -497,6 +617,14 @@ export default function App() {
         boot(api.getResearchSessions(baseUrl), { sessions: [] }),
         boot(api.getResearchCorpus(baseUrl), null),
         boot(api.getWatchers(baseUrl), null),
+        boot(api.getSimulations(baseUrl), { simulations: [] }),
+        boot(api.getBenchmarks(baseUrl), { benchmarks: [] }),
+        boot(api.getServiceAgents(baseUrl), { service_agents: [] }),
+        boot(api.getTrustLadder(baseUrl), { entries: [] }),
+        boot(api.getKillSwitch(baseUrl), null),
+        boot(api.getConnectorCertification(baseUrl), null),
+        boot(api.getApprovals(baseUrl), null),
+        boot(api.getPilotGoNoGo(baseUrl), null),
       ]);
       if (!healthRes) {
         throw new Error("Could not reach control plane health endpoint.");
@@ -508,12 +636,21 @@ export default function App() {
       setResearchSessions(researchRes.sessions);
       setResearchCorpus(researchCorpusRes);
       setWatchers(watchersRes);
+      setSimulations(simulationsRes.simulations);
+      setBenchmarks(benchmarksRes.benchmarks);
+      setServiceAgents(serviceAgentsRes.service_agents);
+      setTrustLadder(trustLadderRes.entries);
+      setKillSwitchStatus(killSwitchRes);
+      setConnectorCertification(connectorCertificationRes);
+      setApprovalPacket(approvalQueueRes);
+      setPilotPacket(pilotPacketRes);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
       void withTimeout(api.getScenarios(baseUrl), 4_000).then((scenariosRes) => {
         setScenarios(scenariosRes.scenarios);
         if (scenariosRes.scenarios[0] && !launchDraft.scenarioKey) {
           setLaunchDraft((d) => ({ ...d, scenarioKey: scenariosRes.scenarios[0].key }));
+          setPolicySimulationDraft(JSON.stringify({ scenario_key: scenariosRes.scenarios[0].key }, null, 2));
         }
       }).catch(() => setScenarios([]));
     } catch (error) {
@@ -529,20 +666,70 @@ export default function App() {
 
   async function loadRun(runId: string) {
     try {
-      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse] = await Promise.all([
+      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse, darkharnessResponse] = await Promise.all([
         api.getRun(baseUrl, runId),
         api.getAgentTasks(baseUrl, runId).catch(() => ({ tasks: [] as AgentTask[] })),
         api.getScenarioAnalysis(baseUrl, runId).catch(() => null),
         api.getEvidenceGraph(baseUrl, runId).catch(() => null),
         api.getMemoryCrystallization(baseUrl, runId).catch(() => null),
+        api.getRunDarkharnessPacket(baseUrl, runId).catch(() => null),
       ]);
       setActiveRun(run);
       setAgentTasks(taskResponse.tasks);
       setScenarioAnalysis(analysisResponse);
       setEvidenceGraph(evidenceResponse);
       setMemoryCrystallization(memoryResponse);
+      setDarkharnessPacket(darkharnessResponse);
+      setRunExport((current) => (current?.run_id === runId ? current : null));
     } catch (error) {
       addToast({ variant: "error", title: "Failed to load run", description: error instanceof Error ? error.message : "Unknown error" });
+    }
+  }
+
+  async function handleBuildRunExport() {
+    if (!activeRunId) {
+      addToast({ variant: "warning", title: "No run selected" });
+      return;
+    }
+    setExportingRun(true);
+    try {
+      const exported = await api.getRunExport(baseUrl, activeRunId);
+      setRunExport(exported);
+      await loadRun(activeRunId);
+      addToast({
+        variant: "success",
+        title: "Run export generated",
+        description: `${exported.timeline_json.length} events, ${exported.vault_documents.length} vault documents`,
+      });
+    } catch (error) {
+      addToast({ variant: "error", title: "Run export failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setExportingRun(false);
+    }
+  }
+
+  async function handleBuildRunArchive() {
+    if (!activeRunId) {
+      addToast({ variant: "warning", title: "No run selected" });
+      return;
+    }
+    setExportingArchive(true);
+    try {
+      const { blob, filename } = await api.getRunExportArchive(baseUrl, activeRunId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      await loadRun(activeRunId);
+      addToast({ variant: "success", title: "Run archive generated", description: filename });
+    } catch (error) {
+      addToast({ variant: "error", title: "Run archive failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setExportingArchive(false);
     }
   }
 
@@ -650,10 +837,7 @@ export default function App() {
       try {
         await api.steerRun(baseUrl, activeRunId, { command, ...payload });
         await loadRun(activeRunId);
-        addToast({
-          variant: "success",
-          title: command === "launch_evo" ? "Evo launch requested" : `Run ${humanize(command).toLowerCase()}d`,
-        });
+        addToast({ variant: "success", title: `Run ${humanize(command).toLowerCase()}d` });
       } catch (error) {
         addToast({ variant: "error", title: `Steer failed`, description: error instanceof Error ? error.message : "Unknown error" });
       } finally {
@@ -696,6 +880,86 @@ export default function App() {
     }
     void handleSteer("chat_with_hermes", { message });
     setHermesChatDraft("");
+  }
+
+  async function handleApplyKillSwitch() {
+    setKillSwitching(true);
+    try {
+      const status = await api.applyKillSwitch(baseUrl, {
+        stop_watchers: true,
+        disable_live_execution: true,
+        force_approval_gate: true,
+      });
+      const [readinessRes, watchersRes, pilotPacketRes] = await Promise.all([
+        api.getReadiness(baseUrl).catch(() => null),
+        api.getWatchers(baseUrl).catch(() => null),
+        api.getPilotGoNoGo(baseUrl).catch(() => null),
+      ]);
+      setReadiness(readinessRes);
+      setWatchers(watchersRes);
+      setKillSwitchStatus(status);
+      setPilotPacket(pilotPacketRes);
+      addToast({ variant: "warning", title: "Kill switch applied", description: "Watchers stopped, live execution disabled, approval gate forced." });
+    } catch (error) {
+      addToast({ variant: "error", title: "Kill switch failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setKillSwitching(false);
+    }
+  }
+
+  async function handleSimulatePolicy(payloadOverride?: Record<string, unknown>) {
+    setSimulatingPolicy(true);
+    try {
+      let payload = payloadOverride;
+      if (!payload) {
+        const parsed = safeJsonParse<Record<string, unknown>>(policySimulationDraft);
+        if (!parsed.ok) {
+          addToast({ variant: "error", title: "Invalid simulator JSON", description: parsed.error });
+          return;
+        }
+        payload = parsed.data;
+      }
+      const fallbackScenario = launchDraft.scenarioKey || scenarios[0]?.key;
+      if (!payload.signal_payload && !payload.scenario_key && !payload.run_id && !payload.captured_run_id && fallbackScenario) {
+        payload = { ...payload, scenario_key: fallbackScenario };
+      }
+      const result = await api.simulatePolicy(baseUrl, payload);
+      setPolicySimulation(result);
+      addToast({
+        variant: result.blockers.length > 0 ? "warning" : "success",
+        title: "Policy simulation complete",
+        description: result.mutates ? "Unexpected mutation flag returned." : "Mutation-free dry run recorded.",
+      });
+    } catch (error) {
+      addToast({ variant: "error", title: "Policy simulation failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setSimulatingPolicy(false);
+    }
+  }
+
+  async function handleRunSimulation(scenarioId: string) {
+    if (!scenarioId) return;
+    setRunningSimulation(scenarioId);
+    try {
+      const run = await api.runSimulation(baseUrl, scenarioId, {
+        goal_id: selectedGoalId || goals[0]?.goal_id,
+        evaluation_mode: launchDraft.evaluationMode,
+        orchestration_mode: "native",
+        steering_mode: "approval_gate",
+        pause_points: ["evaluation_ready"],
+      });
+      setActiveRunId(run.run_id);
+      setActiveResearchSessionId("");
+      setResearchDetail(null);
+      setActiveView("runs");
+      setRunDetailTab("evidence");
+      await refreshBootstrap();
+      addToast({ variant: "success", title: "Simulation run launched", description: scenarioId });
+    } catch (error) {
+      addToast({ variant: "error", title: "Simulation launch failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setRunningSimulation("");
+    }
   }
 
   function handleAcceptHermesAction() {
@@ -888,18 +1152,21 @@ export default function App() {
         readiness.promptfoo,
         readiness.hermes,
         readiness.goose,
-        readiness.evo,
         readiness.latentmas,
         readiness.deepagents,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 6;
+  const integrationsTotal = readinessItems.length || 5;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
   const environmentLabel = health ? humanize(health.environment) : "Booting";
   const buildSubline = health ? `v${health.version} • ${health.commit.slice(0, 7)}` : undefined;
+  const requiredChecks = Object.entries(readiness?.required_checks ?? {});
+  const requiredChecksPassing = requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length;
+  const requiredChecksTotal = requiredChecks.length;
+  const readinessBlockerCount = readiness?.blockers.length ?? 0;
   const researchSessionsAnalyzed = researchCorpus?.sessions_analyzed ?? researchSessions.length;
   const agentConnectors = useMemo(
     () => buildAgentConnectors(readiness, agentTasks),
@@ -910,8 +1177,8 @@ export default function App() {
     [activeSignal, readiness, watchers],
   );
   const approvalQueue = useMemo(
-    () => buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
-    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked],
+    () => approvalPacket?.items ?? buildApprovalQueue(activeRun, approvalCurrentlyBlocked, approvalBlockingReasons),
+    [activeRun, approvalBlockingReasons, approvalCurrentlyBlocked, approvalPacket?.items],
   );
   const incidentRuns = useMemo(
     () =>
@@ -948,16 +1215,16 @@ export default function App() {
   useEffect(() => {
     if (!activeRun) return;
     if (canvasAvailability[canvasMode]) return;
+    if (canvasAvailability.evidence) {
+      setCanvasMode("evidence");
+      return;
+    }
     if (canvasAvailability.labyrinth) {
       setCanvasMode("labyrinth");
       return;
     }
     if (canvasAvailability.flow) {
       setCanvasMode("flow");
-      return;
-    }
-    if (canvasAvailability.evidence) {
-      setCanvasMode("evidence");
       return;
     }
     if (canvasAvailability.rca) {
@@ -999,7 +1266,7 @@ export default function App() {
             label: "Continue run",
             onClick: () => {
               setActiveView("runs");
-              setRunDetailTab("timeline");
+              setRunDetailTab("evidence");
             },
           }
         : {
@@ -1012,31 +1279,34 @@ export default function App() {
     <div className={`mesh-console-shell mesh-agent-console ${rightRailOpen ? "drawer-open" : ""}`}>
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
-      <aside className={`mesh-sidebar mesh-session-rail ${leftRailOpen ? "" : "collapsed"}`} aria-label="Purna Labs workspace sessions">
+      <aside className={`mesh-sidebar mesh-session-rail ${leftRailOpen ? "" : "collapsed"}`} aria-label="orbital-mesh workspace sessions">
         <div className="mesh-sidebar-brand">
           <div className="brand-icon"><Codicon name="circuit-board" /></div>
           {leftRailOpen ? (
             <div>
-              <p className="mesh-kicker">Purna Labs OS</p>
-              <h1>Purna Console</h1>
-              <span className="mesh-brand-subtitle">Bounded operations</span>
+              <p className="mesh-kicker">orbital-mesh</p>
+              <h1>Operator Console</h1>
+              <span className="mesh-brand-subtitle">Bounded production authority</span>
             </div>
           ) : null}
         </div>
         <nav className="mesh-nav" data-testid="mesh-primary-nav">
           {([
-            ["overview", "Overview", <Codicon name="home" />],
-            ["runs", "Runs", <Codicon name="run-all" />],
+            ["overview", "Command", <Codicon name="home" />],
+            ["runs", "Evidence Runs", <Codicon name="run-all" />],
             ["approvals", "Approvals", <Codicon name="pass" />],
-            ["hermes", "Hermes", <Codicon name="sparkle" />],
             ["automation", "Launch", <Codicon name="play" />],
+            ["simulator", "Simulator", <Codicon name="beaker" />],
+            ["trust", "Trust Ladder", <Codicon name="shield" />],
+            ["packets", "Pilot Packet", <Codicon name="package" />],
+            ["control-plane", "Readiness", <Codicon name="server-environment" />],
             ["evidence", "Evidence", <Codicon name="references" />],
-            ["agents", "Agents", <Codicon name="hubot" />],
-            ["integrations", "Integrations", <PlugIcon />],
-            ["incidents", "Incidents", <Codicon name="warning" />],
-            ["fleet", "Fleet", <Codicon name="broadcast" />],
+            ["integrations", "Connectors", <PlugIcon />],
+            ["agents", "Proposal Lanes", <Codicon name="hubot" />],
+            ["fleet", "Signals", <Codicon name="broadcast" />],
+            ["hermes", "Hermes", <Codicon name="sparkle" />],
             ["audit", "Audit", <Codicon name="verified" />],
-            ["control-plane", "Control Plane", <Codicon name="settings-gear" />],
+            ["roadmap", "Roadmap", <Codicon name="list-tree" />],
             ["settings", "Settings", <Codicon name="tools" />],
           ] as Array<[AppView, string, React.ReactNode]>).map(([view, label, icon]) => (
             <button
@@ -1048,7 +1318,7 @@ export default function App() {
                 setRightRailOpen(false);
               }}
               title={label}
-              aria-label={view === "automation" ? "Automation" : label}
+              aria-label={label}
             >
               {icon}
               {leftRailOpen ? <span>{label}</span> : null}
@@ -1073,6 +1343,15 @@ export default function App() {
               }}
             />
             <RailWorkstreamButton
+              icon={<Codicon name="server-environment" />}
+              title="Readiness gates"
+              detail={readiness?.blockers.length ? readiness.blockers[0] : `${humanize(readiness?.profile ?? "local")} profile`}
+              count={readiness?.status ?? "boot"}
+              active={activeView === "control-plane"}
+              tone={(readiness?.blockers.length ?? 0) > 0 ? "warn" : "good"}
+              onClick={() => setActiveView("control-plane")}
+            />
+            <RailWorkstreamButton
               icon={<Codicon name="diff" />}
               title="Review queue"
               detail={approvalQueue.length > 0 ? "Operator action required" : "No pending approval"}
@@ -1082,30 +1361,30 @@ export default function App() {
               onClick={() => setActiveView("approvals")}
             />
             <RailWorkstreamButton
-              icon={<Codicon name="sparkle" />}
-              title="Hermes"
-              detail={readiness?.hermes.ready ? "Run-scoped agent ready" : "Agent degraded"}
-              count={readiness?.hermes.ready ? "ready" : "check"}
-              active={activeView === "hermes"}
-              tone={readiness?.hermes.ready ? "good" : "warn"}
-              onClick={() => setActiveView("hermes")}
+              icon={<Codicon name="beaker" />}
+              title="Policy simulator"
+              detail={policySimulation ? (policySimulation.blockers.length ? "Denied path visible" : "Allowed path visible") : "Mutation-free replay"}
+              count={String(simulations.length)}
+              active={activeView === "simulator"}
+              tone={policySimulation?.blockers.length ? "warn" : "neutral"}
+              onClick={() => setActiveView("simulator")}
             />
             <RailWorkstreamButton
               icon={<Codicon name="references" />}
-              title="Evidence"
-              detail={`${recentEvidenceEvents.length} recent events`}
+              title="Evidence graph"
+              detail={`${recentEvidenceEvents.length} recent proof events`}
               count={String(recentEvidenceEvents.length)}
-              active={activeView === "evidence"}
+              active={activeView === "evidence" || activeView === "runs"}
               onClick={() => setActiveView("evidence")}
             />
             <RailWorkstreamButton
-              icon={<Codicon name="hubot" />}
-              title="Agent mesh"
-              detail={`${agentTasks.length} task packets`}
-              count={`${agentConnectors.filter((agent) => agent.state === "ready").length}/${agentConnectors.length}`}
-              active={activeView === "agents"}
-              tone={agentTasks.length > 0 ? "good" : "neutral"}
-              onClick={() => setActiveView("agents")}
+              icon={<Codicon name="package" />}
+              title="Pilot packet"
+              detail={pilotPacket ? humanize(pilotPacket.status) : "No packet"}
+              count={pilotPacket?.missing_evidence.length ? String(pilotPacket.missing_evidence.length) : "0"}
+              active={activeView === "packets"}
+              tone={pilotPacket?.status === "go" ? "good" : "warn"}
+              onClick={() => setActiveView("packets")}
             />
           </div>
         ) : null}
@@ -1118,7 +1397,7 @@ export default function App() {
       <div className="mesh-console-main">
         <header className="mesh-console-topbar">
           <div className="mesh-task-title">
-            <p className="mesh-kicker">Purna Labs desktop</p>
+            <p className="mesh-kicker">Production deployment control plane</p>
             <h2>{viewTitle(activeView)}</h2>
             <span>{activeGoal?.title ?? "No active goal"} / {activeRun ? activeRun.run_id.slice(0, 12) : "no run"}</span>
           </div>
@@ -1126,17 +1405,25 @@ export default function App() {
             <HeaderMetric icon={<Codicon name="server-environment" />} label="Environment" value={environmentLabel} subline={buildSubline} />
             <HeaderMetric
               icon={<Codicon name="shield" />}
-              label="Integrations"
-              value={`${integrationsReady}/${integrationsTotal} ready`}
-              tone={integrationsReady === integrationsTotal ? "good" : integrationsReady > 0 ? "warn" : "danger"}
+              label="Readiness"
+              value={readiness ? humanize(readiness.profile) : "Unknown"}
+              subline={requiredChecksTotal ? `${requiredChecksPassing}/${requiredChecksTotal} required gates` : undefined}
+              warning={readinessBlockerCount ? `${readinessBlockerCount} blockers` : undefined}
+              tone={readinessBlockerCount ? "danger" : "good"}
             />
-            <HeaderMetric icon={<Codicon name="git-branch" />} label="Mode" value={humanize(activeRun?.steering_mode ?? launchDraft.steeringMode)} />
-            <InferenceMetric
-              icon={<Codicon name="sparkle" />}
-              primaryRoute={inferencePrimaryRoute}
-              fallbackRoute={inferenceFallbackRoute}
-              warning={inferenceWarning}
-              ready={Boolean(readiness?.goose.ready)}
+            <HeaderMetric
+              icon={<Codicon name="package" />}
+              label="Pilot packet"
+              value={pilotPacket ? humanize(pilotPacket.status) : "Unknown"}
+              subline={pilotPacket ? `${pilotPacket.observed.run_count} evidence runs` : undefined}
+              warning={pilotPacket?.missing_evidence.length ? `${pilotPacket.missing_evidence.length} missing proofs` : undefined}
+              tone={pilotPacket?.status === "go" ? "good" : pilotPacket ? "warn" : "danger"}
+            />
+            <HeaderMetric
+              icon={<Codicon name="git-branch" />}
+              label="Authority"
+              value={humanize(activeRun?.steering_mode ?? launchDraft.steeringMode)}
+              subline={`${trustLadder.length} trust entries`}
             />
           </div>
           <div className="mesh-topbar-actions">
@@ -1163,6 +1450,12 @@ export default function App() {
               approvalQueue={approvalQueue}
               agentConnectors={agentConnectors}
               integrationConnectors={integrationConnectors}
+              readiness={readiness}
+              pilotPacket={pilotPacket}
+              trustLadder={trustLadder}
+              serviceAgents={serviceAgents}
+              simulations={simulations}
+              benchmarks={benchmarks}
               evidenceEvents={recentEvidenceEvents}
               watchers={watchers}
               researchSessionsAnalyzed={researchSessionsAnalyzed}
@@ -1201,6 +1494,10 @@ export default function App() {
               recentEvidenceEvents={recentEvidenceEvents}
               selectedEventInsights={selectedEventInsights}
               merkleProof={merkleProof}
+              runExport={runExport}
+              darkharnessPacket={darkharnessPacket}
+              exportingRun={exportingRun}
+              exportingArchive={exportingArchive}
               onSelectRun={(runId) => {
                 setActiveRunId(runId);
                 setActiveResearchSessionId("");
@@ -1210,6 +1507,8 @@ export default function App() {
               onRunDetailTabChange={setRunDetailTab}
               onCanvasModeChange={setCanvasMode}
               onToggleCanvasFullscreen={toggleCanvasFullscreen}
+              onBuildRunExport={() => void handleBuildRunExport()}
+              onBuildRunArchive={() => void handleBuildRunArchive()}
               onJumpContext={(tab) => {
                 setRightRailTab(tab);
                 setRightRailOpen(true);
@@ -1240,7 +1539,12 @@ export default function App() {
               onSteer={handleSteer}
             />
           ) : activeView === "integrations" ? (
-            <IntegrationsView connectors={integrationConnectors} readiness={readiness} watchers={watchers} />
+            <IntegrationsView
+              connectors={integrationConnectors}
+              readiness={readiness}
+              connectorCertification={connectorCertification}
+              watchers={watchers}
+            />
           ) : activeView === "control-plane" ? (
             <ControlPlaneView
               health={health}
@@ -1252,15 +1556,55 @@ export default function App() {
               runConnection={runConnection}
               agentConnectors={agentConnectors}
               integrationConnectors={integrationConnectors}
+              trustLadder={trustLadder}
+              killSwitchStatus={killSwitchStatus}
+              pilotPacket={pilotPacket}
+              serviceAgents={serviceAgents}
+              benchmarks={benchmarks}
+              killSwitching={killSwitching}
+              onApplyKillSwitch={handleApplyKillSwitch}
             />
+          ) : activeView === "simulator" ? (
+            <SimulatorView
+              scenarios={scenarios}
+              simulations={simulations}
+              activeRun={activeRun}
+              runs={runs}
+              policySimulationDraft={policySimulationDraft}
+              policySimulation={policySimulation}
+              selectedSimulationId={selectedSimulationId}
+              simulatingPolicy={simulatingPolicy}
+              runningSimulation={runningSimulation}
+              onPolicySimulationDraftChange={setPolicySimulationDraft}
+              onSelectedSimulationIdChange={setSelectedSimulationId}
+              onSimulatePolicy={(payload) => void handleSimulatePolicy(payload)}
+              onRunSimulation={(scenarioId) => void handleRunSimulation(scenarioId)}
+            />
+          ) : activeView === "trust" ? (
+            <TrustLadderView trustLadder={trustLadder} serviceAgents={serviceAgents} activeRun={activeRun} />
+          ) : activeView === "packets" ? (
+            <PilotPacketView
+              packet={pilotPacket}
+              darkharnessPacket={darkharnessPacket}
+              readiness={readiness}
+              benchmarks={benchmarks}
+              activeRun={activeRun}
+            />
+          ) : activeView === "roadmap" ? (
+            <RoadmapView readiness={readiness} pilotPacket={pilotPacket} simulations={simulations} trustLadder={trustLadder} />
           ) : activeView === "evidence" || activeView === "audit" ? (
             <EvidenceAuditView
               mode={activeView}
               activeRun={activeRun}
               events={recentEvidenceEvents}
               merkleProof={merkleProof}
+              runExport={runExport}
+              exportingRun={exportingRun}
+              exportingArchive={exportingArchive}
               vaultDocument={vaultDocument}
               vaultTree={vaultTree}
+              onBuildRunExport={() => void handleBuildRunExport()}
+              onBuildRunArchive={() => void handleBuildRunArchive()}
               onVaultSelect={handleVaultSelect}
               onJumpRun={() => {
                 setActiveView("runs");
@@ -1385,7 +1729,7 @@ export default function App() {
               onOverrideParams={handleOverrideParams}
             />
           ) : rightRailTab === "agents" ? (
-            <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={handleSteer} />
+            <AgentMeshPanel run={activeRun} tasks={agentTasks} />
           ) : (
             <Inspector
               tab={rightRailTab}
@@ -1460,7 +1804,13 @@ function RailWorkstreamButton({
 function viewTitle(view: AppView): string {
   switch (view) {
     case "control-plane":
-      return "Control Plane";
+      return "Readiness";
+    case "simulator":
+      return "Policy Simulator";
+    case "packets":
+      return "Pilot Packet";
+    case "trust":
+      return "Trust Ladder";
     default:
       return humanize(view);
   }
@@ -1490,6 +1840,12 @@ function OverviewDashboard({
   approvalQueue,
   agentConnectors,
   integrationConnectors,
+  readiness,
+  pilotPacket,
+  trustLadder,
+  serviceAgents,
+  simulations,
+  benchmarks,
   evidenceEvents,
   watchers,
   researchSessionsAnalyzed,
@@ -1504,6 +1860,12 @@ function OverviewDashboard({
   approvalQueue: ApprovalQueueItem[];
   agentConnectors: AgentConnectorSummary[];
   integrationConnectors: IntegrationConnectorSummary[];
+  readiness: IntegrationReadiness | null;
+  pilotPacket: PilotGoNoGoPacket | null;
+  trustLadder: TrustLadderEntry[];
+  serviceAgents: ServiceAgentRecord[];
+  simulations: SimulationScenarioRecord[];
+  benchmarks: BenchmarkRecord[];
   evidenceEvents: RunEventRecord[];
   watchers: WatcherStatus | null;
   researchSessionsAnalyzed: number;
@@ -1518,12 +1880,12 @@ function OverviewDashboard({
       <section className="mesh-card mesh-card-span mesh-command-hero">
         <div className="mesh-command-dock" aria-label="Mesh primary actions">
           <div className="mesh-command-dock-copy">
-            <p className="mesh-kicker">Current objective</p>
-            <h2>{activeRun ? `Operate ${humanize(activeRun.stage)}` : "What should Mesh operate on?"}</h2>
+            <p className="mesh-kicker">Production readiness cockpit</p>
+            <h2>{activeRun ? `Constrain ${humanize(activeRun.stage)}` : "Bounded authority before autonomy"}</h2>
             <p>
               {activeRun
-                ? `${activeRun.run_id.slice(0, 12)} keeps timeline, evidence, agents, approvals, and audit state in one thread.`
-                : "Start with a bounded signal, then use the run thread for evidence, steering, and audit review."}
+                ? `${activeRun.run_id.slice(0, 12)} keeps signal, trigger, evidence, decision, evaluation, approval, execution, feedback, and audit proof in one thread.`
+                : "The console is organized around proof, constraints, and bounded operator decisions required by the production deployment roadmap."}
             </p>
           </div>
           <div className="mesh-command-dock-actions">
@@ -1543,13 +1905,13 @@ function OverviewDashboard({
                 Launch run
               </button>
             )}
-            <button className="action-button compact" type="button" onClick={() => onView("hermes")} disabled={!activeRun}>
-              <Codicon name="sparkle" />
-              Hermes
+            <button className="action-button compact" type="button" onClick={() => onView("simulator")}>
+              <Codicon name="beaker" />
+              Simulate
             </button>
-            <button className="action-button compact" type="button" onClick={() => onOpenContext("steering")} disabled={!activeRun}>
-              <Codicon name="layout-sidebar-right" />
-              Steering
+            <button className="action-button compact" type="button" onClick={() => onView("packets")}>
+              <Codicon name="package" />
+              Packet
             </button>
           </div>
           <div className="mesh-command-dock-footer">
@@ -1558,6 +1920,15 @@ function OverviewDashboard({
             <button type="button" onClick={() => onView("agents")}><Codicon name="hubot" /> {readyAgents}/{agentConnectors.length} agents</button>
           </div>
         </div>
+        <RoadmapProofStrip
+          activeRun={activeRun}
+          readiness={readiness}
+          pilotPacket={pilotPacket}
+          trustLadder={trustLadder}
+          simulations={simulations}
+          benchmarks={benchmarks}
+          serviceAgents={serviceAgents}
+        />
         <div className="mesh-section-header">
           <div>
             <p className="mesh-kicker">Operating picture</p>
@@ -1605,9 +1976,9 @@ function OverviewDashboard({
         </div>
         <div className="mesh-stack">
           {approvalQueue.slice(0, 4).map((item) => (
-            <button key={item.id} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <button key={approvalItemId(item)} className="mesh-list-row" type="button" onClick={() => onView("approvals")}>
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </button>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No operator approvals are pending." /> : null}
@@ -1637,7 +2008,7 @@ function OverviewDashboard({
         </div>
         <div className="mesh-compact-stats">
           <strong>{readyIntegrations}/{integrationConnectors.length}</strong>
-          <span>production surfaces ready</span>
+          <span>connector surfaces ready</span>
         </div>
         <div className="mesh-stack">
           {integrationConnectors.slice(0, 4).map((connector) => (
@@ -1714,11 +2085,17 @@ function RunsView({
   recentEvidenceEvents,
   selectedEventInsights,
   merkleProof,
+  runExport,
+  darkharnessPacket,
+  exportingRun,
+  exportingArchive,
   onSelectRun,
   onSelectEvent,
   onRunDetailTabChange,
   onCanvasModeChange,
   onToggleCanvasFullscreen,
+  onBuildRunExport,
+  onBuildRunArchive,
   onJumpContext,
 }: {
   runs: RunSessionRecord[];
@@ -1741,11 +2118,17 @@ function RunsView({
   recentEvidenceEvents: RunEventRecord[];
   selectedEventInsights: Array<{ label: string; value: string; tone?: string }>;
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
   onSelectRun: (runId: string) => void;
   onSelectEvent: (eventId: string) => void;
   onRunDetailTabChange: (tab: RunDetailTab) => void;
   onCanvasModeChange: (mode: CanvasMode) => void;
   onToggleCanvasFullscreen: () => void;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onJumpContext: (tab: RightRailTab) => void;
 }) {
   return (
@@ -1782,7 +2165,7 @@ function RunsView({
           {activeRun ? <StatusChip label={humanize(activeRun.stage)} tone={toneForStage(activeRun.stage)} /> : null}
         </div>
         <div className="mesh-tab-list" role="tablist" aria-label="Run detail">
-          {(["timeline", "evidence", "rca", "approvals", "actions", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
+          {(["timeline", "evidence", "rca", "approvals", "actions", "darkharness", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
             <button key={tab} className={runDetailTab === tab ? "tab active" : "tab"} type="button" onClick={() => onRunDetailTabChange(tab)}>
               {runDetailTabLabel(tab)}
             </button>
@@ -1798,10 +2181,21 @@ function RunsView({
           <RunApprovalPanel queue={approvalQueue} activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "actions" ? (
           <RunActionPanel activeRun={activeRun} onJumpContext={onJumpContext} />
+        ) : runDetailTab === "darkharness" ? (
+          <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} />
         ) : runDetailTab === "audit" ? (
-          <RunAuditPanel activeRun={activeRun} merkleProof={merkleProof} onJumpContext={onJumpContext} />
+          <RunAuditPanel
+            activeRun={activeRun}
+            merkleProof={merkleProof}
+            runExport={runExport}
+            exportingRun={exportingRun}
+            exportingArchive={exportingArchive}
+            onBuildRunExport={onBuildRunExport}
+            onBuildRunArchive={onBuildRunArchive}
+            onJumpContext={onJumpContext}
+          />
         ) : runDetailTab === "agents" ? (
-          <AgentMeshPanel run={activeRun} tasks={agentTasks} active="" onSteer={() => undefined} />
+          <AgentMeshPanel run={activeRun} tasks={agentTasks} />
         ) : (
           <TopologyPanel
             activeRun={activeRun}
@@ -1989,7 +2383,7 @@ function AgentsView({
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Bot size={15} />} title="Active Run Agent Attempts" />
-        <AgentMeshPanel run={activeRun} tasks={agentTasks} active={steering} onSteer={onSteer} />
+        <AgentMeshPanel run={activeRun} tasks={agentTasks} />
       </section>
     </div>
   );
@@ -1998,10 +2392,12 @@ function AgentsView({
 function IntegrationsView({
   connectors,
   readiness,
+  connectorCertification,
   watchers,
 }: {
   connectors: IntegrationConnectorSummary[];
   readiness: IntegrationReadiness | null;
+  connectorCertification: ConnectorCertificationPacket | null;
   watchers: WatcherStatus | null;
 }) {
   const groups = ["Web3", "Web2 Production", "Development", "Operations"] as const;
@@ -2028,6 +2424,10 @@ function IntegrationsView({
         </section>
       ))}
       <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Connector Certification Matrix" />
+        <ConnectorCertificationMatrix readiness={readiness} certification={connectorCertification} />
+      </section>
+      <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<ShieldCheck size={15} />} title="Connection Boundary" />
         <p className="mesh-muted">
           OAuth/OIDC, service-account, and API-key connections must store raw secrets outside run artifacts. Runs record connection ids, scopes, readiness state, and audit references only.
@@ -2051,32 +2451,69 @@ function ControlPlaneView({
   runConnection,
   agentConnectors,
   integrationConnectors,
+  trustLadder,
+  killSwitchStatus,
+  pilotPacket,
+  serviceAgents,
+  benchmarks,
+  killSwitching,
+  onApplyKillSwitch,
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
-  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "evo" | "latentmas" | "deepagents">][];
+  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents">][];
   integrationsReady: number;
   integrationsTotal: number;
   systemConnection: ConnectionStatus;
   runConnection: ConnectionStatus;
   agentConnectors: AgentConnectorSummary[];
   integrationConnectors: IntegrationConnectorSummary[];
+  trustLadder: TrustLadderEntry[];
+  killSwitchStatus: KillSwitchStatus | null;
+  pilotPacket: PilotGoNoGoPacket | null;
+  serviceAgents: ServiceAgentRecord[];
+  benchmarks: BenchmarkRecord[];
+  killSwitching: boolean;
+  onApplyKillSwitch: () => void;
 }) {
+  const requiredChecks = Object.entries(readiness?.required_checks ?? {});
+  const optionalChecks = Object.entries(readiness?.optional_checks ?? {});
   return (
     <div className="mesh-dashboard-grid">
       <section className="mesh-card mesh-card-span">
         <div className="mesh-section-header">
           <div>
-            <p className="mesh-kicker">Runtime internals</p>
-            <h3>Control plane diagnostics</h3>
+            <p className="mesh-kicker">Tiered readiness</p>
+            <h3>{readiness ? `${humanize(readiness.profile)} profile` : "Readiness unavailable"}</h3>
           </div>
           <StatusPill state={systemConnection === "connected" ? "ready" : "degraded"} label={humanize(systemConnection)} />
         </div>
         <div className="mesh-metric-grid">
           <MetricCard metric={{ label: "Environment", value: health ? humanize(health.environment) : "Unknown", detail: health ? `${health.version} ${health.commit.slice(0, 7)}` : "Health unavailable", tone: health ? "good" : "danger" }} />
-          <MetricCard metric={{ label: "Integrations", value: `${integrationsReady}/${integrationsTotal}`, detail: "hardcoded readiness keys", tone: integrationsReady === integrationsTotal ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Readiness", value: readiness ? humanize(readiness.status) : "Unknown", detail: readiness ? `${humanize(readiness.profile)} profile` : "Profile unavailable", tone: readiness?.status === "ready" ? "good" : "danger" }} />
+          <MetricCard metric={{ label: "Required gates", value: `${requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length}/${requiredChecks.length}`, detail: "profile checks", tone: readiness?.blockers.length ? "danger" : "good" }} />
+          <MetricCard metric={{ label: "Topology", value: readiness?.orchestration_topology?.active_topology ? humanize(String(readiness.orchestration_topology.active_topology)) : "Unknown", detail: readiness?.orchestration_topology?.org_profile_ready ? "org profile configured" : "profile unavailable", tone: readiness?.orchestration_topology?.org_profile_ready ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Integrations", value: `${integrationsReady}/${integrationsTotal}`, detail: "optional connector probes", tone: integrationsReady === integrationsTotal ? "good" : "warn" }} />
           <MetricCard metric={{ label: "Agents", value: `${agentConnectors.filter((a) => a.state === "ready").length}/${agentConnectors.length}`, detail: "worker connectors", tone: "neutral" }} />
           <MetricCard metric={{ label: "Run stream", value: humanize(runConnection), detail: "active run SSE", tone: runConnection === "connected" ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Pilot packet", value: pilotPacket ? humanize(pilotPacket.status) : "Unknown", detail: pilotPacket ? `${pilotPacket.missing_evidence.length} missing proofs` : "not generated", tone: pilotPacket?.status === "go" ? "good" : "warn" }} />
+        </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Required Gate Matrix" />
+        <ReadinessGateList checks={requiredChecks} blockers={readiness?.blockers ?? []} blockerDetails={readiness?.blocker_details ?? {}} />
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Kill Switch" />
+        <div className="mesh-stack">
+          <ConnectorRow name="Live execution" detail={killSwitchStatus?.live_execution_enabled ? "Enabled" : "Disabled"} state={killSwitchStatus?.live_execution_enabled ? "degraded" : "ready"} />
+          <ConnectorRow name="Watchers" detail={`${killSwitchStatus?.watchers.watchers.filter((w) => w.running).length ?? 0}/${killSwitchStatus?.watchers.watchers.length ?? 0} running`} state={killSwitchStatus?.watchers.watchers.some((w) => w.running) ? "config-only" : "ready"} />
+          <ConnectorRow name="Approval gate" detail={killSwitchStatus?.force_approval_gate || readiness?.required_checks?.force_approval_gate ? "Forced or defaulted" : "Not forced"} state={killSwitchStatus?.force_approval_gate || readiness?.required_checks?.force_approval_gate ? "ready" : "config-only"} />
+          <ConnectorRow name="Readiness blockers" detail={(readiness?.blockers ?? []).join(", ") || "None"} state={(readiness?.blockers ?? []).length ? "degraded" : "ready"} />
+          <button className="action-button danger" type="button" onClick={onApplyKillSwitch} disabled={killSwitching}>
+            <ShieldCheck size={15} />
+            {killSwitching ? "Applying" : "Stop live authority"}
+          </button>
         </div>
       </section>
       <section className="mesh-card">
@@ -2088,12 +2525,24 @@ function ControlPlaneView({
         </div>
       </section>
       <section className="mesh-card">
-        <SectionTitle icon={<ShieldCheck size={15} />} title="Readiness" />
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Optional Lanes" />
         <div className="readiness-grid">
           {readinessItems.map((item) => (
             <ReadinessCard key={item.name} label={humanize(item.name)} status={item} />
           ))}
         </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<Activity size={15} />} title="Evidence Capacity" />
+        <div className="mesh-stack">
+          <ConnectorRow name="Trust ladder" detail={`${trustLadder.length} service/action entries`} state={trustLadder.length > 0 ? "ready" : "config-only"} />
+          <ConnectorRow name="Service agent scopes" detail={`${serviceAgents.length} services registered`} state={serviceAgents.length > 0 ? "ready" : "config-only"} />
+          <ConnectorRow name="Benchmark records" detail={`${benchmarks.length} recorded`} state={benchmarks.length > 0 ? "ready" : "config-only"} />
+        </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<CircleDot size={15} />} title="Optional Gate Detail" />
+        <ReadinessGateList checks={optionalChecks} blockers={[]} compact />
       </section>
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<Activity size={15} />} title="Connector Inventory" />
@@ -2115,13 +2564,668 @@ function ControlPlaneView({
   );
 }
 
+function RoadmapProofStrip({
+  activeRun,
+  readiness,
+  pilotPacket,
+  trustLadder,
+  serviceAgents,
+  simulations,
+  benchmarks,
+}: {
+  activeRun: RunDetail | null;
+  readiness: IntegrationReadiness | null;
+  pilotPacket: PilotGoNoGoPacket | null;
+  trustLadder: TrustLadderEntry[];
+  serviceAgents: ServiceAgentRecord[];
+  simulations: SimulationScenarioRecord[];
+  benchmarks: BenchmarkRecord[];
+}) {
+  const requiredChecks = Object.entries(readiness?.required_checks ?? {});
+  const requiredPassed = requiredChecks.filter(([, value]) => value === true || typeof value !== "boolean").length;
+  const connectorStates = Object.values(readiness?.connector_certification ?? {}).map((item) => String(asRecord(item).state ?? ""));
+  const certifiedCount = connectorStates.filter((state) => ["read-only", "staging-ready", "pilot-ready", "production-ready", "proposal-only"].includes(state)).length;
+  const pipelineEvents = (activeRun?.events ?? []).map((event) => `${event.event_type} ${event.stage} ${event.artifact_key ?? ""}`).join(" ").toLowerCase();
+  const stepReady = (step: string) => {
+    const key = step.toLowerCase();
+    if (key === "rca") return /investigation|rca|root/.test(pipelineEvents);
+    if (key === "model review") return /hermes|goose|agent|latent|deepagents/.test(pipelineEvents);
+    if (key === "memory") return /memory|vault|merkle|feedback/.test(pipelineEvents);
+    return pipelineEvents.includes(key);
+  };
+  const proofCards = [
+    {
+      label: "Tiered readiness",
+      value: readiness ? `${requiredPassed}/${requiredChecks.length}` : "0/0",
+      detail: readiness ? `${humanize(readiness.profile)} profile` : "No readiness snapshot",
+      state: readiness?.blockers.length ? "degraded" : "ready",
+    },
+    {
+      label: "Connector maturity",
+      value: `${certifiedCount}/${connectorStates.length}`,
+      detail: "certification states visible",
+      state: certifiedCount > 0 ? "ready" : "config-only",
+    },
+    {
+      label: "Policy replay",
+      value: String(simulations.length),
+      detail: "failure-mode scenarios",
+      state: simulations.length > 0 ? "ready" : "config-only",
+    },
+    {
+      label: "Trust ladder",
+      value: String(trustLadder.length),
+      detail: `${serviceAgents.length} service scopes`,
+      state: trustLadder.length > 0 ? "ready" : "config-only",
+    },
+    {
+      label: "Pilot packet",
+      value: pilotPacket ? humanize(pilotPacket.status) : "Missing",
+      detail: pilotPacket ? `${pilotPacket.missing_evidence.length} missing proofs` : "Generate from observed evidence",
+      state: pilotPacket?.status === "go" ? "ready" : pilotPacket ? "degraded" : "config-only",
+    },
+    {
+      label: "Benchmarks",
+      value: String(benchmarks.length),
+      detail: "recorded gate outputs",
+      state: benchmarks.length > 0 ? "ready" : "config-only",
+    },
+  ] as Array<{ label: string; value: string; detail: string; state: ConnectorState }>;
+
+  return (
+    <div className="mesh-proof-strip">
+      <div className="mesh-proof-grid">
+        {proofCards.map((card) => (
+          <div key={card.label} className="mesh-proof-card">
+            <span>{card.label}</span>
+            <strong>{card.value}</strong>
+            <small>{card.detail}</small>
+            <StatusPill state={card.state} label={humanize(card.state)} />
+          </div>
+        ))}
+      </div>
+      <div className="authority-pipeline" aria-label="Production authority pipeline">
+        {AUTHORITY_PIPELINE.map((step, index) => (
+          <div key={step} className={`authority-step ${stepReady(step) ? "ready" : ""}`}>
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{step}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReadinessGateList({
+  checks,
+  blockers,
+  blockerDetails,
+  compact,
+}: {
+  checks: Array<[string, any]>;
+  blockers: string[];
+  blockerDetails?: Record<string, any>;
+  compact?: boolean;
+}) {
+  if (checks.length === 0) return <EmptyState text="No gate data returned by readiness." />;
+  return (
+    <div className={compact ? "gate-matrix compact" : "gate-matrix"}>
+      {checks.map(([name, value]) => {
+        const record = asRecord(value);
+        const boolValue = typeof value === "boolean" ? value : typeof record.ready === "boolean" ? record.ready : true;
+        const blocked = blockers.includes(name) || boolValue === false;
+        const detail =
+          typeof value === "boolean"
+            ? (value ? "pass" : "fail")
+            : [record.certification, record.detail].filter(Boolean).map(String).join(" / ") || summarizeRecord(record);
+        const blockerDetail = blocked ? asRecord(blockerDetails?.[name]) : {};
+        const remediation = typeof blockerDetail.remediation === "string" ? blockerDetail.remediation : "";
+        const stateSlice = typeof blockerDetail.state_slice === "string" ? `State: ${blockerDetail.state_slice}` : "";
+        const evidencePath = typeof blockerDetail.evidence_path === "string" && blockerDetail.evidence_path
+          ? `Evidence: ${blockerDetail.evidence_path}`
+          : "";
+        const env = stringList(blockerDetail.env);
+        const operatorDetail = [
+          remediation,
+          stateSlice,
+          evidencePath,
+          env.length ? `Inputs: ${env.join(", ")}` : "",
+        ].filter(Boolean).join(" / ");
+        return (
+          <div key={name} className={`gate-matrix-row ${blocked ? "blocked" : ""}`}>
+            <span>{humanize(name)}</span>
+            <strong>{operatorDetail || detail || "recorded"}</strong>
+            <StatusPill state={blocked ? "degraded" : "ready"} label={blocked ? "blocked" : "pass"} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConnectorCertificationMatrix({
+  readiness,
+  certification,
+}: {
+  readiness: IntegrationReadiness | null;
+  certification: ConnectorCertificationPacket | null;
+}) {
+  const entries = Object.entries(certification?.connectors ?? readiness?.connector_certification ?? {});
+  if (entries.length === 0) return <EmptyState text="No connector certification state returned by readiness." />;
+  return (
+    <div className="mesh-table-wrap">
+      <table className="mesh-table">
+        <thead><tr><th>Connector</th><th>State</th><th>Authority</th><th>Credential Boundary</th><th>Scopes / Blockers</th></tr></thead>
+        <tbody>
+          {entries.map(([name, raw]) => {
+            const item = asRecord(raw);
+            const state = toConnectorState(String(item.state ?? item.certified_state ?? item.observed_state ?? ""), "config-only");
+            const connectorName = String(item.display_name ?? item.connector_id ?? name);
+            const authority = String(item.authority_posture ?? item.detail ?? "");
+            const credentialBoundary = connectorCredentialBoundarySummary(item.credential_boundary);
+            const scopes = stringList(item.allowed_scopes);
+            const blockers = stringList(item.blockers);
+            return (
+              <tr key={name}>
+                <td>
+                  <strong>{connectorName}</strong>
+                  <small>{humanize(String(item.domain ?? name))}</small>
+                </td>
+                <td><StatusPill state={state} label={humanize(state)} /></td>
+                <td>
+                  <span>{authority || "Not recorded"}</span>
+                  <small>Before {humanize(String(item.required_before ?? "unset"))}</small>
+                </td>
+                <td>{credentialBoundary}</td>
+                <td>
+                  <span>{scopes.length ? scopes.join(", ") : "No scopes"}</span>
+                  <small>{blockers.length ? `Blocked: ${blockers.join(", ")}` : "No blockers"}</small>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function connectorCredentialBoundarySummary(value: unknown): string {
+  const boundary = asRecord(value);
+  if (Object.keys(boundary).length === 0) return "Not recorded";
+  const flags = [
+    boundary.production_actuator_credentials_allowed === true ? "actuator creds" : "no actuator creds",
+    boundary.repo_write_credentials_allowed === true ? "repo write" : "no repo write",
+    boundary.runtime_secret_mount_required === true ? "runtime mount" : null,
+    boundary.break_glass_recording_required === true ? "break-glass recorded" : null,
+  ].filter(Boolean);
+  return [
+    boundary.credential_mode,
+    boundary.service_account_ref,
+    flags.join(", "),
+  ].filter(Boolean).join(" / ");
+}
+
+function SimulatorView({
+  scenarios,
+  simulations,
+  activeRun,
+  runs,
+  policySimulationDraft,
+  policySimulation,
+  selectedSimulationId,
+  simulatingPolicy,
+  runningSimulation,
+  onPolicySimulationDraftChange,
+  onSelectedSimulationIdChange,
+  onSimulatePolicy,
+  onRunSimulation,
+}: {
+  scenarios: ScenarioRecord[];
+  simulations: SimulationScenarioRecord[];
+  activeRun: RunDetail | null;
+  runs: RunSessionRecord[];
+  policySimulationDraft: string;
+  policySimulation: PolicySimulationResult | null;
+  selectedSimulationId: string;
+  simulatingPolicy: boolean;
+  runningSimulation: string;
+  onPolicySimulationDraftChange: (value: string) => void;
+  onSelectedSimulationIdChange: (value: string) => void;
+  onSimulatePolicy: (payload?: Record<string, unknown>) => void;
+  onRunSimulation: (scenarioId: string) => void;
+}) {
+  const selectedScenario = selectedSimulationId || simulations[0]?.scenario_id || "";
+  return (
+    <div className="mesh-dashboard-grid">
+      <section className="mesh-card mesh-card-span">
+        <div className="mesh-section-header">
+          <div>
+            <p className="mesh-kicker">Mutation-free policy simulator</p>
+            <h3>Replay a fixture, captured run, or inline signal before live authority</h3>
+          </div>
+          <StatusPill state={policySimulation?.mutates ? "unsafe" : "ready"} label={policySimulation?.mutates ? "mutating" : "dry run"} />
+        </div>
+        <div className="simulator-layout">
+          <div className="mesh-stack">
+            <textarea
+              value={policySimulationDraft}
+              onChange={(event) => onPolicySimulationDraftChange(event.target.value)}
+              className="mono-textarea simulator-json"
+              placeholder='{"scenario_key": "search_latency_regression"}'
+            />
+            <div className="context-action-row">
+              <button className="action-button primary" type="button" disabled={simulatingPolicy} onClick={() => onSimulatePolicy()}>
+                {simulatingPolicy ? <Loader2 size={14} className="spin" /> : <Codicon name="beaker" />}
+                Simulate policy
+              </button>
+              <button
+                className="action-button"
+                type="button"
+                disabled={!activeRun || simulatingPolicy}
+                onClick={() => onSimulatePolicy(activeRun ? { captured_run_id: activeRun.run_id } : undefined)}
+              >
+                Captured run
+              </button>
+              {scenarios.slice(0, 3).map((scenario) => (
+                <button
+                  key={scenario.key}
+                  className="action-button"
+                  type="button"
+                  disabled={simulatingPolicy}
+                  onClick={() => {
+                    onPolicySimulationDraftChange(JSON.stringify({ scenario_key: scenario.key }, null, 2));
+                    onSimulatePolicy({ scenario_key: scenario.key });
+                  }}
+                >
+                  {scenario.title}
+                </button>
+              ))}
+            </div>
+          </div>
+          <PolicySimulationResultPanel result={policySimulation} runCount={runs.length} />
+        </div>
+      </section>
+
+      <section className="mesh-card mesh-card-span">
+        <div className="mesh-section-header">
+          <div>
+            <p className="mesh-kicker">Failure-mode library</p>
+            <h3>Replay denied, degraded, and dependency-failure scenarios</h3>
+          </div>
+          <div className="context-action-row">
+            <div className="select-wrap compact-select">
+              <select value={selectedScenario} onChange={(event) => onSelectedSimulationIdChange(event.target.value)}>
+                {simulations.map((scenario) => (
+                  <option key={scenario.scenario_id} value={scenario.scenario_id}>{scenario.title}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="select-icon" />
+            </div>
+            <button className="action-button primary" type="button" disabled={!selectedScenario || !!runningSimulation} onClick={() => onRunSimulation(selectedScenario)}>
+              {runningSimulation ? <Loader2 size={14} className="spin" /> : <Play size={14} />}
+              Run sandbox
+            </button>
+          </div>
+        </div>
+        <div className="simulation-card-grid">
+          {simulations.map((scenario) => (
+            <article key={scenario.scenario_id} className={`simulation-card ${scenario.scenario_id === selectedScenario ? "selected" : ""}`}>
+              <div className="mesh-section-header">
+                <div>
+                  <strong>{scenario.title}</strong>
+                  <p>{humanize(scenario.fault_type)}</p>
+                </div>
+                <StatusPill state="config-only" label={humanize(scenario.expected_decision_type ?? "unscored")} />
+              </div>
+              <div className="context-link-list compact">
+                <ContextLink label="Scenario" value={scenario.scenario_id} mono />
+                <ContextLink label="Expected" value={scenario.expected_outcome ?? "not set"} />
+                <ContextLink label="Sandbox" value={summarizeRecord(scenario.sandbox)} />
+              </div>
+              <div className="tag-row">
+                {scenario.tags.slice(0, 5).map((tag) => <span key={tag}>{tag}</span>)}
+              </div>
+            </article>
+          ))}
+          {simulations.length === 0 ? <EmptyState text="No simulation scenarios are available from the control plane." /> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PolicySimulationResultPanel({ result, runCount }: { result: PolicySimulationResult | null; runCount: number }) {
+  if (!result) {
+    return (
+      <div className="context-panel">
+        <SectionTitle icon={<ShieldCheck size={14} />} title="Simulation Result" />
+        <div className="context-stat-grid">
+          <ContextStat label="Mutation" value="false by contract" />
+          <ContextStat label="Captured runs" value={String(runCount)} />
+          <ContextStat label="Allowed action" value="pending replay" />
+          <ContextStat label="Denied action" value="pending replay" />
+        </div>
+      </div>
+    );
+  }
+  const recommendation = stringField(asRecord(result.evaluation), "final_recommendation") ?? "unscored";
+  const decision = stringField(asRecord(result.decision), "decision_type") ?? stringField(asRecord(result.decision), "action") ?? "none";
+  return (
+    <div className="context-panel">
+      <SectionTitle icon={<ShieldCheck size={14} />} title="Simulation Result" />
+      <div className="context-stat-grid">
+        <ContextStat label="Mutation" value={String(result.mutates)} />
+        <ContextStat label="Source" value={summarizeRecord(result.source)} />
+        <ContextStat label="Decision" value={humanize(decision)} />
+        <ContextStat label="Recommendation" value={humanize(recommendation)} />
+      </div>
+      <ConnectorRow name="Allowed action" detail={result.allowed_action ? summarizeRecord(result.allowed_action) : "None"} state={result.allowed_action ? "ready" : "config-only"} />
+      <ConnectorRow name="Denied action" detail={result.denied_action ? summarizeRecord(result.denied_action) : "None"} state={result.denied_action ? "degraded" : "ready"} />
+      <ConnectorRow name="Rollback path" detail={result.rollback_path ?? "Not available"} state={result.rollback_path ? "ready" : "config-only"} />
+      {result.blockers.length > 0 ? (
+        <div className="mesh-stack">
+          {result.blockers.map((blocker) => (
+            <div key={blocker} className="inspector-alert danger"><AlertTriangle size={14} /><span>{blocker}</span></div>
+          ))}
+        </div>
+      ) : null}
+      <pre className="timeline-summary">{JSON.stringify({ trigger: result.trigger, evaluation: result.evaluation }, null, 2)}</pre>
+    </div>
+  );
+}
+
+function TrustLadderView({
+  trustLadder,
+  serviceAgents,
+  activeRun,
+}: {
+  trustLadder: TrustLadderEntry[];
+  serviceAgents: ServiceAgentRecord[];
+  activeRun: RunDetail | null;
+}) {
+  return (
+    <div className="mesh-dashboard-grid">
+      <section className="mesh-card mesh-card-span">
+        <div className="mesh-section-header">
+          <div>
+            <p className="mesh-kicker">Operator trust ladder</p>
+            <h3>Autonomy ceiling per service and action class</h3>
+          </div>
+          <StatusPill state={activeRun?.auto_mode ? "degraded" : "ready"} label={activeRun?.auto_mode ? "auto requested" : "approval default"} />
+        </div>
+        <div className="trust-ladder-grid">
+          {trustLadder.map((entry) => (
+            <TrustLadderCard key={`${entry.action_class}-${entry.service}`} entry={entry} />
+          ))}
+          {trustLadder.length === 0 ? <EmptyState text="No trust ladder entries yet. Outcomes appear after feedback records are written." /> : null}
+        </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<Bot size={15} />} title="Service Agent Scopes" />
+        <div className="mesh-connector-grid">
+          {serviceAgents.map((agent) => (
+            <article key={agent.service} className="mesh-connector-card">
+              <div className="mesh-section-header">
+                <div>
+                  <strong>{agent.service}</strong>
+                  <p>{agent.runbook_path ?? "No runbook path"}</p>
+                </div>
+                <StatusPill state={agent.preferred_lanes.length > 0 ? "ready" : "config-only"} label={`${agent.preferred_lanes.length} lanes`} />
+              </div>
+              <div className="context-link-list compact">
+                <ContextLink label="Preferred" value={agent.preferred_lanes.join(", ") || "none"} />
+                <ContextLink label="Scope" value={summarizeRecord(agent.scope)} />
+                <ContextLink label="Overrides" value={summarizeRecord(agent.autonomy_overrides)} />
+              </div>
+            </article>
+          ))}
+          {serviceAgents.length === 0 ? <EmptyState text="No service agent records are available." /> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function TrustLadderCard({ entry }: { entry: TrustLadderEntry }) {
+  const levels = ["suggest", "draft", "approve", "auto"];
+  const levelIndex = Math.max(0, levels.indexOf(entry.level));
+  const nextLevel = entry.next_level ? humanize(entry.next_level) : "Max";
+  const requiredRuns = entry.promotion_requirements?.min_runs ?? 0;
+  const requiredRate = entry.promotion_requirements?.min_success_rate ?? 0;
+  const blockers = entry.promotion_blockers ?? [];
+  return (
+    <article className="trust-card">
+      <div className="mesh-section-header">
+        <div>
+          <strong>{entry.service}</strong>
+          <p>{humanize(entry.action_class)}</p>
+        </div>
+        <StatusPill state={entry.level === "auto" ? "degraded" : entry.level === "approve" ? "config-only" : "ready"} label={humanize(entry.level)} />
+      </div>
+      <div className="trust-track">
+        {levels.map((level, index) => (
+          <span key={level} className={index <= levelIndex ? "active" : ""}>{humanize(level)}</span>
+        ))}
+      </div>
+      <div className="context-stat-grid">
+        <ContextStat label="Runs" value={String(entry.total_runs)} />
+        <ContextStat label="Success" value={`${Math.round(clamp01(entry.success_rate) * 100)}%`} />
+        <ContextStat label="Failures" value={String(entry.consecutive_failures)} />
+        <ContextStat label="Overrides" value={String(entry.override_count)} />
+      </div>
+      <div className="trust-rationale">
+        <ContextLink
+          label="Next"
+          value={entry.next_level ? `${nextLevel}: ${requiredRuns} runs / ${Math.round(clamp01(requiredRate) * 100)}% success` : "Max ceiling reached"}
+        />
+        <ContextLink label="Ceiling" value={entry.autonomy_ceiling_reason ?? "No autonomy rationale reported."} />
+      </div>
+      {blockers.length > 0 ? (
+        <div className="trust-blocker-list">
+          {blockers.map((blocker) => (
+            <span key={blocker}>{blocker}</span>
+          ))}
+        </div>
+      ) : null}
+      <p className="mesh-muted">{entry.last_outcome ? `Last outcome: ${humanize(entry.last_outcome)}` : "No outcome recorded."}</p>
+    </article>
+  );
+}
+
+function PilotPacketView({
+  packet,
+  darkharnessPacket,
+  readiness,
+  benchmarks,
+  activeRun,
+}: {
+  packet: PilotGoNoGoPacket | null;
+  darkharnessPacket: DarkharnessPilotPacket | null;
+  readiness: IntegrationReadiness | null;
+  benchmarks: BenchmarkRecord[];
+  activeRun: RunDetail | null;
+}) {
+  const checks = Object.entries(packet?.checks ?? {});
+  const observed = packet?.observed;
+  const proofIds = (ids?: string[]) => (ids ?? []).slice(0, 3).join(", ") || "none";
+  const canaryLanes = (observed?.mesh_brain_canary_lanes ?? [])
+    .map((lane) => [lane.tenant_id, lane.task_type].filter(Boolean).join(":"))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ") || "none";
+  return (
+    <div className="mesh-dashboard-grid">
+      <section className="mesh-card mesh-card-span">
+        <div className="mesh-section-header">
+          <div>
+            <p className="mesh-kicker">Evidence-generated pilot packet</p>
+            <h3>{packet ? humanize(packet.status) : "Packet unavailable"}</h3>
+          </div>
+          <StatusPill state={packet?.status === "go" ? "ready" : "degraded"} label={packet?.packet_version ?? "not generated"} />
+        </div>
+        <div className="mesh-metric-grid">
+          <MetricCard metric={{ label: "Run evidence", value: String(packet?.observed.run_count ?? 0), detail: "observed sessions", tone: (packet?.observed.run_count ?? 0) > 0 ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Missing proofs", value: String(packet?.missing_evidence.length ?? 0), detail: "go/no-go blockers", tone: packet?.missing_evidence.length ? "danger" : "good" }} />
+          <MetricCard metric={{ label: "Readiness", value: readiness ? humanize(readiness.status) : "Unknown", detail: readiness ? `${humanize(readiness.profile)} profile` : "unavailable", tone: readiness?.status === "ready" ? "good" : "warn" }} />
+          <MetricCard metric={{ label: "Benchmarks", value: String(benchmarks.length), detail: "recorded gate rows", tone: benchmarks.length ? "good" : "neutral" }} />
+          <MetricCard metric={{ label: "Current run", value: activeRun ? activeRun.run_id.slice(0, 10) : "None", detail: activeRun ? humanize(activeRun.stage) : "select a run", tone: activeRun ? "good" : "neutral" }} />
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Go/No-Go Checks" />
+        <div className="gate-matrix compact">
+          {checks.map(([name, passed]) => (
+            <div key={name} className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+              <span>{humanize(name)}</span>
+              <strong>{passed ? "observed" : "missing"}</strong>
+              <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+            </div>
+          ))}
+          {checks.length === 0 ? <EmptyState text="No packet checks returned." /> : null}
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<AlertTriangle size={15} />} title="Missing Evidence" />
+        <div className="mesh-stack">
+          {(packet?.missing_evidence ?? []).map((item) => (
+            <ConnectorRow key={item} name={humanize(item)} detail="Required before production pilot" state="degraded" />
+          ))}
+          {packet?.missing_evidence.length === 0 ? <EmptyState text="No missing evidence in the current packet." /> : null}
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<FolderGit2 size={15} />} title="Observed Proofs" />
+        <div className="mesh-stack">
+          <ContextStat label="Approved" value={proofIds(observed?.approved_run_ids)} />
+          <ContextStat label="Live action" value={proofIds(observed?.live_action_run_ids)} />
+          <ContextStat label="Denied action" value={proofIds(observed?.denied_action_run_ids)} />
+          <ContextStat label="Merkle" value={proofIds(observed?.merkle_run_ids)} />
+          <ContextStat label="Model kernel" value={proofIds(observed?.mesh_brain_model_kernel_run_ids)} />
+          <ContextStat label="Live canary" value={proofIds(observed?.mesh_brain_live_canary_smoke_run_ids)} />
+          <ContextStat label="Canary lanes" value={canaryLanes} />
+          <ContextStat label="Rollback drill" value={proofIds(observed?.mesh_brain_rollback_drill_run_ids)} />
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<BookOpen size={15} />} title="Packet Artifacts" />
+        <div className="mesh-stack">
+          {EVIDENCE_PACKET_LINKS.map(([label, path]) => (
+            <ConnectorRow key={path} name={label} detail={path} state="config-only" />
+          ))}
+        </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <DarkharnessPacketPanel packet={darkharnessPacket} activeRun={activeRun} compact />
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<Activity size={15} />} title="Benchmark Records" />
+        <BenchmarkTable benchmarks={benchmarks} />
+      </section>
+    </div>
+  );
+}
+
+function BenchmarkTable({ benchmarks }: { benchmarks: BenchmarkRecord[] }) {
+  if (benchmarks.length === 0) return <EmptyState text="No benchmark records are available." />;
+  return (
+    <div className="mesh-table-wrap">
+      <table className="mesh-table">
+        <thead><tr><th>Benchmark</th><th>Scenario</th><th>Run</th><th>Score</th><th>Status</th><th>Recorded</th></tr></thead>
+        <tbody>
+          {benchmarks.slice(0, 12).map((benchmark) => (
+            <tr key={benchmark.benchmark_id}>
+              <td><code>{benchmark.benchmark_id.slice(0, 14)}</code></td>
+              <td>{benchmark.scenario_id}</td>
+              <td><code>{benchmark.run_id.slice(0, 12)}</code></td>
+              <td>{benchmark.score}</td>
+              <td><StatusText status={benchmark.passed ? "ready" : "failed"} /></td>
+              <td>{relativeTime(benchmark.recorded_at)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function RoadmapView({
+  readiness,
+  pilotPacket,
+  simulations,
+  trustLadder,
+}: {
+  readiness: IntegrationReadiness | null;
+  pilotPacket: PilotGoNoGoPacket | null;
+  simulations: SimulationScenarioRecord[];
+  trustLadder: TrustLadderEntry[];
+}) {
+  return (
+    <div className="mesh-dashboard-grid">
+      <section className="mesh-card mesh-card-span">
+        <div className="mesh-section-header">
+          <div>
+            <p className="mesh-kicker">Production deployment roadmap</p>
+            <h3>UI surfaces mapped to the release gates</h3>
+          </div>
+          <StatusPill state={readiness?.blockers.length ? "degraded" : "ready"} label={readiness ? humanize(readiness.profile) : "unknown"} />
+        </div>
+        <div className="roadmap-phase-grid">
+          {ROADMAP_PHASES.map((phase) => (
+            <article key={phase.id} className="roadmap-phase-card">
+              <span>{phase.before}</span>
+              <strong>{phase.title}</strong>
+              <p>{phase.gate}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="mesh-card mesh-card-span">
+        <SectionTitle icon={<ShieldCheck size={15} />} title="Product Quality Surfaces" />
+        <div className="roadmap-surface-grid">
+          {ROADMAP_PRIORITY_SURFACES.map(([title, detail], index) => (
+            <article key={title} className="roadmap-surface-card">
+              <span>{index + 1}</span>
+              <strong>{title}</strong>
+              <p>{detail}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<Activity size={15} />} title="Current Coverage" />
+        <div className="mesh-stack">
+          <ConnectorRow name="Readiness blockers" detail={(readiness?.blockers ?? []).join(", ") || "None"} state={readiness?.blockers.length ? "degraded" : "ready"} />
+          <ConnectorRow name="Failure library" detail={`${simulations.length} replay scenarios`} state={simulations.length ? "ready" : "config-only"} />
+          <ConnectorRow name="Trust ladder" detail={`${trustLadder.length} entries`} state={trustLadder.length ? "ready" : "config-only"} />
+          <ConnectorRow name="Pilot packet" detail={pilotPacket ? `${humanize(pilotPacket.status)} with ${pilotPacket.missing_evidence.length} missing proofs` : "Unavailable"} state={pilotPacket?.status === "go" ? "ready" : "degraded"} />
+        </div>
+      </section>
+      <section className="mesh-card">
+        <SectionTitle icon={<AlertTriangle size={15} />} title="Non-Negotiable Rules" />
+        <div className="mesh-stack">
+          <ConnectorRow name="Authenticated TLS" detail="No public exposure without identity enforcement" state="config-only" />
+          <ConnectorRow name="Proposal lanes" detail="Deep Agents, Goose, Hermes, and Mesh Brain do not own actuation" state="ready" />
+          <ConnectorRow name="Autonomy" detail="No action without allowlist, policy, evaluation, approval, rollback, and trust evidence" state="ready" />
+          <ConnectorRow name="Adapter claims" detail="Unfinished adapters stay visibly unfinished" state="ready" />
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function EvidenceAuditView({
   mode,
   activeRun,
   events,
   merkleProof,
+  runExport,
+  exportingRun,
+  exportingArchive,
   vaultDocument,
   vaultTree,
+  onBuildRunExport,
+  onBuildRunArchive,
   onVaultSelect,
   onJumpRun,
 }: {
@@ -2129,11 +3233,17 @@ function EvidenceAuditView({
   activeRun: RunDetail | null;
   events: RunEventRecord[];
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
   vaultDocument: string;
   vaultTree: VaultTreeEntry[] | null;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onVaultSelect: (path: string) => void;
   onJumpRun: () => void;
 }) {
+  const activeExport = runExport?.run_id === activeRun?.run_id ? runExport : null;
   return (
     <div className="mesh-dashboard-grid">
       <section className="mesh-card">
@@ -2145,6 +3255,15 @@ function EvidenceAuditView({
           <ContextStat label="Run" value={activeRun?.run_id ?? "No run selected"} />
           <ContextStat label="Merkle root" value={activeRun?.latest_merkle_root ?? "Unavailable"} />
           <ContextStat label="Proof" value={merkleProof?.valid ? "Valid" : merkleProof ? "Invalid" : "Unavailable"} />
+          <ContextStat label="Export" value={activeExport ? activeExport.package_sha256.slice(0, 16) : "Not generated"} />
+        </div>
+        <div className="context-action-row">
+          <button className="action-button compact primary" type="button" disabled={!activeRun || exportingRun} onClick={onBuildRunExport}>
+            {exportingRun ? "Building export" : "Build export"}
+          </button>
+          <button className="action-button compact" type="button" disabled={!activeRun || exportingArchive} onClick={onBuildRunArchive}>
+            {exportingArchive ? "Building archive" : "Archive"}
+          </button>
         </div>
       </section>
       <section className="mesh-card">
@@ -2188,9 +3307,9 @@ function ApprovalsView({
         <SectionTitle icon={<ShieldCheck size={15} />} title="Approval Queue" />
         <div className="mesh-stack">
           {approvalQueue.map((item) => (
-            <div key={item.id} className="mesh-list-row static">
-              <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-              <StatusPill state={item.blocked ? "degraded" : "config-only"} label={humanize(item.stage)} />
+            <div key={approvalItemId(item)} className="mesh-list-row static">
+              <span><strong>{approvalItemTitle(item)}</strong><small>{approvalItemDetail(item)}</small></span>
+              <StatusPill state={approvalItemBlocked(item) ? "degraded" : "config-only"} label={humanize(item.pending_pause_stage ?? item.stage)} />
             </div>
           ))}
           {approvalQueue.length === 0 ? <EmptyState text="No pending approvals." /> : null}
@@ -2257,7 +3376,7 @@ function FleetView({
         <SectionTitle icon={<Waves size={15} />} title="Watchers" />
         <div className="mesh-stack">
           {(watchers?.watchers ?? []).map((watcher) => (
-            <ConnectorRow key={watcher.name} name={watcher.name} detail={`${watcher.signal_source} / ${watcher.interval_seconds}s`} state={watcher.running ? "ready" : "degraded"} />
+            <ConnectorRow key={watcher.name} name={watcher.name} detail={watcherOwnerDetail(watcher)} state={watcher.running ? "ready" : "degraded"} />
           ))}
           {(!watchers || watchers.watchers.length === 0) ? <EmptyState text="No typed watchers registered." /> : null}
         </div>
@@ -2276,6 +3395,19 @@ function FleetView({
       </section>
     </div>
   );
+}
+
+function watcherOwnerDetail(watcher: WatcherStatus["watchers"][number]): string {
+  const owner = watcher.ownership?.owner?.display_name ?? watcher.ownership?.owner?.owner_id;
+  const resolved = watcher.ownership?.resolved_target_count ?? 0;
+  const total = watcher.ownership?.target_count ?? 0;
+  const target = watcher.ownership?.targets?.[0];
+  const escalation = typeof target?.escalation_route === "string" && target.escalation_route ? target.escalation_route : null;
+  const blockers = watcher.ownership?.blockers ?? [];
+  if (owner && escalation) return `${owner} / ${resolved}/${total} targets / ${escalation}`;
+  if (owner) return `${owner} / ${resolved}/${total} targets`;
+  if (blockers.length > 0) return `${watcher.signal_source} / ${blockers.join(", ")}`;
+  return `${watcher.signal_source} / ${watcher.interval_seconds}s`;
 }
 
 function AutomationView({
@@ -2316,7 +3448,7 @@ function AutomationView({
       <section className="mesh-card">
         <div className="mesh-section-header">
           <SectionTitle icon={<Play size={15} />} title="Launch Run" />
-          <button className="action-button compact" type="button" onClick={onUseResearchSafe}>Research Safe</button>
+          <button className="action-button compact" type="button" onClick={onUseResearchSafe}>Proposal Safe</button>
         </div>
         <div className="mesh-stack">
           <div className="select-wrap">
@@ -2443,11 +3575,11 @@ function StatusPill({ state, label }: { state: ConnectorState; label: string }) 
 
 function StatusText({ status }: { status: string }) {
   const state: ConnectorState =
-    status === "completed" || status === "ready" ? "ready" :
-    status === "failed" || status === "danger" || status === "disconnected" ? "degraded" :
+    status === "completed" || status === "ready" || status === "pilot-ready" || status === "production-ready" || status === "staging-ready" ? "ready" :
+    status === "failed" || status === "danger" || status === "disconnected" || status === "unfinished" || status === "disabled" ? "degraded" :
     status === "unsafe" ? "unsafe" :
     status === "stub" ? "stub" :
-    status === "config-only" ? "config-only" :
+    status === "config-only" || status === "mock" || status === "read-only" || status === "proposal-only" ? "config-only" :
     "config-only";
   return <StatusPill state={state} label={humanize(status)} />;
 }
@@ -2684,7 +3816,14 @@ function RunApprovalPanel({
         <div className="mesh-stack">
           <ContextStat label="Run" value={activeRun?.run_id ?? "No run"} />
           <ContextStat label="Stage" value={activeRun ? humanize(activeRun.stage) : "Idle"} />
-          {queue.map((item) => <ConnectorRow key={item.id} name={item.title} detail={item.detail} state={item.blocked ? "degraded" : "config-only"} />)}
+          {queue.map((item) => (
+            <ConnectorRow
+              key={approvalItemId(item)}
+              name={approvalItemTitle(item)}
+              detail={approvalItemDetail(item)}
+              state={approvalItemBlocked(item) ? "degraded" : "config-only"}
+            />
+          ))}
           {queue.length === 0 ? <EmptyState text="No pending approval for this run." /> : null}
           <button className="action-button compact" type="button" onClick={() => onJumpContext("steering")}>Open steering</button>
         </div>
@@ -2698,7 +3837,7 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
     <div className="mesh-detail-grid">
       <section className="context-panel">
         <SectionTitle icon={<Play size={14} />} title="Action Surface" />
-        <p className="mesh-muted">Approvals, notes, overrides, Evo launch, and execution context remain behind Mesh steering controls.</p>
+        <p className="mesh-muted">Approvals, notes, overrides, and execution context remain behind Mesh steering controls.</p>
         <div className="context-action-row">
           <button className="action-button compact primary" type="button" disabled={!activeRun} onClick={() => onJumpContext("steering")}>Steering</button>
           <button className="action-button compact" type="button" disabled={!activeRun} onClick={() => onJumpContext("execution")}>Execution</button>
@@ -2709,15 +3848,224 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
   );
 }
 
+function DarkharnessPacketPanel({
+  packet,
+  activeRun,
+  compact,
+}: {
+  packet: DarkharnessPilotPacket | null;
+  activeRun: RunDetail | null;
+  compact?: boolean;
+}) {
+  const missingEvidence = packet?.missing_evidence ?? [];
+  const checks = Object.entries(packet?.checks ?? {});
+  const evidence = packet?.implemented_evidence;
+  const records = packet?.perennial_records;
+  const allowedProofs = evidence?.allowed_action_proofs ?? [];
+  const deniedProofs = evidence?.denied_action_proofs ?? [];
+  const merkleProofs = evidence?.merkle_proofs ?? [];
+  const governanceCommits = records?.governance_commits ?? [];
+  const agentRecords = records?.agent_action_records ?? [];
+  const reservoirs = records?.sensitive_reservoirs ?? [];
+  const runExports = evidence?.run_exports ?? [];
+  const proofEnvelopes = records?.proof_envelopes ?? [];
+  const implementedClaims = packet?.claim_boundary.implemented ?? [];
+  const proposedClaims = packet?.claim_boundary.proposed ?? [];
+  const notImplementedClaims = packet?.claim_boundary.not_implemented ?? [];
+  const state: ConnectorState = !packet ? "disconnected" : packet.status === "blocked" ? "degraded" : "ready";
+  const statusLabel = !packet ? "Unavailable" : packet.status === "blocked" ? "Blocked" : "Packet ready";
+  const boundaryPasses =
+    packet?.boundaries.raw_reservoir_egress === "deny" &&
+    packet.boundaries.external_model_calls === "deny" &&
+    packet.boundaries.production_actions_approval_required === true;
+  const checkedValues = Object.values(packet?.checks ?? {});
+  const capabilityRows: Array<{ name: string; detail: string; state: ConnectorState }> = [
+    {
+      name: "Evidence capture",
+      detail: `${runExports.length} run exports, ${merkleProofs.length} Merkle proofs, ${missingEvidence.length} blockers`,
+      state: !packet ? "disconnected" : runExports.length > 0 && merkleProofs.length > 0 && missingEvidence.length === 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Action gate exercise",
+      detail: `${allowedProofs.length} allowed proofs, ${deniedProofs.length} denied proofs, ${governanceCommits.length} governance commits`,
+      state: !packet ? "disconnected" : allowedProofs.length > 0 && governanceCommits.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Boundary enforcement",
+      detail: `Raw egress ${packet?.boundaries.raw_reservoir_egress ?? "unavailable"}, external models ${packet?.boundaries.external_model_calls ?? "unavailable"}, approval ${packet ? String(packet.boundaries.production_actions_approval_required) : "unavailable"}`,
+      state: !packet ? "disconnected" : boundaryPasses ? "ready" : "degraded",
+    },
+    {
+      name: "Perennial record materialization",
+      detail: `${reservoirs.length} reservoirs, ${agentRecords.length} agent actions, ${proofEnvelopes.length} proof envelopes`,
+      state: !packet ? "disconnected" : reservoirs.length > 0 && agentRecords.length > 0 && proofEnvelopes.length > 0 ? "ready" : "config-only",
+    },
+    {
+      name: "Claim separation",
+      detail: `${implementedClaims.length} implemented, ${proposedClaims.length} proposed, ${notImplementedClaims.length} not implemented`,
+      state: !packet ? "disconnected" : implementedClaims.length > 0 ? "ready" : "degraded",
+    },
+    {
+      name: "Policy checks",
+      detail: `${checkedValues.filter(Boolean).length} observed, ${checkedValues.filter((passed) => !passed).length} missing`,
+      state: !packet ? "disconnected" : checkedValues.length === 0 || checkedValues.every(Boolean) ? "ready" : "degraded",
+    },
+  ];
+  return (
+    <div className={compact ? "darkharness-panel compact" : "mesh-detail-grid darkharness-panel"} data-testid="darkharness-packet-panel">
+      <section className="context-panel">
+        <div className="mesh-section-header">
+          <SectionTitle icon={<ShieldCheck size={14} />} title="Dark Harness Packet" />
+          <StatusPill state={state} label={statusLabel} />
+        </div>
+        <div className="context-stat-grid">
+          <ContextStat label="Run" value={activeRun?.run_id ?? packet?.run_id ?? "No run"} />
+          <ContextStat label="Packet" value={packet?.packet_id?.slice(0, 18) ?? packet?.packet ?? "Unavailable"} />
+          <ContextStat label="Allowed proof" value={String(allowedProofs.length)} />
+          <ContextStat label="Denied proof" value={String(deniedProofs.length)} />
+          <ContextStat label="Merkle proofs" value={String(merkleProofs.length)} />
+          <ContextStat label="Missing evidence" value={String(missingEvidence.length)} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<SlidersHorizontal size={14} />} title="Harness Capabilities" />
+        <div className="mesh-stack">
+          {capabilityRows.map((row) => (
+            <ConnectorRow key={row.name} name={row.name} detail={row.detail} state={row.state} />
+          ))}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Binary size={14} />} title="Boundary Status" />
+        <div className="gate-matrix compact">
+          <DarkharnessBoundaryRow
+            label="Raw reservoir egress"
+            value={packet?.boundaries.raw_reservoir_egress}
+            passed={packet?.boundaries.raw_reservoir_egress === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="External model calls"
+            value={packet?.boundaries.external_model_calls}
+            passed={packet?.boundaries.external_model_calls === "deny"}
+          />
+          <DarkharnessBoundaryRow
+            label="Production approval"
+            value={packet ? String(packet.boundaries.production_actions_approval_required) : undefined}
+            passed={packet?.boundaries.production_actions_approval_required === true}
+          />
+          {checks.map(([name, passed]) => (
+            <div key={name} className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+              <span>{humanize(name)}</span>
+              <strong>{passed ? "observed" : "missing"}</strong>
+              <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<AlertTriangle size={14} />} title="Missing Evidence" />
+        <div className="mesh-stack">
+          {missingEvidence.map((item) => (
+            <ConnectorRow key={item} name={humanize(item)} detail="Packet eligibility blocker" state="degraded" />
+          ))}
+          {packet && missingEvidence.length === 0 ? <EmptyState text="No missing evidence in the Dark Harness packet." /> : null}
+          {!packet ? <EmptyState text="No Dark Harness packet is available for the selected run." /> : null}
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<Activity size={14} />} title="Implemented Evidence" />
+        <div className="context-stat-grid">
+          <ContextStat label="Run exports" value={String(evidence?.run_exports?.length ?? 0)} />
+          <ContextStat label="Agent records" value={String(agentRecords.length)} />
+          <ContextStat label="Governance commits" value={String(governanceCommits.length)} />
+          <ContextStat label="Reservoirs" value={String(reservoirs.length)} />
+          <ContextStat label="Readiness" value={humanize(String(evidence?.readiness?.status ?? "unavailable"))} />
+          <ContextStat label="Go/no-go" value={humanize(String(evidence?.go_no_go?.status ?? evidence?.go_no_go?.final_release_decision ?? "unavailable"))} />
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<FolderGit2 size={14} />} title="Claim Boundary" />
+        <ClaimBoundaryList title="Implemented" items={implementedClaims} state="ready" />
+        <ClaimBoundaryList title="Proposed" items={proposedClaims} state="config-only" />
+        <ClaimBoundaryList title="Not implemented" items={notImplementedClaims} state="degraded" />
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<BookOpen size={14} />} title="Perennial Records" />
+        <div className="mesh-table-wrap">
+          <table className="mesh-table">
+            <thead><tr><th>Record</th><th>Count</th><th>Status</th></tr></thead>
+            <tbody>
+              <DarkharnessRecordRow label="Sensitive reservoirs" count={reservoirs.length} />
+              <DarkharnessRecordRow label="Agent actions" count={agentRecords.length} />
+              <DarkharnessRecordRow label="Governance commits" count={governanceCommits.length} />
+              <DarkharnessRecordRow label="Epistemic states" count={records?.epistemic_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Ontological states" count={records?.ontological_states?.length ?? 0} />
+              <DarkharnessRecordRow label="Proof envelopes" count={records?.proof_envelopes?.length ?? 0} />
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DarkharnessBoundaryRow({ label, value, passed }: { label: string; value?: string; passed: boolean }) {
+  return (
+    <div className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
+      <span>{label}</span>
+      <strong>{value ?? "unavailable"}</strong>
+      <StatusPill state={passed ? "ready" : "degraded"} label={passed ? "pass" : "block"} />
+    </div>
+  );
+}
+
+function ClaimBoundaryList({ title, items, state }: { title: string; items: string[]; state: ConnectorState }) {
+  return (
+    <div className="darkharness-claim-group">
+      <div className="mesh-section-header compact">
+        <strong>{title}</strong>
+        <StatusPill state={state} label={String(items.length)} />
+      </div>
+      <div className="darkharness-claim-list">
+        {items.map((item) => (
+          <span key={`${title}-${item}`}>{humanize(item)}</span>
+        ))}
+        {items.length === 0 ? <small>None</small> : null}
+      </div>
+    </div>
+  );
+}
+
+function DarkharnessRecordRow({ label, count }: { label: string; count: number }) {
+  return (
+    <tr>
+      <td>{label}</td>
+      <td>{count}</td>
+      <td><StatusPill state={count > 0 ? "ready" : "config-only"} label={count > 0 ? "present" : "empty"} /></td>
+    </tr>
+  );
+}
+
 function RunAuditPanel({
   activeRun,
   merkleProof,
+  runExport,
+  exportingRun,
+  exportingArchive,
+  onBuildRunExport,
+  onBuildRunArchive,
   onJumpContext,
 }: {
   activeRun: RunDetail | null;
   merkleProof: MerkleProof | null;
+  runExport: RunExportPackage | null;
+  exportingRun: boolean;
+  exportingArchive: boolean;
+  onBuildRunExport: () => void;
+  onBuildRunArchive: () => void;
   onJumpContext: (tab: RightRailTab) => void;
 }) {
+  const activeExport = runExport?.run_id === activeRun?.run_id ? runExport : null;
   return (
     <div className="mesh-detail-grid">
       <section className="context-panel">
@@ -2728,7 +4076,27 @@ function RunAuditPanel({
           <ContextStat label="Proof event" value={merkleProof?.event_id ?? "Unavailable"} />
           <ContextStat label="Proof valid" value={merkleProof ? String(merkleProof.valid) : "Unavailable"} />
         </div>
-        <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Open Merkle inspector</button>
+        <div className="context-action-row">
+          <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Open Merkle inspector</button>
+          <button className="action-button compact primary" type="button" disabled={!activeRun || exportingRun} onClick={onBuildRunExport}>
+            {exportingRun ? "Building export" : "Build export"}
+          </button>
+          <button className="action-button compact" type="button" disabled={!activeRun || exportingArchive} onClick={onBuildRunArchive}>
+            {exportingArchive ? "Building archive" : "Archive"}
+          </button>
+        </div>
+      </section>
+      <section className="context-panel">
+        <SectionTitle icon={<FolderGit2 size={14} />} title="Run Export Package" />
+        <div className="context-stat-grid">
+          <ContextStat label="Status" value={activeExport ? "Generated" : "Not generated"} />
+          <ContextStat label="Events" value={activeExport ? String(activeExport.timeline_json.length) : "0"} />
+          <ContextStat label="Vault docs" value={activeExport ? String(activeExport.vault_documents.length) : "0"} />
+          <ContextStat label="Checksum" value={activeExport?.package_sha256.slice(0, 18) ?? "Unavailable"} />
+          <ContextStat label="Compacted" value={activeExport ? String(activeExport.size_control.truncated) : "Unavailable"} />
+          <ContextStat label="Retention" value={activeExport ? `${activeExport.retention.retention_days}d${activeExport.retention.reviewed ? "" : " review"}` : "Unavailable"} />
+        </div>
+        {activeExport ? <pre className="timeline-summary">{activeExport.postmortem_markdown}</pre> : null}
       </section>
     </div>
   );
@@ -2854,12 +4222,45 @@ function buildDashboardMetrics({
 function buildApprovalQueue(run: RunDetail | null, blocked: boolean, reasons: string[]): ApprovalQueueItem[] {
   if (!run || run.stage !== "awaiting_operator") return [];
   return [{
-    id: `${run.run_id}-approval`,
-    title: blocked ? "Approval blocked" : "Awaiting operator approval",
-    detail: reasons[0] ?? "Run is paused at the operator gate.",
-    stage: run.pending_pause_stage ?? run.stage,
-    blocked,
+    queue_id: `approval://${run.run_id}`,
+    run_id: run.run_id,
+    created_at: run.created_at,
+    updated_at: run.updated_at,
+    scenario_key: run.scenario_key,
+    service: asRecord(run.artifacts?.input_signal).service ?? asRecord(run.artifacts?.ownership_boundary).service ?? null,
+    namespace: asRecord(run.artifacts?.input_signal).namespace ?? asRecord(run.artifacts?.ownership_boundary).namespace ?? null,
+    environment: asRecord(run.artifacts?.input_signal).environment ?? "local",
+    stage: run.stage,
+    pending_pause_stage: run.pending_pause_stage,
+    steering_mode: run.steering_mode,
+    decision_type: asRecord(run.artifacts?.decision).decision_type ?? null,
+    risk_level: asRecord(run.artifacts?.decision).risk_level ?? null,
+    final_recommendation: asRecord(run.artifacts?.evaluation).final_recommendation ?? null,
+    approval_state: blocked ? "blocked" : "pending",
+    blockers: reasons,
+    requested_by: asRecord(run.artifacts?.operator),
+    owner: asRecord(run.artifacts?.ownership_boundary).owner ?? null,
+    approver_roles: firstArray(asRecord(run.artifacts?.ownership_boundary).approver_roles),
+    allowed_commands: blocked ? ["explain_blockers", "override_decision", "cancel", "handoff"] : ["approve", "resume", "cancel", "handoff"],
+    evidence_refs: [`run://${run.run_id}`, ...(run.latest_event_id ? [`event://${run.latest_event_id}`] : [])],
+    latest_event_id: run.latest_event_id,
   }];
+}
+
+function approvalItemId(item: ApprovalQueueItem): string {
+  return item.queue_id || `approval://${item.run_id}`;
+}
+
+function approvalItemBlocked(item: ApprovalQueueItem): boolean {
+  return item.approval_state === "blocked";
+}
+
+function approvalItemTitle(item: ApprovalQueueItem): string {
+  return approvalItemBlocked(item) ? "Approval blocked" : "Awaiting operator approval";
+}
+
+function approvalItemDetail(item: ApprovalQueueItem): string {
+  return item.blockers[0] ?? item.decision_type ?? item.service ?? "Run is paused at the operator gate.";
 }
 
 function buildRcaSnapshot(
@@ -3115,10 +4516,12 @@ function buildConfidenceMovement(
   return points.slice(0, 8);
 }
 
-function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
+export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "evo" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const certification = readiness?.connector_certification ?? {};
+  const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
     if (!status) return "disconnected";
     if (status.ready) return "ready";
@@ -3126,31 +4529,53 @@ function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: Age
     if (status.command || status.url || status.detail) return "config-only";
     return "disconnected";
   };
-  const specs = [
-    ["hermes", "Hermes", "Default root-cause and blocker interaction", "hermes bridge", readinessFor("hermes"), true],
-    ["goose", "Goose", "Operational coordination and review", "goose bridge", readinessFor("goose"), false],
-    ["codex", "Codex", "Patch proposal lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["claudecode", "Claude Code", "Review and risk lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["openclaw", "OpenClaw", "Staging validation lane", "deepagents/native contract", readinessFor("deepagents"), false],
-    ["evo", "Evo", "Benchmark and discovery lane", "evo cli", readinessFor("evo"), false],
-    ["latentmas", "LatentMAS", "Advisory full-inference worker", "latentmas sidecar", readinessFor("latentmas"), false],
-    ["deepagents", "Deep Agents", "Sandboxed multi-agent proposal fabric", "deepagents", readinessFor("deepagents"), false],
-    ["custom-http", "Custom HTTP Agent", "Future external worker connector", "http connector", null, false],
-  ] as const;
-  return specs.map(([id, name, role, adapter, status, primary]) => {
+  const specs: Array<{
+    id: string;
+    name: string;
+    role: string;
+    adapter: string;
+    status: IntegrationReadiness["hermes"] | null;
+    primary: boolean;
+    platform?: boolean;
+  }> = [
+    { id: "hermes", name: "Hermes", role: "Default root-cause and blocker interaction", adapter: "hermes bridge", status: readinessFor("hermes"), primary: true },
+    { id: "goose", name: "Goose", role: "Operational coordination and review", adapter: "goose bridge", status: readinessFor("goose"), primary: false },
+    { id: "codex", name: "Codex", role: "Patch proposal lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "claudecode", name: "Claude Code", role: "Review and risk lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
+    { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
+    { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "temporal", name: "Temporal", role: "Durable workflow history and supervisor lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "dagster", name: "Dagster", role: "Asset lineage and materialization evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "prefect", name: "Prefect", role: "Flow run state and work-pool evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "flyte", name: "Flyte", role: "ML workflow reproducibility evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "luigi", name: "Luigi", role: "Pipeline dependency proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "oozie", name: "Apache Oozie", role: "Hadoop workflow status evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "kubernetes", name: "Kubernetes", role: "Controller reconciliation and bounded actuator lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "n8n", name: "n8n", role: "Low-code workflow trace proposal lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
+    { id: "custom-http", name: "Custom HTTP Agent", role: "Future external worker connector", adapter: "http connector", status: null, primary: false },
+  ];
+  return specs.map(({ id, name, role, adapter, status, primary, platform }) => {
     const attempt = lastAttempt(id);
+    const cert = certFor(id);
+    const certState = String(cert.state ?? "");
     return {
       id,
       name,
       role,
       adapter,
-      state: id === "custom-http" ? "disconnected" : fromReadiness(status),
-      scope: primary ? "Default Mesh run context" : "Domain/service scoped",
-      profile: status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
-      readinessDetail: status?.detail ?? "Connector registry placeholder",
+      state: platform ? toConnectorState(certState, "config-only") : id === "custom-http" ? "disconnected" : fromReadiness(status),
+      scope: platform ? "Topology routed orchestration lane" : primary ? "Default Mesh run context" : "Domain/service scoped",
+      profile: platform
+        ? `${humanize(certState || "mock")} before ${humanize(String(cert.required_before ?? "expansion"))}`
+        : status?.primary_route ?? status?.url ?? status?.command ?? "Not configured",
+      readinessDetail: platform ? String(cert.detail ?? cert.authority_posture ?? "Connector certification governs authority") : status?.detail ?? "Connector registry placeholder",
       lastAttempt: attempt ? `${humanize(attempt.status)}: ${attempt.summary}` : undefined,
-      riskFlags: attempt?.risk_flags ?? status?.warnings ?? [],
-      boundary: "Proposal-only. Mesh owns policy, approval, audit, and execution.",
+      riskFlags: attempt?.risk_flags ?? stringList(cert.blockers ?? status?.warnings ?? []),
+      boundary: platform
+        ? String(cert.authority_posture ?? "Mesh governs topology, approval, audit, and execution authority.")
+        : "Proposal-only. Mesh owns policy, approval, audit, and execution.",
       primary,
     };
   });
@@ -3162,6 +4587,16 @@ function buildIntegrationConnectors(
   activeSignal: Record<string, any> | null,
 ): IntegrationConnectorSummary[] {
   const watcherReady = (source: string) => Boolean(watchers?.watchers.some((watcher) => watcher.signal_source === source && watcher.running));
+  const certification = readiness?.connector_certification ?? {};
+  const certState = (id: string, fallback: ConnectorState): ConnectorState => {
+    const state = String((certification[id] as Record<string, any> | undefined)?.state ?? "");
+    return toConnectorState(state, fallback);
+  };
+  const certDetail = (id: string, fallback: string): string => {
+    const item = certification[id] as Record<string, any> | undefined;
+    const state = item?.state ? `${humanize(String(item.state))}: ` : "";
+    return `${state}${item?.detail ?? fallback}`;
+  };
   const statusState = (status?: { ready: boolean; warnings?: string[] } | null): ConnectorState => {
     if (!status) return "disconnected";
     if (status.ready) return "ready";
@@ -3173,17 +4608,37 @@ function buildIntegrationConnectors(
     { id: "reth", name: "Reth / geth nodes", domain: "Web3", state: hasRethSignal ? "ready" : "config-only", authType: "Local config", scopes: ["rpc", "sync", "disk", "peers"], detail: hasRethSignal ? "Active node signal loaded" : "Configured through node targets or signal fixtures" },
     { id: "validators", name: "Validators", domain: "Web3", state: "config-only", authType: "Service account", scopes: ["validator", "slashing-safe", "telemetry"], detail: "Domain pack reserved for validator operations" },
     { id: "kurtosis", name: "Kurtosis devnets", domain: "Web3", state: hasRethSignal ? "ready" : "config-only", authType: "Local config", scopes: ["enclave", "service", "restart"], detail: "Bounded devnet actuation behind allowlists" },
-    { id: "kubernetes", name: "Kubernetes", domain: "Web2 Production", state: watcherReady("kubernetes") || watcherReady("live_kubernetes") ? "ready" : "config-only", authType: "Service account", scopes: ["deployments", "pods", "events"], detail: "Live execution requires explicit allowlists" },
+    { id: "kubernetes", name: "Kubernetes", domain: "Web2 Production", state: watcherReady("kubernetes") || watcherReady("live_kubernetes") ? "ready" : certState("kubernetes", "config-only"), authType: "Service account", scopes: ["deployments", "pods", "events"], detail: certDetail("kubernetes", "Live execution requires explicit allowlists") },
     { id: "argocd", name: "ArgoCD", domain: "Web2 Production", state: "config-only", authType: "API key", scopes: ["applications", "sync", "health"], detail: "Runtime config supports ArgoCD URL/token" },
-    { id: "otel", name: "Prometheus / OpenTelemetry", domain: "Web2 Production", state: watcherReady("otel") || watcherReady("prometheus") ? "ready" : "config-only", authType: "API key", scopes: ["metrics", "slo", "feedback"], detail: "OTLP receiver and Prometheus feedback are opt-in" },
+    { id: "otel", name: "Prometheus / OpenTelemetry", domain: "Web2 Production", state: watcherReady("otel") || watcherReady("prometheus") ? "ready" : certState("otel", "config-only"), authType: "API key", scopes: ["metrics", "slo", "feedback"], detail: certDetail("otel", "OTLP receiver and Prometheus feedback are opt-in") },
     { id: "logs", name: "Logs", domain: "Web2 Production", state: "disconnected", authType: "OAuth/OIDC", scopes: ["errors", "patterns", "trace"], detail: "Loki/Elastic connector track" },
     { id: "github", name: "GitHub / GitLab", domain: "Development", state: "disconnected", authType: "OAuth/OIDC", scopes: ["repos", "prs", "checks"], detail: "Reserved for repo and release management" },
     { id: "promptfoo", name: "Promptfoo", domain: "Development", state: statusState(readiness?.promptfoo), authType: "Local config", scopes: ["evaluation", "gates"], detail: readiness?.promptfoo.detail ?? "Evaluation bridge" },
     { id: "ci", name: "CI and build gates", domain: "Development", state: "config-only", authType: "OAuth/OIDC", scopes: ["checks", "artifacts", "logs"], detail: "Release-readiness connector track" },
-    { id: "pagerduty", name: "PagerDuty / Opsgenie", domain: "Operations", state: "stub", authType: "API key", scopes: ["incidents", "escalations"], detail: "Incident adapter is not production-complete yet" },
+    { id: "pagerduty", name: "PagerDuty / Opsgenie", domain: "Operations", state: certState("incident_adapter", "stub"), authType: "API key", scopes: ["incidents", "escalations"], detail: certDetail("incident_adapter", "Incident adapter is not production-complete yet") },
     { id: "linear", name: "Linear / Jira", domain: "Operations", state: "disconnected", authType: "OAuth/OIDC", scopes: ["issues", "projects", "comments"], detail: "Work tracking connector track" },
-    { id: "audit-sink", name: "Audit sinks", domain: "Operations", state: "stub", authType: "Service account", scopes: ["append-only", "exports"], detail: "Local audit adapter must be mirrored before compliance reliance" },
+    { id: "audit-sink", name: "Audit sinks", domain: "Operations", state: certState("audit_sink", "stub"), authType: "Service account", scopes: ["append-only", "exports"], detail: certDetail("audit_sink", "Local audit adapter must be mirrored before compliance reliance") },
   ];
+}
+
+function toConnectorState(raw: string, fallback: ConnectorState): ConnectorState {
+  const allowed: ConnectorState[] = [
+    "ready",
+    "degraded",
+    "config-only",
+    "unsafe",
+    "stub",
+    "disconnected",
+    "mock",
+    "read-only",
+    "staging-ready",
+    "pilot-ready",
+    "production-ready",
+    "unfinished",
+    "disabled",
+    "proposal-only",
+  ];
+  return allowed.includes(raw as ConnectorState) ? raw as ConnectorState : fallback;
 }
 
 function RunEventNode({ data, selected }: NodeProps<RunGraphNode>) {
@@ -3539,39 +4994,17 @@ function SteeringConsolePanel({
   );
 }
 
-function AgentMeshPanel({
+export function AgentMeshPanel({
   run,
   tasks,
-  active,
-  onSteer,
 }: {
   run: RunDetail | null;
   tasks: AgentTask[];
-  active: string;
-  onSteer: (command: string, payload?: Record<string, unknown>) => void;
 }) {
   const fallbackTasks = Array.isArray(run?.artifacts?.agent_tasks)
     ? (run?.artifacts?.agent_tasks as AgentTask[])
     : [];
   const resolvedTasks = tasks.length > 0 ? tasks : fallbackTasks;
-  const evoLaunches = Array.isArray((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] } | undefined)?.launches)
-    ? (((run?.artifacts?.evo_launches as { launches?: EvoLaunchRecord[] }).launches ?? []) as EvoLaunchRecord[])
-    : [];
-  const defaultTargetPath = resolvedTasks.flatMap((task) => task.allowed_paths)[0] ?? "";
-  const defaultGateCommand = resolvedTasks.flatMap((task) => task.test_commands)[0] ?? "";
-  const [targetPath, setTargetPath] = useState(defaultTargetPath);
-  const [benchmarkCommand, setBenchmarkCommand] = useState("");
-  const [metric, setMetric] = useState("max");
-  const [instrumentationMode, setInstrumentationMode] = useState("inline");
-  const [gateCommand, setGateCommand] = useState(defaultGateCommand);
-
-  useEffect(() => {
-    setTargetPath(defaultTargetPath);
-    setGateCommand(defaultGateCommand);
-    setBenchmarkCommand("");
-    setMetric("max");
-    setInstrumentationMode("inline");
-  }, [run?.run_id, defaultTargetPath, defaultGateCommand]);
 
   if (!run) {
     return <EmptyState text="Agent worker tasks will appear after a run reaches evaluation." />;
@@ -3604,86 +5037,6 @@ function AgentMeshPanel({
         </p>
       </section>
 
-      <section className="context-panel">
-        <div className="context-panel-header">
-          <div>
-            <p className="eyebrow">Evo Launch</p>
-            <h4>Operator-triggered discovery bootstrap</h4>
-          </div>
-          <StatusChip label={active === "launch_evo" ? "Launching" : "Manual"} tone={active === "launch_evo" ? "#e8a33e" : "#2aacb8"} />
-        </div>
-        <div className="stack">
-          <input
-            value={targetPath}
-            onChange={(e) => setTargetPath(e.target.value)}
-            placeholder="Target path"
-            disabled={!defaultTargetPath || active === "launch_evo"}
-          />
-          <textarea
-            value={benchmarkCommand}
-            onChange={(e) => setBenchmarkCommand(e.target.value)}
-            placeholder="Benchmark command (required unless the repo already contains .evo/meta.json)"
-            className="small-textarea mono-textarea"
-            disabled={active === "launch_evo"}
-          />
-          <div className="steering-grid">
-            <select value={metric} onChange={(e) => setMetric(e.target.value)} disabled={active === "launch_evo"}>
-              <option value="max">Metric: max</option>
-              <option value="min">Metric: min</option>
-            </select>
-            <select
-              value={instrumentationMode}
-              onChange={(e) => setInstrumentationMode(e.target.value)}
-              disabled={active === "launch_evo"}
-            >
-              <option value="inline">Instrumentation: inline</option>
-              <option value="sdk">Instrumentation: sdk</option>
-            </select>
-          </div>
-          <input
-            value={gateCommand}
-            onChange={(e) => setGateCommand(e.target.value)}
-            placeholder="Gate command"
-            disabled={active === "launch_evo"}
-          />
-          <button
-            className="action-button compact"
-            disabled={!targetPath.trim() || !gateCommand.trim() || active === "launch_evo"}
-            onClick={() =>
-              onSteer("launch_evo", {
-                target_path: targetPath.trim(),
-                benchmark_command: benchmarkCommand.trim() || undefined,
-                metric,
-                instrumentation_mode: instrumentationMode,
-                gate_command: gateCommand.trim(),
-              })
-            }
-          >
-            Launch Evo
-          </button>
-          {evoLaunches.length > 0 && (
-            <div className="stack">
-              {evoLaunches.map((launch) => (
-                <article key={launch.launch_id} className="agent-attempt-card">
-                  <div className="agent-attempt-header">
-                    <strong>{humanize(launch.action)}</strong>
-                    <span className={launch.status === "completed" ? "agent-risk-badge good" : launch.status === "failed" ? "agent-risk-badge warn" : "agent-risk-badge"}>
-                      {humanize(launch.status)}
-                    </span>
-                  </div>
-                  <div className="context-link-list compact">
-                    <ContextLink label="Target" value={launch.target_path} mono />
-                    {launch.experiment_id ? <ContextLink label="Experiment" value={launch.experiment_id} mono /> : null}
-                    {launch.dashboard_url ? <ContextLink label="Dashboard" value={launch.dashboard_url} mono /> : null}
-                  </div>
-                  {launch.error ? <div className="readiness-warning">{launch.error}</div> : null}
-                </article>
-              ))}
-            </div>
-          )}
-        </div>
-      </section>
-
       {resolvedTasks.map((task) => (
         <section key={task.task_id} className="context-panel">
           <div className="context-panel-header">
@@ -3699,6 +5052,7 @@ function AgentMeshPanel({
             <ContextStat label="Paths" value={String(task.allowed_paths.length)} />
             <ContextStat label="Tests" value={String(task.test_commands.length)} />
           </div>
+          <AgentTopologyPanel task={task} />
           {Object.keys(task.kubernetes_scope ?? {}).length > 0 && (
             <div className="context-link-list">
               {Object.entries(task.kubernetes_scope).map(([key, value]) => (
@@ -3758,6 +5112,81 @@ function AgentMeshPanel({
         </section>
       ))}
     </div>
+  );
+}
+
+function AgentTopologyPanel({ task }: { task: AgentTask }) {
+  const topology = asRecord(task.orchestration_topology || task.lane_routing);
+  if (Object.keys(topology).length === 0) return null;
+  const lanes = firstArray(topology.selected_lanes);
+  const blockers = stringList(topology.blockers);
+  const sourceEvidence = asRecord(topology.source_evidence);
+  const ownership = asRecord(sourceEvidence.ownership_boundary);
+  return (
+    <section className="agent-topology-panel" data-testid="agent-topology-panel">
+      <div className="context-panel-header">
+        <div>
+          <p className="eyebrow">Topology</p>
+          <h4>{humanize(String(topology.active_topology ?? "centralized"))}</h4>
+        </div>
+        <StatusChip label={blockers.length ? "Blocked" : "Mesh Governed"} tone={blockers.length ? "#e8a33e" : "#2aacb8"} />
+      </div>
+      <div className="context-stat-grid">
+        <ContextStat label="Rule" value={String(topology.rule_id ?? "default")} />
+        <ContextStat label="Lanes" value={String(lanes.length || task.agents.length)} />
+        <ContextStat label="Reconciliation" value={humanize(String(topology.reconciliation ?? "mesh_reconciles"))} />
+        <ContextStat label="Authority" value="Mesh" />
+      </div>
+      <div className="context-link-list compact">
+        <ContextLink label="Reason" value={String(topology.routing_reason ?? "default profile topology")} />
+        {ownership.record_id ? <ContextLink label="Ownership" value={String(ownership.record_id)} /> : null}
+        {ownership.tenant_id ? <ContextLink label="Tenant" value={String(ownership.tenant_id)} /> : null}
+      </div>
+      {lanes.length > 0 ? (
+        <div className="mesh-table-wrap compact-table">
+          <table className="mesh-table">
+            <thead>
+              <tr><th>Lane</th><th>Topology</th><th>Model</th><th>Authority</th><th>Reconcile</th></tr>
+            </thead>
+            <tbody>
+              {lanes.map((lane, index) => {
+                const record = asRecord(lane);
+                const modelBinding = asRecord(record.model_binding);
+                return (
+                  <tr key={`${record.lane_id ?? index}`}>
+                    <td>{humanize(String(record.lane_id ?? "lane"))}</td>
+                    <td>{humanize(String(record.topology_role ?? record.role ?? "worker"))}</td>
+                    <td>{modelBinding.supported === false ? "None" : `${String(modelBinding.provider ?? "unknown")}:${String(modelBinding.model ?? "unknown")}`}</td>
+                    <td>{humanize(String(record.authority ?? "proposal_only"))}</td>
+                    <td>{humanize(String(record.reconciliation_mode ?? topology.reconciliation ?? "mesh_reconciles"))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {lanes.length > 0 ? (
+        <div className="context-link-list compact">
+          {lanes.slice(0, 4).map((lane, index) => {
+            const record = asRecord(lane);
+            const evidence = asRecord(record.source_evidence);
+            return evidence.profile_rule_ref ? (
+              <ContextLink
+                key={`lane-evidence-${record.lane_id ?? index}`}
+                label={`${humanize(String(record.lane_id ?? "lane"))} evidence`}
+                value={String(evidence.profile_rule_ref)}
+              />
+            ) : null;
+          })}
+        </div>
+      ) : null}
+      {blockers.length > 0 && (
+        <div className="readiness-warning">
+          {blockers.map((blocker) => humanize(blocker)).join(", ")}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -3932,6 +5361,8 @@ function runDetailTabLabel(tab: RunDetailTab) {
       return "Review gates";
     case "actions":
       return "Steering";
+    case "darkharness":
+      return "Dark Harness";
     default:
       return humanize(tab);
   }

@@ -104,7 +104,7 @@ ENV MESH_SERVER_HOST=0.0.0.0 \
     MESH_BUILD_COMMIT=$MESH_BUILD_COMMIT
 
 COPY --from=web /repo/web/dist ./web/dist
-COPY control_plane_server.py run_server.py run_first_slice.py run_tui.py tui.py setup_integrations.py ./
+COPY control_plane_server.py run_server.py run_tui.py tui.py setup_integrations.py ./
 COPY scripts/compose_mesh_entrypoint.sh /usr/local/bin/compose_mesh_entrypoint.sh
 COPY shared ./shared
 COPY services ./services

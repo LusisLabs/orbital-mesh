@@ -23,7 +23,9 @@ dependencies = [
 [tool.uv]
 override-dependencies = [
     "nbconvert>=7.17.0",  # CVE-2025-53000
+    "mistune>=3.2.1",  # Dependabot security alerts
     "protobuf>=6.33.5",  # CVE-2026-0994
+    "jupyterlab>=4.5.7",
 ]
 
 [project.optional-dependencies]

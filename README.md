@@ -347,7 +347,6 @@ mesh-intelligence/
 ├── control_plane_server.py        # HTTP + SSE server (stdlib http.server)
 ├── run_server.py                  # browser control-plane entrypoint
 ├── run_tui.py                     # curses terminal UI
-├── run_first_slice.py             # synchronous stdin/stdout runner
 ├── setup_integrations.py          # detect / install CLI integrations
 ├── services/
 │   ├── runtime.py                 # MeshRuntimeEngine — stage orchestration

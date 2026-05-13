@@ -1,0 +1,184 @@
+/*
+  State slice: branding.brand_system.v1
+  Orbital Mesh brand tokens for operator-facing product surfaces.
+  These tokens are intentionally restrained: dark neutral UI base, clear
+  status semantics, and minimal decorative effects for production tools.
+*/
+
+:root {
+  color-scheme: dark;
+
+  /* Brand architecture */
+  --om-brand-name: "Orbital Mesh";
+  --om-brand-parent: "Purna Labs";
+  --om-brand-category: "CROPS Mesh";
+
+  /* Core palette */
+  --om-color-bg: #111217;
+  --om-color-bg-grid: #171a21;
+  --om-color-surface: #181a1f;
+  --om-color-surface-raised: #20242c;
+  --om-color-surface-inset: #0c0e13;
+  --om-color-border: #2c323d;
+  --om-color-border-strong: #3a4352;
+
+  /* Text */
+  --om-color-text: #f2f4f7;
+  --om-color-text-secondary: #c7cdd6;
+  --om-color-text-muted: #8c96a5;
+  --om-color-text-disabled: #667080;
+
+  /* Action and proof colors */
+  --om-color-action: #548af7;
+  --om-color-action-hover: #6d9cff;
+  --om-color-action-quiet: rgba(84, 138, 247, 0.14);
+  --om-color-proof: #2aacb8;
+  --om-color-proof-quiet: rgba(42, 172, 184, 0.14);
+
+  /* Semantic state colors */
+  --om-color-success: #73b00a;
+  --om-color-success-quiet: rgba(115, 176, 10, 0.14);
+  --om-color-warning: #e8a33e;
+  --om-color-warning-quiet: rgba(232, 163, 62, 0.14);
+  --om-color-danger: #f75464;
+  --om-color-danger-quiet: rgba(247, 84, 100, 0.14);
+  --om-color-info: #8aa4c8;
+  --om-color-info-quiet: rgba(138, 164, 200, 0.14);
+
+  /* Topology and model-lifecycle accents */
+  --om-color-topology: #a982c0;
+  --om-color-topology-quiet: rgba(169, 130, 192, 0.14);
+  --om-color-memory: #6fae8d;
+  --om-color-memory-quiet: rgba(111, 174, 141, 0.14);
+
+  /* Typography */
+  --om-font-sans: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --om-font-display: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --om-font-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
+
+  /* Type scale */
+  --om-text-xs: 0.72rem;
+  --om-text-sm: 0.82rem;
+  --om-text-md: 0.95rem;
+  --om-text-lg: 1.08rem;
+  --om-text-xl: 1.32rem;
+  --om-text-2xl: 1.72rem;
+  --om-text-3xl: 2.3rem;
+
+  /* Spacing */
+  --om-space-1: 0.25rem;
+  --om-space-2: 0.5rem;
+  --om-space-3: 0.75rem;
+  --om-space-4: 1rem;
+  --om-space-5: 1.25rem;
+  --om-space-6: 1.5rem;
+  --om-space-8: 2rem;
+  --om-space-10: 2.5rem;
+  --om-space-12: 3rem;
+  --om-space-16: 4rem;
+
+  /* Shape */
+  --om-radius-xs: 4px;
+  --om-radius-sm: 6px;
+  --om-radius-md: 8px;
+  --om-radius-pill: 999px;
+
+  /* Effects */
+  --om-shadow-panel: 0 16px 48px rgba(0, 0, 0, 0.28);
+  --om-shadow-focus: 0 0 0 2px rgba(84, 138, 247, 0.32);
+  --om-transition-fast: 120ms ease;
+  --om-transition-base: 180ms ease;
+
+  /* Legacy aliases for older examples and gradual adoption. */
+  --mesh-bg: var(--om-color-bg);
+  --mesh-bg-01: var(--om-color-bg-grid);
+  --mesh-bg-02: var(--om-color-surface-inset);
+  --mesh-surface: var(--om-color-surface);
+  --mesh-surface-02: var(--om-color-surface-raised);
+  --mesh-surface-overlay: var(--om-color-surface-raised);
+  --mesh-border: var(--om-color-border);
+  --mesh-border-02: var(--om-color-border-strong);
+  --mesh-ink: var(--om-color-text);
+  --mesh-ink-02: var(--om-color-text-secondary);
+  --mesh-ink-03: var(--om-color-text-muted);
+  --mesh-accent: var(--om-color-action);
+  --mesh-accent-dim: var(--om-color-action-hover);
+  --mesh-accent-glow: var(--om-color-action-quiet);
+  --mesh-agentic: var(--om-color-topology);
+  --mesh-agentic-dim: var(--om-color-topology);
+  --mesh-agentic-glow: var(--om-color-topology-quiet);
+  --mesh-success: var(--om-color-success);
+  --mesh-success-dim: var(--om-color-success);
+  --mesh-warning: var(--om-color-warning);
+  --mesh-warning-dim: var(--om-color-warning);
+  --mesh-danger: var(--om-color-danger);
+  --mesh-danger-dim: var(--om-color-danger);
+  --mesh-info: var(--om-color-info);
+  --f-heading: var(--om-font-display);
+  --f-body: var(--om-font-sans);
+  --f-mono: var(--om-font-mono);
+  --r-sm: var(--om-radius-sm);
+  --r-md: var(--om-radius-md);
+  --r-lg: var(--om-radius-md);
+  --r-pill: var(--om-radius-pill);
+}
+
+.om-brand-surface {
+  background: var(--om-color-surface);
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-md);
+  color: var(--om-color-text);
+  font-family: var(--om-font-sans);
+}
+
+.om-wordmark {
+  color: var(--om-color-text);
+  font-family: var(--om-font-display);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.om-kicker {
+  color: var(--om-color-text-muted);
+  font-family: var(--om-font-mono);
+  font-size: var(--om-text-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.om-status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0.14rem 0.48rem;
+  border: 1px solid var(--om-color-border-strong);
+  border-radius: var(--om-radius-pill);
+  color: var(--om-color-text-secondary);
+  font: 700 var(--om-text-xs) / 1.2 var(--om-font-sans);
+  white-space: nowrap;
+}
+
+.om-status-pill[data-state="success"] {
+  border-color: color-mix(in srgb, var(--om-color-success) 52%, transparent);
+  background: var(--om-color-success-quiet);
+  color: #a9de7a;
+}
+
+.om-status-pill[data-state="warning"] {
+  border-color: color-mix(in srgb, var(--om-color-warning) 52%, transparent);
+  background: var(--om-color-warning-quiet);
+  color: #f0c16d;
+}
+
+.om-status-pill[data-state="danger"] {
+  border-color: color-mix(in srgb, var(--om-color-danger) 52%, transparent);
+  background: var(--om-color-danger-quiet);
+  color: #ff9b95;
+}
+
+.om-status-pill[data-state="proof"] {
+  border-color: color-mix(in srgb, var(--om-color-proof) 52%, transparent);
+  background: var(--om-color-proof-quiet);
+  color: #80d7df;
+}
