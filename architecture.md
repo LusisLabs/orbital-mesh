@@ -1,863 +1,633 @@
-# Mesh Intelligence Architecture
+# Mesh Intelligence — Architecture
 
-## Scope
+`mesh-intelligence` is an audited closed-loop SRE harness for the full
+incident lifecycle: **detect → investigate → raise → keep history**. It
+treats every inbound alert as a *lead*, not the truth. Each run
+assembles an audited evidence pack, runs an LLM-driven investigation
+loop over a typed read-only tool surface, ranks falsifiable hypotheses
+with a deterministic floor, optionally invokes an LLM observer for a
+second opinion, then applies a one-way safety promotion before the
+orchestrator touches anything. The result is persisted with
+Merkle-rooted audit trails so any run is independently replayable.
 
-`mesh-intelligence` is an audited closed-loop SRE harness covering the full incident lifecycle:
-**detect → investigate → raise → keep history**. It runs across three regression classes today:
+It is an **operator control plane with a bounded action surface**.
+Not a general autonomous agent. Not a multi-tenant SaaS. Not a CLI
+RCA tool.
 
-1. **Feature-flag regressions** (latency / error / timeout deltas attributable to a flag flip).
-2. **Kubernetes deployment regressions** (crash loops, OOM, image-pull failures, probe failures).
-3. **Blockchain execution-node degradations** (Reth-class symptoms: peer starvation, sync stall,
-   RPC degradation, consensus disconnect, JWT/exposure misconfigurations, disk pressure).
+Today it handles three regression classes:
 
-Across all three, Mesh treats an inbound alert as a *lead*, not the truth. Every run assembles an
-audited evidence pack, ranks falsifiable hypotheses with a deterministic floor, optionally calls an
-RCA harness for tool-loop investigation, runs an optional LLM observer, and applies a one-way
-safety promotion before acting. The result is persisted with Merkle-rooted audit trails so the run
-is independently replayable and provable.
+1. **Kubernetes deployment regressions** — crash loops, OOM, image-pull
+   failures, probe failures, scheduling errors, RBAC denials, service
+   selector mismatches.
+2. **Blockchain execution-node degradations** (Reth-class) — peer
+   starvation, sync stall, RPC degradation, consensus disconnect, JWT
+   misconfigurations, disk pressure.
+3. **Feature-flag regressions** — latency / error / timeout deltas
+   attributable to a flag flip.
 
-It is an operator control plane with a fixed action surface, not a general autonomous platform for
-arbitrary infra changes, code changes, or open-ended planning.
+---
 
-## Competitive positioning
-
-Mesh sits in the "AI SRE" category alongside two reference points:
-
-- **OpenSRE / opensre-cli** — open source SRE assistant; CLI agent for K8s troubleshooting.
-  Mesh's [`services/benchmark/`](services/benchmark) plane runs head-to-head against `opensre-cli`
-  as a registered provider.
-- **Resolve.ai** — closed-source enterprise AI SRE; PagerDuty/Datadog ingestion, single-agent
-  internal investigation, Slack/Teams escalation.
-
-Mesh's edge over both is the harness shape itself, not the LLM:
-
-| Capability | OpenSRE | Resolve.ai | Mesh |
-|---|---|---|---|
-| Multi-source ingest | Manual | Yes | Yes (webhooks + K8s watch + OTel + bare-metal) |
-| Tool-calling investigation | Yes | Yes | Yes — `services/investigation/harness/` planner→critic→loop |
-| Deterministic safety floor under LLM | No | No | Yes — `HypothesisEngine` falsifiable predicates |
-| One-way observer safety promotion | N/A | N/A | Yes — observer can only escalate, never demote |
-| Multi-agent ensemble at execution | Single agent | Single agent | Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents |
-| Reconciliation across competing agent attempts | No | No | Yes — `services/orchestrator/reconciliation.py` |
-| Audit-grade run history | No | Internal-only | Yes — Merkle proofs per event, replayable |
-| Long-tail incident corpus | No | Internal-only | Yes — `IncidentCorpusDatabase` + FTS, exportable |
-| Per-target temporal memory | No | Limited | Yes — `services/signal_history/` (transient vs sustained) |
-| Strategy memory (reasoning bank) | No | Limited | Yes — `shared/mesh_runtime/reasoning_bank.py` |
-| Outer-loop self-improvement | No | No | Yes — HALO read-only run-trace consumer |
-| Open source | Yes | No | Yes |
-
-The hard differentiator is the *harness*: deterministic falsification + multi-agent ensemble +
-audit-grade history. The LLMs themselves are commodity. A user can swap providers, swap agents,
-swap models — the harness contracts hold.
-
-## The four phases
-
-Every Mesh run flows through four phases. The whole system is built around making each phase
-inspectable, replayable, and bounded.
+## System diagram
 
 ```mermaid
 flowchart LR
-    subgraph DETECT[1. DETECT]
-        WH[Webhooks<br/>alertmanager, github, argocd]
+    subgraph DETECT[1. Detect]
+        WH[Webhooks<br/>alertmanager · github · argocd]
         K8S[K8s watch + live signal]
         OTEL[OpenTelemetry]
-        BARE[Bare-metal probes<br/>Reth/Lighthouse JSON-RPC]
-        TRIG[TriggerService<br/>normalize → Trigger]
+        BARE[Bare-metal probes<br/>JSON-RPC + systemd]
+        TRIG[TriggerService]
     end
-    subgraph INVESTIGATE[2. INVESTIGATE]
-        EV[EvidenceService<br/>audited pack + field_observability]
+    subgraph INVESTIGATE[2. Investigate]
+        EV[EvidenceService<br/>field-level audit]
+        TOPO[Topology populator<br/>InfraGraph per-run]
+        HARN[Investigation harness<br/>planner → critic → loop]
         HE[HypothesisEngine<br/>falsifiable predicates]
-        INV[InvestigationService<br/>tool-loop RCA]
-        SCEN[ScenarioAnalysis<br/>cross-run patterns]
-        OBS[LlmObserver<br/>typed verdict, fail-open]
+        SCEN[ScenarioAnalysis]
+        OBS[LlmObserver<br/>typed verdict]
     end
-    subgraph RAISE[3. RAISE]
+    subgraph RAISE[3. Raise]
         DEC[DecisionService<br/>bounded action set]
-        AGM[Agent Mesh<br/>multi-agent fanout]
-        REC[Reconciliation<br/>pick best attempt]
-        ACT[Actuators<br/>argocd, ssh, lb, repo_patch]
-        OPER[Operator pause/<br/>approve/override]
+        AGM[Agent mesh<br/>multi-agent fanout]
+        REC[Reconciliation]
+        ACT[Actuators<br/>argocd · ssh · lb · repo_patch]
+        OPER[Operator gate<br/>pause / approve / override]
     end
-    subgraph HISTORY[4. HISTORY]
+    subgraph HISTORY[4. History]
         SS[(StateStore<br/>Postgres or SQLite)]
         MERKLE[Merkle proofs<br/>per event]
         VAULT[(Vault<br/>Obsidian markdown)]
         SH[SignalHistory<br/>per-target temporal]
         CORPUS[(IncidentCorpus<br/>SQLite + FTS)]
         RB[ReasoningBank<br/>strategy memory]
-        HALO[HALO outer loop<br/>proposal-only patches]
     end
-
     DETECT ==> INVESTIGATE
     INVESTIGATE ==> RAISE
     RAISE ==> HISTORY
     HISTORY -.context.-> INVESTIGATE
-    HISTORY -.proposal-only.-> DETECT
 ```
 
-### 1. Detect
+Each arrow is a directed information flow. History only flows
+backward into Investigate as *context*; nothing in History can demote
+a Raise decision.
 
-| Component | Source | Output |
-|---|---|---|
-| `services/ingest/webhook_service.py` | HTTP webhooks (alertmanager, GitHub, ArgoCD, custom) | EventEnvelope |
-| `services/watchers/kubernetes.py` | K8s API watch | EventEnvelope |
-| `services/ingest/kubernetes_live_signal.py` | K8s pull (cluster snapshot) | EventEnvelope |
-| `services/ingest/otel_signal.py` | OpenTelemetry metrics | EventEnvelope |
-| `services/ingest/bare_metal_node.py` | Reth/Lighthouse JSON-RPC + systemd | EventEnvelope |
-| `services/trigger/service.py` | EventEnvelope → policy thresholds | Trigger contract |
-
-Detection is **not** a single push endpoint. Telemetry is supplied per run via `POST /api/runs`
-with `signal_payload` or `scenario_key`; the watchers and webhook service are the long-running
-pumps that turn external events into `POST /api/runs` calls. There is no `/api/ingest` endpoint
-by design — every detection becomes a run with a unique ID and a full event log.
-
-### 2. Investigate
-
-| Component | Role |
-|---|---|
-| `services/evidence/service.py` | Promotes the inbound signal to an audited evidence pack. Field-level observability (`observed` / `timeout` / `not_attempted`). Fast-path skip on credential/exposure signatures. |
-| `services/decision/hypothesis_engine.py` | Generates ranked hypotheses from built-in templates (k8s + Reth signatures). Each hypothesis carries falsification predicates resolved against the evidence pack, AlertStore, InfraGraph, and ContextStore. **Posterior is computed only from probe-evaluated predicates** — see "Architectural invariants" below. |
-| `services/investigation/service.py` + `harness/` | Tool-loop RCA via planner → critic → loop. Read-only by default; mutating tools cannot reach the registry. Bounded by `max_iterations` and `budget`. Fails non-fatally — investigation output is advisory; the deterministic decision path is authoritative. |
-| `services/scenario_analysis/service.py` | Cross-run evidence, modular subdecisions, active-memory compaction. Produces a Merkle-bound advisory synthesis. |
-| `services/observer/service.py` | LLM second pair of eyes. OpenAI-compatible + Anthropic native. Returns one of `approve` / `escalate` / `request_more_evidence` / `reject_unsafe`. Fail-open. |
-
-The investigate phase is where Mesh's defense-in-depth lives: 5 distinct layers, each able to
-promote toward escalation, none able to demote.
-
-### 3. Raise
-
-| Component | Role |
-|---|---|
-| `services/decision/service.py` | Produces exactly one bounded decision per signal class. Action surface enforced by `policies/autonomy.policy.json`. |
-| `services/orchestrator/agent_mesh.py` | Fans the task out to multiple agents (Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents). Each agent records a read-only proposal as an `AgentAttempt`. |
-| `services/orchestrator/service_agents/registry.py` | Capability matrix — which agents can attempt which task classes. |
-| `services/orchestrator/reconciliation.py` | Selects the best attempt across agents (or escalates if none meet the policy floor). |
-| `services/actuators/` | Bounded side effects: `argocd.py` (GitOps), `systemd_ssh.py` (Reth restart over SSH), `load_balancer.py`, `repo_patch.py`. Gated by `policies/autonomy.policy.json`. |
-| Operator surface | SSE + HTTP for pause / approve / override. Pauseable stages: `trigger_ready`, `decision_ready`, `evaluation_ready`, `feedback_ready`. |
-
-The raise phase is where Mesh's multi-agent design lives. Resolve.ai's single-agent design has
-no defense if the agent hallucinates. Mesh's reconciliation step compares attempts and rejects
-ones with risk flags before any actuator fires.
-
-### 4. History
-
-| Component | Role |
-|---|---|
-| `shared/mesh_runtime/state_store_factory.py` | Selects backend at startup. Postgres is production; SQLite + JSON files is local-dev. |
-| `shared/mesh_runtime/postgres_state.py` | Postgres backend. Migrations under `migrations/postgres/`. |
-| `shared/mesh_runtime/control_plane_state.py` | SQLite + JSON-files backend. |
-| `shared/mesh_runtime/merkle.py` | Per-event Merkle leaf hashing + snapshot building. Every run has a verifiable Merkle root and per-event inclusion proofs reachable via `/api/runs/:id/merkle/proof/:event_id`. |
-| Vault | Obsidian-compatible markdown mirror — human-browsable run notes with backlinks, served at `/api/vault/...`. |
-| `services/signal_history/store.py` | Per-target temporal ring buffer. Distinguishes "peer_count dipped to 1 once" (transient) from "peer_count has been at 1 for 5 ticks" (sustained partition). The decision service and the LLM observer query the same store; agreement on what "sustained" means is enforced by passing the same predicates to both. |
-| `shared/mesh_runtime/corpus_store.py` | `IncidentCorpusDatabase` — SQLite + FTS-backed long-tail incident memory. Importable from JSONL exports. Project-able into the active-memory store for retrieval. |
-| `shared/mesh_runtime/reasoning_bank.py` | Strategy memory across runs. Surfaces "this kind of incident usually responds to X" without prescribing it. |
-| `shared/mesh_runtime/halo.py` | Outer-loop optimization sidecar. Reads run traces, produces proposal-only patches against the harness itself (path-allowlisted, never auto-merges). |
-
-This phase is where Mesh has the strongest moat. Resolve.ai keeps history internal to its
-SaaS; OpenSRE doesn't keep history at all. Mesh's history is on the customer's filesystem,
-Merkle-proofed, replayable, and exportable as JSONL training data.
+---
 
 ## Architectural invariants
 
-Three invariants must hold for the system to be safe; every code change should be checked
-against them.
+Three invariants hold across every code change.
 
-1. **One-way safety promotion.** Every layer (trigger thresholds → policy → evidence sufficiency
-   → hypothesis ranking → LLM observer) can only promote toward escalation. None can demote.
-   A hallucinating model can therefore only make the system more conservative, never less safe.
+### 1. One-way safety promotion
 
-2. **Deterministic posterior.** The hypothesis engine's posterior is computed only from
-   evidence-grounded predicates — those whose `result` was set by a probe runner against the
-   evidence pack. RCA-derived predicates (kind=`investigation_root_cause_candidate`) are
-   excluded from posterior weight summation. RCA influence reaches the engine via:
-   - synthetic `h_rca_*` hypotheses with prior anchored to the RCA confidence (visible in
-     ranking + UI), and
-   - the `supporting_evidence` / `disconfirming_evidence` lists (visible to operator UI and
-     the observer prompt), but unweighted in `_posterior`.
+Every layer (trigger thresholds → policy match → evidence sufficiency
+→ hypothesis ranking → LLM observer) can only push the decision
+**toward escalation**. None can demote.
 
-   This invariant blocks LLM-confident-but-unverified RCA candidates from inflating
-   non-`h_rca_*` hypotheses past the 0.55 promotion threshold via posterior math.
+A hallucinating LLM observer can promote `restart_systemd_service` to
+`escalate`. It cannot demote an `escalate` to `approve`. The decision
+service rejects any verdict that would reduce conservatism.
 
-3. **Single-tenant by design.** A Mesh deployment monitors one operational fleet. The corpus
-   stores (`corpus_store.py`, `incident_corpus.py`, `monitoring_corpus.py`) have no tenant
-   predicate by design. Multi-tenant isolation would require every query in those modules
-   to grow a tenant-id parameter — and that change is explicitly out of scope until a real
-   multi-tenant deployment shape exists.
+### 2. Deterministic posterior
 
-## Current Runtime Shape
+The hypothesis engine's posterior is computed **only from
+probe-evaluated predicates** — those whose `result` was set by a
+probe runner against the evidence pack. RCA-derived predicates
+(`kind="investigation_root_cause_candidate"`) are excluded from
+posterior weight summation.
 
-```mermaid
-flowchart LR
-    raw[Telemetry + Flag + Release Context] --> ingest[IngestService]
-    k8s[Live Kubernetes Snapshot] --> ingest
-    reth[Reth JSON-RPC + systemd state] --> ingest
-    ingest --> trigger[TriggerService]
-    trigger -->|valid regression| evidence[EvidenceService]
-    evidence --> scenario[ScenarioAnalysisService]
-    scenario --> decision[DecisionService]
-    decision --> hypothesis[HypothesisEngine<br/>falsifiable predicates]
-    decision --> investigate[InvestigationService<br/>tool-loop RCA]
-    decision --> observer[LlmObserver — OpenAI-compatible]
-    decision --> evaluation[EvaluationService]
-    evaluation --> trajectory[Task Trace + Behavioral Scorers]
-    evaluation --> verifier[Deterministic Verifier]
-    evaluation -->|execute| orchestrator[OrchestratorService]
-    evaluation -->|human_review or reject| operator[Operator Review Route]
-    orchestrator --> agent_mesh[Agent Mesh<br/>Goose · Hermes · Codex · CC · OpenClaw · Evo · DeepAgents]
-    agent_mesh --> reconcile[Reconciliation]
-    reconcile --> actuators[Bounded Local Actuators<br/>argocd · ssh · lb · repo_patch]
-    reconcile --> feedback[FeedbackService]
-    feedback --> state[Run State + Event Log]
-    feedback --> sh[SignalHistoryStore<br/>per-target temporal]
-    feedback --> corpus[(IncidentCorpus<br/>SQLite + FTS)]
-    feedback --> rb[ReasoningBank]
-    state --> vault[Vault + Merkle]
-    state --> api[HTTP API + SSE + TUI]
-    state -.run-trace.-> halo[HALO outer loop<br/>proposal-only]
-```
+RCA influence reaches the engine via:
 
-## Main Layers
+- synthetic `h_rca_*` hypotheses with prior anchored to RCA
+  confidence (visible in ranking + UI), and
+- `supporting_evidence` / `disconfirming_evidence` lists (visible to
+  operator UI and the observer prompt) but unweighted in `_posterior`.
+
+This blocks an LLM-confident-but-unverified RCA candidate from
+inflating any other hypothesis past the 0.55 promotion threshold via
+posterior math.
+
+### 3. Single-tenant by design
+
+A Mesh deployment monitors one operational fleet. The corpus stores
+(`corpus_store.py`, `incident_corpus.py`, `monitoring_corpus.py`)
+intentionally carry no tenant predicate. Multi-tenant isolation would
+require growing a tenant-id parameter on every query in those modules
+— that change is explicitly out of scope until a real multi-tenant
+deployment shape exists.
+
+---
+
+## Runtime topology
 
 ### Production boundary
 
-- Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
-- The static web bundle is served from `MESH_WEB_ASSET_PATH` and calls the same HTTP API under `/api/*`.
-- Persistent state lives under `MESH_STATE_DIRECTORY`; autoresearch sessions live under `MESH_RESEARCH_DIRECTORY`; vault artifacts live under `MESH_VAULT_PATH`.
-- Trust boundaries are explicit: external clients must be authenticated by a reverse proxy or private network because the app has no built-in auth; LLM provider keys are process/container secrets; kubeconfig is a read-only secret mount; Docker socket access is developer-only unless explicitly accepted; Hermes is an optional external integration boundary.
-- Kubernetes is a foundational production path, but it has two separate requirements: the runtime must have a kubeconfig/context that passes the allowlists, and the API server endpoint inside that kubeconfig must be reachable from the container namespace. Local `localhost` kubeconfig server URLs generally fail inside containers unless rewritten to a container-reachable host, as the e2e scripts do for k3d.
+| Entry point | Role |
+|---|---|
+| `run_server.py` → `control_plane_server.py` | HTTP API (`/api/*`) + SSE streams + static web bundle |
+| `setup_integrations.py` (Docker entrypoint) | Provisions Promptfoo / Goose / Hermes / Evo configs before the server starts |
+| `run_tui.py` → `tui.py` | Local terminal UI over the same HTTP API |
+| `MeshRuntimeEngine.run_sync` (in-process) | Direct pipeline runner used by tests, fixtures, and the benchmark harness — bypasses the HTTP control plane |
 
-### Local all-in-one topology
+Trust posture:
 
-`docker-compose.stack.yml` is the local whole-system topology. It runs Mesh, dedicated Hermes and GitNexus sidecars, embedded k3s, a one-shot Kubernetes bootstrap job, and a one-shot smoke verifier in one Compose project.
+- No built-in HTTP auth. Sit behind a reverse proxy or private network.
+- LLM provider keys are process/container secrets (`MESH_OBSERVER_API_KEY`,
+  `ANTHROPIC_API_KEY`, etc.).
+- Kubeconfig is a read-only secret mount.
+- Persistent state lives at `MESH_STATE_DIRECTORY` (defaults to
+  `.mesh-runtime-state/`).
+- Vault artifacts at `MESH_VAULT_PATH`.
 
-```mermaid
-flowchart LR
-    operator[Operator Browser] --> mesh[Mesh API + UI]
-    smoke[mesh-smoke] --> mesh
-    smoke --> k8s[k3s API]
-    bootstrap[mesh-kube-bootstrap] --> k8s
-    mesh --> k8s
-    mesh --> hermes[Hermes Sidecar]
-    mesh --> gitnexus[GitNexus Sidecar]
-    mesh --> state[mesh_runtime_state]
-    mesh --> kubeconfig[mesh_kubeconfig]
-    k8s --> kubeconfig
-    latentmas[LatentMAS Profile] -. optional .-> mesh
+### Local all-in-one stack
+
+`docker-compose.stack.yml` is the whole system in one Compose project:
+Mesh + a dedicated Hermes sidecar + embedded k3s + a one-shot
+Kubernetes bootstrap job + a smoke verifier + optional LatentMAS
+sidecar (via the `latentmas` profile). Used for end-to-end manual
+testing; not the production template.
+
+---
+
+## Subsystems
+
+### Ingest
+
+| Module | Source |
+|---|---|
+| `services/ingest/webhook_service.py` | HTTP webhooks (alertmanager, GitHub, ArgoCD, custom) |
+| `services/watchers/kubernetes.py` | K8s API `watch` daemon |
+| `services/ingest/kubernetes_live_signal.py` | K8s pull-mode cluster snapshot |
+| `services/ingest/otel_signal.py` | OpenTelemetry metric receiver |
+| `services/ingest/bare_metal_node.py` | Reth/Lighthouse JSON-RPC + systemd state |
+
+There is **no** `/api/ingest` route by design. Every detection becomes
+a `POST /api/runs` with `signal_payload` or `scenario_key`, so every
+inbound event gets a run ID and a full event log.
+
+### Trigger
+
+`services/trigger/service.py` admits a signal as a `Trigger` only when:
+
+- evidence is recent (per-class freshness windows)
+- the signature persists across consecutive ticks (no single-sample noise)
+- thresholds are exceeded
+- the signal isn't currently in the suppression set
+
+Suppression state is in-memory + persisted; restarts pick it back up.
+
+### Evidence
+
+`services/evidence/service.py` promotes the inbound signal to an
+audited *evidence pack* — never reads the raw inbound signal
+downstream.
+
+For Reth signals it stamps the snapshot as a separate run artifact
+with **per-probe results** (`observed` / `timeout` / `not_attempted`),
+runs the sufficiency check from `policies/reth-node.policy.json`, and
+short-circuits to a **fast-path skip** for credential/exposure
+signatures (`authrpc_exposed`, `rpc_exposed`, `jwt_missing`,
+`db_corruption_suspected`, `jwt_secret_insecure_permissions`) so a
+critical-credential leak doesn't wait for the full pipeline.
+
+The probe runner is pluggable (`EvidenceService(probe_runner=...)`).
+Today the default runner is configured via `build_configured_probe_runner`
+and reads the inbound signal; a production runner attaching `kubectl get`,
+`kubectl logs`, and live JSON-RPC is the roadmap follow-up.
+
+### Investigation harness
+
+`services/investigation/harness/` is the LLM-driven tool-loop RCA path
+that fires on **every trigger**, not just CloudOps benchmark scenarios.
+It's the most distinctive subsystem in Mesh.
+
+Shape:
+
+```
+   ┌────────────────┐
+   │  Rule pack     │   CloudOpsRulePack | RethRulePack | GenericRulePack
+   │  (per trigger) │   carries domain heuristics + canonical RCA labels
+   └────────┬───────┘
+            │
+   ┌────────▼───────┐
+   │  Planner       │   selects next ToolCall from the registry
+   │  Native + LLM  │   (LlmProbeSelector + ShadowProbeSelector blend)
+   └────────┬───────┘
+            │ ToolCall
+   ┌────────▼───────┐
+   │  Critic        │   rejects unknown / mutating / duplicate / invalid-arg
+   └────────┬───────┘
+            │
+   ┌────────▼───────┐
+   │  Tool registry │   reads-only by construction
+   │  (root packs   │   always-on: prometheus / aws / kubectl / github / loki /
+   │   + per-run    │              jaeger / postgres / mcp / topology
+   │   overlays)    │   per-run:   cloudops (snapshot) / reth (live probes)
+   └────────┬───────┘
+            │ RawToolOutput
+   ┌────────▼───────┐
+   │  Loop          │   max_iterations + budget_cost guard
+   └────────┬───────┘
+            │
+            ▼
+   InvestigationReport
+   {root_cause_candidates, ranked, tool_call_trace, ...}
 ```
 
-This topology is not the production template. It intentionally uses a privileged k3s container, repository bind mounts, a Docker socket mount for the Hermes sidecar command path, and local published ports so the complete system can be launched and tested from one command. The production-like template remains `docker-compose.prod.yml`, which removes the repository bind mount and Docker socket and requires externally provided kubeconfig and allowlists.
+Key contracts (`services/investigation/harness/contracts.py`):
 
-### 1. Core remediation loop
+- `ToolDefinition` — name, domain, args_schema, `mutation_class`,
+  `timeout_seconds`, `budget_cost`, `citations_kind`.
+- `ToolCall` / `ToolResult` — bound to a definition + args.
+- `InvestigationLoopState` — accumulates calls, results, and decision
+  trace per iteration.
+- `LoopDecision` — what the planner wants to do next.
+- `LoopRejection` — why the critic vetoed a call.
 
-- `IngestService` normalizes raw telemetry, flag metadata, deployment context, segment context,
-  Reth/geth/Solana RPC snapshots, and post-action observations into one event envelope.
-- `TriggerService` emits a trigger only when evidence is recent, persistent, above thresholds, and
-  not suppressed.
-- **`EvidenceService`** (in `services/evidence/`) promotes the inbound signal from a *lead* to an
-  audited *evidence pack*. For Reth signals it stamps the snapshot as a separate run artifact with
-  per-probe results, runs a sufficiency check (per `evidence_sufficiency` in
-  `policies/reth-node.policy.json`), and short-circuits to a fast-path skip for credential or
-  exposure signatures (`authrpc_exposed`, `rpc_exposed`, `jwt_missing`, `db_corruption_suspected`,
-  `jwt_secret_insecure_permissions`). The pack is what every downstream stage reads — never the
-  raw inbound signal directly.
-- `ScenarioAnalysisService` records cross-run evidence, modular subdecisions, active-memory
-  compaction, and a Merkle-bound advisory synthesis before final decision creation.
-- `DecisionService` produces exactly one bounded decision from the allowed set per signal class:
-  - **Feature-flag**: `no_action`, `reduce_rollout`, `disable_flag`, `escalate`,
-    `investigate_and_patch`.
-  - **Kubernetes**: `no_action`, `restart_deployment`, `rollback_deployment`, `patch_resources`,
-    `escalate`.
-  - **Reth node**: `no_action`, `restart_systemd_service` (approval-gated), `cordon_node`,
-    `drain_node`, `escalate`.
-  - The autonomy policy (`policies/autonomy.policy.json`) enumerates which `(system, action)`
-    pairs are ever allowed; nothing else is reachable from this layer.
-- `HypothesisEngine` (in `services/decision/hypothesis_engine.py`) generates ranked hypotheses
-  with falsification predicates that resolve against the evidence pack, the AlertStore, the
-  InfraGraph, the ContextStore, and (when present) an `InvestigationReport`. Today it carries
-  templates for Kubernetes signatures (`crash_loop`, `oom_killed`, `image_pull_failure`,
-  `probe_failure`) and Reth signatures (`peer_starvation`, `sync_stalled`, `rpc_degraded`).
-  Output biases the deterministic decision one-way only — it can promote toward `escalate`
-  but never demote an escalation.
+The harness is **read-only by construction**:
 
-  **Posterior math is invariant.** Posteriors are computed only from probe-evaluated
-  predicates. RCA-derived predicates (`kind="investigation_root_cause_candidate"`) are
-  excluded from `_posterior` weight summation. RCA candidates surface via synthetic `h_rca_*`
-  hypotheses with priors anchored to RCA confidence, and via `supporting_evidence` /
-  `disconfirming_evidence` lists. This blocks the confidence-laundering pathway whereby an
-  LLM-confident root cause could otherwise inflate any matching deterministic hypothesis past
-  the 0.55 promotion threshold without any probe support.
-- `InvestigationService` (in `services/investigation/`) runs a tool-loop RCA harness when an
-  evidence pack alone is insufficient to nail down the root cause. The harness has a
-  planner→critic→loop shape with a registered tool catalog (`harness/registry.py`); read-only
-  by default, mutating tools cannot reach the registry. Bounded by `max_iterations` and
-  `budget_cost`. **Investigation output is advisory only.** If it times out, crashes, or
-  fails the critic's checks, the deterministic decision path remains authoritative.
-  The harness emits `InvestigationReport` carrying ranked `RcaCandidate` rows; those flow
-  into `HypothesisEngine.generate(investigation_report=...)` and surface as synthetic
-  hypotheses without inflating the deterministic posterior. CloudOps and Reth domain
-  ports are wired in (`services/investigation/cloudops_*.py`, `services/investigation/reth_*.py`).
-- `LlmObserver` (in `services/observer/`) is an optional second-opinion layer that reviews the
-  deterministic decision and emits a typed verdict. See *AI reasoning layer* below.
-- `EvaluationService` merges policy and business gates with Mesh-native trajectory scoring:
-  `task -> trace -> verifier -> scorer -> memory`.
-- `OrchestratorService` executes only approved actions and attaches Goose-backed review artifacts.
-- `FeedbackService` evaluates `T+10m` and `T+30m` outcomes and writes bounded world-model updates.
+1. `LoopCritic` rejects any `ToolCall` whose definition's
+   `mutation_class != "read_only"`.
+2. `LlmProbeSelector` filters its menu to `read_only` definitions
+   before the LLM ever sees it.
+3. Tool packs register `mutation_class="read_only"` on every
+   definition.
 
-### 2. Control plane
+That's the same property three different ways — defense in depth.
 
-- `services/control_plane.py` coordinates long-lived runs, operator pauses, overrides, approvals,
-  and run lifecycle state.
-- `control_plane_server.py` exposes HTTP APIs plus SSE streams for run and system updates.
-- `run_server.py` serves the browser UI; `run_tui.py` exposes the same system through the TUI.
-- Runs persist to `.mesh-runtime-state/` and are mirrored into the Obsidian-compatible vault with
-  Merkle roots and proofs.
+#### Tool packs
 
-#### HTTP API (singular calls)
+Each pack is one module under `services/investigation/tools/` exposing
+a uniform trio: `TOOL_DEFINITIONS`, `register(registry, ...)`, and (for
+always-on packs) `maybe_register_at_root(registry)`.
 
-There is **no** standalone `/api/ingest` route. **Telemetry** is supplied as JSON on run creation:
-either `signal_payload` (full raw signal) or `scenario_key` (loads a fixture under
-`fixtures/signals/`). When a run reaches the `ingesting` stage, `IngestService.normalize_signal`
-runs **in-process** on that payload, then `TriggerService` and the rest of the loop execute.
+| Pack | Trigger | Gating |
+|---|---|---|
+| `topology` | always-on | InfraGraph always present (default-constructed in engine) |
+| `prometheus` | always-on | `MESH_PROMETHEUS_URL` set |
+| `aws` | always-on | `MESH_AWS_TOOLS_ENABLED=1` |
+| `kubectl` | always-on | kubeconfig + `kubectl` on PATH |
+| `github` | always-on | `gh auth status` succeeds |
+| `loki` | always-on | `MESH_LOKI_URL` set |
+| `jaeger` | always-on | `MESH_JAEGER_URL` set |
+| `postgres` | always-on | `MESH_PG_DSN` set + `psql` on PATH |
+| `mcp` | always-on | `MESH_MCP_SERVERS` set (caller-supplied client_factory) |
+| `cloudops` | per-run | trigger carries `cloudopsbench_snapshot` |
+| `reth` | per-run | `trigger_type == "reth_node_degraded"` |
 
-| Method | Path | Role |
-| --- | --- | --- |
-| `GET` | `/api/health` | Liveness probe |
-| `GET` | `/api/readiness` | Integration readiness (Promptfoo, Goose, Hermes, etc.) |
-| `GET` | `/api/scenarios` | List fixture-backed scenario keys |
-| `GET` | `/api/goals` | List goals |
-| `POST` | `/api/goals` | Create a goal |
-| `GET` | `/api/runs` | List runs |
-| `POST` | `/api/runs` | **Start a run** — body includes goal, modes, and **`signal_payload` or `scenario_key`** (ingest input) |
-| `GET` | `/api/runs/:id` | Run snapshot |
-| `POST` | `/api/runs/:id/steer` | Operator command (`approve`, `cancel`, overrides, etc.) |
-| `GET` | `/api/runs/:id/events` | Paged run events (`?after=` sequence) |
-| `GET` | `/api/runs/:id/merkle` | Merkle snapshot for the run |
-| `GET` | `/api/runs/:id/merkle/proof/:event_id` | Proof for one event |
-| `GET` | `/api/vault/tree` | Vault path tree |
-| `GET` | `/api/vault/document?path=...` | Read one vault document |
-| `GET` | `/api/stream/runs/:id` | **SSE** — live run events |
-| `GET` | `/api/stream/system` | **SSE** — system-wide updates |
+Production deployments without a backend pay zero cost — the
+`maybe_register_at_root` helper checks config/env before constructing
+any client, so the registry stays empty for that domain and the
+planner never sees its tools.
 
-Static assets under the same server serve the browser operator UI (see `README.md` for defaults).
+The LLM planner sees **every read-only tool in the registry**, not
+just the per-trigger pack, and selects by `{domain}:{name}` qualified
+names. That's how a CloudOps trigger can call a Prometheus tool, or a
+Reth trigger can call kubectl — domain mixing is allowed and
+contracted.
 
-#### Telemetry in, services out (end-to-end flow)
+#### Auto-wiring
 
-Telemetry is **not** pushed service-by-service over HTTP. One **`POST /api/runs`** (or the equivalent action in the UI) carries the **raw signal** JSON (`signal_payload` or fixture from `scenario_key`). A background worker then runs **`MeshRuntimeEngine`** in-process inside `RunCoordinator._execute_run` (`services/control_plane.py`), which chains the same calls as `MeshRuntimeEngine.run_sync` (`services/runtime.py`).
+`services/runtime._auto_wire_investigation_harness` picks the right
+rule pack for the trigger in three paths:
 
-**1. HTTP: admit work**
+1. `cloudopsbench_snapshot` present → `CloudOpsRulePack` + per-run
+   CloudOps tools overlaid on the root registry.
+2. `trigger_type == "reth_node_degraded"` → `RethRulePack` + Reth tool
+   pack from the audited signal payload.
+3. Anything else with an LLM observer configured → `GenericRulePack`
+   (no domain rules; the LLM is the sole decider over the full
+   root-registered surface).
 
-| Step | Caller → callee | What moves |
-| --- | --- | --- |
-| Start run | Client → `POST /api/runs` | Body: `goal_id`, `evaluation_mode`, `orchestration_mode`, `steering_mode`, optional `pause_points`, and **`signal_payload`** *or* **`scenario_key`** |
-| Observe | Client → `GET /api/stream/runs/:id` (SSE) | Server pushes run events as stages advance |
-| Inspect | Client → `GET /api/runs/:id`, `GET /api/runs/:id/events` | Snapshots and paged history |
-| Steer | Client → `POST /api/runs/:id/steer` | `approve`, `cancel`, `override_*`, `resume`, etc., when the run is at `awaiting_operator` |
+Without an LLM observer configured and without a domain-specific
+rule pack, the loop falls back to the deterministic decision path
+unchanged.
 
-**2. In-process pipeline (single thread per run, after queue)**
+### Topology graph
 
-| Order | Service / method | Input → output | Run stage surfaced |
-| --- | --- | --- | --- |
-| 1 | `IngestService.normalize_signal` | Raw signal dict → `EventEnvelope` | `ingesting` |
-| 2 | `TriggerService.detect` | Envelope → `Trigger` or `None` | `trigger_ready` or `no_trigger` (then terminal if no trigger) |
-| 3 | `EvidenceService.assemble` | `Trigger` + signal payload → `EvidencePack` (audited) | `evidence_pack_ready` (emits per-probe events) |
-| 4 | `ScenarioAnalysisService.analyze` | `Trigger` + recent run/memory context → `ScenarioAnalysis` | `scenario_analysis_ready` |
-| 5 | `DecisionService.decide` | `Trigger` + analysis + `EvidencePack` → `Decision` | `decision_ready` (calls `HypothesisEngine` and, if enabled, `LlmObserver`) |
-| 6 | `EvaluationService.evaluate` | `Trigger`, `Decision` → `EvaluationResult` plus `task_trace`, `trajectory_score`, `verifier_output`, `phoenix_spans` | `evaluation_ready` |
-| — | *Operator gate* | If approval mode or failed auto conditions: **`awaiting_operator`** until `POST .../steer` | `awaiting_operator` |
-| 7 | `OrchestratorService.execute` | `Decision`, `EvaluationResult` → `ExecutionRecord` | `executing` (may invoke Goose bridge when not `native`) |
-| 8 | `FeedbackService.record` | Trigger, decision, execution, envelope → `FeedbackRecord` | `feedback_ready` (optional pause same as step 6) |
-| 9 | Control plane | Session + artifacts + vault/Merkle | `completed` / `failed` / `cancelled` |
+`shared/mesh_runtime/infra_graph.py` is the typed view of Kubernetes
+relationships: services → pods → nodes, owned-by edges, scheduled-on
+edges, service-selector edges. Node kinds: `service`, `deployment`,
+`pod`, `namespace`, `node`, `configmap`, `secret`, `ingress`,
+`statefulset`, `daemonset`, `job`. Edge kinds: `routes_to`, `selects`,
+`owns`, `mounts`, `scheduled_on`, `exposes`.
 
-Overrides (`override_decision`, `override_execution_parameters`) cause **re-evaluation**: `decide` is not re-run from scratch in all cases, but evaluation is run again with the updated decision path before execution resumes.
+`services/investigation/topology_builder.py` parses CloudOpsBench
+snapshot text (`DescribeResource` outputs) into nodes + edges. The
+engine calls it once per trigger via `_populate_topology`. Empty
+snapshots leave the graph empty — never crash. The graph is persisted
+under `MESH_STATE_DIRECTORY/graph/` with append-only versioned
+snapshots so topology drift can be reviewed historically.
 
-The evidence stage is the only one that may emit *multiple* run events for one logical step:
-`evidence_pack_assembling` (entry), one `evidence_probe_completed` per probe run, then
-`evidence_pack_ready`. This makes the audit trail show exactly what was looked up and how long
-each lookup took, even when the pack is built from the inbound signal alone (the no-op probe
-runner case).
+The `topology` tool pack exposes the graph through five queries:
+`topology_resolve_service_pods`, `topology_pod_lineage`,
+`topology_pod_node`, `topology_resource_neighbors`,
+`topology_snapshot`. The LLM uses these to anchor RCA (e.g. "which
+pods does this service select?" without re-parsing kubectl text).
 
-**3. Non-HTTP entry (same pipeline)**
+### Hypothesis engine
 
-`run_first_slice.py` and tests call `MeshRuntimeEngine.run_sync(raw_signal, ...)` directly: same method chain as rows 1–6 above, without `POST /api/runs` or operator pauses.
+`services/decision/hypothesis_engine.py` generates ranked
+`Hypothesis` rows from built-in templates. Each hypothesis carries
+falsification predicates that resolve against the evidence pack,
+`AlertStore`, `InfraGraph`, `ContextStore`, and (when present) the
+`InvestigationReport` from the harness.
 
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API as control_plane_server
-    participant RC as RunCoordinator
-    participant I as IngestService
-    participant T as TriggerService
-    participant D as DecisionService
-    participant E as EvaluationService
-    participant O as OrchestratorService
-    participant F as FeedbackService
+Active template families:
 
-    Client->>API: POST /api/runs (signal_payload or scenario_key)
-    API->>RC: enqueue run
-    RC->>I: normalize_signal(raw)
-    I-->>RC: EventEnvelope
-    RC->>T: detect(envelope)
-    alt no trigger
-        T-->>RC: None
-        RC-->>Client: SSE / GET run → no_trigger, completed
-    else trigger
-        T-->>RC: Trigger
-        RC->>EV: assemble(trigger, signal_payload)
-        EV-->>RC: EvidencePack (sufficient? fast_path?)
-        RC->>D: decide(trigger, evidence_pack)
-        D->>HE: generate(trigger, evidence_pack)
-        HE-->>D: ranked hypotheses
-        opt observer enabled
-            D->>OBS: review(decision, pack, hypotheses)
-            OBS-->>D: ObserverVerdict (one-way promotion)
-        end
-        D-->>RC: Decision (post-promotion)
-        RC->>E: evaluate(trigger, decision)
-        E-->>RC: EvaluationResult
-        opt approval_gate or pause_points
-            RC-->>Client: awaiting_operator (SSE)
-            Client->>API: POST /api/runs/:id/steer
-            API->>RC: approve / override / cancel
-        end
-        RC->>O: execute(decision, evaluation)
-        O-->>RC: ExecutionRecord
-        RC->>F: record(..., normalized envelope)
-        F-->>RC: FeedbackRecord
-        RC-->>Client: SSE completed
-    end
-```
+- **Kubernetes** — `crash_loop`, `oom_killed`, `image_pull_failure`,
+  `probe_failure`, `service_selector_mismatch`, `missing_service_account`,
+  `resource_quota_exceeded`, `admission_webhook_denied`.
+- **Reth** — `peer_starvation`, `sync_stalled`, `rpc_degraded`,
+  `consensus_disconnect`, `local_isolation`, `disk_pressure`,
+  `jwt_secret_insecure`, `authrpc_exposed`.
 
-(The `EV` participant is `EvidenceService`; `HE` is `HypothesisEngine`; `OBS` is `LlmObserver`.
-Both `HE` and `OBS` are called inside `DecisionService.decide` rather than as separate stages on
-the run timeline — they are *part of the decision*, not standalone gates, and their outputs are
-stamped onto `decision.reasoning` for audit.)
+Output biases the deterministic decision **one-way only** — it can
+promote toward `escalate` but never demote an escalation. Posterior
+math obeys invariant 2 above.
 
-### 3. Multi-agent ensemble + reconciliation
+### Decision
 
-The orchestrator is **not** a single-agent design. `services/orchestrator/agent_mesh.py` fans
-each task out to multiple agents and `services/orchestrator/reconciliation.py` selects the
-best attempt (or escalates if no attempt clears the policy floor).
+`services/decision/service.py` produces exactly one bounded decision
+per signal class. The action surface is enforced by
+`policies/autonomy.policy.json`:
+
+| Signal class | Allowed actions |
+|---|---|
+| Feature-flag | `no_action`, `reduce_rollout`, `disable_flag`, `escalate`, `investigate_and_patch` |
+| Kubernetes | `no_action`, `restart_deployment`, `rollback_deployment`, `patch_resources`, `escalate` |
+| Reth node | `no_action`, `restart_systemd_service` (approval-gated), `cordon_node`, `drain_node`, `escalate` |
+
+Anything outside this matrix is unreachable from this layer. The
+decision service also stamps `decision.reasoning.ranked_hypotheses`
+and (if enabled) `decision.reasoning.observer_verdict` onto the
+audit trail.
+
+### LLM observer
+
+`services/observer/service.py` is an optional second-opinion layer.
+
+- **Provider-neutral.** Speaks OpenAI `/v1/chat/completions` (works
+  with OpenAI, vLLM, Ollama, Together, Groq, OpenRouter, llama.cpp
+  shim) and Anthropic native `/v1/messages`. Config: `MESH_OBSERVER_*`.
+  Disabled by default.
+- **Typed verdict.** Returns exactly one of `approve`, `escalate`,
+  `request_more_evidence`, `reject_unsafe`.
+- **One-way promotion.** A verdict can only push the decision toward
+  more conservative outcomes (invariant 1).
+- **Fail-open.** Provider down, timeout, malformed JSON, unknown
+  verdict — every failure collapses to `verdict=approve` with the
+  failure stamped on `error`, and the deterministic decision stands.
+- **Prompt caching.** System prefix is cache-stable; Anthropic gets an
+  explicit `cache_control: ephemeral` marker. Per-run evidence is the
+  only uncached portion, so repeat-call latency and cost stay low.
+
+### Orchestrator + agent mesh
+
+`services/orchestrator/agent_mesh.py` fans the decision out to
+multiple agents. Each agent records a read-only proposal as an
+`AgentAttempt`. `services/orchestrator/reconciliation.py` selects the
+best attempt — or escalates if no attempt clears the policy floor.
 
 | Adapter | Module | Capability |
 |---|---|---|
 | Goose | `goose_adapter.py`, `goose_bridge.py` | Code-review-style structured response + bounded actuation |
 | Hermes | `hermes_adapter.py`, `hermes_bridge.py` | NousResearch Hermes agent runtime |
-| Claude Code | `cli_executor.py` (`adapter="claudecode"`) | Anthropic CLI agent |
-| Codex | `cli_executor.py` (`adapter="codex"`) | OpenAI Codex CLI |
-| OpenClaw | `cli_executor.py` (`adapter="openclaw"`) | Open-source claw agent |
-| Evo | `evo_launcher.py` (`adapter="evo"` / `"native_contract"`) | Evolutionary plan search |
-| DeepAgents | `deepagents_adapter.py` | DeepAgents harness (subagent topology) |
+| Claude Code | `cli_executor.py` (`claudecode`) | Anthropic CLI agent |
+| Codex | `cli_executor.py` (`codex`) | OpenAI Codex CLI |
+| OpenClaw | `cli_executor.py` (`openclaw`) | Open-source claw agent |
+| Evo | `evo_launcher.py` (`evo` / `native_contract`) | Evolutionary plan search |
+| DeepAgents | `deepagents_adapter.py` | DeepAgents subagent topology |
 | LatentMAS | `latentmas_adapter.py`, `latentmas_server.py` | Rust sidecar for low-latency latent inference |
 
-`services/orchestrator/service_agents/registry.py` carries the capability matrix —
-which agents are eligible for which task class. The reconciliation step compares each
-attempt's `recommended_action`, `risk_flags`, and `selected_attempt_id`, then either
-promotes one winner or escalates.
+`services/orchestrator/service_agents/registry.py` carries the
+capability matrix — which adapters are eligible for which task class.
 
-This is the headline differentiation against Resolve.ai's single-agent design. A hallucinating
-single agent has no defense; an ensemble + reconciliation has multiple distinct attempts to
-disagree.
+### Actuators
 
-### 3a. Evaluation bridges
+`services/actuators/` is the bounded side-effect layer. Gated by
+`policies/autonomy.policy.json`.
 
-- `native` mode (default) keeps everything local and in-process using `services/evaluation/mesh_eval/`.
-- `promptfoo` mode uses `services/evaluation/promptfoo_bridge.py` to run real `promptfoo eval`,
-  parse exported JSON, and return structured evaluation artifacts.
-- `goose` mode uses `services/orchestrator/goose_bridge.py` to run a real Goose review step,
-  capture structured review metadata, and then perform bounded local actuation.
+| Actuator | Capability | Gating |
+|---|---|---|
+| `argocd.py` | GitOps sync / rollback | Policy + ArgoCD endpoint configured |
+| `systemd_ssh.py` | `systemctl restart` on allowlisted hosts | Policy + `MESH_SSH_*` + approval gate |
+| `load_balancer.py` | LB pool drain | Policy + LB endpoint configured |
+| `repo_patch.py` | Creates a config-patch PR | Policy + GitHub token |
 
-### 3b. Memory layer (history that informs future runs)
+**Disallowed side effects**: source-code changes, infrastructure
+mutation outside allowlists, direct production database writes,
+arbitrary shell execution against production, anything in
+`policies/reth-node.policy.json#forbidden_automated_actions` (delete
+datadir, restore snapshot, rewrite JWT, change pruning mode, client
+up/downgrade).
+
+### Memory layer
 
 | Module | Role |
 |---|---|
-| `services/signal_history/store.py` | Per-target ring buffer of recent envelopes + `Trend` extractor. Distinguishes transient from sustained at the data layer (`duration_below_floor_seconds`, `sustained_below_floor`). |
-| `shared/mesh_runtime/active_memory.py` | Active retrieval scope used by ScenarioAnalysisService and the LLM observer. |
-| `shared/mesh_runtime/reasoning_bank.py` | Strategy memory across runs — which approaches have worked for similar incident patterns. |
-| `shared/mesh_runtime/corpus_store.py` (`IncidentCorpusDatabase`) | SQLite + FTS-backed long-tail incident memory. Importable from JSONL exports; project-able into active memory. |
+| `services/signal_history/store.py` | Per-target ring buffer + `Trend` extractor. Distinguishes transient from sustained at the data layer (`duration_below_floor_seconds`, `sustained_below_floor`). |
+| `shared/mesh_runtime/active_memory.py` | Active retrieval scope used by ScenarioAnalysis and the LLM observer. |
+| `shared/mesh_runtime/reasoning_bank.py` | Strategy memory — "this kind of incident usually responds to X" without prescribing. |
+| `shared/mesh_runtime/corpus_store.py` (`IncidentCorpusDatabase`) | SQLite + FTS long-tail incident memory. Importable from JSONL exports; projectable into active memory. |
 | `shared/mesh_runtime/incident_corpus.py` | Normalizes Mesh run artifacts into corpus rows. |
-| `shared/mesh_runtime/monitoring_corpus.py` | Catalog of public + private monitoring datasets used as bootstrap material. |
-| `shared/mesh_runtime/memory_lifecycle.py`, `memory_scoring.py`, `memory_verifier.py` | Compaction, scoring, and verification of memory entries. |
+| `shared/mesh_runtime/halo.py` | Outer-loop optimization sidecar. Reads run traces, produces proposal-only patches against the harness itself (path-allowlisted, never auto-merges). |
 
-The memory layer is single-tenant by design — see invariant 3 above. It is also append-only
-at the run level: every run writes new events, never mutates old ones. Replay is therefore
-deterministic.
+The memory layer is single-tenant by design (invariant 3) and
+append-only at the run level: every run writes new events, never
+mutates old ones. Replay is therefore deterministic.
 
-### 3c. Benchmark plane (head-to-head against competitors)
+---
 
-`services/benchmark/` is a benchmark harness that lets Mesh run side-by-side against
-**registered competitor providers** on the same scenario set. The runner accepts:
-
-| Provider | Backend behavior |
-|---|---|
-| `mesh` | Mesh's full pipeline, native mode |
-| `mesh-control-plane` | Mesh via the HTTP control plane (round-trip through `POST /api/runs`) |
-| `mesh-agentic` | Mesh with the agent ensemble enabled (DeepAgents fabric) |
-| `opensre-cli` | OpenSRE CLI as an external subprocess |
-| `sregym` | SREGym MCP-style server (`services/benchmark/sregym_agent.py`) |
-| `cloudopsbench` | CloudOpsBench scenarios (Microsoft's benchmark suite, imported via `cloudopsbench_import.py`) |
-
-Subcommands:
-
-- `run` — execute a suite against a backend; emit per-scenario scorecards
-- `gate` — run + apply gate thresholds; non-zero exit on regression
-- `compare` — diff two run directories
-- `gaps` — generate a capability gap report (what does provider X get wrong that Mesh gets right?)
-- `extract-loghub` — pull scenarios from a local Loghub corpus
-
-The benchmark plane is what makes "compete with OpenSRE" a falsifiable claim, not marketing.
-A nightly run produces `benchmarks/benchmark_gates.json` with regression-capped scoring.
-
-### 4. AI reasoning layer (LLM observer)
-
-The deterministic engine is the safety floor; the AI observer is a second pair of eyes.
-
-- **Modular and provider-neutral.** The observer in `services/observer/` speaks two protocols:
-  the OpenAI `/v1/chat/completions` shape (works with OpenAI, vLLM, Ollama, Together, Groq,
-  OpenRouter, llama.cpp's OpenAI shim) and Anthropic's native `/v1/messages` API. Switching
-  providers is a config change — `MESH_OBSERVER_PROVIDER`, `MESH_OBSERVER_BASE_URL`,
-  `MESH_OBSERVER_MODEL`, `MESH_OBSERVER_API_KEY`. Disabled by default.
-- **Typed verdict.** The observer reads the trigger, the evidence pack, the ranked hypotheses,
-  and the deterministic decision-in-progress, then returns one of four verdicts:
-  - `approve` — the decision is grounded and safe; no change.
-  - `escalate` — route to a human even if the engine proposed an automated action.
-  - `request_more_evidence` — pack is too sparse to defend the action.
-  - `reject_unsafe` — proposed action is unsafe given the node's state (validator mid-attestation,
-    DB at corruption risk on shutdown, etc.).
-- **One-way safety promotion.** Verdicts can only push the decision toward more conservative
-  outcomes (`approve` ≤ `escalate` ≤ `reject_unsafe`/`request_more_evidence`). The observer can
-  promote a `restart_systemd_service` to `escalate`; it cannot demote an `escalate` to `approve`.
-  A hallucinating model can therefore only make the system more conservative, never less safe.
-- **Fail-open.** Provider down, timeout, malformed JSON, unknown verdict — every failure mode
-  collapses to `verdict=approve` with the failure stamped on `error`, and the deterministic
-  decision stands. The observer cannot block the pipeline.
-- **Prompt caching.** The static prefix (system instructions, policy file, action allowlist,
-  hypothesis-template descriptions) is structured to be cache-prefix-stable. On Anthropic the
-  observer sends an explicit `cache_control: ephemeral` marker on the system block. Per-run
-  evidence is the only uncached portion, keeping repeat-call latency and cost low.
-- **Defense in depth.** The observer is layer 5 of a 5-layer architecture: (1) trigger
-  thresholds, (2) deterministic policy match, (3) evidence sufficiency check, (4) hypothesis
-  ranking with falsification predicates, (5) LLM observer. Each layer can promote toward
-  escalation; none can demote.
-
-## Run Lifecycle
+## Run lifecycle
 
 Each run advances through explicit stages:
 
-1. `queued`
-2. `ingesting`
-3. `trigger_ready` or `no_trigger`
-4. `evidence_pack_ready` (Reth signals; no-op pass-through for other types)
-5. `scenario_analysis_ready`
-6. `decision_ready`
-7. `evaluation_ready`
-8. `awaiting_operator`
-9. `executing`
-10. `feedback_ready`
-11. `completed`, `failed`, or `cancelled`
+```
+queued
+  → ingesting
+  → trigger_ready  | no_trigger (terminal)
+  → evidence_pack_ready
+  → scenario_analysis_ready
+  → decision_ready
+  → evaluation_ready
+  → awaiting_operator (only if approval_gate or pause_points)
+  → executing
+  → feedback_ready
+  → completed | failed | cancelled
+```
 
-The control plane records typed run events for these transitions and stores artifact metadata such
-as `artifact_key`, `integration_name`, and `status` so the existing event log can later back a real
-event bus or projection layer.
+The evidence stage emits multiple events per logical step:
+`evidence_pack_assembling`, one `evidence_probe_completed` per probe,
+then `evidence_pack_ready` — so the audit trail shows exactly what was
+looked up and how long each lookup took.
 
-Per-stage events of note:
+Pauseable stages (when `default_steering_mode=approval_gate` or
+operator pause points): `trigger_ready`, `decision_ready`,
+`evaluation_ready`, `feedback_ready`. **Evidence is not pauseable** —
+fast, audited, not a decision point.
 
-- `evidence_pack_assembling`, `evidence_probe_completed` (one per probe), `evidence_pack_ready`
-- `hypothesis_ranked` (when the engine produces a non-empty ranking)
-- `decision_ready` carries the observer verdict on `decision.reasoning.observer_verdict` when
-  the observer is enabled
+The harness itself is invoked **inside** `DecisionService.decide`
+(when registry + planner are present from auto-wiring); its
+`InvestigationReport` is stamped onto the decision artifact rather
+than appearing as a separate stage.
 
-Pauseable stages (when `default_steering_mode=approval_gate` or operator-set pause points):
-`trigger_ready`, `decision_ready`, `evaluation_ready`, `feedback_ready`. The evidence stage is
-**not** pauseable — it's fast, audited, and not a decision point.
+---
 
-## Persistence Model
+## HTTP API surface
 
-The current durable backbone is local file-backed state under `.mesh-runtime-state/`:
+Full details in [`docs/api-reference.md`](./docs/api-reference.md). At
+a glance:
+
+| Method | Path | Role |
+|---|---|---|
+| `GET` | `/api/health` | Liveness |
+| `GET` | `/api/readiness` | Integration readiness |
+| `GET` | `/api/scenarios` | Fixture-backed scenario keys |
+| `GET` `POST` | `/api/goals` | List / create goals |
+| `GET` `POST` | `/api/runs` | List / **start** runs (body: `signal_payload` or `scenario_key`) |
+| `GET` | `/api/runs/:id` | Run snapshot |
+| `POST` | `/api/runs/:id/steer` | `approve`, `cancel`, override commands |
+| `GET` | `/api/runs/:id/events` | Paged event log |
+| `GET` | `/api/runs/:id/merkle` | Merkle snapshot |
+| `GET` | `/api/runs/:id/merkle/proof/:event_id` | Inclusion proof |
+| `GET` | `/api/vault/tree`, `/api/vault/document?path=...` | Vault browse |
+| `GET` | `/api/stream/runs/:id` | SSE — live run events |
+| `GET` | `/api/stream/system` | SSE — system updates |
+
+There is **no** `/api/ingest` route by design — every detection
+becomes a `POST /api/runs` with `signal_payload` or `scenario_key`,
+so every inbound event has a run ID and a full event log.
+
+---
+
+## Persistence
+
+| Backend | Selector | Storage |
+|---|---|---|
+| Postgres | `MESH_STATE_BACKEND=postgres` | Production. Migrations under `migrations/postgres/`. |
+| SQLite + JSON files | default | Local-dev. State at `MESH_STATE_DIRECTORY` (`.mesh-runtime-state/`). |
+
+Both backends store:
 
 - run sessions and goal records
-- per-run event logs
-- run snapshots
+- per-run event logs (append-only)
+- run snapshots + artifact metadata
 - duplicate-evaluation suppression state
 - integration readiness snapshots
 - vault documents and Merkle proofs
 
-This is intentionally the short-term persistence layer. It is replay-friendly, but it is not yet a
-broker/database-backed production event system.
+Per-event Merkle leaves are hashed by `shared/mesh_runtime/merkle.py`
+and rolled into a per-run root reachable via
+`/api/runs/:id/merkle/proof/:event_id`.
 
-## Execution Boundary
+The Obsidian-compatible vault mirrors run notes with backlinks at
+`MESH_VAULT_PATH`, served at `/api/vault/...`.
 
-Allowed side effects:
-
-- feature-flag rollout changes
-- incident or ticket creation
-- audit-log writes
-- approval-gated `systemctl restart` of allowlisted blockchain-node services on allowlisted hosts
-  via the SSH adapter (see `MESH_SSH_*` env vars + `policies/reth-node.policy.json`)
-- approval-gated Kubernetes `rollout restart`, `rollback`, and `patch` on allowlisted contexts and
-  namespaces (see `MESH_KUBERNETES_*` env vars + `policies/autonomy.policy.json`)
-
-Disallowed side effects:
-
-- source-code changes
-- infrastructure mutation outside the allowlists above
-- direct production database writes
-- arbitrary shell execution against production
-- any of the actions in `policies/reth-node.policy.json#forbidden_automated_actions`
-  (delete datadir, restore snapshot, rewrite JWT, change pruning mode, client up/downgrade)
+---
 
 ## Contracts
 
-Active shared contracts live in:
+JSON schemas under `shared/mesh_runtime/schemas/`:
 
-- `shared/mesh_runtime/schemas/trigger.schema.json`
-- `shared/mesh_runtime/schemas/decision.schema.json` (now permits
-  `reasoning.ranked_hypotheses` and `reasoning.observer_verdict`)
-- `shared/mesh_runtime/schemas/evaluation-result.schema.json`
-- `shared/mesh_runtime/schemas/execution-record.schema.json`
-- `shared/mesh_runtime/schemas/feedback-record.schema.json`
-- `shared/mesh_runtime/schemas/reth-node-signal.schema.json` (also serves as the evidence pack
-  shape — signal and pack are intentionally byte-compatible)
-- `shared/mesh_runtime/schemas/kubernetes-signal.schema.json`
-- `shared/mesh_runtime/schemas/otel-metric-signal.schema.json`
+- `trigger.schema.json`
+- `decision.schema.json` (permits `reasoning.ranked_hypotheses` and
+  `reasoning.observer_verdict`)
+- `evaluation-result.schema.json`
+- `execution-record.schema.json`
+- `feedback-record.schema.json`
+- `reth-node-signal.schema.json` (also the evidence-pack shape for
+  Reth — signal and pack are byte-compatible)
+- `kubernetes-signal.schema.json`
+- `otel-metric-signal.schema.json`
 
-Policy files in `policies/` carry the operator-tunable thresholds:
+Python contract models in `shared/mesh_runtime/contracts.py`.
 
-- `autonomy.policy.json` — allowed `(system, action)` pairs, idempotent flags
-- `reth-node.policy.json` — restartable vs escalation signatures, `evidence_sufficiency` block,
-  forbidden automated actions, restart-rate limits
-- `metric-actions.policy.json` — OTel signal → action mappings (~40 rules)
-- `protected-scope.policy.json` — services / endpoints off-limits for autonomy
+## Policies
+
+Operator-tunable thresholds in `policies/`:
+
+- `autonomy.policy.json` — allowed `(system, action)` pairs, idempotent
+  flags
+- `reth-node.policy.json` — restartable vs escalation signatures,
+  `evidence_sufficiency` block, forbidden automated actions,
+  restart-rate limits
+- `metric-actions.policy.json` — OTel signal → action mappings
+  (~40 rules)
+- `protected-scope.policy.json` — services / endpoints off-limits for
+  autonomy
 - `rollback.policy.json` — rollback-frequency caps
 
-These schemas back the Python contract models in `shared/mesh_runtime/contracts.py`.
+---
 
-## Operator Surfaces
+## What's out of scope
 
-- Browser control plane: primary interface for goals, scenarios, run inspection, readiness, vault
-  browsing, and Merkle proofs.
-- TUI: terminal-native scenario runner and run-history inspector.
-- Synchronous runner: `run_first_slice.py` for stdin/stdout execution of the same bounded loop.
+Deliberately:
 
-## What Is Real Today
+- **Open-ended autonomy.** No arbitrary `kubectl exec`,
+  no shell-out-and-figure-it-out. Action set is bounded by
+  `policies/autonomy.policy.json`.
+- **Multi-cloud breadth.** Today: K8s + bare-metal Reth + feature-flag
+  tooling. AWS Lambda / Cloud Run / serverless require real work, not
+  a "plugin point that's almost there."
+- **Pure RCA without remediation.** That's OpenSRE's space. Mesh ships
+  a closed-loop harness where RCA is one stage of many.
+- **Multi-tenant SaaS.** Single-tenant by design (invariant 3).
+  Multi-tenancy would be a fork, not a feature flag.
+- **Source-code mutation.** Repo-patch actuator creates *proposal*
+  PRs; nothing auto-merges.
 
-### Detect
-
-- Webhook ingest + auto-run wiring: **yes**
-- Kubernetes watch daemon (`services/watchers/kubernetes.py`): **yes**
-- Kubernetes pull-based live signal: **yes**
-- OpenTelemetry metric ingest: **yes**
-- Bare-metal Reth/Lighthouse JSON-RPC ingester: **yes**
-- TriggerService with thresholds, persistence, suppression: **yes**
-
-### Investigate
-
-- Audited evidence pack stage (all signal types): **yes**
-- Field-level observability (`observed` / `timeout` / `not_attempted`): **yes**
-- Fast-path skip on credential/exposure signatures: **yes**
-- Hypothesis engine with falsification predicates: **yes** (k8s + Reth templates wired; Solana /
-  geth / archive-specific templates pending)
-- Investigation/RCA tool-loop harness (`services/investigation/harness/`): **yes** (CloudOps and
-  Reth domain ports wired; planner→critic→loop with budget bounds; read-only by design)
-- RCA candidates wired into hypothesis ranking with deterministic-posterior invariant: **yes**
-- ScenarioAnalysisService for cross-run patterns + Merkle-bound advisory synthesis: **yes**
-- Modular OpenAI-compatible + Anthropic-native LLM observer with one-way safety promotion and
-  prompt caching (`cache_control: ephemeral` on system block, default `prompt_cache_mode=explicit`):
-  **yes**
-- DeepEval-backed offline observer-quality regression (`simulation/eval_observer.py`): **yes**
-- Live JSON-RPC probe runner driven by the evidence service: **no** — current evidence path
-  passes through the inbound signal; probes happen via the existing `RethNodeIngester` for
-  cron-driven flows. Pluggable `probe_runner` parameter is wired but no production runner is
-  yet attached.
-- Diagnostic-action class (operator-approvable read-only probes that run as audited actions):
-  **no** — phase 3 work
-- Validator attestation-duty awareness for execution-node restarts: **no** — phase 3 work; needs
-  CL-client-specific probes (Lighthouse REST, Prysm gRPC, …)
-
-### Raise
-
-- Multi-agent ensemble (Goose, Hermes, Codex, Claude Code, OpenClaw, Evo, DeepAgents,
-  LatentMAS sidecar): **yes** for the adapter shells; per-agent CLI/runtime availability is
-  per-environment
-- Reconciliation across competing agent attempts: **yes**
-- Service-agent capability registry: **yes**
-- ArgoCD GitOps actuator: **yes**
-- systemd-SSH actuator with allowlist + approval gate: **yes**
-- Load balancer actuator: **yes**
-- Repo-patch actuator (creates a config patch PR): **yes**
-- Operator pause / approve / override via SSE + HTTP: **yes**
-- Real Promptfoo CLI-backed evaluation bridge: **yes**
-- Real Goose CLI-backed review bridge: **yes**
-
-### History
-
-- Postgres state-store backend: **yes**
-- SQLite + JSON-files state-store backend: **yes**
-- Per-event Merkle proofs reachable via `/api/runs/:id/merkle/proof/:event_id`: **yes**
-- Vault mirroring with Obsidian-compatible markdown + backlinks: **yes**
-- SignalHistoryStore with `sustained_below_floor` predicates shared between decision and
-  observer: **yes**
-- IncidentCorpusDatabase (SQLite + FTS) with JSONL import + retrieval: **yes**
-- ReasoningBank strategy memory: **yes**
-- HALO outer-loop optimization (read-only run-trace consumer, proposal-only patches,
-  path-allowlisted): **yes**
-- Memory lifecycle / scoring / verification: **yes**
-- External message bus or database projection: **no**
-- Durable world-model store beyond bounded feedback updates: **no**
-- Open-ended diagnosis/planning or arbitrary execution: **no** (intentionally)
-
-### Benchmarking + simulation
-
-- Fault-injection simulation harness (`simulation/`) with 26 scenarios + Reth/Lighthouse Docker
-  demo (`docker-compose.reth-demo.yml`) + chaos injector: **yes**
-- Benchmark plane runner with provider matrix (mesh, mesh-control-plane, mesh-agentic,
-  opensre-cli, sregym, cloudopsbench): **yes**
-- Gate profiles + threshold overrides: **yes**
-- Cross-run comparison + capability gap reports: **yes**
-- CloudOpsBench scenario import: **yes**
-- Loghub scenario extraction: **yes**
+---
 
 ## Verification
 
-Primary verification command:
-
 ```bash
+# Full test suite
 python3 -m unittest discover -s tests -v
-```
 
-Secondary verification — fault-injection harness with the AI observer engaged:
-
-```bash
+# Fault-injection simulation with the AI observer engaged
 export ANTHROPIC_API_KEY=sk-ant-...
 MESH_OBSERVER_MODEL=claude-haiku-4-5-20251001 python -m simulation
-# or for a sustained noise burst:
-MESH_OBSERVER_MODEL=claude-haiku-4-5-20251001 python -m simulation --mode cron --duration 600 --interval 15
 ```
 
-The simulation drives 26 fault scenarios through `MeshRuntimeEngine.run_sync` and produces a
-markdown report in `.mesh-runtime-state/simulation/` scoring observer behavior (verdict
-distribution, evidence-citation rate, escalation precision) alongside deterministic accuracy.
+The simulation drives 26 fault scenarios through `MeshRuntimeEngine.run_sync`
+and produces a markdown report in `.mesh-runtime-state/simulation/`
+scoring observer verdict distribution, evidence-citation rate, and
+escalation precision alongside deterministic accuracy.
 
-Key test coverage includes:
+Test coverage worth knowing about:
 
-- contract validation
-- pipeline behavior (ingest → trigger → evidence → decision → evaluation → orchestrator → feedback)
-- integration bridge parsing
-- control-plane HTTP flows
-- TUI/controller behavior
-- evidence service: policy override loading, fast-path skip, sufficiency check
-- LLM observer: verdict parsing, fail-open behavior, retry budget bounding, JSON extraction
-  from fenced responses
-- hypothesis engine: Reth template ranking, cascade-case ordering (consensus_disconnect must
-  outrank local_isolation when EAPI is down)
-- decision service: one-way safety promotion, fast-path force-escalate
-- investigation harness: planner / critic / loop termination / tool registry / RCA candidate
-  scoring (substring-tightened — `_evidence_kind_matches` token-subset prevents false positives
-  like `oom` matching `boom`)
-- benchmark harness: provider matrix, gate thresholds, scoring, comparison, gap reports
+- Contract validation (every schema)
+- Pipeline behavior (ingest → trigger → evidence → decision →
+  evaluation → orchestrator → feedback)
+- Investigation harness: planner / critic / loop termination / tool
+  registry / RCA candidate scoring (substring-tightened —
+  `_evidence_kind_matches` token-subset prevents false positives like
+  `oom` matching `boom`)
+- Topology populator: pod / service / deployment / node node emission,
+  `selects` / `scheduled_on` / `owns` edges, ReplicaSet → deployment
+  collapse, empty-snapshot is a no-op
+- Hypothesis engine: cascade-case ordering (`consensus_disconnect`
+  must outrank `local_isolation` when EAPI is down)
+- Decision service: one-way safety promotion, fast-path force-escalate
+- LLM observer: verdict parsing, fail-open behavior, retry budget,
+  JSON extraction from fenced responses
+- Benchmark harness: provider matrix, gate thresholds, scoring,
+  comparison, gap reports
 
-## Competitive deep-dive
+---
 
-Mesh is positioned to displace OpenSRE for self-hosted SRE teams and Resolve.ai for teams that
-care about audit, multi-agent defense, or open-source data ownership. This section is the
-honest version — what each competitor has that Mesh doesn't, and where Mesh wins.
+## Further reading
 
-### vs OpenSRE / opensre-cli
-
-OpenSRE is an open-source CLI agent for K8s troubleshooting. It's a **single-shot tool**: you
-invoke it, it reads cluster state, it suggests an action. No history, no event log, no
-multi-agent ensemble, no audit trail.
-
-Where OpenSRE wins:
-- Lower bar to install (single binary)
-- Simpler mental model (one tool, one process)
-- Faster cold start
-
-Where Mesh wins:
-- Closed-loop remediation, not just diagnosis
-- Audit-grade history with Merkle proofs (regulated environments need this)
-- Multi-agent ensemble + reconciliation (defense vs hallucination)
-- Falsifiable hypothesis engine (deterministic floor)
-- LLM observer with one-way safety promotion (extra layer of defense)
-- Long-tail incident corpus (gets smarter over time)
-- Per-target temporal memory (transient vs sustained)
-- Bench plane that can run OpenSRE itself as a registered provider — Mesh literally races OpenSRE
-  on the same scenarios and emits the comparison report
-
-The benchmark gap report (`services/benchmark/gaps.py`) is specifically designed to surface
-"what does provider X get wrong that Mesh gets right?" — turning the comparison into actionable
-gap categories.
-
-### vs Resolve.ai
-
-Resolve.ai is a closed-source SaaS SRE assistant. It's well-funded and has polished UX for
-PagerDuty/Slack integration. The architectural shape is different from Mesh in three ways
-that matter for trust:
-
-| | Resolve.ai | Mesh |
-|---|---|---|
-| Investigation agent | Single proprietary agent | Ensemble: 7+ agent adapters + reconciliation |
-| Where data lives | Resolve's SaaS | Customer's filesystem / Postgres |
-| Audit trail | Internal (you trust them) | Merkle-rooted, customer-verifiable |
-| Hypothesis layer | LLM-only | Deterministic falsification engine + LLM |
-| Open source | No | Yes |
-
-Where Resolve wins:
-- Slack/Teams polish and onboarding flow
-- Hosted infra — nothing to operate
-- A sales team
-- Better marketing surface; more enterprise logos
-
-Where Mesh wins:
-- You own your incident data; you can export the corpus as JSONL
-- Multi-agent ensemble = defense in depth against any single agent's hallucinations
-- Falsifiable hypothesis engine = deterministic safety floor under the LLM
-- One-way safety promotion at every layer = a hallucinating model can only escalate, never auto-act
-- Replayable runs with cryptographic audit trails = SOC2 / FedRAMP / on-prem-regulated friendly
-- HALO outer loop = the harness improves itself from your run history (proposal-only patches)
-
-### What Mesh is NOT trying to be
-
-This is as important as the differentiation. Mesh deliberately doesn't compete on:
-
-- **Open-ended autonomy.** Mesh's action set is bounded by `policies/autonomy.policy.json`.
-  No arbitrary `kubectl exec`, no shell-out-and-figure-it-out. If you want that, you want
-  Cursor agents in production, which is a different (and dangerous) product.
-- **Multi-cloud breadth.** Mesh today is K8s + bare-metal Reth + feature-flag tooling. Adding
-  AWS Lambda / Cloud Run / serverless requires real work — not a plugin point that's "almost
-  there."
-- **Pure RCA tools without remediation.** That's OpenSRE's space. Mesh doesn't ship an RCA
-  CLI; it ships a closed-loop harness where RCA is one stage of many.
-- **Multi-tenant SaaS.** Mesh is single-tenant by design (invariant 3). Adding multi-tenancy
-  is a fork, not a feature flag.
-
-### Roadmap pressure points
-
-Real gaps that competitors will exploit until closed:
-
-1. **Detection breadth.** OpenTelemetry ingest works but the trigger thresholds are tuned for
-   Reth/K8s. Generic webapp microservice signatures (`p99_latency_above`,
-   `error_rate_step_change`, `traffic_drop`) need real templates.
-
-2. **Probe runner.** The `EvidenceService` accepts a `probe_runner` callable but no production
-   runner is attached. Currently Mesh consumes inbound signal as the "evidence." Production
-   needs a probe runner that can call `kubectl get`, `kubectl logs`, JSON-RPC, etc., on
-   demand from the evidence stage.
-
-3. **Validator-duty awareness.** For Reth restarts, Mesh needs to query the consensus client
-   (Lighthouse / Prysm) to confirm no attestation is imminent before allowing restart. Wired
-   in policy but no live probe yet.
-
-4. **PagerDuty / Slack escalation actuator.** Today escalations terminate at "operator
-   review" via SSE. A production deploy needs a registered actuator that fires the alert
-   into PagerDuty / Slack / OpsGenie with a deep link back to the run.
-
-5. **Diagnostic-action class.** Some operations (Reth `eth_syncing`, `kubectl get events`)
-   are read-only but operationally meaningful. They should be a separate action class —
-   approvable like a remediation, but recorded and time-bounded — rather than embedded in
-   the probe runner.
-
-6. **Multi-agent SLAs.** With 7+ agent adapters, agent latency variance becomes a tail risk.
-   Reconciliation needs an explicit timeout per agent + a budget for the ensemble as a whole.
-
-These are not blockers. They are the items the next reviewer will ask about, and the team
-should ship them before scaling beyond friendly users.
+| Topic | File |
+|---|---|
+| HTTP API reference | [`docs/api-reference.md`](./docs/api-reference.md) |
+| Extending Mesh (plug-ins) | [`docs/extending-mesh.md`](./docs/extending-mesh.md) |
+| Investigation harness | [`docs/investigation-harness.md`](./docs/investigation-harness.md) |
+| API + runtime map | [`docs/architecture/api-and-runtime-map.md`](./docs/architecture/api-and-runtime-map.md) |
+| All-in-one compose stack | [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md) |
+| Production runbook | [`docs/production-live-runbook.md`](./docs/production-live-runbook.md) |
+| Postgres persistence | [`docs/postgres-persistence.md`](./docs/postgres-persistence.md) |
+| Memory + reasoning bank | [`docs/memory-architecture.md`](./docs/memory-architecture.md) · [`docs/reasoning-bank.md`](./docs/reasoning-bank.md) |
+| Safety loop | [`docs/remediation-safety-loop.md`](./docs/remediation-safety-loop.md) |
+| Foundations + messaging | [`docs/foundations.md`](./docs/foundations.md) |
+| Contributor guide | [`AGENTS.md`](./AGENTS.md) |
