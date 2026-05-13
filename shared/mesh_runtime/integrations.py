@@ -137,6 +137,28 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         evo_status = evo_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+    required_checks = {
+        "promptfoo_ready": promptfoo_status.ready,
+        "hermes_ready": hermes_status.ready,
+        "goose_ready": goose_status.ready,
+        "force_approval_gate": runtime_config.default_steering_mode == "approval_gate",
+    }
+    optional_checks = {
+        "evo_ready": evo_status.ready,
+        "latentmas_ready": latentmas_status.ready,
+        "deepagents_ready": deepagents_status.ready,
+    }
+    blockers = [
+        key
+        for key, ready in required_checks.items()
+        if key.endswith("_ready") and not bool(ready)
+    ]
+    blocker_details = {
+        "promptfoo_ready": promptfoo_status.detail,
+        "hermes_ready": hermes_status.detail,
+        "goose_ready": goose_status.detail,
+    }
+    connector_certification = _connector_certification_snapshot()
     readiness = IntegrationReadiness(
         checked_at=checked_at,
         promptfoo=promptfoo_status,
@@ -148,10 +170,74 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         vault_path=runtime_config.vault_path,
         state_path=runtime_config.state_directory,
         integrations_config_path=runtime_config.integrations_config_path,
+        profile=os.getenv("MESH_READINESS_PROFILE", "local"),
+        status="ready" if not blockers else "blocked",
+        required_checks=required_checks,
+        optional_checks=optional_checks,
+        blockers=blockers,
+        blocker_details=blocker_details,
+        connector_certification=connector_certification,
+        orchestration_topology={
+            "active_topology": os.getenv("MESH_ORCHESTRATION_TOPOLOGY", "hybrid"),
+            "org_profile_ready": bool(connector_certification),
+            "selected_lanes": ["hermes", "goose", "deepagents", "latentmas"],
+            "reconciliation": "mesh_reconciles_proposal_lanes",
+        },
     )
     with _readiness_lock:
         _readiness_cache[cache_key] = (now, readiness)
     return readiness
+
+
+def _connector_certification_snapshot() -> dict[str, dict[str, Any]]:
+    proposal_only = {
+        "state": "proposal-only",
+        "required_before": "expansion",
+        "authority_posture": "Connector state can inform Mesh evaluation but cannot approve or execute production actions.",
+        "detail": "Advisory evidence lane; Mesh remains authoritative.",
+        "blockers": [],
+    }
+    return {
+        "airflow": {
+            **proposal_only,
+            "authority_posture": "DAG state can inform Mesh evaluation but cannot approve or execute production actions.",
+        },
+        "temporal": {
+            **proposal_only,
+            "authority_posture": "Workflow history can inform Mesh reconciliation.",
+        },
+        "dagster": {
+            **proposal_only,
+            "authority_posture": "Asset lineage can inform Mesh evidence review.",
+        },
+        "prefect": {
+            **proposal_only,
+            "authority_posture": "Flow-run state can inform Mesh evidence review.",
+        },
+        "flyte": {
+            **proposal_only,
+            "authority_posture": "ML workflow state can inform Mesh evidence review.",
+        },
+        "luigi": {
+            **proposal_only,
+            "authority_posture": "Pipeline dependency state can inform Mesh evidence review.",
+        },
+        "oozie": {
+            **proposal_only,
+            "authority_posture": "Workflow coordinator state can inform Mesh evidence review.",
+        },
+        "n8n": {
+            **proposal_only,
+            "authority_posture": "Workflow traces can inform Mesh proposal lanes.",
+        },
+        "kubernetes": {
+            "state": "pilot-ready",
+            "required_before": "pilot",
+            "authority_posture": "Live execution requires explicit context and namespace allowlists.",
+            "detail": "Bounded actuator lane guarded by Mesh policy and Kubernetes allowlists.",
+            "blockers": [],
+        },
+    }
 
 
 def invalidate_readiness_cache() -> None:

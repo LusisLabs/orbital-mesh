@@ -120,6 +120,15 @@ export interface IntegrationStatus {
 
 export interface IntegrationReadiness {
   checked_at: string;
+  promptfoo: IntegrationStatus;
+  hermes: IntegrationStatus;
+  goose: IntegrationStatus;
+  evo: IntegrationStatus;
+  latentmas: IntegrationStatus;
+  deepagents: IntegrationStatus;
+  vault_path: string;
+  state_path: string;
+  integrations_config_path: string;
   profile: string;
   status: string;
   required_checks: Record<string, any>;
@@ -128,14 +137,6 @@ export interface IntegrationReadiness {
   blocker_details: Record<string, any>;
   connector_certification: Record<string, any>;
   orchestration_topology: Record<string, any>;
-  promptfoo: IntegrationStatus;
-  hermes: IntegrationStatus;
-  goose: IntegrationStatus;
-  latentmas: IntegrationStatus;
-  deepagents: IntegrationStatus;
-  vault_path: string;
-  state_path: string;
-  integrations_config_path: string;
 }
 
 export interface MerkleProofStep {

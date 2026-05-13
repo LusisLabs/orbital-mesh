@@ -144,6 +144,7 @@ describe("AgentMeshPanel topology", () => {
       promptfoo: integrationStatus("Promptfoo"),
       hermes: integrationStatus("Hermes"),
       goose: integrationStatus("Goose"),
+      evo: integrationStatus("Evo"),
       latentmas: integrationStatus("LatentMAS"),
       deepagents: integrationStatus("DeepAgents"),
       vault_path: ".mesh-runtime-state",

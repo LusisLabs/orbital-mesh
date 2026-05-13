@@ -1081,6 +1081,7 @@ all-providers = [
     { name = "langchain-openrouter" },
     { name = "langchain-perplexity" },
     { name = "langchain-xai" },
+    { name = "litellm" },
 ]
 all-sandboxes = [
     { name = "langchain-agentcore-codeinterpreter" },
@@ -1123,6 +1124,7 @@ ibm = [
 ]
 litellm = [
     { name = "langchain-litellm" },
+    { name = "litellm" },
 ]
 mistralai = [
     { name = "langchain-mistralai" },
@@ -1216,6 +1218,7 @@ requires-dist = [
     { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.15,<1.0.0" },
     { name = "langgraph-sdk", specifier = ">=0.3.11,<1.0.0" },
     { name = "langsmith", extras = ["sandbox"], specifier = ">=0.7.7" },
+    { name = "litellm", marker = "extra == 'litellm'", specifier = ">=1.85.0rc1" },
     { name = "markdownify", specifier = ">=0.13.0,<2.0.0" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "pillow", specifier = ">=10.0.0,<13.0.0" },
@@ -3146,7 +3149,7 @@ wheels = [
 
 [[package]]
 name = "litellm"
-version = "1.83.0"
+version = "1.85.0rc1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -3162,9 +3165,9 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tokenizers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/22/92/6ce9737554994ca8e536e5f4f6a87cc7c4774b656c9eb9add071caf7d54b/litellm-1.83.0.tar.gz", hash = "sha256:860bebc76c4bb27b4cf90b4a77acd66dba25aced37e3db98750de8a1766bfb7a", size = 17333062, upload-time = "2026-03-31T05:08:25.331Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/47/0b355d97e3113d2a501515117967d17f82172eecd32e2d34ec3bc64598f6/litellm-1.85.0rc1.tar.gz", hash = "sha256:495dfe054472a85f9d4232c4ac4f5b0e3351ac7194b766e661d8263285da3596", size = 15175787, upload-time = "2026-05-13T04:54:09.227Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/2c/a670cc050fcd6f45c6199eb99e259c73aea92edba8d5c2fc1b3686d36217/litellm-1.83.0-py3-none-any.whl", hash = "sha256:88c536d339248f3987571493015784671ba3f193a328e1ea6780dbebaa2094a8", size = 15610306, upload-time = "2026-03-31T05:08:21.987Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/f2/1ccdb81347033599194eb03eee6f0094f2024b6fe8682a410c3c7c067f7a/litellm-1.85.0rc1-py3-none-any.whl", hash = "sha256:20949faa9e2702905f0f6e9f9c4ea384359ed9fe7a10d403c7b5fdba9a713125", size = 16805595, upload-time = "2026-05-13T04:54:06.161Z" },
 ]
 
 [[package]]

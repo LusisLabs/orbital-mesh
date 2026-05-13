@@ -171,6 +171,8 @@ class AgentTask(JsonModel):
     memory_write_policy: dict[str, Any] = field(default_factory=dict)
     open_questions: list[str] = field(default_factory=list)
     agents: list[str] = field(default_factory=list)
+    orchestration_topology: dict[str, Any] = field(default_factory=dict)
+    lane_routing: dict[str, Any] = field(default_factory=dict)
     attempts: list[AgentAttempt] = field(default_factory=list)
     selected_attempt_id: str | None = None
 
@@ -185,6 +187,9 @@ class IntegrationStatus(JsonModel):
     primary_route: str | None = None
     fallback_route: str | None = None
     warnings: list[str] = field(default_factory=list)
+    certification: str = "proposal-only"
+    required_before: str = "pilot"
+    posture: str = "proposal lane; Mesh keeps policy, approval, audit, and execution authority"
 
 
 @dataclass
@@ -199,6 +204,14 @@ class IntegrationReadiness(JsonModel):
     vault_path: str
     state_path: str
     integrations_config_path: str
+    profile: str = "local"
+    status: str = "blocked"
+    required_checks: dict[str, Any] = field(default_factory=dict)
+    optional_checks: dict[str, Any] = field(default_factory=dict)
+    blockers: list[str] = field(default_factory=list)
+    blocker_details: dict[str, Any] = field(default_factory=dict)
+    connector_certification: dict[str, Any] = field(default_factory=dict)
+    orchestration_topology: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
