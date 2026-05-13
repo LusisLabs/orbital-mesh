@@ -1,6 +1,8 @@
 # Mesh Intelligence
 
+
 Agentic harness based the principal of unlocking ai to understand,read and remedy software production pipelines.
+
 
 Mesh ingests infrastructure signals → investigates with read-only tools (Prometheus, kubectl, AWS, GitHub, Loki, Jaeger, Postgres, MCP, topology graph) → proposes a decision → evaluates it against policy and quality gates → pauses for **operator approval** by default → executes through a bounded actuator → records feedback. Every step is captured in a Merkle-rooted event log and mirrored into an Obsidian-compatible vault for audit.
 
@@ -272,13 +274,10 @@ CI runs the Python test suite on every PR. See [`AGENTS.md`](./AGENTS.md) for co
 | Memory + reasoning bank | [`docs/memory-architecture.md`](./docs/memory-architecture.md) · [`docs/reasoning-bank.md`](./docs/reasoning-bank.md) |
 | Safety loop | [`docs/remediation-safety-loop.md`](./docs/remediation-safety-loop.md) |
 | Scenario analysis | [`docs/scenario-analysis.md`](./docs/scenario-analysis.md) |
-| Research sessions | [`docs/research-intelligence.md`](./docs/research-intelligence.md) |
-| First closed-loop contract | [`first-closed-loop-contract.md`](./first-closed-loop-contract.md) |
 
 ---
 
 ## License & contributing
 
-Contributor guide: [`AGENTS.md`](./AGENTS.md). Demo walkthrough: [`demo.md`](./demo.md). Plan + roadmap: [`plan.md`](./plan.md).
 
 **External messaging:** prefer **policy-guided**, **bounded**, and **intent-driven** remediation. Avoid **"self-healing"** or generic **"AI-powered"** framing — Mesh runs are **operator-steerable** and **evaluation-gated** unless explicit interruptible auto mode is enabled.
