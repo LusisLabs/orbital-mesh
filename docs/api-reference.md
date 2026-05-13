@@ -375,7 +375,7 @@ Per-service-agent SLO posture.
 
 ## OTLP metrics receiver
 
-### `POST /api/otlp/v1/metrics`
+### `POST /v1/metrics`
 
 Accepts OTLP/HTTP JSON metrics. When `MESH_OTEL_RECEIVER_ENABLED=1`, an inbound payload becomes a Mesh run via the OTLP ingester. Optional bearer auth via `MESH_OTEL_RECEIVER_TOKEN`. Optional `x-mesh-alert-context` header (JSON) names the offending metric + baseline value.
 

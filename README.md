@@ -40,6 +40,150 @@ python3 setup_integrations.py --install-missing
 
 ---
 
+## Run Mesh
+
+Mesh has two common run modes: the full local stack for a simulated Kubernetes
+environment, and the API control plane pointed at your own signal sources.
+
+### Full simulated Kubernetes stack
+
+```bash
+docker compose -f docker-compose.stack.yml up --build
+```
+
+This starts the Mesh API, UI, embedded k3s clusters, seed workloads, and a
+smoke job that creates a Kubernetes incident. The API listens on
+`http://127.0.0.1:8787`.
+
+### Realtime control plane
+
+Use this entrypoint when Mesh should boot the HTTP/SSE server and start any
+configured watchers immediately:
+
+```bash
+PYTHONPATH=. uv run python -c "from control_plane_server import serve_forever; serve_forever()"
+```
+
+`python3 run_server.py` is still useful for local UI/API development, but it
+does not auto-start watchers. Start them after boot with:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/watch/start
+```
+
+### Listen on a host and port
+
+```bash
+export MESH_SERVER_HOST=0.0.0.0
+export MESH_SERVER_PORT=8787
+```
+
+Check the server:
+
+```bash
+curl http://127.0.0.1:8787/api/health
+curl http://127.0.0.1:8787/api/watchers
+```
+
+### Watch Kubernetes deployments
+
+Configure one or more deployment targets. The watcher polls with `kubectl`,
+normalizes unhealthy deployments into Mesh runs, and deduplicates by target and
+cooldown.
+
+```bash
+export MESH_WATCH_ENABLED=1
+export MESH_WATCH_INTERVAL_SECONDS=30
+export MESH_WATCH_COOLDOWN_SECONDS=300
+export MESH_WATCH_TARGETS='[
+  {
+    "deployment_name": "frontend",
+    "namespace": "search",
+    "kube_context": "mesh-compose",
+    "cooldown_seconds": 300
+  }
+]'
+export MESH_KUBECTL_COMMAND=kubectl
+```
+
+Live Kubernetes mutations are off by default. To allow bounded rollout actions,
+enable execution and set narrow allowlists:
+
+```bash
+export MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=1
+export MESH_KUBERNETES_ALLOWED_CONTEXTS=mesh-compose
+export MESH_KUBERNETES_ALLOWED_NAMESPACES=search
+```
+
+Leave `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=0` when you want Mesh to propose
+and evaluate actions without mutating the cluster.
+
+### Receive webhooks
+
+Register a source, then send vendor alerts to that source. The built-in
+Prometheus Alertmanager template is a good starting point:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/webhook-sources \
+  -H 'Content-Type: application/json' \
+  --data-binary @fixtures/webhook_templates/prometheus.json
+
+curl -X POST http://127.0.0.1:8787/api/webhooks/prometheus \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "status": "firing",
+    "alerts": [
+      {
+        "fingerprint": "frontend-high-error-rate",
+        "startsAt": "2026-05-13T00:00:00Z",
+        "status": "firing"
+      }
+    ],
+    "commonLabels": {
+      "alertname": "HighErrorRate",
+      "severity": "critical",
+      "service": "frontend",
+      "env": "prod"
+    },
+    "commonAnnotations": {
+      "description": "frontend error rate is above threshold"
+    }
+  }'
+```
+
+### Receive OTLP metrics
+
+```bash
+export MESH_OTEL_RECEIVER_ENABLED=1
+export MESH_OTEL_RECEIVER_TOKEN=dev-token
+```
+
+Post OTLP/HTTP JSON metrics to:
+
+```text
+POST /v1/metrics
+```
+
+If `MESH_OTEL_RECEIVER_TOKEN` is set, include
+`Authorization: Bearer dev-token`. You can add an `x-mesh-alert-context` JSON
+header to identify the metric, service, and baseline that tripped the alert.
+
+### Enable read-only investigation tools
+
+These endpoints are optional. When configured, Mesh exposes them to the
+read-only investigation harness:
+
+```bash
+export MESH_PROMETHEUS_URL=http://localhost:9090
+export MESH_LOKI_URL=http://localhost:3100
+export MESH_JAEGER_URL=http://localhost:16686
+export MESH_PG_DSN=postgresql://user:pass@localhost:5432/app
+export MESH_AWS_TOOLS_ENABLED=1
+export MESH_MCP_SERVERS=name=stdio://path/to/server
+```
+
+---
+
 ## Architecture
 
 ```
