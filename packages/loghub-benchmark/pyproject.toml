@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loghub-sre-benchmark"
+version = "0.1.0"
+description = "Harbor-style SRE log investigation benchmark built from Loghub datasets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = { text = "MIT" }
+authors = [
+  { name = "Mesh Intelligence Contributors" },
+]
+keywords = ["sre", "benchmark", "loghub", "harbor", "observability", "incident-response"]
+
+[project.scripts]
+loghub-benchmark = "loghub_benchmark.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 140
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

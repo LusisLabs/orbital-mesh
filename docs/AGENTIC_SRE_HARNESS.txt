@@ -1,0 +1,83 @@
+Agentic SRE Harness
+===================
+
+Purpose
+-------
+This is the living implementation harness for making MESH more agentic for SRE
+while keeping execution bounded, policy-gated, and auditable.
+
+Current Active Checkpoint
+-------------------------
+Checkpoint: Loghub Harbor benchmark portability
+
+Goal:
+  Build a production-style, Harbor-compatible Loghub SRE benchmark that can run
+  inside MESH and also be exported as an independent open-source package.
+
+Planned files:
+  - services/benchmark/harbor_loghub.py
+  - services/benchmark/harbor_agents/mesh_loghub_agent.py
+  - services/benchmark/__main__.py
+  - packages/loghub-benchmark/
+  - tests/test_benchmark_harness.py
+
+Intended behavior:
+  - Build deterministic Loghub cases with gold/silver/stress tracks.
+  - Export Harbor task directories with instructions, Docker environment,
+    verifier script, and private oracle files.
+  - Import Harbor results into summary/report artifacts with mean reward,
+    Pass@3, Pass^3, citation, cost, latency, and invalid-answer metrics.
+  - Provide a standalone benchmark package that does not depend on MESH.
+
+Risk:
+  - Oracle leakage into agent-visible task files.
+  - Overstating heuristic silver cases as publishable RCA claims.
+  - Divergence between the MESH-integrated benchmark code and the standalone
+    open-source package.
+
+Change Ledger
+-------------
+2026-05-15 - Loghub Harbor benchmark
+
+Actual files changed:
+  - Added services/benchmark/harbor_loghub.py.
+  - Added services/benchmark/harbor_agents/.
+  - Added CLI commands: loghub-build, loghub-export-harbor,
+    harbor-import-results.
+  - Added packages/loghub-benchmark as a standalone stdlib-only package.
+  - Added benchmark tests for deterministic case generation, oracle leakage,
+    verifier scoring, result import, and standalone package smoke behavior.
+
+Behavior added:
+  - Gold cases are label-backed; silver cases are heuristic; stress is reserved
+    for large-window scale tests.
+  - Harbor tasks keep private oracle files outside the agent-visible task
+    directory.
+  - The verifier emits reward.json, grading_details.json, and
+    evidence_audit.json.
+  - Import reports include Pass@3, Pass^3, invalid answer rate,
+    zero-evidence diagnosis rate, citation precision/recall, latency, and cost.
+
+Validation run:
+  - PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest
+    tests/test_benchmark_harness.py -q
+  - PYTHONPATH=src python3 -m unittest discover -s tests -v
+    from packages/loghub-benchmark
+  - python3 -m py_compile on benchmark and standalone files
+  - ruff check on services/benchmark, tests/test_benchmark_harness.py, and
+    packages/loghub-benchmark using the locally cached ruff binary
+
+Remaining gaps:
+  - Push standalone package to github.com/hydrogenbond007/loghub-benchmark once
+    GitHub auth is repaired.
+  - Run full Loghub export on the benchmark VM.
+  - Compare MESH, OpenSRE, and at least one generic Harbor baseline under the
+    same model/API/tool budget.
+
+Safety Invariants
+-----------------
+  - No benchmark oracle label may appear in instruction.md, task.toml,
+    environment logs, or agent-visible task metadata.
+  - Loghub silver/stress tracks are not publishable leaderboard claims.
+  - Benchmark investigation remains read-only and must not expose production
+    mutation tools.

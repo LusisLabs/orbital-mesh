@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,12 +11,27 @@ from pathlib import Path
 from services.benchmark.compare import compare_benchmark_runs
 from services.benchmark.cloudopsbench_import import import_cloudopsbench_scenarios
 from services.benchmark.gaps import generate_gap_report
+from services.benchmark.harbor_loghub import (
+    HarborResultImportConfig,
+    LoghubCaseBuildConfig,
+    LoghubHarborExportConfig,
+    build_loghub_cases,
+    export_loghub_harbor_dataset,
+    find_oracle_leaks,
+    import_harbor_results,
+    score_loghub_answer,
+)
 from services.benchmark.loghub import LoghubExtractionConfig, extract_loghub_scenarios
 from services.benchmark.models import DIMENSION_WEIGHTS, BenchmarkScenario
 from services.benchmark.runner import BenchmarkRunConfig, run_benchmark
 from services.benchmark.scenario_loader import load_suite
 from services.benchmark.scoring import _evidence_kind_matches, score_outcome
-from services.benchmark.sregym_agent import build_agent_registry_entry, render_agent_yaml, run_mesh_sregym_agent
+from services.benchmark.sregym_agent import (
+    SreGymEndpointConfig,
+    build_agent_registry_entry,
+    render_agent_yaml,
+    run_mesh_sregym_agent,
+)
 from services.investigation.cloudops_ontology import rank_root_causes
 from shared.mesh_runtime import Trigger
 
@@ -274,6 +291,209 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertEqual(3, scenario["source"]["line"])
             self.assertEqual("otel_metric_regression", scenario["raw_signal"]["signal_type"])
             self.assertIn("log_anomaly", scenario["raw_signal"]["related_context"])
+
+    def test_loghub_harbor_build_creates_deterministic_cases_and_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            log_path = root / "HDFS.log"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        "INFO blk_1 request completed",
+                        "worker-a ERROR blk_2 failed to replicate block",
+                        "INFO blk_3 request completed",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (root / "anomaly_label.csv").write_text("BlockId,Label\nblk_2,Anomaly\n", encoding="utf-8")
+
+            first = build_loghub_cases(
+                LoghubCaseBuildConfig(
+                    dataset="HDFS",
+                    input_path=root,
+                    output_dir=root / "first",
+                    max_cases=1,
+                    split_salt="unit-salt",
+                )
+            )
+            second = build_loghub_cases(
+                LoghubCaseBuildConfig(
+                    dataset="HDFS",
+                    input_path=root,
+                    output_dir=root / "second",
+                    max_cases=1,
+                    split_salt="unit-salt",
+                )
+            )
+
+            self.assertEqual(first.cases[0]["case_id"], second.cases[0]["case_id"])
+            self.assertEqual("gold", first.cases[0]["track"])
+            self.assertIn(first.cases[0]["split"], {"smoke", "dev", "eval"})
+            manifest = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(1, manifest["publishable_case_count"])
+            self.assertEqual({"gold": 1}, manifest["tracks"])
+
+    def test_loghub_harbor_export_writes_task_without_oracle_leak(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            case_root = root / "cases"
+            (case_root / "cases").mkdir(parents=True)
+            case = {
+                "case_id": "loghub_unit_secret",
+                "title": "Secret leak guard",
+                "dataset": "Unit",
+                "track": "gold",
+                "split": "eval",
+                "benchmark": {"publishable": True},
+                "visible": {
+                    "log_file": "logs/unit.log",
+                    "log_window": [
+                        {"line_id": "L000001", "line_number": 1, "text": "INFO request completed"},
+                        {"line_id": "L000002", "line_number": 2, "text": "ERROR request failed with code 500"},
+                    ],
+                },
+                "oracle": {
+                    "is_incident": True,
+                    "anomaly_line_ids": ["L000002"],
+                    "root_cause_type": "failure",
+                    "affected_component": "secret-component-not-in-log",
+                    "recommended_action": "escalate",
+                    "label_source": "label_file",
+                    "leak_guard_tokens": ["secret-oracle-token"],
+                },
+            }
+            (case_root / "cases" / "loghub_unit_secret.json").write_text(json.dumps(case), encoding="utf-8")
+
+            export = export_loghub_harbor_dataset(
+                LoghubHarborExportConfig(
+                    case_root=case_root,
+                    output_dir=root / "harbor",
+                    split="full",
+                    track="gold",
+                )
+            )
+
+            task_dir = export.task_dirs[0]
+            self.assertTrue((task_dir / "instruction.md").exists())
+            self.assertTrue((task_dir / "task.toml").exists())
+            self.assertTrue((task_dir / "environment" / "Dockerfile").exists())
+            self.assertTrue((task_dir / "tests" / "test.sh").exists())
+            self.assertTrue((task_dir / "tests" / "verifier.py").exists())
+            oracle_path = export.oracle_dir / "loghub_unit_secret.oracle.json"
+            self.assertTrue(oracle_path.exists())
+            self.assertEqual([], find_oracle_leaks(task_dir, case["oracle"]))
+
+            answer_path = root / "answer.json"
+            verifier_dir = root / "verifier-output"
+            answer_path.write_text(
+                json.dumps(
+                    {
+                        "is_incident": True,
+                        "anomaly_line_ids": ["L000002"],
+                        "root_cause_type": "failure",
+                        "evidence": [{"line_id": "L000002", "quote": "ERROR request failed", "reason": "failure signal"}],
+                        "recommended_action": "escalate",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [sys.executable, str(task_dir / "tests" / "verifier.py")],
+                env={
+                    **os.environ,
+                    "LOGHUB_HARBOR_ORACLE_PATH": str(oracle_path),
+                    "LOGHUB_HARBOR_ANSWER_PATH": str(answer_path),
+                    "LOGHUB_HARBOR_VERIFIER_DIR": str(verifier_dir),
+                },
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual("", completed.stderr)
+            self.assertEqual(0, completed.returncode)
+            reward = json.loads((verifier_dir / "reward.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(reward["reward"], 0.9)
+
+    def test_loghub_harbor_verifier_scores_perfect_and_penalizes_hallucination(self) -> None:
+        oracle = {
+            "is_incident": True,
+            "anomaly_line_ids": ["L000002"],
+            "root_cause_type": "failure",
+            "recommended_action": "escalate",
+        }
+        perfect = {
+            "is_incident": True,
+            "anomaly_line_ids": ["L000002"],
+            "root_cause_type": "failure",
+            "affected_component": "worker-a",
+            "evidence": [{"line_id": "L000002", "quote": "ERROR request failed", "reason": "failure signal"}],
+            "recommended_action": "escalate",
+            "confidence": 0.9,
+        }
+        bad = {
+            "is_incident": True,
+            "anomaly_line_ids": ["L999999"],
+            "root_cause_type": "impossible_magic",
+            "evidence": [{"line_id": "L999999", "quote": "not present", "reason": "invented"}],
+            "recommended_action": "restart the production database",
+        }
+
+        perfect_grade = score_loghub_answer(perfect, oracle, visible_line_ids={"L000001", "L000002"})
+        bad_grade = score_loghub_answer(bad, oracle, visible_line_ids={"L000001", "L000002"})
+
+        self.assertEqual(1.0, perfect_grade["reward"])
+        self.assertLess(bad_grade["reward"], 0.5)
+        self.assertIn("hallucinated_line_reference", bad_grade["penalties"])
+        self.assertIn("unsafe_remediation_recommendation", bad_grade["penalties"])
+        self.assertIn("impossible_root_cause", bad_grade["penalties"])
+
+    def test_harbor_result_importer_computes_pass_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rewards = {
+                "task-a": [0.8, 0.9, 0.85],
+                "task-b": [0.1, 0.8, 0.2],
+            }
+            for task_id, values in rewards.items():
+                for index, reward in enumerate(values, start=1):
+                    trial_dir = root / "job" / task_id / f"trial-{index}"
+                    trial_dir.mkdir(parents=True)
+                    (trial_dir / "result.json").write_text(
+                        json.dumps(
+                            {
+                                "task_id": task_id,
+                                "verifier_result": {
+                                    "rewards": {"reward": reward},
+                                    "details": {
+                                        "valid": True,
+                                        "malformed": False,
+                                        "zero_evidence": False,
+                                        "citation_precision": 1.0,
+                                        "citation_recall": 1.0,
+                                    },
+                                },
+                                "cost_usd": 0.01,
+                                "latency_ms": 1000,
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+
+            imported = import_harbor_results(
+                HarborResultImportConfig(
+                    job_dir=root / "job",
+                    output_dir=root / "imported",
+                    pass_threshold=0.75,
+                )
+            )
+
+            self.assertEqual(6, imported.summary["attempt_count"])
+            self.assertEqual(2, imported.summary["task_count"])
+            self.assertEqual(1.0, imported.summary["pass_at_3"])
+            self.assertEqual(0.5, imported.summary["pass_3"])
+            self.assertTrue((imported.output_dir / "report.md").exists())
+            self.assertTrue((imported.output_dir / "metadata.yaml").exists())
 
     def test_compare_writes_delta_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1366,6 +1586,22 @@ class BenchmarkHarnessTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_mesh_sregym_agent(client=client, trigger=trigger, target="external-cluster")
 
+    def test_sregym_endpoint_config_separates_conductor_and_mcp_server(self) -> None:
+        endpoints = SreGymEndpointConfig.from_server_url(
+            "http://localhost:8000",
+            mcp_server_url="http://localhost:9954",
+        )
+
+        self.assertEqual("http://localhost:9954/kubectl/sse", endpoints.kubectl_url)
+        self.assertEqual("http://localhost:9954/prometheus/sse", endpoints.prometheus_url)
+        self.assertEqual("http://localhost:8000/submit_mcp/sse", endpoints.submit_url)
+
+    def test_sregym_agent_fails_when_required_submit_fails(self) -> None:
+        client = FakeSreGymClient(fail_submit=True)
+
+        with self.assertRaises(RuntimeError):
+            run_mesh_sregym_agent(client=client, trigger=_kubernetes_trigger())
+
     def test_sregym_agent_registry_entry_matches_sregym_agents_yaml_shape(self) -> None:
         entry = build_agent_registry_entry(
             server_url="http://localhost:8000",
@@ -1431,11 +1667,14 @@ class EvidenceKindMatchTests(unittest.TestCase):
 
 
 class FakeSreGymClient:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_submit: bool = False) -> None:
         self.calls: list[dict[str, object]] = []
+        self.fail_submit = fail_submit
 
     def call_tool(self, name: str, arguments: dict[str, object] | None = None) -> dict[str, object]:
         self.calls.append({"name": name, "arguments": dict(arguments or {})})
+        if name == "submit" and self.fail_submit:
+            return {"status": "error", "text": "submission rejected"}
         return {"ok": True, "name": name, "arguments": dict(arguments or {})}
 
 

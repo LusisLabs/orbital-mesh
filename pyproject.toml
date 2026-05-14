@@ -42,6 +42,7 @@ packages = [
   "services.evidence",
   "services.investigation",
   "services.benchmark",
+  "services.benchmark.harbor_agents",
   "services.decision",
   "services.evaluation",
   "services.evaluation.mesh_eval",
