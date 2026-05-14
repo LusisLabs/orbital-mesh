@@ -1,14 +1,12 @@
 # Mesh Intelligence
 
+An agentic incident-response and bounded-remediation control plane. Mesh ingests operational signals, investigates them with read-only tools, proposes one bounded decision, gates it on policy + operator approval, and only then executes through a narrow actuator allowlist. Every step is captured as an audited artifact in a Merkle-rooted event log and mirrored into a file-backed vault.
 
-Agentic harness based the principal of unlocking ai to understand,read and remedy software production pipelines.
+**What Mesh is:** a remediation **orchestration and safety layer** between signals and bounded actions (Kubernetes rollouts, feature-flag rollout %, ArgoCD sync/rollback, repo patches, systemd-over-SSH, incident creation, load balancer). Runs are structured, steerable, and auditable — explicit stages, evaluation gates, steering commands, Merkle-backed history.
 
+**What Mesh is not:** a replacement for your observability, ITSM, or general-purpose automation engine. It doesn't replace **detection**; it structures **investigation → decision → evaluation → execution → feedback** for the remediation workloads you drive through it. The investigation loop is read-only; mutating actions only fire after evaluation permits, and by default that requires operator approval.
 
-Mesh ingests infrastructure signals → investigates with read-only tools (Prometheus, kubectl, AWS, GitHub, Loki, Jaeger, Postgres, MCP, topology graph) → proposes a decision → evaluates it against policy and quality gates → pauses for **operator approval** by default → executes through a bounded actuator → records feedback. Every step is captured in a Merkle-rooted event log and mirrored into an Obsidian-compatible vault for audit.
-
-**What Mesh is:** a remediation **orchestration and safety layer** between signals and bounded actions (feature flags, incident routing, Kubernetes rollouts). Runs are **structured, steerable, and auditable** — explicit stages, evaluation gates, steering commands, Merkle-backed event history.
-
-**What Mesh is not:** a replacement for your observability, ITSM, or general-purpose automation engine. It doesn't replace **detection**; it structures **decision → evaluation → execution → feedback** for the remediation workloads you drive through it.
+> See [`docs/codebase-overview.md`](./docs/codebase-overview.md) for a from-source orientation, and [`architecture.md`](./architecture.md) for the deep dive.
 
 ---
 
@@ -20,7 +18,7 @@ Mesh ingests infrastructure signals → investigates with read-only tools (Prome
 docker compose -f docker-compose.stack.yml up --build
 ```
 
-This starts Mesh, embedded k3s, a bootstrap job that seeds a search/semantic-search workload, `mesh-ui`, and `mesh-smoke` (which seeds a CrashLoop and launches a live Mesh recovery run). The API is at `http://127.0.0.1:8787`.
+Starts the Mesh API + UI, embedded k3s, a bootstrap job that seeds a workload, and `mesh-smoke` (which seeds a CrashLoop and runs a live recovery). API at `http://127.0.0.1:8787`.
 
 Full stack runbook: [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md).
 
@@ -38,58 +36,35 @@ Optional install attempt for supported dependencies:
 python3 setup_integrations.py --install-missing
 ```
 
----
-
-## Run Mesh
-
-Mesh has two common run modes: the full local stack for a simulated Kubernetes
-environment, and the API control plane pointed at your own signal sources.
-
-### Full simulated Kubernetes stack
+`run_server.py` does not auto-start watchers. To start them after boot:
 
 ```bash
-docker compose -f docker-compose.stack.yml up --build
+curl -X POST http://127.0.0.1:8787/api/watch/start
 ```
 
-This starts the Mesh API, UI, embedded k3s clusters, seed workloads, and a
-smoke job that creates a Kubernetes incident. The API listens on
-`http://127.0.0.1:8787`.
-
-### Realtime control plane
-
-Use this entrypoint when Mesh should boot the HTTP/SSE server and start any
-configured watchers immediately:
+For the realtime control plane that starts watchers at boot:
 
 ```bash
 PYTHONPATH=. uv run python -c "from control_plane_server import serve_forever; serve_forever()"
 ```
 
-`python3 run_server.py` is still useful for local UI/API development, but it
-does not auto-start watchers. Start them after boot with:
+---
 
-```bash
-curl -X POST http://127.0.0.1:8787/api/watch/start
-```
+## Running Mesh
 
 ### Listen on a host and port
 
 ```bash
 export MESH_SERVER_HOST=0.0.0.0
 export MESH_SERVER_PORT=8787
-```
 
-Check the server:
-
-```bash
 curl http://127.0.0.1:8787/api/health
-curl http://127.0.0.1:8787/api/watchers
+curl http://127.0.0.1:8787/api/readiness
 ```
 
 ### Watch Kubernetes deployments
 
-Configure one or more deployment targets. The watcher polls with `kubectl`,
-normalizes unhealthy deployments into Mesh runs, and deduplicates by target and
-cooldown.
+The watcher polls with `kubectl`, normalizes unhealthy deployments into runs, and deduplicates per target and cooldown.
 
 ```bash
 export MESH_WATCH_ENABLED=1
@@ -106,8 +81,7 @@ export MESH_WATCH_TARGETS='[
 export MESH_KUBECTL_COMMAND=kubectl
 ```
 
-Live Kubernetes mutations are off by default. To allow bounded rollout actions,
-enable execution and set narrow allowlists:
+Live Kubernetes mutations are off by default. To allow bounded rollout actions, enable execution and set narrow allowlists:
 
 ```bash
 export MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=1
@@ -115,13 +89,11 @@ export MESH_KUBERNETES_ALLOWED_CONTEXTS=mesh-compose
 export MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 ```
 
-Leave `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=0` when you want Mesh to propose
-and evaluate actions without mutating the cluster.
+Leave `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=0` to propose + evaluate without mutating the cluster.
 
-### Receive webhooks
+### Receive webhooks (HMAC-verified)
 
-Register a source, then send vendor alerts to that source. The built-in
-Prometheus Alertmanager template is a good starting point:
+Register a source, then send vendor alerts. Mesh verifies an HMAC signature on the raw body via `X-Mesh-Signature` or GitHub-style `X-Hub-Signature-256`.
 
 ```bash
 curl -X POST http://127.0.0.1:8787/api/webhook-sources \
@@ -130,48 +102,27 @@ curl -X POST http://127.0.0.1:8787/api/webhook-sources \
 
 curl -X POST http://127.0.0.1:8787/api/webhooks/prometheus \
   -H 'Content-Type: application/json' \
-  -d '{
-    "status": "firing",
-    "alerts": [
-      {
-        "fingerprint": "frontend-high-error-rate",
-        "startsAt": "2026-05-13T00:00:00Z",
-        "status": "firing"
-      }
-    ],
-    "commonLabels": {
-      "alertname": "HighErrorRate",
-      "severity": "critical",
-      "service": "frontend",
-      "env": "prod"
-    },
-    "commonAnnotations": {
-      "description": "frontend error rate is above threshold"
-    }
-  }'
+  -H 'X-Mesh-Signature: sha256=<hex>' \
+  -d '{ "status": "firing", "alerts": [ { "fingerprint": "frontend-high-error-rate" } ],
+        "commonLabels": { "alertname": "HighErrorRate", "service": "frontend", "env": "prod" } }'
 ```
 
 ### Receive OTLP metrics
 
 ```bash
 export MESH_OTEL_RECEIVER_ENABLED=1
-export MESH_OTEL_RECEIVER_TOKEN=dev-token
+export MESH_OTEL_RECEIVER_TOKEN=dev-token   # optional bearer token
 ```
-
-Post OTLP/HTTP JSON metrics to:
 
 ```text
-POST /v1/metrics
+POST /v1/metrics                            # OTLP/HTTP JSON
+Authorization: Bearer dev-token             # when MESH_OTEL_RECEIVER_TOKEN is set
+x-mesh-alert-context: {"metric":"…","service":"…","baseline":…}   # optional, JSON-encoded
 ```
-
-If `MESH_OTEL_RECEIVER_TOKEN` is set, include
-`Authorization: Bearer dev-token`. You can add an `x-mesh-alert-context` JSON
-header to identify the metric, service, and baseline that tripped the alert.
 
 ### Enable read-only investigation tools
 
-These endpoints are optional. When configured, Mesh exposes them to the
-read-only investigation harness:
+Optional. When configured, Mesh exposes them to the read-only investigation harness:
 
 ```bash
 export MESH_PROMETHEUS_URL=http://localhost:9090
@@ -180,88 +131,142 @@ export MESH_JAEGER_URL=http://localhost:16686
 export MESH_PG_DSN=postgresql://user:pass@localhost:5432/app
 export MESH_AWS_TOOLS_ENABLED=1
 export MESH_MCP_SERVERS=name=stdio://path/to/server
+# GitHub pack auto-enables when `gh auth status` succeeds.
+# kubectl pack auto-enables when kubectl + kubeconfig are reachable.
+# topology pack is always available.
 ```
 
 ---
 
-## Architecture
+## Pipeline & stages
+
+Each run produces a fixed chain of first-class artifacts:
 
 ```
-signal ─┬─→ trigger ─→ investigation ─→ decision ─→ evaluation ─┬─→ approval ─→ execution ─→ feedback
-        │                  │                                    │       gate          │
-        │                  ↓                                    │                     ↓
-        │       agentic tool loop                               │            Kubernetes / flags /
-        │       (read-only, LLM-driven)                         │            incidents (bounded)
-        │                                                       │
-        └─────────────→ Merkle event log + Obsidian vault ←─────┘
+raw signal
+  └─► ingest                              → normalized_event
+  └─► trigger                             → trigger
+  └─► signal-profile resolve              → SignalProfile
+  └─► investigation planner               → investigation_plan
+  └─► evidence assembly                   → evidence_pack
+  └─► investigation harness (read-only)   → investigation_report
+  └─► scenario analysis                   → scenario_analysis (+ memory_compaction)
+  └─► hypothesis engine + decision        → decision + ranked_hypotheses
+  └─► profile RCA builder                 → rca_report
+  └─► evaluation (policy/risk/rollback)   → evaluation
+  └─► [operator approval gate]
+  └─► orchestrator → actuators            → execution_record
+  └─► feedback observer                   → feedback_record
 ```
 
-Every run advances through explicit stages:
+Run stages (from `services/runtime.py` and `services/control_plane.py`):
 
 ```
-queued → ingesting → trigger_ready → decision_ready → evaluation_ready
+queued → ingesting → trigger_ready → evidence_pack_ready → investigation_ready
+       → scenario_analysis_ready → decision_ready → evaluation_ready
        → awaiting_operator → executing → feedback_ready
-       → completed | failed | cancelled | recovery_spawned
+       → completed | failed | cancelled | no_trigger | recovery_spawned
 ```
 
 Operator steering commands are bounded: `approve`, `cancel`, `pause_after_stage`, `resume`, `set_auto_mode`, `override_decision`, `override_execution_parameters`, `attach_note`. Overrides always re-enter evaluation. Approval never bypasses policy or rollback constraints.
 
-Deeper architecture: [`architecture.md`](./architecture.md) · [`docs/architecture/api-and-runtime-map.md`](./docs/architecture/api-and-runtime-map.md).
+---
+
+## Signal profiles
+
+Mesh is signal-agnostic: one harness, one safety model, many signal types. A `SignalProfile` binds a signal + trigger type to strategy implementations (planner, evidence, RCA — and progressively ingest/trigger/decision/feedback as those migrate from monolithic per-signal branches).
+
+| Signal | Trigger | Status |
+| --- | --- | --- |
+| `reth_node` | `reth_node_degraded` | Specialized planner, typed evidence probes, specialized RCA |
+| `kubernetes_deployment_issue` | `kubernetes_deployment_unhealthy` | Harness planner, structured evidence, generic RCA |
+| `otel_metric_regression` | `otel_metric_regression` | Harness planner, structured evidence, generic RCA |
+| `webhook_alert` | `webhook_alert_firing` | Harness planner, structured evidence, generic RCA |
+| `feature_flag` | `feature_flag_performance_regression` | Harness planner, structured evidence, generic RCA |
+| unknown / unregistered | `generic_signal_firing` | Generic evidence + RCA, **unconditional escalation** |
+
+Generic is the safety floor: unknown signals are investigated and summarized but cannot auto-act.
 
 ---
 
-## Agentic SRE harness
+## Investigation harness
 
-On **every trigger** (not just benchmark scenarios), Mesh wires an investigation harness with cross-domain read-only tools the LLM can call:
+`services/investigation/harness/` runs a planner + tool-registry loop. The `LoopCritic` rejects unknown, malformed, mutating, or over-budget calls. Always-on tool packs auto-register when their backing config/env is present:
 
-| Pack | Tools | Backing config |
-|---|---|---|
-| `prometheus` | range/instant query, label values | `RuntimeConfig.prometheus_url` |
-| `kubectl` | get/describe/logs (read-only) | `kubectl` on PATH + kubeconfig |
-| `aws` | describe/list (read-only) | `MESH_AWS_TOOLS_ENABLED=1` |
+| Pack | Surface | Backing config |
+| --- | --- | --- |
+| `prometheus` | PromQL instant/range, label values | `MESH_PROMETHEUS_URL` |
+| `kubectl` | get / describe / logs (read-only) | kubectl on PATH + kubeconfig |
+| `aws` | describe / list (read-only) | `MESH_AWS_TOOLS_ENABLED=1` |
 | `github` | issues, PRs, file reads | `gh auth status` succeeds |
-| `loki` | log range queries | `MESH_LOKI_URL` |
+| `loki` | LogQL labels + log ranges | `MESH_LOKI_URL` |
 | `jaeger` | trace search, service map | `MESH_JAEGER_URL` |
-| `postgres` | SELECT-only queries | `MESH_PG_DSN` + `psql` |
+| `postgres` | SELECT-only SQL | `MESH_PG_DSN` + `psql` |
 | `mcp` | bridged MCP tool servers | `MESH_MCP_SERVERS` |
-| `topology` | graph lineage, service→pods, neighbors | always-on |
+| `topology` | InfraGraph lineage / neighbors | always-on |
 | `cloudops` | snapshot analyzers (admission events, service routing, node dataplane) | per-run snapshot |
-| `reth` | peer-starvation probes | per-trigger Reth payload |
+| `reth` | peer-starvation + node probes | per-trigger Reth payload |
 
-The harness enforces read-only via a `LoopCritic`. Mutating actions are policy-gated and never reachable from the investigation loop — they ship through the actuator layer after evaluation passes.
+Mutating actions are policy-gated and never reachable from the investigation loop — they ship through actuators after evaluation passes.
 
-Full harness reference: [`docs/investigation-harness.md`](./docs/investigation-harness.md). Extending: [`docs/extending-mesh.md`](./docs/extending-mesh.md).
+Harness reference: [`docs/investigation-harness.md`](./docs/investigation-harness.md) · Extending: [`docs/extending-mesh.md`](./docs/extending-mesh.md).
+
+---
+
+## Decision, evaluation, actuators
+
+- **Decision** (`services/decision/`). `HypothesisEngine` does deterministic RCA scoring. LLM proposers (`llm_fallback.py`, `llm_reasoning.py`) can contribute candidates but cannot bypass policy or pick production actions. Output: exactly one decision (`no_action`, `reduce_rollout`, `disable_flag`, `rollback_deployment`, `restart_deployment`, `scale_deployment`, `patch_resources`, `restart_systemd_service`, `open_incident`, `escalate`, …).
+- **Evaluation** (`services/evaluation/`). Policy / confidence / risk / credential / rollback / integration-readiness checks. In approval-gate mode runs pause at `awaiting_operator` before execution.
+- **Actuators** (`services/actuators/`). Bounded surfaces: `feature_flag` (rollout %), `incident`, `kubernetes` (rollout restart/undo, gated), `argocd` (sync, rollback), `repo_patch`, `systemd_ssh` (approval-gated), `load_balancer`.
+
+External agent bridges (review-before-actuation, or read-only proposals): Goose, Hermes, LatentMAS (vendored Rust), DeepAgents, Evo (external CLI), plus an `agent_mesh.py` proposal registry.
 
 ---
 
 ## HTTP API
 
-The server exposes a JSON+SSE control surface. Selected routes:
+The server is a stdlib `http.server.ThreadingHTTPServer` exposing JSON + SSE. Selected routes (full reference: [`docs/api-reference.md`](./docs/api-reference.md)):
 
 ```
-GET    /api/health                              liveness
+GET    /api/health                              liveness + build info
 GET    /api/readiness                           integration readiness
 GET    /api/scenarios                           bundled fixture scenarios
+GET    /api/simulations | /api/benchmarks       catalogs
+
+POST   /api/goals                               create a goal
 GET    /api/goals                               list goals
-POST   /api/goals                               create goal
+
+POST   /api/runs                                start a run (signal_payload | scenario_key | otlp_payload)
 GET    /api/runs                                list runs
-POST   /api/runs                                start a run
-GET    /api/runs/:id                            run detail
-POST   /api/runs/:id/steer                      send a steering command
-GET    /api/runs/:id/events                     event log
+GET    /api/runs/:id                            run snapshot
+GET    /api/runs/:id/events                     paged event log
+POST   /api/runs/:id/steer                      operator steering
 GET    /api/runs/:id/scenario-analysis          analyzer evidence graph
+GET    /api/runs/:id/evidence-graph             evidence DAG
+GET    /api/runs/:id/agent-tasks                agent-task artifacts
+GET    /api/runs/:id/reasoning-bank             reasoning-bank entries
+GET    /api/runs/:id/memory-crystallization     memory crystallization artifacts
 GET    /api/runs/:id/merkle                     Merkle root + tree
-GET    /api/runs/:id/merkle/proof/:event_id     Merkle inclusion proof
+GET    /api/runs/:id/merkle/proof/:event_id     inclusion proof
+
 GET    /api/stream/runs/:id                     SSE stream of run events
 GET    /api/stream/system                       SSE stream of system events
-GET    /api/graph/snapshot                      InfraGraph snapshot
-GET    /api/graph/neighbors/:kind/:ns/:name     graph traversal
-GET    /api/vault/tree | /document              vault read API
-GET    /api/research-sessions                   filesystem autoresearch
-POST   /api/webhook-sources                     register a webhook ingester
-```
 
-Full reference (every route, request/response shapes, SSE format, error codes): [`docs/api-reference.md`](./docs/api-reference.md).
+GET    /api/watchers · POST /api/watch/{start,stop} · POST /api/watchers/:name/{start,stop}
+POST   /api/webhook-sources · DELETE /api/webhook-sources/:id
+POST   /api/webhooks/:source_id                 HMAC-verified ingest
+POST   /v1/metrics                              OTLP/HTTP JSON (opt-in)
+
+GET    /api/graph/{status,snapshot} · POST /api/graph/refresh
+GET    /api/graph/neighbors/:kind/:ns/:name · /api/graph/node/* · /api/graph/affected/*
+
+GET    /api/trust-ladder · POST /api/trust-ladder/override
+GET    /api/rules/suggestions                   admin (manual policy-paste workflow)
+GET    /api/memory/{active,query,graph} · POST /api/memory/maintenance/run
+GET    /api/research-sessions · /api/research-corpus
+GET    /api/service-agents · /api/agent/slo · /api/alerts · /metrics
+GET    /api/vault/tree · /api/vault/document
+```
 
 **Minimal Python client:**
 
@@ -285,21 +290,21 @@ with httpx.stream("GET", f"http://127.0.0.1:8787/api/stream/runs/{run_id}") as r
 
 ---
 
-## Modes
+## Runtime modes
 
-Each run chooses one evaluation mode and one orchestration mode.
+Each run picks one evaluation mode and one orchestration mode.
 
-**Evaluation:**
-- `native` — deterministic trajectory checks, task traces, behavioral scorers, verifier output, reasoning-bank memory.
-- `promptfoo` — legacy-compatible mode name; pass/fail is still the same Mesh trajectory evaluation. Kept so older stacks don't break.
+**Evaluation**
+- `native` — in-process trajectory + verifier checks, behavioral scorers, reasoning-bank memory.
+- `promptfoo` — compatibility mode for Promptfoo-backed eval artifacts. Same Mesh trajectory evaluation underneath; kept so older stacks don't break.
 
-**Orchestration:**
-- `native` — in-process bounded actuators with full audit and persistence.
+**Orchestration**
+- `native` — in-process bounded actuators, full audit + persistence.
 - `goose` — CLI-bridged Goose review step before bounded local actuation.
 - `hermes` — CLI-bridged Hermes review step before bounded local actuation. Default image bundles the CLI.
 
-**Proposal lane (not an orchestration mode):**
-- `evo` — Mesh probes the configured `evo-hq-cli`, records an agent-task recommendation for bounded code-remediation runs. Launched via a separate operator steering command, not by normal run progression.
+**Proposal lane (not an orchestration mode)**
+- `evo` — Mesh probes the configured `evo-hq-cli` and records an agent-task recommendation for bounded code-remediation runs. Launched via a separate steering command, not normal run progression.
 
 CLI bridge details: [`docs/integrations.md`](./docs/integrations.md).
 
@@ -307,28 +312,34 @@ CLI bridge details: [`docs/integrations.md`](./docs/integrations.md).
 
 ## Configuration
 
-All runtime configuration lives in env vars (full template in `.env.example`). Key knobs:
+All runtime configuration lives in env vars (full template: `.env.example`). Highlights:
 
 ```bash
+# Server + state
 MESH_SERVER_HOST=0.0.0.0
 MESH_SERVER_PORT=8787
 MESH_STATE_DIRECTORY=.mesh-runtime-state
 MESH_VAULT_PATH=.mesh-runtime-state/vault
 MESH_STATE_BACKEND=file                 # or "postgres"
-MESH_DATABASE_URL=postgresql://...      # when MESH_STATE_BACKEND=postgres
+MESH_DATABASE_URL=postgresql://...      # required when MESH_STATE_BACKEND=postgres
 
+# Modes
 MESH_DEFAULT_STEERING_MODE=approval_gate
 MESH_EVALUATION_MODE=native
 MESH_ORCHESTRATION_MODE=native
 MESH_AGENT_FABRIC_MODE=native           # or "deepagents"
 
-# Diagnostic tool packs (always-on when set)
+# Diagnostic tool packs (auto-enable when set)
 MESH_PROMETHEUS_URL=http://prom:9090
 MESH_LOKI_URL=http://loki:3100
 MESH_JAEGER_URL=http://jaeger:16686
 MESH_PG_DSN=postgresql://...
 MESH_AWS_TOOLS_ENABLED=1
 MESH_MCP_SERVERS=name=stdio://path/to/server
+
+# Ingest surfaces
+MESH_OTEL_RECEIVER_ENABLED=0            # POST /v1/metrics OTLP receiver
+MESH_OTEL_RECEIVER_TOKEN=               # optional bearer token
 
 # Live Kubernetes execution (off by default)
 MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=0
@@ -338,41 +349,61 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=default,boutique
 
 When `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=1` and the allowlist permits, `rollback_deployment` maps to `kubectl rollout undo` and `restart_deployment` to `kubectl rollout restart`. Both stay constrained by `MESH_KUBERNETES_ALLOWED_CONTEXTS` and `MESH_KUBERNETES_ALLOWED_NAMESPACES`.
 
+Postgres backend: see [`docs/postgres-persistence.md`](./docs/postgres-persistence.md).
+
 ---
 
 ## Repository layout
 
 ```
 mesh-intelligence/
-├── control_plane_server.py        # HTTP + SSE server (stdlib http.server)
-├── run_server.py                  # browser control-plane entrypoint
+├── control_plane_server.py        # stdlib HTTP + SSE server
+├── run_server.py                  # local dev API entrypoint
 ├── run_tui.py                     # curses terminal UI
 ├── setup_integrations.py          # detect / install CLI integrations
 ├── services/
-│   ├── runtime.py                 # MeshRuntimeEngine — stage orchestration
-│   ├── ingest/                    # signal → audited trigger
-│   ├── trigger/                   # trigger gating
-│   ├── investigation/             # agentic SRE harness
-│   │   ├── harness/               # ToolRegistry, LoopCritic, planner
-│   │   ├── tools/                 # 11 domain packs
-│   │   ├── cloudops_analyzers.py  # K8sGPT-style analyzers
-│   │   └── topology_builder.py    # InfraGraph populator
-│   ├── decision/                  # rule + LLM fallback proposers
-│   ├── evaluation/                # trajectory + scorer gates
-│   ├── orchestrator/              # native / goose / hermes / deepagents
-│   ├── actuators/                 # Kubernetes / flags / incidents
-│   ├── feedback/                  # post-execution observers
-│   └── benchmark/                 # CloudOpsBench / Reth scenarios
+│   ├── runtime.py                 # MeshRuntimeEngine — pipeline orchestration
+│   ├── control_plane.py           # RunCoordinator — runs, approvals, watchers, vault, webhooks
+│   ├── pipeline.py                # FirstSlicePipeline thin wrapper
+│   ├── ingest/                    # raw payload → EventEnvelope
+│   ├── trigger/                   # envelope → Trigger
+│   ├── evidence/                  # EvidencePack assembly + Reth probe registry
+│   ├── investigation/
+│   │   ├── harness/               # planner + critic + tool registry + loop
+│   │   ├── tools/                 # always-on read-only tool packs
+│   │   ├── cloudops_*, reth_planner, llm_planner, rca, topology_builder
+│   ├── scenario_analysis/
+│   ├── decision/                  # HypothesisEngine + LLM proposers
+│   ├── evaluation/                # policy gates, promptfoo bridge, SRE judge
+│   ├── orchestrator/              # native + goose/hermes/latentmas/deepagents/evo bridges
+│   │   └── service_agents/        # agent mesh registry
+│   ├── actuators/                 # k8s, argocd, systemd-ssh, repo_patch, load_balancer
+│   ├── feedback/                  # Prometheus + k8s post-action observers
+│   ├── observer/                  # LLM observer (redacted) for simulation
+│   ├── watchers/                  # k8s + base watcher daemons
+│   ├── benchmark/                 # CloudOpsBench / LogHub / SREGym + gates + scoring
+│   ├── signal_correlator.py · signal_history/ · signal_profiles/
+│   └── simulation/ · skills/
 ├── shared/mesh_runtime/
-│   ├── config.py                  # RuntimeConfig
-│   ├── infra_graph.py             # typed K8s topology graph
-│   ├── merkle.py                  # event-log Merkle tree
-│   ├── vault.py                   # Obsidian-compatible vault mirror
-│   └── state.py                   # run state store
-├── web/                           # React/Vite browser control plane
-├── fixtures/                      # scenario JSON
-├── policies/                      # remediation policy JSON
-├── tests/
+│   ├── schemas/                   # JSON Schema source of truth
+│   ├── contracts.py · config.py
+│   ├── infra_graph.py             # typed topology graph
+│   ├── merkle.py · vault.py       # audit
+│   ├── postgres_state.py · state.py · state_store_factory.py
+│   ├── reasoning_bank.py · learning.py · trust_ladder.py
+│   └── alert_store.py · webhook_templates.py · …
+├── web/                           # React 18 + Vite + TS browser UI
+├── tui.py                         # textual TUI implementation
+├── simulation/                    # synthetic Reth fault-injection harness
+├── benchmarks/                    # scenarios, corpora, gate config
+├── fixtures/                      # signals, decisions, webhook templates, monitoring corpus, codebases
+├── policies/                      # autonomy, metric-actions, protected-scope, reth-node, rollback
+├── plugins/mesh-intelligence/     # skills bundle
+├── latent-mesh/LatentMAS/         # vendored Rust multi-agent subsystem (cargo)
+├── deepagents/                    # vendored DeepAgents package (editable install)
+├── migrations/                    # state-store migrations
+├── scripts/                       # ops / CI / contract-gen
+├── tests/                         # pytest-compatible (unittest-based)
 └── docs/
 ```
 
@@ -380,47 +411,62 @@ mesh-intelligence/
 
 ## Verification
 
-```bash
-# Python tests (fast)
-uv run python -m unittest discover tests -v
+Canonical validation gates (also in [`AGENTS.md`](./AGENTS.md)):
 
-# Targeted subsets
+```bash
+# Python tests
+PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest
+
+# Lint + typecheck (cache in /tmp if default cache dirs aren't writable)
+RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check .
+TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagents --with mypy mypy --strict \
+  --exclude 'deepagents/|latent-mesh/LatentMAS/|services/skills/'
+
+# Web build
+npm --prefix web ci
+npm --prefix web run build
+
+# Rust (only when touching latent-mesh/LatentMAS/)
+(cd latent-mesh/LatentMAS && cargo test && cargo clippy)
+```
+
+Note: `mypy --strict` is currently scoped (per `pyproject.toml`) to `services/decision/hypothesis_engine.py`. The rest of the runtime is being typed incrementally — this is a partial gate by design, not whole-repo proof.
+
+Targeted subsets are easy to run:
+
+```bash
 uv run python -m unittest tests.test_investigation_harness
 uv run python -m unittest tests.test_cloudops_analyzers
-uv run python -m unittest tests.test_topology
-
-# Browser UI
-cd web && npm test && cd ..
 
 # Live Kubernetes E2E (requires k3d/k3s + kubeconfig)
 MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=1 \
   uv run python -m unittest tests.test_kubernetes_live_e2e
 ```
 
-CI runs the Python test suite on every PR. See [`AGENTS.md`](./AGENTS.md) for contributor expectations.
-
 ---
 
 ## Documentation index
 
 | Topic | File |
-|---|---|
+| --- | --- |
+| From-source codebase overview | [`docs/codebase-overview.md`](./docs/codebase-overview.md) |
 | Architecture deep-dive | [`architecture.md`](./architecture.md) |
 | API + runtime map | [`docs/architecture/api-and-runtime-map.md`](./docs/architecture/api-and-runtime-map.md) |
 | HTTP API reference | [`docs/api-reference.md`](./docs/api-reference.md) |
-| Extending Mesh (plug-ins) | [`docs/extending-mesh.md`](./docs/extending-mesh.md) |
 | Investigation harness | [`docs/investigation-harness.md`](./docs/investigation-harness.md) |
+| Extending Mesh | [`docs/extending-mesh.md`](./docs/extending-mesh.md) |
 | All-in-one compose stack | [`docs/all-in-one-compose-stack.md`](./docs/all-in-one-compose-stack.md) |
-| CLI integrations (Goose/Hermes/Promptfoo/Evo) | [`docs/integrations.md`](./docs/integrations.md) |
+| CLI integrations (Goose / Hermes / Promptfoo / Evo) | [`docs/integrations.md`](./docs/integrations.md) |
 | Postgres persistence | [`docs/postgres-persistence.md`](./docs/postgres-persistence.md) |
 | Production runbook | [`docs/production-live-runbook.md`](./docs/production-live-runbook.md) |
 | Memory + reasoning bank | [`docs/memory-architecture.md`](./docs/memory-architecture.md) · [`docs/reasoning-bank.md`](./docs/reasoning-bank.md) |
-| Safety loop | [`docs/remediation-safety-loop.md`](./docs/remediation-safety-loop.md) |
+| Remediation safety loop | [`docs/remediation-safety-loop.md`](./docs/remediation-safety-loop.md) |
 | Scenario analysis | [`docs/scenario-analysis.md`](./docs/scenario-analysis.md) |
 
 ---
 
 ## License & contributing
 
+Contributor expectations: [`AGENTS.md`](./AGENTS.md).
 
-**External messaging:** prefer **policy-guided**, **bounded**, and **intent-driven** remediation. Avoid **"self-healing"** or generic **"AI-powered"** framing — Mesh runs are **operator-steerable** and **evaluation-gated** unless explicit interruptible auto mode is enabled.
+**External messaging:** prefer **policy-guided**, **bounded**, and **intent-driven** remediation. Avoid "self-healing" or generic "AI-powered" framing — Mesh runs are operator-steerable and evaluation-gated unless explicit interruptible auto mode is enabled.
