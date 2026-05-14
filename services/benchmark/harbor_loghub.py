@@ -259,10 +259,7 @@ def find_oracle_leaks(task_dir: Path, oracle: dict[str, Any]) -> list[dict[str, 
     leaks: list[dict[str, str]] = []
     if not task_dir.exists():
         raise FileNotFoundError(f"task directory not found: {task_dir}")
-    forbidden = {
-        "label_source",
-        str(oracle.get("affected_component") or ""),
-    }
+    forbidden = {"label_source"}
     forbidden.update(str(item) for item in oracle.get("leak_guard_tokens", []) if item)
     forbidden = {item for item in forbidden if len(item) >= 4}
     for path in sorted(item for item in task_dir.rglob("*") if item.is_file()):

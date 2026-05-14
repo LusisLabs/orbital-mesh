@@ -25,6 +25,35 @@ python -m pip install -e .
 
 The package uses only the Python standard library.
 
+## Data
+
+This repository does **not** include the full Loghub corpus. Loghub is a large
+external dataset, so users download or mount it separately and point the
+benchmark at the local files.
+
+Good starting points:
+
+- Loghub GitHub repository: `https://github.com/logpai/loghub`
+- Loghub archive/mirror links referenced by the Loghub project
+
+Expected local shape can be either a single log file:
+
+```text
+/data/loghub/Apache/Apache.log
+```
+
+or a dataset directory:
+
+```text
+/data/loghub/HDFS/
+  HDFS.log
+  anomaly_label.csv        # optional, when available
+```
+
+Label files are optional. If a CSV file whose name includes `label`,
+`anomaly`, `groundtruth`, or `ground_truth` is present, positive rows are used
+to create `gold` cases. Otherwise anomaly-looking lines become `silver` cases.
+
 ## Build Cases
 
 ```bash
@@ -38,6 +67,25 @@ loghub-benchmark build \
 The build step writes deterministic case JSON under `cases/` plus a manifest.
 If label/anomaly CSV files are present, matching positive rows become `gold`
 cases. Unlabeled anomaly-looking lines become `silver` cases.
+
+## Partitions
+
+Each case receives a deterministic split from:
+
+```text
+sha256("<split-salt>:<case-id>") % 100
+```
+
+The default split map is:
+
+- `smoke`: buckets `0-4`  (~5%)
+- `dev`: buckets `5-24`  (~20%)
+- `eval`: buckets `25-99` (~75%)
+- `full`: not a stored split; export-time alias for all splits
+
+The default salt is `mesh-loghub-harbor-v1`. Keep the salt fixed for published
+benchmark releases so splits remain reproducible. Use `dev` for tuning and
+`eval` for held-out reporting.
 
 ## Export Harbor Tasks
 
@@ -60,6 +108,11 @@ Generated tasks use:
 
 Private oracle files are written separately under `private_oracles/`. Do not
 mount or copy those into the agent-visible task environment.
+
+The generated task directory intentionally does not contain the oracle answer.
+During standalone verifier smoke tests, pass the oracle path with
+`LOGHUB_HARBOR_ORACLE_PATH`. In a Harbor deployment, mount or inject the oracle
+only for verifier execution.
 
 ## Import Harbor Results
 
@@ -111,3 +164,9 @@ Safe recommendation labels are `escalate`, `investigate`, `no_action`,
 Use `gold` for public claims. `silver` and `stress` are valuable engineering
 tracks, but they are heuristic and should not be presented as leaderboard-grade
 root-cause accuracy.
+
+Recommended report language:
+
+- Publishable: `gold/eval`, fixed commit, fixed split salt, fixed model/tool
+  budget, repeated runs.
+- Engineering-only: `silver`, `stress`, or ad hoc local corpora.
