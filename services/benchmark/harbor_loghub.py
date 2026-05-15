@@ -107,7 +107,7 @@ def build_loghub_cases(config: LoghubCaseBuildConfig) -> LoghubBuildResult:
         lines = log_path.read_text(encoding="utf-8", errors="ignore").splitlines()
         for index, line in enumerate(lines):
             labeled_positive = labels.is_positive(log_path, index + 1, line)
-            heuristic_positive = bool(ANOMALY_RE.search(line))
+            heuristic_positive = bool(ANOMALY_RE.search(line)) and not labels.is_known_normal(log_path, index + 1)
             if not labeled_positive and not heuristic_positive:
                 continue
             track = _case_track(config.track, labeled_positive)
@@ -664,11 +664,13 @@ class _LabelIndex:
         *,
         global_line_numbers: set[int] | None = None,
         line_numbers_by_file: dict[str, set[int]] | None = None,
+        normal_line_numbers_by_file: dict[str, set[int]] | None = None,
         tokens: set[str] | None = None,
         label_files: list[Path] | None = None,
     ):
         self.global_line_numbers = global_line_numbers or set()
         self.line_numbers_by_file = line_numbers_by_file or {}
+        self.normal_line_numbers_by_file = normal_line_numbers_by_file or {}
         self.tokens = tokens or set()
         self.label_files = label_files or []
 
@@ -683,40 +685,65 @@ class _LabelIndex:
         normalized = line.lower()
         return any(token and token.lower() in normalized for token in self.tokens)
 
+    def is_known_normal(self, log_path: Path, line_number: int) -> bool:
+        for key in {log_path.name.lower(), log_path.as_posix().lower()}:
+            if line_number in self.normal_line_numbers_by_file.get(key, set()):
+                return True
+        return False
+
 
 def _load_label_index(input_path: Path) -> _LabelIndex:
     root = input_path if input_path.is_dir() else input_path.parent
     label_files = [
         path
         for path in sorted(root.rglob("*.csv"))
-        if any(token in path.name.lower() for token in ("label", "anomaly", "groundtruth", "ground_truth"))
+        if _looks_like_label_file(path)
     ]
     global_line_numbers: set[int] = set()
     line_numbers_by_file: dict[str, set[int]] = {}
+    normal_line_numbers_by_file: dict[str, set[int]] = {}
     tokens: set[str] = set()
     for label_file in label_files:
         try:
             with label_file.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
                 reader = csv.DictReader(handle)
                 for row in reader:
-                    if not _positive_label(row):
-                        continue
+                    has_label = _has_label_field(row)
+                    positive_label = _positive_label(row)
                     row_line_numbers = _line_numbers_from_row(row)
-                    file_tokens = _file_tokens_from_row(row)
-                    if file_tokens:
+                    file_tokens = _file_tokens_from_row(row) | _file_tokens_from_label_file(label_file)
+                    if not row_line_numbers:
+                        if positive_label:
+                            tokens.update(_tokens_from_row(row))
+                        continue
+                    target = line_numbers_by_file if positive_label else normal_line_numbers_by_file
+                    if file_tokens and (positive_label or has_label):
                         for file_token in file_tokens:
-                            line_numbers_by_file.setdefault(file_token.lower(), set()).update(row_line_numbers)
-                    elif input_path.is_file():
+                            target.setdefault(file_token.lower(), set()).update(row_line_numbers)
+                    elif input_path.is_file() and positive_label:
                         global_line_numbers.update(row_line_numbers)
-                    tokens.update(_tokens_from_row(row))
+                    if positive_label:
+                        tokens.update(_tokens_from_row(row))
         except csv.Error:
             continue
     return _LabelIndex(
         global_line_numbers=global_line_numbers,
         line_numbers_by_file=line_numbers_by_file,
+        normal_line_numbers_by_file=normal_line_numbers_by_file,
         tokens=tokens,
         label_files=label_files,
     )
+
+
+def _looks_like_label_file(path: Path) -> bool:
+    if any(token in path.name.lower() for token in ("label", "anomaly", "groundtruth", "ground_truth", "structured")):
+        return True
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore", newline="") as handle:
+            reader = csv.DictReader(handle)
+            return bool(reader.fieldnames) and any(field.lower() in {"label", "anomaly", "is_anomaly", "failure", "status", "class"} for field in reader.fieldnames)
+    except csv.Error:
+        return False
 
 
 def _positive_label(row: dict[str, str]) -> bool:
@@ -729,6 +756,10 @@ def _positive_label(row: dict[str, str]) -> bool:
             return False
         return True
     return False
+
+
+def _has_label_field(row: dict[str, str]) -> bool:
+    return any(key.lower() in {"label", "anomaly", "is_anomaly", "failure", "status", "class"} for key in row)
 
 
 def _line_numbers_from_row(row: dict[str, str]) -> set[int]:
@@ -753,6 +784,17 @@ def _file_tokens_from_row(row: dict[str, str]) -> set[str]:
                 values.add(token)
                 values.add(Path(token).name)
     return values
+
+
+def _file_tokens_from_label_file(path: Path) -> set[str]:
+    name = path.name
+    candidates = {name}
+    for suffix in ("_structured.csv", ".log_structured.csv", "_labels.csv", "_label.csv", ".csv"):
+        if name.endswith(suffix):
+            stem = name[: -len(suffix)]
+            candidates.add(stem)
+            candidates.add(f"{stem}.log")
+    return {candidate for candidate in candidates if candidate}
 
 
 def _tokens_from_row(row: dict[str, str]) -> set[str]:

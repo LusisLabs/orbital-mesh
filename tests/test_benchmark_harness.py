@@ -334,6 +334,46 @@ class BenchmarkHarnessTest(unittest.TestCase):
             self.assertEqual(1, manifest["publishable_case_count"])
             self.assertEqual({"gold": 1}, manifest["tracks"])
 
+    def test_loghub_harbor_build_uses_structured_csv_label_columns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus = root / "BGL"
+            corpus.mkdir()
+            (corpus / "BGL_2k.log").write_text(
+                "\n".join(
+                    [
+                        "INFO instruction cache parity error corrected",
+                        "FATAL node card failed with machine check",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (corpus / "BGL_2k.log_structured.csv").write_text(
+                "\n".join(
+                    [
+                        "LineId,Label,Content",
+                        "1,-,instruction cache parity error corrected",
+                        "2,FATAL,node card failed with machine check",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = build_loghub_cases(
+                LoghubCaseBuildConfig(
+                    dataset="BGL",
+                    input_path=corpus,
+                    output_dir=root / "cases",
+                    max_cases=5,
+                    split_salt="structured-labels",
+                )
+            )
+
+            self.assertEqual("gold", result.cases[0]["track"])
+            self.assertEqual(2, result.cases[0]["source"]["line"])
+
     def test_loghub_harbor_export_writes_task_without_oracle_leak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

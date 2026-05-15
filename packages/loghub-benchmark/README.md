@@ -50,9 +50,11 @@ or a dataset directory:
   anomaly_label.csv        # optional, when available
 ```
 
-Label files are optional. If a CSV file whose name includes `label`,
-`anomaly`, `groundtruth`, or `ground_truth` is present, positive rows are used
-to create `gold` cases. Otherwise anomaly-looking lines become `silver` cases.
+Label files are optional. If a CSV file has a label-like name or a label column
+such as `Label`, `Anomaly`, `is_anomaly`, `Failure`, `Status`, or `Class`,
+positive rows are used to create `gold` cases. This includes Loghub's standard
+`*_structured.csv` files when they contain a `Label` column. Otherwise
+anomaly-looking lines become `silver` cases.
 
 ## Build Cases
 
@@ -65,8 +67,9 @@ loghub-benchmark build \
 ```
 
 The build step writes deterministic case JSON under `cases/` plus a manifest.
-If label/anomaly CSV files are present, matching positive rows become `gold`
-cases. Unlabeled anomaly-looking lines become `silver` cases.
+If label/anomaly CSV files or structured CSVs with positive label rows are
+present, matching positive rows become `gold` cases. Unlabeled anomaly-looking
+lines become `silver` cases.
 
 ## Partitions
 

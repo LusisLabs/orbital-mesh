@@ -112,6 +112,47 @@ class LoghubBenchmarkTests(unittest.TestCase):
             )
             self.assertEqual(1.0, imported.summary["pass_at_3"])
 
+    def test_loghub_structured_csv_labels_create_gold_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            corpus = root / "BGL"
+            corpus.mkdir()
+            (corpus / "BGL_2k.log").write_text(
+                "\n".join(
+                    [
+                        "INFO instruction cache parity error corrected",
+                        "FATAL node card failed with machine check",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (corpus / "BGL_2k.log_structured.csv").write_text(
+                "\n".join(
+                    [
+                        "LineId,Label,Content",
+                        "1,-,instruction cache parity error corrected",
+                        "2,FATAL,node card failed with machine check",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            cases = build_loghub_cases(
+                LoghubCaseBuildConfig(
+                    dataset="BGL",
+                    input_path=corpus,
+                    output_dir=root / "cases",
+                    max_cases=5,
+                    split_salt="structured-labels",
+                )
+            )
+
+            self.assertTrue(cases.cases)
+            self.assertEqual("gold", cases.cases[0]["track"])
+            self.assertEqual(2, cases.cases[0]["source"]["line"])
+
     def test_scoring_penalizes_hallucinated_and_unsafe_answers(self) -> None:
         grade = score_loghub_answer(
             {
