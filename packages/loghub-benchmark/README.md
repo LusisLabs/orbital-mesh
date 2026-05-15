@@ -25,6 +25,11 @@ python -m pip install -e .
 
 The package uses only the Python standard library.
 
+## Demo
+
+For a tiny end-to-end smoke test using the included `examples/tiny.log`, see
+[`docs/DEMO.md`](docs/DEMO.md).
+
 ## Data
 
 This repository does **not** include the full Loghub corpus. Loghub is a large
