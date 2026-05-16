@@ -424,6 +424,17 @@ export default function App() {
   const [systemConnection, setSystemConnection] = useState<ConnectionStatus>("reconnecting");
   const [runConnection, setRunConnection] = useState<ConnectionStatus>("reconnecting");
 
+  // Presentation mode — toggled via ?present=1 URL param. Hides
+  // sidebar + status pill + connection dots, centres the main
+  // content, bumps typography. For investor demo recording. Read
+  // once at mount; URL changes during a demo are not expected.
+  // Defensive: defaults to false in any non-browser environment
+  // (vitest jsdom may not expose window.location reliably).
+  const isPresentationMode = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("present") === "1";
+  }, []);
+
   const [booting, setBooting] = useState(true);
   const [launching, setLaunching] = useState(false);
   const [steering, setSteering] = useState("");
@@ -1281,7 +1292,7 @@ export default function App() {
           };
 
   return (
-    <div className={`mesh-console-shell mesh-agent-console ${rightRailOpen ? "drawer-open" : ""}`}>
+    <div className={`mesh-console-shell mesh-agent-console ${rightRailOpen ? "drawer-open" : ""}${isPresentationMode ? " mesh-present-mode" : ""}`}>
       <Toaster toasts={toasts} onDismiss={dismissToast} />
 
       <aside className={`mesh-sidebar mesh-session-rail ${leftRailOpen ? "" : "collapsed"}`} aria-label="orbital-mesh workspace sessions">
@@ -1295,24 +1306,27 @@ export default function App() {
             </div>
           ) : null}
         </div>
+        {/*
+          Sidebar nav redesign.
+
+          The previous 16-item flat nav + 6-card workstreams block put
+          ~24 elements in the sidebar. Notion-like baseline is 6-10.
+          We split into "primary" (always visible) + "more" (collapsed
+          by default, expands on click). Workstreams section is dropped
+          entirely — every entry duplicated a nav item with extra
+          status badges that are now better surfaced in their own pages.
+
+          Primary picks: the six surfaces an operator needs in incident
+          flow. Everything else is one click away under "More".
+        */}
         <nav className="mesh-nav" data-testid="mesh-primary-nav">
           {([
             ["overview", "Command", <Codicon name="home" />],
-            ["runs", "Evidence Runs", <Codicon name="run-all" />],
+            ["runs", "Runs", <Codicon name="run-all" />],
             ["approvals", "Approvals", <Codicon name="pass" />],
             ["automation", "Launch", <Codicon name="play" />],
-            ["simulator", "Simulator", <Codicon name="beaker" />],
-            ["trust", "Trust Ladder", <Codicon name="shield" />],
-            ["packets", "Pilot Packet", <Codicon name="package" />],
-            ["control-plane", "Readiness", <Codicon name="server-environment" />],
             ["evidence", "Evidence", <Codicon name="references" />],
-            ["integrations", "Connectors", <PlugIcon />],
-            ["agents", "Proposal Lanes", <Codicon name="hubot" />],
-            ["fleet", "Signals", <Codicon name="broadcast" />],
-            ["hermes", "Hermes", <Codicon name="sparkle" />],
-            ["audit", "Audit", <Codicon name="verified" />],
-            ["roadmap", "Roadmap", <Codicon name="list-tree" />],
-            ["settings", "Settings", <Codicon name="tools" />],
+            ["control-plane", "Readiness", <Codicon name="server-environment" />],
           ] as Array<[AppView, string, React.ReactNode]>).map(([view, label, icon]) => (
             <button
               key={view}
@@ -1329,70 +1343,47 @@ export default function App() {
               {leftRailOpen ? <span>{label}</span> : null}
             </button>
           ))}
+          {leftRailOpen ? (
+            <details className="mesh-nav-more">
+              <summary>More</summary>
+              {([
+                ["simulator", "Simulator", <Codicon name="beaker" />],
+                ["trust", "Trust Ladder", <Codicon name="shield" />],
+                ["packets", "Pilot Packet", <Codicon name="package" />],
+                ["integrations", "Connectors", <PlugIcon />],
+                ["agents", "Proposal Lanes", <Codicon name="hubot" />],
+                ["fleet", "Signals", <Codicon name="broadcast" />],
+                ["hermes", "Hermes", <Codicon name="sparkle" />],
+                ["audit", "Audit", <Codicon name="verified" />],
+                ["roadmap", "Roadmap", <Codicon name="list-tree" />],
+                ["settings", "Settings", <Codicon name="tools" />],
+              ] as Array<[AppView, string, React.ReactNode]>).map(([view, label, icon]) => (
+                <button
+                  key={view}
+                  className={`mesh-nav-item ${activeView === view ? "active" : ""}`}
+                  type="button"
+                  onClick={() => {
+                    setActiveView(view);
+                    setRightRailOpen(false);
+                  }}
+                  title={label}
+                  aria-label={label}
+                >
+                  {icon}
+                  <span>{label}</span>
+                </button>
+              ))}
+            </details>
+          ) : null}
         </nav>
-        {leftRailOpen ? (
-          <div className="mesh-rail-workspaces" aria-label="Mesh workstreams">
-            <div className="mesh-rail-section-title">
-              <span>Workstreams</span>
-              <Codicon name="filter" />
-            </div>
-            <RailWorkstreamButton
-              icon={<Codicon name="run-all" />}
-              title="Active run"
-              detail={activeRun ? humanize(activeRun.stage) : "No run selected"}
-              count={activeRun ? activeRun.run_id.slice(0, 8) : String(runs.length)}
-              active={activeView === "runs"}
-              onClick={() => {
-                setActiveView("runs");
-                setRunDetailTab("timeline");
-              }}
-            />
-            <RailWorkstreamButton
-              icon={<Codicon name="server-environment" />}
-              title="Readiness gates"
-              detail={readiness?.blockers.length ? readiness.blockers[0] : `${humanize(readiness?.profile ?? "local")} profile`}
-              count={readiness?.status ?? "boot"}
-              active={activeView === "control-plane"}
-              tone={(readiness?.blockers.length ?? 0) > 0 ? "warn" : "good"}
-              onClick={() => setActiveView("control-plane")}
-            />
-            <RailWorkstreamButton
-              icon={<Codicon name="diff" />}
-              title="Review queue"
-              detail={approvalQueue.length > 0 ? "Operator action required" : "No pending approval"}
-              count={String(approvalQueue.length)}
-              active={activeView === "approvals"}
-              tone={approvalQueue.length > 0 ? "warn" : "good"}
-              onClick={() => setActiveView("approvals")}
-            />
-            <RailWorkstreamButton
-              icon={<Codicon name="beaker" />}
-              title="Policy simulator"
-              detail={policySimulation ? (policySimulation.blockers.length ? "Denied path visible" : "Allowed path visible") : "Mutation-free replay"}
-              count={String(simulations.length)}
-              active={activeView === "simulator"}
-              tone={policySimulation?.blockers.length ? "warn" : "neutral"}
-              onClick={() => setActiveView("simulator")}
-            />
-            <RailWorkstreamButton
-              icon={<Codicon name="references" />}
-              title="Evidence graph"
-              detail={`${recentEvidenceEvents.length} recent proof events`}
-              count={String(recentEvidenceEvents.length)}
-              active={activeView === "evidence" || activeView === "runs"}
-              onClick={() => setActiveView("evidence")}
-            />
-            <RailWorkstreamButton
-              icon={<Codicon name="package" />}
-              title="Pilot packet"
-              detail={pilotPacket ? humanize(pilotPacket.status) : "No packet"}
-              count={pilotPacket?.missing_evidence.length ? String(pilotPacket.missing_evidence.length) : "0"}
-              active={activeView === "packets"}
-              tone={pilotPacket?.status === "go" ? "good" : "warn"}
-              onClick={() => setActiveView("packets")}
-            />
-          </div>
-        ) : null}
+        {/*
+          Workstreams section deliberately removed. Each card was a
+          status-decorated duplicate of an existing nav item (Active
+          run → Runs, Readiness gates → Readiness, Review queue →
+          Approvals, etc). The status badges that gave them value are
+          surfaced on their target pages — sidebar should be navigation,
+          not a second dashboard.
+        */}
         <button className="mesh-sidebar-toggle" type="button" onClick={() => setLeftRailOpen((open) => !open)}>
           <Codicon name={leftRailOpen ? "chevron-left" : "chevron-right"} />
           {leftRailOpen ? "Collapse rail" : "Expand rail"}
@@ -1401,34 +1392,29 @@ export default function App() {
 
       <div className="mesh-console-main">
         <header className="mesh-console-topbar">
+          {/*
+            Slimmed topbar — Notion-like.
+
+            Previous layout: 3-line title block (kicker + h2 + goal/run
+            subline) + 4 metric tiles + ticker + 2 dots + 2 buttons.
+            That's ~12 elements competing for the operator's attention.
+
+            New layout: page title only (1 line) + system status pill +
+            live ticker + 2 dots + primary action. Detailed status that
+            used to live in tiles (readiness profile, pilot packet
+            details, authority breakdown) now lives on its own pages
+            where it has room to breathe.
+          */}
           <div className="mesh-task-title">
-            <p className="mesh-kicker">Production deployment control plane</p>
             <h2>{viewTitle(activeView)}</h2>
-            <span>{activeGoal?.title ?? "No active goal"} / {activeRun ? activeRun.run_id.slice(0, 12) : "no run"}</span>
+            {activeRun ? (
+              <span className="mesh-task-subtle">{activeRun.run_id.slice(0, 12)}</span>
+            ) : null}
           </div>
-          <div className="mesh-topbar-metrics">
-            <HeaderMetric icon={<Codicon name="server-environment" />} label="Environment" value={environmentLabel} subline={buildSubline} />
-            <HeaderMetric
-              icon={<Codicon name="shield" />}
-              label="Readiness"
-              value={readiness ? humanize(readiness.profile) : "Unknown"}
-              subline={requiredChecksTotal ? `${requiredChecksPassing}/${requiredChecksTotal} required gates` : undefined}
-              warning={readinessBlockerCount ? `${readinessBlockerCount} blockers` : undefined}
-              tone={readinessBlockerCount ? "danger" : "good"}
-            />
-            <HeaderMetric
-              icon={<Codicon name="package" />}
-              label="Pilot packet"
-              value={pilotPacket ? humanize(pilotPacket.status) : "Unknown"}
-              subline={pilotPacket ? `${pilotPacket.observed.run_count} evidence runs` : undefined}
-              warning={pilotPacket?.missing_evidence.length ? `${pilotPacket.missing_evidence.length} missing proofs` : undefined}
-              tone={pilotPacket?.status === "go" ? "good" : pilotPacket ? "warn" : "danger"}
-            />
-            <HeaderMetric
-              icon={<Codicon name="git-branch" />}
-              label="Authority"
-              value={humanize(activeRun?.steering_mode ?? launchDraft.steeringMode)}
-              subline={`${trustLadder.length} trust entries`}
+          <div className="mesh-topbar-status">
+            <SystemStatusPill
+              readinessBlockers={readinessBlockerCount}
+              pilotStatus={pilotPacket?.status}
             />
           </div>
           <div className="mesh-topbar-actions">
@@ -1785,34 +1771,13 @@ function PlugIcon() {
   return <Codicon name="plug" />;
 }
 
-function RailWorkstreamButton({
-  icon,
-  title,
-  detail,
-  count,
-  active,
-  tone = "neutral",
-  onClick,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  detail: string;
-  count: string;
-  active: boolean;
-  tone?: "good" | "warn" | "neutral";
-  onClick: () => void;
-}) {
-  return (
-    <button className={`mesh-rail-workstream ${active ? "active" : ""} ${tone}`} type="button" onClick={onClick}>
-      <span className="mesh-rail-workstream-icon">{icon}</span>
-      <span className="mesh-rail-workstream-copy">
-        <strong>{title}</strong>
-        <small>{detail}</small>
-      </span>
-      <span className="mesh-rail-workstream-count">{count}</span>
-    </button>
-  );
-}
+// ``RailWorkstreamButton`` was deleted when we dropped the sidebar
+// workstreams section in the Notion-like chrome trim. Each card was a
+// status-decorated duplicate of an existing nav item (Active run →
+// Runs, Readiness gates → Readiness, …); the status badges that gave
+// them value are now surfaced on their target pages where there's
+// room. Keeping the deletion notice here so future "where did the
+// workstream cards go?" greps land on context.
 
 function viewTitle(view: AppView): string {
   switch (view) {
@@ -5367,33 +5332,10 @@ function formatPercent(value: number | null): string {
   return typeof value === "number" ? `${Math.round(clamp01(value) * 100)}%` : "unscored";
 }
 
-function HeaderMetric({
-  icon,
-  label,
-  value,
-  tone,
-  subline,
-  warning,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  tone?: "good" | "warn" | "danger";
-  subline?: string;
-  warning?: string;
-}) {
-  return (
-    <div className={`header-metric ${tone ?? ""}`}>
-      <span className="header-metric-icon">{icon}</span>
-      <div>
-        <p>{label}</p>
-        <strong>{value}</strong>
-        {subline ? <span className="header-metric-subline">{subline}</span> : null}
-        {warning ? <span className="header-metric-warning">{warning}</span> : null}
-      </div>
-    </div>
-  );
-}
+// ``HeaderMetric`` was deleted with the topbar metric-rack reduction.
+// The four tiles (Environment / Readiness / Pilot packet / Authority)
+// became one ``SystemStatusPill`` — detailed status now lives on the
+// pages that own each surface, where it has room to breathe.
 
 function SectionTitle({ icon, title }: { icon: React.ReactNode; title: string }) {
   return (
@@ -5489,6 +5431,43 @@ function StatusChip({ label, tone }: { label: string; tone: string }) {
   return (
     <span className="status-chip" style={{ borderColor: tone, color: tone }}>
       {label}
+    </span>
+  );
+}
+
+/**
+ * Compact single-pill system status — the topbar's only health
+ * surface after the metric-tile reduction. Three states only:
+ *
+ *   - "all-green" when readiness has zero blockers AND pilot packet
+ *     status is "go" (or unknown — absence of info isn't a blocker).
+ *   - "warn" when pilot packet is in a non-go state but readiness is
+ *     fine. Operator should look but no action is forced.
+ *   - "blocked" when readiness has at least one blocker. This is the
+ *     only state that makes the pill demand attention.
+ *
+ * Detail per-blocker / per-gate lives on the Readiness page where
+ * it has room. The pill is glance-only; click to jump to Readiness.
+ */
+function SystemStatusPill({
+  readinessBlockers,
+  pilotStatus,
+}: {
+  readinessBlockers: number;
+  pilotStatus: string | null | undefined;
+}) {
+  const blocked = readinessBlockers > 0;
+  const warn = !blocked && pilotStatus !== undefined && pilotStatus !== null && pilotStatus !== "go";
+  const tone = blocked ? "blocked" : warn ? "warn" : "good";
+  const label = blocked
+    ? `${readinessBlockers} blocker${readinessBlockers === 1 ? "" : "s"}`
+    : warn
+    ? "Pilot pending"
+    : "All systems go";
+  return (
+    <span className={`mesh-status-pill ${tone}`} title="System health summary">
+      <span className="mesh-status-pill-dot" />
+      <span>{label}</span>
     </span>
   );
 }
