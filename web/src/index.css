@@ -4336,3 +4336,221 @@ body {
     font-size: 1.28rem;
   }
 }
+
+/* ─── Motion: entrance + active-pulse primitives ───────────────────────────
+ *
+ * The agentic-loop visualisations (tool trajectory, ranked candidates,
+ * confidence movement) arrive via SSE. Without motion the rows just
+ * "pop" into existence and the live-streaming nature is invisible. These
+ * primitives give every demo-critical row a quiet entrance + an optional
+ * pulse for the currently-active item.
+ *
+ * Hand-rolled (no Framer Motion dep) because the gestures we need are
+ * narrow: slide-in-from-bottom + stagger + a heartbeat-pulse. Pure CSS
+ * keyframes are ~30 lines and add zero JS weight.
+ */
+
+@keyframes mesh-row-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes mesh-active-pulse {
+  /* Heartbeat ring around the currently-executing tool call. Subtle so
+   * the panel doesn't feel like a Christmas tree on a live demo. */
+  0%, 100% { box-shadow: 0 0 0 0 rgba(84, 138, 247, 0.32); }
+  50% { box-shadow: 0 0 0 4px rgba(84, 138, 247, 0); }
+}
+
+@keyframes mesh-bar-grow {
+  /* Confidence-bar grow-in. The bar's final width is set inline; the
+   * keyframe just grows from 0 → 100% of that. Looks like evidence
+   * accumulating rather than springing into place. */
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes mesh-ticker-pulse {
+  /* Top-bar live-event chip: a single soft flash when a new event lands. */
+  0% { background: rgba(84, 138, 247, 0.22); }
+  100% { background: rgba(84, 138, 247, 0); }
+}
+
+.mesh-row-enter {
+  animation: mesh-row-enter 280ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Stagger: nth-child delays so a list of rows arriving in the same SSE
+ * frame still cascades. Caps at 8 — beyond that the user notices the
+ * stalling rather than the cascade. */
+.mesh-row-enter-stagger:nth-child(1) { animation-delay: 0ms; }
+.mesh-row-enter-stagger:nth-child(2) { animation-delay: 60ms; }
+.mesh-row-enter-stagger:nth-child(3) { animation-delay: 120ms; }
+.mesh-row-enter-stagger:nth-child(4) { animation-delay: 180ms; }
+.mesh-row-enter-stagger:nth-child(5) { animation-delay: 240ms; }
+.mesh-row-enter-stagger:nth-child(6) { animation-delay: 300ms; }
+.mesh-row-enter-stagger:nth-child(7) { animation-delay: 360ms; }
+.mesh-row-enter-stagger:nth-child(8) { animation-delay: 420ms; }
+
+.mesh-active-pulse {
+  animation: mesh-active-pulse 1.8s ease-in-out infinite;
+}
+
+.mesh-bar-grow {
+  transform-origin: left center;
+  animation: mesh-bar-grow 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Respect prefers-reduced-motion. The motion is decorative; the data
+ * comes through either way. Don't impose vestibular triggers on users
+ * who have opted out. */
+@media (prefers-reduced-motion: reduce) {
+  .mesh-row-enter,
+  .mesh-row-enter-stagger,
+  .mesh-active-pulse,
+  .mesh-bar-grow {
+    animation: none !important;
+  }
+}
+
+/* ─── Live event ticker (top-bar) ─────────────────────────────────────────
+ *
+ * Thin strip that shows "what Mesh is doing right now" across the whole
+ * fleet. Lives in the topbar so the agentic-real-time feel is visible
+ * even when no specific run is selected.
+ */
+
+.mesh-event-ticker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.55rem;
+  background: rgba(24, 26, 29, 0.85);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--ink-secondary);
+  max-width: 36rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.6s ease;
+}
+
+.mesh-event-ticker.flash {
+  animation: mesh-ticker-pulse 600ms ease-out;
+}
+
+.mesh-event-ticker-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex-shrink: 0;
+  box-shadow: 0 0 6px rgba(84, 138, 247, 0.6);
+}
+
+.mesh-event-ticker-stage {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.mesh-event-ticker-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.mesh-event-ticker-empty {
+  color: var(--muted);
+  opacity: 0.7;
+}
+
+/* ─── Decision card hero ──────────────────────────────────────────────────
+ *
+ * Mesh's safety story lives in the autonomy_tier. The token surfaced in
+ * a generic ContextStat sells none of the differentiation. Promote it to
+ * a hero card with tier-coded color and a glanceable status badge.
+ */
+
+.mesh-decision-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--panel-border);
+  background: var(--panel-strong);
+  align-items: center;
+  transition: border-color 0.3s ease;
+}
+
+.mesh-decision-card .tier-icon {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid currentColor;
+}
+
+.mesh-decision-card .tier-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.mesh-decision-card .tier-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.mesh-decision-card .tier-headline {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesh-decision-card .tier-sub {
+  font-size: 0.7rem;
+  color: var(--ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mesh-decision-card .tier-badge {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.32rem 0.55rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid currentColor;
+  white-space: nowrap;
+}
+
+/* Tier color cascade — uses semantic tokens so theme switches still work. */
+.mesh-decision-card.tier-autonomous {
+  color: var(--accent-good);
+  border-color: rgba(115, 176, 10, 0.42);
+}
+.mesh-decision-card.tier-approval-required {
+  color: var(--accent-warm);
+  border-color: rgba(232, 163, 62, 0.42);
+}
+.mesh-decision-card.tier-escalated {
+  color: var(--accent-danger);
+  border-color: rgba(247, 84, 100, 0.42);
+}

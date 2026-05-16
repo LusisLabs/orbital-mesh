@@ -25,6 +25,11 @@ import { Background, Handle, Position, ReactFlow, type NodeProps } from "@xyflow
 import { api, connectRunStream, connectSystemStream, resolveBaseUrl } from "./api";
 import { AmbientAsciiSignal } from "./components/AmbientAsciiSignal";
 import { Inspector } from "./components/Inspector";
+import { ConfidenceStep } from "./components/rca/ConfidenceStep";
+import { DecisionCard } from "./components/rca/DecisionCard";
+import { LiveEventTicker } from "./components/rca/LiveEventTicker";
+import { RcaCandidateCard } from "./components/rca/RcaCandidateCard";
+import { ToolCallRow } from "./components/rca/ToolCallRow";
 import { Toaster, useToast } from "./components/Toaster";
 import { formatTimestamp, humanize, relativeTime, safeJsonParse } from "./lib/format";
 import {
@@ -1427,6 +1432,14 @@ export default function App() {
             />
           </div>
           <div className="mesh-topbar-actions">
+            {/*
+              Live event ticker — visible chrome-level "Mesh is doing
+              something right now" signal sourced from the system SSE
+              snapshot the parent already maintains in ``runs``. The
+              ticker filters to non-terminal runs internally so it
+              stays quiet between incidents.
+            */}
+            <LiveEventTicker activeRuns={runs} />
             <ConnectionDot status={systemConnection} label="System" />
             <ConnectionDot status={runConnection} label="Run" />
             <button className="action-button compact primary" type="button" onClick={headerPrimaryAction.onClick}>
@@ -2176,7 +2189,7 @@ function RunsView({
         ) : runDetailTab === "evidence" ? (
           <EvidencePanel events={recentEvidenceEvents} selectedEvent={selectedEvent} insights={selectedEventInsights} onJumpContext={onJumpContext} />
         ) : runDetailTab === "rca" ? (
-          <RcaPanel snapshot={rcaSnapshot} onJumpContext={onJumpContext} onOpenTopology={() => onRunDetailTabChange("topology")} />
+          <RcaPanel snapshot={rcaSnapshot} activeRun={activeRun} onJumpContext={onJumpContext} onOpenTopology={() => onRunDetailTabChange("topology")} />
         ) : runDetailTab === "approvals" ? (
           <RunApprovalPanel queue={approvalQueue} activeRun={activeRun} onJumpContext={onJumpContext} />
         ) : runDetailTab === "actions" ? (
@@ -3692,16 +3705,51 @@ function EvidencePanel({
 
 function RcaPanel({
   snapshot,
+  activeRun,
   onJumpContext,
   onOpenTopology,
 }: {
   snapshot: RcaSnapshot;
+  /**
+   * Optional. When present we surface the decision_type and autonomy
+   * tier as a hero card above the RCA summary — investors watching a
+   * demo want the safety story visible, and burying autonomy_tier in
+   * a generic stat doesn't sell it. The card is omitted entirely when
+   * the run hasn't reached a decision yet.
+   */
+  activeRun: RunDetail | null;
   onJumpContext: (tab: RightRailTab) => void;
   onOpenTopology: () => void;
 }) {
   const topCandidate = snapshot.candidates[0];
+  // Pull the RCA likely_cause for sub-text under the decision when
+  // available — it gives one line of context without forcing the
+  // operator to scan the full ranked list.
+  const rcaContext =
+    typeof snapshot.report?.likely_cause === "string"
+      ? (snapshot.report.likely_cause as string)
+      : topCandidate?.cause ?? null;
   return (
     <div className="mesh-detail-grid">
+      {(() => {
+        // ``decision`` lives on ``activeRun.artifacts.decision``
+        // (per the run lifecycle — see services/runtime.py:
+        // record_event("decision_ready", "decision", decision.to_dict())).
+        // Type the lookup defensively because ``artifacts`` is
+        // ``Record<string, any>`` and the Decision shape isn't
+        // narrowed in the contract types yet.
+        const decision = activeRun?.artifacts?.decision as
+          | { decision_type?: string; autonomy_tier?: string }
+          | undefined;
+        if (!decision?.decision_type) return null;
+        return (
+          <DecisionCard
+            decisionType={decision.decision_type}
+            autonomyTier={decision.autonomy_tier ?? null}
+            context={rcaContext}
+          />
+        );
+      })()}
       <section className="context-panel rca-summary-panel">
         <div className="context-panel-header">
           <div>
@@ -3710,7 +3758,16 @@ function RcaPanel({
           </div>
           <StatusChip
             label={snapshot.stopReason ? humanize(snapshot.stopReason) : "No report"}
-            tone={snapshot.blockers.some((blocker) => blocker.severity === "danger") ? "#f75464" : "#2aacb8"}
+            // Semantic tokens, not hardcoded hex. Falls back to the
+            // teal "accent" cool tone when nothing's wrong; switches to
+            // the danger accent the rest of the surface uses when a
+            // blocker is present. Theme switches and a11y contrast
+            // adjustments now propagate without touching this site.
+            tone={
+              snapshot.blockers.some((blocker) => blocker.severity === "danger")
+                ? "var(--accent-danger)"
+                : "var(--accent)"
+            }
           />
         </div>
         <div className="context-stat-grid">
@@ -3730,15 +3787,21 @@ function RcaPanel({
         <SectionTitle icon={<Activity size={14} />} title="Tool Trajectory" />
         <div className="rca-tool-list">
           {snapshot.tools.map((tool, index) => (
-            <article key={tool.id} className={`rca-tool-row ${tool.valid ? "valid" : "invalid"}`}>
-              <span className="rca-rank">{index + 1}</span>
-              <div>
-                <strong>{tool.name}</strong>
-                <small>{tool.summary || humanize(tool.status)}</small>
-                {tool.citationIds.length > 0 ? <code>{tool.citationIds.slice(0, 3).join(" / ")}</code> : null}
-              </div>
-              <StatusPill state={tool.valid ? "ready" : "degraded"} label={humanize(tool.status || "recorded")} />
-            </article>
+            <ToolCallRow
+              key={tool.id}
+              tool={tool}
+              rank={index + 1}
+              // "Active" = the most recently recorded tool when the
+              // harness hasn't yet stopped. This is the closest signal
+              // we have to "the agent is doing this RIGHT now" without
+              // adding a new field to the SSE event shape. Once the
+              // harness emits ``stop_reason``, no row is active and the
+              // pulse settles down.
+              isActive={
+                !snapshot.stopReason &&
+                index === snapshot.tools.length - 1
+              }
+            />
           ))}
           {snapshot.tools.length === 0 ? <EmptyState text="No read-only RCA tool calls are recorded." /> : null}
         </div>
@@ -3748,14 +3811,7 @@ function RcaPanel({
         <SectionTitle icon={<AlertTriangle size={14} />} title="Ranked Candidates" />
         <div className="rca-candidate-grid">
           {snapshot.candidates.map((candidate) => (
-            <article key={candidate.id} className="rca-candidate-card">
-              <div className="agent-attempt-header">
-                <strong>#{candidate.rank} {candidate.cause}</strong>
-                <span>{formatPercent(candidate.confidence)}</span>
-              </div>
-              {candidate.support.length > 0 ? <p>{candidate.support.slice(0, 4).join(", ")}</p> : null}
-              {candidate.citationIds.length > 0 ? <code>{candidate.citationIds.slice(0, 4).join(" / ")}</code> : null}
-            </article>
+            <RcaCandidateCard key={candidate.id} candidate={candidate} />
           ))}
           {snapshot.candidates.length === 0 ? <EmptyState text="No root-cause candidates are ranked yet." /> : null}
         </div>
@@ -3765,12 +3821,7 @@ function RcaPanel({
         <SectionTitle icon={<CircleDot size={14} />} title="Confidence Movement" />
         <div className="confidence-movement">
           {snapshot.confidenceMovement.map((point) => (
-            <div key={point.id} className="confidence-step">
-              <span>{point.label}</span>
-              <div className="confidence-track"><i style={{ width: `${Math.round(point.value * 100)}%`, background: point.tone }} /></div>
-              <strong>{Math.round(point.value * 100)}%</strong>
-              <small>{point.detail}</small>
-            </div>
+            <ConfidenceStep key={point.id} point={point} />
           ))}
           {snapshot.confidenceMovement.length === 0 ? <EmptyState text="No confidence-bearing artifacts are recorded." /> : null}
         </div>
