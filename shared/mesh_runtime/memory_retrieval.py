@@ -10,8 +10,31 @@ from .memory_verifier import verify_memory_candidates
 
 
 class MemoryRetrievalService:
-    def __init__(self, state_store: Any):
+    """Memory retrieval over observations, claims, and relationships.
+
+    The retrieval surface is three channels fused via reciprocal rank
+    fusion: ``lexical`` (token overlap), ``graph`` (1-hop expansion
+    via the ``RelationshipRecord`` table plus optional metapath
+    traversal through ``InfraGraph``), and ``vector`` (stub today —
+    returns no hits until an embedding backend is wired).
+
+    The ``infra_graph`` parameter is the bridge between mesh's memory
+    layer and its typed K8s topology layer. When provided, the graph
+    channel does NOT stop at the 1-hop relationship table; it walks
+    InfraGraph edges (``selects``, ``scheduled_on``, ``owns``, …) from
+    each seed claim's stamped ``infra_node_key`` to find
+    topologically-adjacent resources, then surfaces claims about
+    those resources. This is the SynergyRCA-style metapath traversal
+    that lets a worker-01 incident on ``redis-cart`` surface a
+    worker-01 claim attached to ``payment-service``. Without
+    ``infra_graph`` the channel falls back to its pre-bridge
+    1-hop-only behavior, so callers without an InfraGraph stay
+    functional.
+    """
+
+    def __init__(self, state_store: Any, infra_graph: Any = None):
         self.state_store = state_store
+        self.infra_graph = infra_graph
 
     def retrieve(self, request: dict[str, Any]) -> dict[str, Any]:
         query = str(request.get("query", "") or "").strip()
@@ -161,17 +184,66 @@ class MemoryRetrievalService:
         return [item_id for _score, item_id in sorted(scored, key=lambda item: item[0], reverse=True)]
 
     def _graph_rank(self, seed_ids: list[str], relationships: list[dict[str, Any]]) -> list[str]:
+        """Expand seeds along memory edges, then through InfraGraph if available.
+
+        Two-pass expansion:
+
+        1. **1-hop relationship walk** (pre-bridge behavior): for any
+           relationship row whose ``from_id``/``to_id`` is in the seed
+           set, surface the other endpoint. This catches
+           ``service → describes → claim`` and ``claim → describes →
+           service`` patterns.
+
+        2. **Metapath traversal through InfraGraph** (new): when
+           ``self.infra_graph`` is set AND a seed row carries an
+           ``infra_node_key``, walk InfraGraph's typed edges
+           (``selects``, ``scheduled_on``, ``owns``, …) from that
+           node to find topologically-adjacent resources. Each
+           adjacent node key is mapped back to the claims about it
+           by scanning ``relationships`` for matching
+           ``infra_node_key`` values. Surfaces e.g. claims about
+           pods scheduled on the same worker node as the seed
+           service's pods.
+
+        Bounded by design: at most 20 seeds, at most 50 InfraGraph
+        neighbors per seed, no recursion. Retrieval is fast and
+        latency-bounded; deeper graph reasoning is a follow-up.
+        """
         if not seed_ids:
             return []
         seeds = set(seed_ids[:20])
         expanded: list[str] = []
+        # Index relationships once for the metapath pass:
+        # ``infra_node_key → [claim_id]`` lets us go from "topology
+        # node" back to "claims about that node" in one lookup.
+        claims_by_infra_key: dict[str, list[str]] = {}
+        seed_infra_keys: set[str] = set()
         for relationship in relationships:
             from_id = str(relationship.get("from_id", ""))
             to_id = str(relationship.get("to_id", ""))
+            # Pass 1: 1-hop relationship walk (preserves pre-bridge behavior).
             if from_id in seeds and to_id and to_id not in seeds:
                 expanded.append(to_id)
             if to_id in seeds and from_id and from_id not in seeds:
                 expanded.append(from_id)
+            # Build the indices the metapath pass needs.
+            infra_key = relationship.get("infra_node_key")
+            if isinstance(infra_key, str) and infra_key:
+                claims_by_infra_key.setdefault(infra_key, []).append(to_id)
+                if from_id in seeds or to_id in seeds:
+                    seed_infra_keys.add(infra_key)
+
+        # Pass 2: metapath traversal through InfraGraph. Skipped
+        # silently when no InfraGraph is wired (test contexts, file
+        # backend without topology, etc.).
+        if self.infra_graph is not None and seed_infra_keys:
+            metapath_ids = self._metapath_expand(
+                seed_infra_keys=seed_infra_keys,
+                claims_by_infra_key=claims_by_infra_key,
+                excluded=seeds,
+            )
+            expanded.extend(metapath_ids)
+
         seen: set[str] = set()
         ordered: list[str] = []
         for item_id in expanded:
@@ -179,6 +251,67 @@ class MemoryRetrievalService:
                 seen.add(item_id)
                 ordered.append(item_id)
         return ordered
+
+    def _metapath_expand(
+        self,
+        *,
+        seed_infra_keys: set[str],
+        claims_by_infra_key: dict[str, list[str]],
+        excluded: set[str],
+    ) -> list[str]:
+        """Walk InfraGraph from each seed key to surface adjacent claims.
+
+        ``seed_infra_keys`` are the InfraGraph node keys carried by
+        seed relationships (typically ``service:NS:NAME``). For each
+        key we:
+
+        1. Parse the key back to (kind, namespace, name) — InfraGraph
+           uses the ``kind:namespace:name`` colon-delimited form, with
+           ``_cluster`` substituting for empty namespace.
+        2. Ask InfraGraph for outbound and inbound neighbors (uses
+           the public ``neighbors`` API, no internal poking).
+        3. Each neighbor's node key is looked up in
+           ``claims_by_infra_key`` to surface the claims about it.
+
+        Returns deduplicated, order-preserved claim IDs. Caps each
+        seed's neighbor list at 50 to keep latency bounded.
+        """
+        out: list[str] = []
+        for seed_key in seed_infra_keys:
+            parsed = _parse_infra_node_key(seed_key)
+            if parsed is None:
+                continue
+            kind, namespace, name = parsed
+            try:
+                # Depth 2 reaches the canonical (service, pod, node)
+                # metapath in one call: service → pod (depth 1) →
+                # node (depth 2), and similarly node → pod →
+                # other-service. SynergyRCA's MetaGraph uses this
+                # same 2-hop traversal as the SRE-RCA differentiator.
+                # Direction "both" merges in/out so we don't miss
+                # incoming edges (e.g. "service selects pod" is
+                # outbound from the service but inbound from the
+                # pod's perspective).
+                neighbors = (
+                    self.infra_graph.neighbors(
+                        kind, name, namespace, direction="both", depth=2
+                    )
+                    or []
+                )
+            except Exception:
+                # InfraGraph might be a partial / stub in tests or
+                # an offline snapshot. Fail-soft: skip this seed.
+                continue
+            # Cap at 100 to keep retrieval latency bounded even on
+            # densely-connected graphs (large clusters).
+            for neighbor in list(neighbors)[:100]:
+                neighbor_key = _neighbor_to_node_key(neighbor)
+                if not neighbor_key or neighbor_key == seed_key:
+                    continue
+                for claim_id in claims_by_infra_key.get(neighbor_key, []):
+                    if claim_id and claim_id not in excluded:
+                        out.append(claim_id)
+        return out
 
     def _vector_rank(
         self,
@@ -205,6 +338,52 @@ def _overlap_score(query_tokens: set[str], content_tokens: set[str]) -> float:
     if intersection == 0:
         return 0.0
     return intersection / len(query_tokens)
+
+
+def _parse_infra_node_key(key: str) -> tuple[str, str | None, str] | None:
+    """Decompose an InfraGraph node key back to (kind, namespace, name).
+
+    InfraGraph stamps keys as ``kind:namespace:name`` (colon-delimited),
+    using the sentinel ``_cluster`` for non-namespaced resources
+    (nodes, namespaces themselves, …). ``_parse_infra_node_key`` is
+    the inverse — strict about the 3-part shape so a malformed value
+    in a relationship row returns ``None`` rather than crashing the
+    retrieval call.
+    """
+    if not key or not isinstance(key, str):
+        return None
+    parts = key.split(":")
+    if len(parts) != 3:
+        return None
+    kind, namespace_part, name = parts
+    if not kind or not name:
+        return None
+    namespace: str | None = None if namespace_part in ("", "_cluster") else namespace_part
+    return kind, namespace, name
+
+
+def _neighbor_to_node_key(neighbor: dict[str, Any]) -> str | None:
+    """Compute the InfraGraph node key for a ``neighbors()`` response item.
+
+    ``InfraGraph.neighbors`` returns ``GraphNode.to_dict()`` entries
+    of shape ``{kind, name, namespace, labels, attributes}``. We
+    recompute the key here rather than threading it through the
+    response — it keeps this module independent of any InfraGraph
+    schema changes that don't alter the key formula.
+    """
+    if not isinstance(neighbor, dict):
+        return None
+    kind = neighbor.get("kind")
+    name = neighbor.get("name")
+    if not kind or not name:
+        return None
+    namespace = neighbor.get("namespace")
+    # Mirror ``InfraGraph._node_key``'s sentinel without importing it,
+    # avoiding a circular dep at module load. The sentinel only
+    # affects non-namespaced resources; namespaced ones round-trip
+    # unchanged.
+    ns_part = str(namespace) if namespace else "_cluster"
+    return f"{kind}:{ns_part}:{name}"
 
 
 def _timestamp() -> str:

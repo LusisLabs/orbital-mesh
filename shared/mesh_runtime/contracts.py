@@ -222,6 +222,22 @@ class RelationshipRecord(ContractModel):
     confidence: float
     supporting_observation_ids: list[str]
     state: str
+    # Bridge to ``InfraGraph``. When the ``from_id`` side identifies a
+    # typed K8s resource (service, deployment, node, pod, …) we stamp
+    # the canonical InfraGraph node key here at write time, e.g.
+    # ``service:boutique:emailservice`` or ``node:_cluster:worker-01``
+    # (the colon-delimited form ``InfraGraph._node_key`` produces). The
+    # memory retrieval graph-channel uses this to walk InfraGraph edges
+    # (``selects``, ``scheduled_on``, ``owns``, …) and surface claims
+    # about topologically-adjacent resources — the
+    # "metapath traversal over a typed resource-relationship graph"
+    # pattern that closes the gap between mesh's memory layer and its
+    # InfraGraph topology layer. Optional / nullable for backward
+    # compatibility: rows written before the bridge landed have
+    # ``infra_node_key=None``, which the retrieval expander treats as
+    # "graph hop disabled for this record" (lexical + 1-hop relationship
+    # walk still work).
+    infra_node_key: str | None = None
 
 
 @dataclass
