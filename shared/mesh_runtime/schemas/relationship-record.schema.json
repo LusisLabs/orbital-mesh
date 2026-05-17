@@ -17,7 +17,8 @@
     "type": { "type": "string" },
     "confidence": { "type": "number" },
     "supporting_observation_ids": { "type": "array", "items": { "type": "string" } },
-    "state": { "type": "string" }
+    "state": { "type": "string" },
+    "infra_node_key": { "type": ["string", "null"] }
   },
   "additionalProperties": false
 }

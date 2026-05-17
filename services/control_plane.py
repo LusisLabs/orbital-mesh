@@ -273,13 +273,21 @@ class RunCoordinator:
         self.override_store = OverrideLearningStore(self.config.state_directory)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        # InfraGraph is constructed before ReasoningBankService so the
+        # bridge between mesh's typed K8s topology and the memory
+        # graph can be threaded in at retrieval time. See
+        # ``shared/mesh_runtime/reasoning_bank.py`` for what this
+        # buys us (metapath traversal across service → pod → node so
+        # past incidents about topologically-adjacent resources
+        # surface on a new trigger).
+        self.infra_graph = InfraGraph(self.config.state_directory)
         self.reasoning_bank = ReasoningBankService(
             self.state_store,
             max_strategies=self.config.reasoning_bank_max_strategies,
             scaling_mode=self.config.reasoning_bank_scaling_mode,
+            infra_graph=self.infra_graph,
         )
         self._project_corpus_memory_on_startup()
-        self.infra_graph = InfraGraph(self.config.state_directory)
         self.trust_ladder = TrustLadder(
             self.config.state_directory,
             min_draft_runs=self.config.trust_ladder_min_draft_runs,
