@@ -237,7 +237,9 @@ class OtelLiveStrategyTests(unittest.TestCase):
     def test_prometheus_range_query_fires_when_client_injected(self) -> None:
         """The metric name + service from the signal must reach the
         Prometheus client. The returned samples land in the probe
-        payload's ``samples_head``."""
+        payload's ``samples_head``. The query MUST be scoped to the
+        triggered service so multi-service Prometheus setups don't
+        feed unrelated series into ranking (Codex P1 on PR #42)."""
         fake_prom = MagicMock()
         fake_prom.range_query.return_value = [
             (1700000000.0, 0.10),
@@ -252,17 +254,26 @@ class OtelLiveStrategyTests(unittest.TestCase):
         probe_names = [p.name for p in pack.probe_results]
         self.assertIn("prometheus_range_query", probe_names)
         prom_probe = next(p for p in pack.probe_results if p.name == "prometheus_range_query")
-        # The metric name from the signal reached the query.
+        # The metric name from the signal reached the probe payload
+        # in its undecorated form so the audit trail keeps the input.
         self.assertEqual(prom_probe.payload["metric_name"], "http_request_duration_seconds_p95")
+        # …and the actual PromQL is scoped by the service label.
+        self.assertEqual(
+            prom_probe.payload["query"],
+            'http_request_duration_seconds_p95{service="api"}',
+        )
         # Samples landed in the probe.
         self.assertEqual(prom_probe.payload["samples_count"], 3)
         self.assertEqual(len(prom_probe.payload["samples_head"]), 3)
         # Source reflects live-mode.
         self.assertIn("prometheus_live", pack.source)
-        # Prometheus client was called with the right query.
+        # Prometheus client was called with the service-scoped query.
         fake_prom.range_query.assert_called_once()
         called_args = fake_prom.range_query.call_args
-        self.assertEqual(called_args[0][0], "http_request_duration_seconds_p95")
+        self.assertEqual(
+            called_args[0][0],
+            'http_request_duration_seconds_p95{service="api"}',
+        )
 
     def test_prometheus_exception_surfaces_as_failed_probe(self) -> None:
         fake_prom = MagicMock()
@@ -292,6 +303,110 @@ class OtelLiveStrategyTests(unittest.TestCase):
         fake_prom.range_query.assert_not_called()
         probe_names = [p.name for p in pack.probe_results]
         self.assertIn("prometheus_metric_unavailable", probe_names)
+
+    def test_query_window_derived_from_comparison_window(self) -> None:
+        """When the trigger carries a ``comparison_window.observed``
+        ISO interval (``"<start>/<end>"`` — the OTel ingest shape),
+        the range query MUST use those exact bounds, not
+        ``datetime.now()`` (Codex P1 on PR #42 — historical incident
+        reruns + delayed processing depend on this)."""
+        fake_prom = MagicMock()
+        fake_prom.range_query.return_value = []
+
+        trigger = _otel_trigger()
+        trigger.comparison_window = {
+            "baseline": "2026-05-17T11:00:00Z/2026-05-17T11:55:00Z",
+            "observed": "2026-05-17T11:55:00Z/2026-05-17T12:00:00Z",
+        }
+
+        strategy = OtelLiveEvidenceStrategy(prometheus_client=fake_prom)
+        strategy.assemble(trigger=trigger, signal_payload=_otel_signal_payload())
+
+        fake_prom.range_query.assert_called_once()
+        start_ts, end_ts = fake_prom.range_query.call_args[0][1:3]
+        # 2026-05-17T11:55:00Z → 1779018900.0
+        # 2026-05-17T12:00:00Z → 1779019200.0
+        self.assertAlmostEqual(start_ts, 1779018900.0, places=1)
+        self.assertAlmostEqual(end_ts, 1779019200.0, places=1)
+
+    def test_query_window_falls_back_to_triggered_at(self) -> None:
+        """When ``comparison_window`` is missing, the window anchors
+        on ``trigger.triggered_at`` — not wall-clock now — so replayed
+        signals query the right historical span."""
+        fake_prom = MagicMock()
+        fake_prom.range_query.return_value = []
+
+        # _otel_trigger has triggered_at="2026-05-17T12:00:00Z",
+        # comparison_window=None.
+        strategy = OtelLiveEvidenceStrategy(prometheus_client=fake_prom)
+        strategy.assemble(
+            trigger=_otel_trigger(), signal_payload=_otel_signal_payload()
+        )
+
+        fake_prom.range_query.assert_called_once()
+        start_ts, end_ts = fake_prom.range_query.call_args[0][1:3]
+        # 2026-05-17T12:00:00Z → 1779019200.0
+        self.assertAlmostEqual(end_ts, 1779019200.0, places=1)
+        # Default range is 10 minutes = 600s.
+        self.assertAlmostEqual(start_ts, end_ts - 600.0, places=1)
+
+    def test_predecorated_metric_name_is_not_double_scoped(self) -> None:
+        """When the operator passes a metric name that already
+        carries a ``{...}`` matcher (e.g. ``job=`` instead of
+        ``service=`` for non-OTel-convention deployments), we MUST
+        trust their selector verbatim — wrapping with ``service=``
+        would risk producing a no-match query."""
+        fake_prom = MagicMock()
+        fake_prom.range_query.return_value = []
+
+        payload = _otel_signal_payload()
+        payload["metric_regression"]["metric_name"] = (
+            'http_request_duration_seconds_p95{job="api-server"}'
+        )
+
+        strategy = OtelLiveEvidenceStrategy(prometheus_client=fake_prom)
+        strategy.assemble(trigger=_otel_trigger(), signal_payload=payload)
+
+        fake_prom.range_query.assert_called_once()
+        called_query = fake_prom.range_query.call_args[0][0]
+        # Pre-decorated query passed through untouched.
+        self.assertEqual(
+            called_query,
+            'http_request_duration_seconds_p95{job="api-server"}',
+        )
+
+    def test_structural_required_fields_match_legacy_otel_profile(self) -> None:
+        """The legacy OTel profile rejected payloads missing
+        ``observed_value``, ``baseline_value`` or ``resource_attributes``.
+        Codex P2 on PR #42 flagged that the new live strategy had
+        relaxed this to just ``signal_type + metric_name + service``,
+        which would silently change downstream uncertainty / decision
+        behavior for partially populated OTel signals. This test pins
+        the restored contract."""
+        # Drop the resource_attributes field — legacy required it.
+        payload = _otel_signal_payload()
+        del payload["resource_attributes"]
+
+        # No Prometheus client → pure structural path.
+        strategy = OtelLiveEvidenceStrategy(config=RuntimeConfig())
+        pack = strategy.assemble(trigger=_otel_trigger(), signal_payload=payload)
+
+        # The pack must be marked insufficient and call out the
+        # missing field, mirroring the legacy profile.
+        self.assertFalse(pack.sufficient)
+        self.assertIn("resource_attributes", pack.missing_fields)
+
+    def test_structural_required_fields_flag_missing_baseline(self) -> None:
+        """``metric_regression.baseline_value`` must remain in the
+        required-fields contract — Codex P2 on PR #42."""
+        payload = _otel_signal_payload()
+        payload["metric_regression"].pop("baseline_value")
+
+        strategy = OtelLiveEvidenceStrategy(config=RuntimeConfig())
+        pack = strategy.assemble(trigger=_otel_trigger(), signal_payload=payload)
+
+        self.assertFalse(pack.sufficient)
+        self.assertIn("metric_regression.baseline_value", pack.missing_fields)
 
 
 # ---------------------------------------------------------------------------

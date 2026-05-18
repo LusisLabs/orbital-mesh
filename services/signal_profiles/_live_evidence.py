@@ -374,10 +374,22 @@ class OtelLiveEvidenceStrategy:
     """
 
     _SIGNAL_SOURCE: str = "otel"
+    # Structural required-field contract carried over from the legacy
+    # OTel profile. The pre-PR profile rejected payloads missing
+    # ``observed_value``, ``baseline_value`` or ``resource_attributes``
+    # — relaxing that would silently flip downstream uncertainty /
+    # decision behavior for partially populated OTel signals when
+    # Prometheus probes are skipped (no backend configured) or fail.
+    # ``service`` isn't in this list on purpose: the live probe falls
+    # back to ``trigger.service`` when the payload omits it and emits
+    # a ``prometheus_metric_unavailable`` audit probe instead of
+    # marking the pack insufficient.
     _REQUIRED_PATHS: tuple[str, ...] = (
         "signal_type",
         "metric_regression.metric_name",
-        "service",
+        "metric_regression.observed_value",
+        "metric_regression.baseline_value",
+        "resource_attributes",
     )
     # Default range when the trigger doesn't carry an explicit window.
     _DEFAULT_RANGE_SECONDS: int = 10 * 60
@@ -436,7 +448,7 @@ class OtelLiveEvidenceStrategy:
                 missing_fields=base.missing_fields,
             )
 
-        live_probe = self._probe_metric_range(metric_name, service)
+        live_probe = self._probe_metric_range(trigger, metric_name, service)
         return EvidencePack(
             pack=base.pack,
             assembled_at=base.assembled_at,
@@ -450,16 +462,21 @@ class OtelLiveEvidenceStrategy:
     # Probes
     # ------------------------------------------------------------------
 
-    def _probe_metric_range(self, metric_name: str, service: str) -> ProbeResult:
-        # PromQL needs the metric name as-is. We don't enforce a
-        # ``{service=...}`` label matcher because mesh's metric_name
-        # often arrives pre-decorated (e.g. ``http_request_duration_seconds{service="api"}``).
-        # If the operator passes a bare metric name, the query
-        # returns all series for that metric — the
-        # investigation harness can refine downstream.
-        query = metric_name
-        end_ts = datetime.now(timezone.utc).timestamp()
-        start_ts = end_ts - self._DEFAULT_RANGE_SECONDS
+    def _probe_metric_range(
+        self,
+        trigger: Trigger,
+        metric_name: str,
+        service: str,
+    ) -> ProbeResult:
+        # PromQL query: scope to the triggered service when the metric
+        # name arrives bare. If the operator pre-decorated it with a
+        # label matcher (``{...}``), trust their selector verbatim —
+        # double-scoping would risk producing a no-match query when
+        # the operator's label spelling differs from ours.
+        query = _build_promql_query(metric_name, service)
+        start_ts, end_ts, window_source = _derive_query_window(
+            trigger, default_range_seconds=self._DEFAULT_RANGE_SECONDS
+        )
         started = time.monotonic()
         try:
             samples = self._prometheus.range_query(  # type: ignore[union-attr]
@@ -483,6 +500,9 @@ class OtelLiveEvidenceStrategy:
                 "metric_name": metric_name,
                 "service": service,
                 "query": query,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "window_source": window_source,
                 "samples_count": len(samples),
                 # Cap at 200 samples (~100 minutes at 30s step) to
                 # keep the artifact small. Investigation harness can
@@ -492,10 +512,135 @@ class OtelLiveEvidenceStrategy:
             citations=[
                 {
                     "source_type": "prometheus",
-                    "source_ref": f"range_query/{metric_name}",
+                    "source_ref": f"range_query/{query}",
                 }
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Helpers — promQL query assembly + trigger-window derivation
+# ---------------------------------------------------------------------------
+
+
+def _build_promql_query(metric_name: str, service: str) -> str:
+    """Compose a PromQL query that scopes ``metric_name`` to ``service``.
+
+    The legacy code passed ``metric_name`` through verbatim, which in
+    multi-service Prometheus setups risks pulling samples from an
+    unrelated series (``range_query`` returns one series of points)
+    and feeding wrong evidence into ranking + decision. Codex flagged
+    this on PR #42; this helper is the fix.
+
+    Behavior:
+
+    * Bare metric name + non-empty service → wrap as
+      ``metric_name{service="<service>"}`` so the range query is
+      scoped to the triggered service.
+    * Metric name already carrying a ``{...}`` matcher → leave it
+      alone. Operators that pre-decorate with a custom label
+      (``app=…``, ``job=…``, ``k8s_deployment=…``) shouldn't have us
+      double-scope on top of their selector — a wrong label name
+      would produce a no-match query and *worse* evidence than the
+      unscoped probe.
+    * Empty metric name → return empty (caller short-circuits).
+    * Empty service with a bare metric → fall through to bare query.
+      The unscoped query is still useful for single-service Prometheus
+      deployments, and the audit trail records ``service=""`` so
+      downstream can flag it.
+
+    The ``service`` label name is the OTel-convention default and is
+    not currently configurable. Operators that use a different label
+    (``job`` is the other common convention) should pre-decorate the
+    metric name in the inbound signal.
+    """
+    name = metric_name.strip()
+    if not name:
+        return ""
+    if "{" in name:
+        return name
+    svc = service.strip()
+    if not svc:
+        return name
+    # Escape any embedded double-quotes in the service value so we
+    # don't produce invalid PromQL when service strings carry quotes.
+    safe_service = svc.replace("\\", "\\\\").replace('"', '\\"')
+    return f'{name}{{service="{safe_service}"}}'
+
+
+def _derive_query_window(
+    trigger: Trigger,
+    *,
+    default_range_seconds: int,
+) -> tuple[float, float, str]:
+    """Pick ``(start_ts, end_ts, source_label)`` for the range query.
+
+    The legacy code anchored every range query at ``datetime.now() -
+    10min`` regardless of when the trigger fired or which window it
+    flagged. That works for live cluster operation but produces wrong
+    evidence for delayed processing, replayed benchmarks, and
+    historical incident reruns — Codex's P1 callout on PR #42.
+
+    Priority order:
+
+    1. ``trigger.comparison_window["observed"]`` formatted as an
+       ISO 8601 time-interval string ``"<start>/<end>"``. This is the
+       shape the OTel ingest pipeline emits (see
+       ``services/ingest/otel_signal.py``) — both ends are absolute,
+       so we use them as-is. ``source_label="comparison_window"``.
+    2. ``trigger.triggered_at`` as the end of the window;
+       ``end - default_range_seconds`` as the start. Covers triggers
+       that arrive without a comparison_window or with a
+       relative-duration-only window (``"PT5M"``, CloudOpsBench).
+       ``source_label="triggered_at"``.
+    3. ``datetime.now(UTC)`` end / ``- default_range_seconds`` start.
+       Last-resort fallback for triggers with no time context (live
+       demos, fuzz inputs). ``source_label="now"``.
+
+    Any parse failure on (1) silently falls through to (2). We don't
+    surface the parse error because the audit trail still captures
+    ``window_source`` in the probe payload, and the comparison_window
+    string is preserved on the trigger artifact.
+    """
+    window = getattr(trigger, "comparison_window", None)
+    if isinstance(window, dict):
+        observed = window.get("observed")
+        if isinstance(observed, str) and "/" in observed:
+            start_str, _, end_str = observed.partition("/")
+            start = _parse_iso_timestamp(start_str)
+            end = _parse_iso_timestamp(end_str)
+            if start is not None and end is not None and end > start:
+                return start.timestamp(), end.timestamp(), "comparison_window"
+
+    triggered_at = _parse_iso_timestamp(getattr(trigger, "triggered_at", "") or "")
+    if triggered_at is not None:
+        end_ts = triggered_at.timestamp()
+        return end_ts - default_range_seconds, end_ts, "triggered_at"
+
+    end_ts = datetime.now(timezone.utc).timestamp()
+    return end_ts - default_range_seconds, end_ts, "now"
+
+
+def _parse_iso_timestamp(value: str) -> datetime | None:
+    """Parse an ISO 8601 timestamp, tolerating the ``"Z"`` UTC suffix.
+
+    ``datetime.fromisoformat`` rejects ``"Z"`` on Python < 3.11; we
+    normalise to ``"+00:00"`` first so the same code path works on
+    3.10. Returns ``None`` on any parse failure so callers can fall
+    back without exception handling at the call site.
+    """
+    if not value:
+        return None
+    candidate = value.strip()
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 __all__ = [
