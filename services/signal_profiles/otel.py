@@ -15,7 +15,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
-from ._evidence_strategies import StructuredSignalEvidenceStrategy
+from ._live_evidence import OtelLiveEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -24,7 +24,15 @@ from ._shared_strategies import (
 
 
 def build(config: RuntimeConfig | None = None) -> SignalProfile:
-    """Construct the OTel signal profile."""
+    """Construct the OTel signal profile.
+
+    Evidence strategy is ``OtelLiveEvidenceStrategy``: queries the
+    configured Prometheus for the regressed metric's range when
+    ``MESH_PROMETHEUS_URL`` is set, falls back to structural
+    field-check when not. Range-query data lands as a probe result
+    so the hypothesis engine and scenario analyzer get actual time
+    series rather than just the summary in the inbound signal.
+    """
     return SignalProfile(
         signal_type="otel_metric_regression",
         trigger_type="otel_metric_regression",
@@ -38,16 +46,7 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "prometheus/loki/jaeger tool packs."
             ),
         ),
-        evidence_strategy=StructuredSignalEvidenceStrategy(
-            signal_source="otel",
-            required_paths=(
-                "signal_type",
-                "metric_regression.metric_name",
-                "metric_regression.observed_value",
-                "metric_regression.baseline_value",
-                "resource_attributes",
-            ),
-        ),
+        evidence_strategy=OtelLiveEvidenceStrategy(config=config),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:otel"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:otel"),
