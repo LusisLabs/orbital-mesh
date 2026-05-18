@@ -1,16 +1,14 @@
 """Kubernetes deployment-issue signal profile.
 
-K8s was the second signal type wired into Mesh but never had a real
-investigation planner or RCA builder — both stages silently no-op'd
-for K8s today. This profile fills that gap using the shared
-``HarnessDrivenInvestigationPlanner`` and ``HarnessDrivenRcaBuilder``
-so the run timeline records full diagnostic artifacts for K8s
-incidents going forward.
-
-PR 1 wires planner + RCA (now non-silent for K8s). Later PRs lift
-K8s-specific evidence assembly, decision logic, scenario analysis,
-and feedback into proper strategies; for now those slots use
-``NotYetWiredStrategy`` placeholders.
+K8s was the second signal type wired into Mesh but the evidence
+strategy was a structural field-check passthrough until this PR.
+``KubernetesLiveEvidenceStrategy`` now runs real read-only kubectl
+probes (get pods, get events, describe deployment) when
+``MESH_KUBECTL_COMMAND`` is configured. Investigation planner + RCA
+builder remain the harness-driven defaults; the other slots
+(``ingest_normalizer``, ``trigger_detector``, ``decision_strategy``,
+``scenario_analyzer``, ``feedback_strategy``) are still placeholders
+for follow-up PRs.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from __future__ import annotations
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.signal_profile import SignalProfile
 
-from ._evidence_strategies import StructuredSignalEvidenceStrategy
+from ._live_evidence import KubernetesLiveEvidenceStrategy
 from ._shared_strategies import (
     HarnessDrivenInvestigationPlanner,
     HarnessDrivenRcaBuilder,
@@ -27,7 +25,13 @@ from ._shared_strategies import (
 
 
 def build(config: RuntimeConfig | None = None) -> SignalProfile:
-    """Construct the Kubernetes signal profile."""
+    """Construct the Kubernetes signal profile.
+
+    Evidence strategy is ``KubernetesLiveEvidenceStrategy``: runs
+    real kubectl probes when configured, falls back to structural
+    field-check when not. Deployments without a cluster wired keep
+    working unchanged.
+    """
     return SignalProfile(
         signal_type="kubernetes_deployment_issue",
         trigger_type="kubernetes_deployment_unhealthy",
@@ -41,19 +45,7 @@ def build(config: RuntimeConfig | None = None) -> SignalProfile:
                 "kubectl/topology/loki tool packs."
             ),
         ),
-        evidence_strategy=StructuredSignalEvidenceStrategy(
-            signal_source="kubernetes",
-            required_paths=(
-                "signal_type",
-                "cluster",
-                "namespace",
-                "deployment.name",
-                "deployment.rollout_status",
-                "pods",
-                "events",
-                "log_summary",
-            ),
-        ),
+        evidence_strategy=KubernetesLiveEvidenceStrategy(config=config),
         rca_builder=HarnessDrivenRcaBuilder(),
         decision_strategy=NotYetWiredStrategy("decision_strategy:kubernetes"),
         scenario_analyzer=NotYetWiredStrategy("scenario_analyzer:kubernetes"),
