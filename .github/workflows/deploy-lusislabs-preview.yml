@@ -1,0 +1,84 @@
+name: Deploy Lusis Labs Preview
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-lusislabs-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      )
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.LUSIS_DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.LUSIS_DEPLOY_USER }}
+      DEPLOY_KEY: ${{ secrets.LUSIS_DEPLOY_SSH_KEY }}
+      DEPLOY_SOURCE_DIR: /opt/lusis-mesh-webapp/incoming/source
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Prepare deployment source metadata
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DEPLOY_SHA" > .deploy-commit
+          printf '%s\n' "${GITHUB_REF_NAME:-main}" > .deploy-branch
+
+      - name: Install SSH credentials
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_KEY"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/lusislabs-preview"
+          chmod 600 "$HOME/.ssh/lusislabs-preview"
+          ssh-keyscan -H "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts"
+
+      - name: Sync source to Hetzner
+        run: |
+          set -euo pipefail
+          rsync -az --delete \
+            --exclude '.git/' \
+            --exclude '.env' \
+            --exclude '.env.*' \
+            --exclude 'node_modules/' \
+            --exclude '.next/' \
+            --exclude 'out/' \
+            --exclude 'dist/' \
+            --exclude '.mesh-runtime-state/' \
+            --exclude '.mesh-runtime-state-preview/' \
+            --exclude 'artifacts/' \
+            --exclude '__pycache__/' \
+            --exclude '.pytest_cache/' \
+            --exclude '.mypy_cache/' \
+            --exclude '.ruff_cache/' \
+            --exclude '.turbo/' \
+            --exclude '.venv/' \
+            --exclude 'venv/' \
+            --exclude '.DS_Store' \
+            --exclude '*.pyc' \
+            -e "ssh -i $HOME/.ssh/lusislabs-preview" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_SOURCE_DIR/"
+
+      - name: Run server deployment
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/lusislabs-preview" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "sudo /usr/local/bin/deploy-lusis-mesh-webapp --source '$DEPLOY_SOURCE_DIR'"
