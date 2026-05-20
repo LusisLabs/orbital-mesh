@@ -16,14 +16,13 @@ State slice: `lusislabs-preview-deployment`.
 
 ## Deployment Flow
 
-`.github/workflows/deploy-lusislabs-preview.yml` deploys after the `CI` workflow succeeds on `main`, and can also be run manually with `workflow_dispatch`.
+`.github/workflows/deploy-lusislabs-preview.yml` deploys on every push to `main`, and can also be run manually with `workflow_dispatch`. It runs on the Hetzner self-hosted runner labeled `lusislabs-preview`, so it does not depend on GitHub-hosted runner minutes.
 
 The workflow:
 
-1. Checks out the exact CI-validated commit.
+1. Checks out the pushed commit.
 2. Writes `.deploy-commit`.
-3. Rsyncs the source tree to `/opt/lusis-mesh-webapp/incoming/source`.
-4. Runs `sudo /usr/local/bin/deploy-lusis-mesh-webapp --source /opt/lusis-mesh-webapp/incoming/source`.
+3. Runs `sudo /usr/local/bin/deploy-lusis-mesh-webapp --source "$GITHUB_WORKSPACE"` on the self-hosted runner.
 
 The server script:
 
@@ -35,15 +34,11 @@ The server script:
 6. Verifies `http://127.0.0.1:8788/api/health`.
 7. Rolls back the symlink and restarts the previous release if the restart or healthcheck fails.
 
-## GitHub Secrets
+## GitHub Runner
 
-Required repository secrets:
+The self-hosted runner is registered to `LusisLabs/orbital-mesh` with the label `lusislabs-preview`. It is intended only for trusted `main` pushes and manual dispatches from this repository.
 
-- `LUSIS_DEPLOY_HOST`: Hetzner host or IP.
-- `LUSIS_DEPLOY_USER`: restricted deploy user, normally `lusis-deploy`.
-- `LUSIS_DEPLOY_SSH_KEY`: private key for the deploy user.
-
-The deploy user is allowed to run only `/usr/local/bin/deploy-lusis-mesh-webapp` through passwordless sudo.
+The runner service account is allowed to run only `/usr/local/bin/deploy-lusis-mesh-webapp` through passwordless sudo.
 
 ## Manual Commands
 
