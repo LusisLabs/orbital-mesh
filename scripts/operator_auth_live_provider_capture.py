@@ -465,6 +465,7 @@ def build_auth_checkpoint(
         ("provider readiness artifact exists", readiness_path.exists()),
         ("provider readiness schema is mesh.operator_auth_provider_readiness.v1", readiness.get("schema_version") == "mesh.operator_auth_provider_readiness.v1"),
         ("provider readiness state slice is auth-provider-proof.v1", readiness.get("state_slice") == "auth-provider-proof.v1"),
+        ("provider readiness generated_at is present", _generated_at_present(readiness)),
         ("provider readiness contains no raw secret material", readiness.get("raw_secret_material_present") is False),
         ("provider env files are untracked", readiness.get("tracked_env_secret_material_present") is False),
         ("tracked secret hits are empty", readiness.get("tracked_secret_hits") == []),
@@ -474,6 +475,7 @@ def build_auth_checkpoint(
         ("live preflight artifact exists", preflight_path.exists()),
         ("live preflight schema is mesh.operator_auth_live_capture_preflight.v1", preflight.get("schema_version") == "mesh.operator_auth_live_capture_preflight.v1"),
         ("live preflight state slice is auth-provider-proof.v1", preflight.get("state_slice") == "auth-provider-proof.v1"),
+        ("live preflight generated_at is present", _generated_at_present(preflight)),
         ("live preflight is ready", preflight.get("status") == "ready"),
         ("live preflight has no blockers", preflight.get("blockers") == []),
         ("live preflight contains no raw secret material", preflight.get("raw_secret_material_present") is False),
@@ -485,6 +487,7 @@ def build_auth_checkpoint(
         ("live stack smoke artifact exists", stack_smoke_path.exists()),
         ("live stack smoke schema is mesh.operator_auth_live_stack_smoke.v1", stack_smoke.get("schema_version") == "mesh.operator_auth_live_stack_smoke.v1"),
         ("live stack smoke state slice is auth-provider-proof.v1", stack_smoke.get("state_slice") == "auth-provider-proof.v1"),
+        ("live stack smoke generated_at is present", _generated_at_present(stack_smoke)),
         ("live stack smoke is ready", stack_smoke.get("status") == "ready"),
         ("live stack smoke has no blockers", stack_smoke.get("blockers") == []),
         ("live stack smoke preflight was ready", stack_smoke.get("preflight_status") == "ready"),
@@ -496,6 +499,7 @@ def build_auth_checkpoint(
         ("live capture attempt artifact exists", attempt_path.exists()),
         ("live capture attempt schema is mesh.operator_auth_live_capture_attempt.v1", attempt.get("schema_version") == "mesh.operator_auth_live_capture_attempt.v1"),
         ("live capture attempt state slice is auth-provider-proof.v1", attempt.get("state_slice") == "auth-provider-proof.v1"),
+        ("live capture attempt generated_at is present", _generated_at_present(attempt)),
         ("live capture attempt used a clean browser", attempt.get("clean_browser_session") is True),
         ("live capture attempt preflight was ready", attempt.get("preflight_status") == "ready"),
         ("live capture attempt contains no raw secret material", attempt.get("raw_secret_material_present") is False),
@@ -539,6 +543,12 @@ def build_auth_checkpoint(
             "live_capture_attempt": str(attempt_path),
             "live_provider_proof": str(live_proof_path),
         },
+        "evidence_generated_at": {
+            "provider_readiness": str(readiness.get("generated_at") or ""),
+            "live_preflight": str(preflight.get("generated_at") or ""),
+            "live_stack_smoke": str(stack_smoke.get("generated_at") or ""),
+            "live_capture_attempt": str(attempt.get("generated_at") or ""),
+        },
         "next_required_command": _checkpoint_next_required_command(stack_smoke),
         "final_verification_command": "pnpm run test:auth-provider:live",
         "raw_secret_material_present": False,
@@ -567,6 +577,11 @@ def _checkpoint_next_required_command(stack_smoke: dict[str, Any]) -> str:
     if stack_smoke.get("stack_mode") == STACK_MODE_REUSED:
         return "pnpm run auth-provider:reuse-stack"
     return "pnpm run auth-provider:live-stack"
+
+
+def _generated_at_present(payload: dict[str, Any]) -> bool:
+    generated_at = payload.get("generated_at")
+    return isinstance(generated_at, str) and bool(generated_at)
 
 
 def _string_list(value: Any) -> list[str]:
@@ -829,6 +844,7 @@ def build_live_capture_preflight(
         "schema_version": "mesh.operator_auth_live_capture_preflight.v1",
         "state_slice": "auth-provider-proof.v1",
         "status": "ready" if not blockers else "blocked",
+        "generated_at": _timestamp(),
         "blockers": blockers,
         "managed_local_stack": managed_local_stack,
         "stack_mode": stack_mode,

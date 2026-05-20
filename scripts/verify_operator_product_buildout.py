@@ -198,6 +198,7 @@ REQUIRED_TEST_MARKERS = [
     "test_goal_audit_fails_local_when_auth_live_stack_smoke_has_ambiguous_stack_provenance",
     "test_goal_audit_fails_local_when_auth_checkpoint_is_not_bound",
     "test_goal_audit_fails_local_when_auth_checkpoint_attempt_binding_is_stale",
+    "test_goal_audit_fails_local_when_auth_checkpoint_evidence_timestamps_are_stale",
     "test_goal_audit_fails_local_when_auth_checkpoint_next_command_is_stale",
     "test_goal_audit_fails_local_when_auth_live_capture_attempt_is_not_bound",
     "test_goal_audit_fails_local_when_dashboard_backend_section_contract_marker_is_missing",

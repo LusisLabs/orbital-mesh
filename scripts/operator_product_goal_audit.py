@@ -341,6 +341,7 @@ def _p0_requirement(
         ("auth proof artifact exists", auth_path.exists()),
         ("auth proof schema is mesh.operator_auth_provider_readiness.v1", auth_proof.get("schema_version") == "mesh.operator_auth_provider_readiness.v1"),
         ("auth proof state slice is auth-provider-proof.v1", auth_proof.get("state_slice") == "auth-provider-proof.v1"),
+        ("auth proof generated_at is present", _generated_at_present(auth_proof)),
         ("auth proof does not contain raw secret material", auth_proof.get("raw_secret_material_present") is False),
         ("auth env files are untracked", auth_proof.get("tracked_env_secret_material_present") is False),
         ("tracked secret hits are empty", auth_proof.get("tracked_secret_hits") == []),
@@ -352,6 +353,7 @@ def _p0_requirement(
         ("auth live preflight artifact exists", auth_preflight_path.exists()),
         ("auth live preflight schema is mesh.operator_auth_live_capture_preflight.v1", auth_preflight.get("schema_version") == "mesh.operator_auth_live_capture_preflight.v1"),
         ("auth live preflight state slice is auth-provider-proof.v1", auth_preflight.get("state_slice") == "auth-provider-proof.v1"),
+        ("auth live preflight generated_at is present", _generated_at_present(auth_preflight)),
         ("auth live preflight is ready", auth_preflight.get("status") == "ready"),
         ("auth live preflight has no blockers", auth_preflight.get("blockers") == []),
         ("auth live preflight does not contain raw secret material", auth_preflight.get("raw_secret_material_present") is False),
@@ -363,6 +365,7 @@ def _p0_requirement(
         ("auth live stack smoke artifact exists", auth_stack_smoke_path.exists()),
         ("auth live stack smoke schema is mesh.operator_auth_live_stack_smoke.v1", auth_stack_smoke.get("schema_version") == "mesh.operator_auth_live_stack_smoke.v1"),
         ("auth live stack smoke state slice is auth-provider-proof.v1", auth_stack_smoke.get("state_slice") == "auth-provider-proof.v1"),
+        ("auth live stack smoke generated_at is present", _generated_at_present(auth_stack_smoke)),
         ("auth live stack smoke is ready", auth_stack_smoke.get("status") == "ready"),
         ("auth live stack smoke has no blockers", auth_stack_smoke.get("blockers") == []),
         ("auth live stack smoke preflight was ready", auth_stack_smoke.get("preflight_status") == "ready"),
@@ -382,6 +385,10 @@ def _p0_requirement(
         ("auth checkpoint binds live capture attempt status", auth_checkpoint.get("live_capture_attempt_status") in {"complete", "blocked"}),
         ("auth checkpoint binds live capture attempt blockers", isinstance(auth_checkpoint.get("live_capture_attempt_blockers"), list)),
         ("auth checkpoint live capture attempt binding matches artifact", _checkpoint_attempt_matches_attempt(auth_checkpoint, auth_attempt)),
+        (
+            "auth checkpoint evidence timestamps match source artifacts",
+            _checkpoint_evidence_timestamps_match(auth_checkpoint, auth_proof, auth_preflight, auth_stack_smoke, auth_attempt),
+        ),
         ("auth checkpoint next required command matches stack provenance", _checkpoint_next_required_command_ok(auth_checkpoint, auth_stack_smoke)),
         ("auth checkpoint final verification command is auth-provider live test", auth_checkpoint.get("final_verification_command") == "pnpm run test:auth-provider:live"),
         ("auth checkpoint readiness status matches provider readiness", auth_checkpoint.get("readiness_status") == auth_proof.get("status")),
@@ -390,6 +397,7 @@ def _p0_requirement(
         ("auth live capture attempt artifact exists", auth_attempt_path.exists()),
         ("auth live capture attempt schema is mesh.operator_auth_live_capture_attempt.v1", auth_attempt.get("schema_version") == "mesh.operator_auth_live_capture_attempt.v1"),
         ("auth live capture attempt state slice is auth-provider-proof.v1", auth_attempt.get("state_slice") == "auth-provider-proof.v1"),
+        ("auth live capture attempt generated_at is present", _generated_at_present(auth_attempt)),
         ("auth live capture attempt used a clean browser", auth_attempt.get("clean_browser_session") is True),
         ("auth live capture attempt stack provenance is explicit", _stack_provenance_ok(auth_attempt)),
         ("auth live capture attempt preflight was ready", auth_attempt.get("preflight_status") == "ready"),
@@ -437,6 +445,7 @@ def _p0_requirement(
         "auth_checkpoint_live_provider_status": str(auth_checkpoint.get("live_provider_status") or "missing"),
         "auth_checkpoint_next_required_command": str(auth_checkpoint.get("next_required_command") or "missing"),
         "auth_checkpoint_final_verification_command": str(auth_checkpoint.get("final_verification_command") or "missing"),
+        "auth_checkpoint_evidence_generated_at": auth_checkpoint.get("evidence_generated_at") if isinstance(auth_checkpoint.get("evidence_generated_at"), dict) else {},
         "live_capture_attempt_status": str(auth_attempt.get("status") or "auth_live_capture_attempt_missing"),
         "live_capture_attempt_stack_mode": str(auth_attempt.get("stack_mode") or "missing"),
         "live_capture_attempt_blockers": _string_list(auth_attempt.get("blockers")),
@@ -525,6 +534,36 @@ def _checkpoint_attempt_matches_attempt(auth_checkpoint: dict[str, Any], auth_at
 def _checkpoint_next_required_command_ok(auth_checkpoint: dict[str, Any], auth_stack_smoke: dict[str, Any]) -> bool:
     expected = "pnpm run auth-provider:reuse-stack" if auth_stack_smoke.get("stack_mode") == STACK_MODE_REUSED else "pnpm run auth-provider:live-stack"
     return auth_checkpoint.get("next_required_command") == expected
+
+
+def _checkpoint_evidence_timestamps_match(
+    auth_checkpoint: dict[str, Any],
+    auth_proof: dict[str, Any],
+    auth_preflight: dict[str, Any],
+    auth_stack_smoke: dict[str, Any],
+    auth_attempt: dict[str, Any],
+) -> bool:
+    evidence_generated_at = auth_checkpoint.get("evidence_generated_at")
+    if not isinstance(evidence_generated_at, dict):
+        return False
+    source_artifacts = {
+        "provider_readiness": auth_proof,
+        "live_preflight": auth_preflight,
+        "live_stack_smoke": auth_stack_smoke,
+        "live_capture_attempt": auth_attempt,
+    }
+    for key, payload in source_artifacts.items():
+        generated_at = payload.get("generated_at")
+        if not isinstance(generated_at, str) or not generated_at:
+            return False
+        if evidence_generated_at.get(key) != generated_at:
+            return False
+    return True
+
+
+def _generated_at_present(payload: dict[str, Any]) -> bool:
+    generated_at = payload.get("generated_at")
+    return isinstance(generated_at, str) and bool(generated_at)
 
 
 def _checkpoint_completion_state_matches_readiness(

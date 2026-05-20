@@ -27,6 +27,11 @@ from scripts.operator_product_goal_audit import (
     build_goal_audit,
 )
 
+AUTH_PROOF_GENERATED_AT = "2026-05-20T00:00:01Z"
+AUTH_PREFLIGHT_GENERATED_AT = "2026-05-20T00:00:02Z"
+AUTH_STACK_SMOKE_GENERATED_AT = "2026-05-20T00:00:03Z"
+AUTH_ATTEMPT_GENERATED_AT = "2026-05-20T00:00:04Z"
+
 
 class OperatorProductGoalAuditTests(unittest.TestCase):
     def test_goal_audit_blocks_only_on_external_provider_proof_when_local_markers_exist(self) -> None:
@@ -48,6 +53,15 @@ class OperatorProductGoalAuditTests(unittest.TestCase):
         self.assertEqual(audit["requirements"][0]["auth_checkpoint_live_provider_status"], "blocked")
         self.assertEqual(audit["requirements"][0]["auth_checkpoint_next_required_command"], "pnpm run auth-provider:live-stack")
         self.assertEqual(audit["requirements"][0]["auth_checkpoint_final_verification_command"], "pnpm run test:auth-provider:live")
+        self.assertEqual(
+            audit["requirements"][0]["auth_checkpoint_evidence_generated_at"],
+            {
+                "provider_readiness": AUTH_PROOF_GENERATED_AT,
+                "live_preflight": AUTH_PREFLIGHT_GENERATED_AT,
+                "live_stack_smoke": AUTH_STACK_SMOKE_GENERATED_AT,
+                "live_capture_attempt": AUTH_ATTEMPT_GENERATED_AT,
+            },
+        )
         self.assertEqual(audit["requirements"][0]["live_capture_attempt_status"], "blocked")
         self.assertEqual(audit["requirements"][0]["live_capture_attempt_stack_mode"], "managed_local_stack")
         self.assertEqual(audit["requirements"][0]["live_capture_attempt_blockers"], ["live_provider_proof_missing"])
@@ -237,6 +251,21 @@ class OperatorProductGoalAuditTests(unittest.TestCase):
         self.assertEqual(p0["status"], STATUS_BLOCKED_LOCAL)
         self.assertIn("auth checkpoint live capture attempt binding matches artifact", p0["missing"])
 
+    def test_goal_audit_fails_local_when_auth_checkpoint_evidence_timestamps_are_stale(self) -> None:
+        with TemporaryDirectory() as tmp_dir:
+            root = _minimal_goal_tree(Path(tmp_dir), auth_status="blocked_provider_console_unverified")
+            checkpoint_path = root / ".mesh-runtime-state" / "operator-auth-proof" / "checkpoint.json"
+            payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+            payload["evidence_generated_at"]["live_capture_attempt"] = "2026-05-20T00:00:00Z"
+            checkpoint_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+            audit = build_goal_audit(root)
+
+        self.assertEqual(audit["status"], STATUS_BLOCKED_LOCAL)
+        p0 = next(item for item in audit["requirements"] if item["id"] == "P0")
+        self.assertEqual(p0["status"], STATUS_BLOCKED_LOCAL)
+        self.assertIn("auth checkpoint evidence timestamps match source artifacts", p0["missing"])
+
     def test_goal_audit_fails_local_when_auth_checkpoint_next_command_is_stale(self) -> None:
         with TemporaryDirectory() as tmp_dir:
             root = _minimal_goal_tree(Path(tmp_dir), auth_status="blocked_provider_console_unverified")
@@ -325,6 +354,7 @@ def _auth_proof(status: str) -> dict[str, object]:
         "schema_version": "mesh.operator_auth_provider_readiness.v1",
         "state_slice": "auth-provider-proof.v1",
         "status": status,
+        "generated_at": AUTH_PROOF_GENERATED_AT,
         "raw_secret_material_present": False,
         "tracked_env_secret_material_present": False,
         "tracked_secret_hits": [],
@@ -351,6 +381,7 @@ def _auth_preflight() -> dict[str, object]:
         "schema_version": "mesh.operator_auth_live_capture_preflight.v1",
         "state_slice": "auth-provider-proof.v1",
         "status": "ready",
+        "generated_at": AUTH_PREFLIGHT_GENERATED_AT,
         "blockers": [],
         "raw_secret_material_present": False,
         "identity_path_matches_default": True,
@@ -368,6 +399,7 @@ def _auth_stack_smoke() -> dict[str, object]:
         "schema_version": "mesh.operator_auth_live_stack_smoke.v1",
         "state_slice": "auth-provider-proof.v1",
         "status": "ready",
+        "generated_at": AUTH_STACK_SMOKE_GENERATED_AT,
         "blockers": [],
         "preflight_status": "ready",
         "stack_mode": "managed_local_stack",
@@ -400,6 +432,12 @@ def _auth_checkpoint(auth_status: str) -> dict[str, object]:
         "readiness_status": auth_status,
         "live_provider_status": "complete" if complete else "blocked",
         "live_provider_blocker": "" if complete else "live_provider_proof_missing",
+        "evidence_generated_at": {
+            "provider_readiness": AUTH_PROOF_GENERATED_AT,
+            "live_preflight": AUTH_PREFLIGHT_GENERATED_AT,
+            "live_stack_smoke": AUTH_STACK_SMOKE_GENERATED_AT,
+            "live_capture_attempt": AUTH_ATTEMPT_GENERATED_AT,
+        },
         "next_required_command": "pnpm run auth-provider:live-stack",
         "final_verification_command": "pnpm run test:auth-provider:live",
     }
@@ -411,6 +449,7 @@ def _auth_attempt(auth_status: str) -> dict[str, object]:
         "schema_version": "mesh.operator_auth_live_capture_attempt.v1",
         "state_slice": "auth-provider-proof.v1",
         "status": "complete" if complete else "blocked",
+        "generated_at": AUTH_ATTEMPT_GENERATED_AT,
         "blockers": [] if complete else ["live_provider_proof_missing"],
         "clean_browser_session": True,
         "managed_local_stack": True,

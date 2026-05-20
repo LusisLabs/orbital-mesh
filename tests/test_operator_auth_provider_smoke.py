@@ -473,6 +473,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
         self.assertTrue(preflight["oauth"]["github"]["exact_match"])
         self.assertTrue(preflight["product_redirect"]["exact_match"])
         self.assertTrue(preflight["captcha"]["hcaptcha_env_ready"])
+        self.assertTrue(preflight["generated_at"])
         self.assertFalse(preflight["raw_secret_material_present"])
 
     def test_live_stack_smoke_artifacts_are_redacted_and_do_not_claim_provider_completion(self) -> None:
@@ -554,6 +555,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_provider_readiness.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "blocked_provider_console_unverified",
+                        "generated_at": "2026-05-20T00:00:01Z",
                         "raw_secret_material_present": False,
                         "tracked_env_secret_material_present": False,
                         "tracked_secret_hits": [],
@@ -574,6 +576,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_capture_preflight.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "ready",
+                        "generated_at": "2026-05-20T00:00:02Z",
                         "blockers": [],
                         "raw_secret_material_present": False,
                         "identity_path_matches_default": True,
@@ -594,6 +597,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_stack_smoke.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "ready",
+                        "generated_at": "2026-05-20T00:00:03Z",
                         "blockers": [],
                         "preflight_status": "ready",
                         "stack_mode": "managed_local_stack",
@@ -615,6 +619,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_capture_attempt.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "blocked",
+                        "generated_at": "2026-05-20T00:00:04Z",
                         "blockers": ["google_oauth_browser_completion_missing"],
                         "clean_browser_session": True,
                         "preflight_status": "ready",
@@ -646,6 +651,15 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
         self.assertEqual(checkpoint["live_capture_attempt_stack_mode"], "managed_local_stack")
         self.assertEqual(checkpoint["live_capture_attempt_blockers"], ["google_oauth_browser_completion_missing"])
         self.assertEqual(checkpoint["next_required_command"], "pnpm run auth-provider:live-stack")
+        self.assertEqual(
+            checkpoint["evidence_generated_at"],
+            {
+                "provider_readiness": "2026-05-20T00:00:01Z",
+                "live_preflight": "2026-05-20T00:00:02Z",
+                "live_stack_smoke": "2026-05-20T00:00:03Z",
+                "live_capture_attempt": "2026-05-20T00:00:04Z",
+            },
+        )
 
     def test_auth_checkpoint_points_reused_stack_evidence_to_reuse_stack_command(self) -> None:
         with TemporaryDirectory() as tmp_dir:
@@ -661,6 +675,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_provider_readiness.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "blocked_provider_console_unverified",
+                        "generated_at": "2026-05-20T00:01:01Z",
                         "raw_secret_material_present": False,
                         "tracked_env_secret_material_present": False,
                         "tracked_secret_hits": [],
@@ -681,6 +696,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_capture_preflight.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "ready",
+                        "generated_at": "2026-05-20T00:01:02Z",
                         "blockers": [],
                         "raw_secret_material_present": False,
                         "identity_path_matches_default": True,
@@ -701,6 +717,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_stack_smoke.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "ready",
+                        "generated_at": "2026-05-20T00:01:03Z",
                         "blockers": [],
                         "preflight_status": "ready",
                         "stack_mode": "reused_local_stack",
@@ -722,6 +739,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
                         "schema_version": "mesh.operator_auth_live_capture_attempt.v1",
                         "state_slice": "auth-provider-proof.v1",
                         "status": "blocked",
+                        "generated_at": "2026-05-20T00:01:04Z",
                         "blockers": ["github_oauth_browser_completion_missing"],
                         "clean_browser_session": True,
                         "preflight_status": "ready",
@@ -744,6 +762,7 @@ class OperatorAuthProviderSmokeTests(unittest.TestCase):
 
         self.assertEqual(checkpoint["local_evidence_status"], "complete")
         self.assertEqual(checkpoint["next_required_command"], "pnpm run auth-provider:reuse-stack")
+        self.assertEqual(checkpoint["evidence_generated_at"]["live_stack_smoke"], "2026-05-20T00:01:03Z")
 
     def test_live_capture_attempt_records_missing_components_without_secret_material(self) -> None:
         attempt = build_live_capture_attempt(
