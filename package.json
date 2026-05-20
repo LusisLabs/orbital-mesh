@@ -2,6 +2,10 @@
   "name": "orbital-mesh",
   "private": true,
   "scripts": {
-    "lint": "npm --prefix web run lint && npm --prefix meshapp/frontend run lint"
+    "lint": "pnpm run verify:full",
+    "lint:fast": "pnpm run verify:contracts && uv run --with-editable . python -m py_compile services/runtime.py services/control_plane.py shared/mesh_runtime/config.py shared/mesh_runtime/control_plane_models.py shared/mesh_runtime/postgres_state.py",
+    "test:focused": "PYTHONPATH=. uv run --with-editable . python -m unittest tests.test_signal_profile_registry tests.test_signal_agnostic_evidence tests.test_live_evidence_strategies tests.test_postgres_pool tests.test_memory_infra_bridge tests.test_control_plane",
+    "verify:contracts": "uv run --with-editable . python scripts/generate_control_plane_contracts.py --check && uv run --with-editable . python scripts/generate_control_plane_contracts.py --check --types-path meshapp/frontend/src/types.ts && uv run --with-editable . python -m json.tool shared/mesh_runtime/schemas/control-plane.schema.json >/tmp/orbital-mesh-control-plane-schema.json",
+    "verify:full": "pnpm run verify:contracts && pnpm run test:focused && pnpm --dir web run lint && pnpm --dir meshapp/frontend run lint"
   }
 }

@@ -29,6 +29,108 @@ _VAULT_QUEUE_SIZE = 256
 _LOG = logging.getLogger("mesh.postgres_state_store")
 
 
+# ----------------------------------------------------------------------
+# Connection pool
+# ----------------------------------------------------------------------
+#
+# Pre-pool implementation called ``psycopg.connect`` fresh on every DB
+# operation (27 sites in this file). Each call paid the full
+# TCP+TLS+auth round-trip, dominating per-op latency on TLS Postgres.
+# We replace it with a process-wide ``ConnectionPool`` keyed by DSN so
+# concurrent ``PostgresStateStore`` instances (multiple worktrees, test
+# subprocesses, control-plane + worker threads) share one pool per
+# database. The pool's size and timeouts are config-driven; see
+# ``RuntimeConfig.postgres_pool_*``.
+#
+# Module-level lifetime is intentional: pools outlive any single store
+# instance and shut down with the process. ``close_all_pools`` is
+# provided for clean teardown in tests and the ``MeshControl`` exit
+# path; otherwise the pool's own thread reclaims idle connections.
+
+_POOLS: dict[str, Any] = {}
+_POOLS_LOCK = threading.Lock()
+
+
+def _get_or_create_pool(config: RuntimeConfig) -> Any:
+    """Return the process-wide pool for ``config.database_url``.
+
+    Creates the pool lazily on first call for a given DSN; subsequent
+    calls for the same DSN return the same pool. Raises a clear error
+    if ``psycopg_pool`` isn't installed (the binary extra now pulls it
+    in via ``psycopg[binary,pool]``; legacy installs of plain
+    ``psycopg[binary]`` get the runtime error pointing at the fix).
+    """
+    if not config.database_url:
+        raise ValueError("MESH_DATABASE_URL is required when MESH_STATE_BACKEND=postgres")
+    try:
+        from psycopg_pool import ConnectionPool
+    except ImportError as exc:
+        raise RuntimeError(
+            "Postgres backend requires psycopg_pool. Install with "
+            "`uv pip install 'psycopg[binary,pool]>=3.2,<4'` or "
+            "switch to MESH_STATE_BACKEND=file."
+        ) from exc
+
+    key = config.database_url
+    with _POOLS_LOCK:
+        pool = _POOLS.get(key)
+        if pool is None:
+            pool = ConnectionPool(
+                conninfo=config.database_url,
+                min_size=int(config.postgres_pool_min_size),
+                max_size=int(config.postgres_pool_max_size),
+                max_idle=float(config.postgres_pool_max_idle_seconds),
+                timeout=float(config.postgres_pool_connect_timeout_seconds),
+                # ``open=True`` opens the minimum connections eagerly so
+                # the first request doesn't pay handshake. Pool spawns a
+                # background worker to grow / shrink within bounds.
+                open=True,
+                name=f"mesh-postgres-{abs(hash(key)) & 0xFFFF:04x}",
+            )
+            _POOLS[key] = pool
+            _LOG.info(
+                "opened postgres pool min=%d max=%d for dsn=%s",
+                config.postgres_pool_min_size,
+                config.postgres_pool_max_size,
+                _redact_dsn(key),
+            )
+    return pool
+
+
+def close_all_pools() -> None:
+    """Close every pool created in this process.
+
+    Used by tests for hermeticity and by shutdown hooks for a clean
+    exit. Pool's own ``__del__`` would eventually drain connections,
+    but explicit close releases sockets immediately and surfaces any
+    errors at teardown rather than at GC time.
+    """
+    with _POOLS_LOCK:
+        for pool in _POOLS.values():
+            try:
+                pool.close()
+            except Exception:  # noqa: BLE001 — teardown is best-effort
+                _LOG.exception("failed to close postgres pool during shutdown")
+        _POOLS.clear()
+
+
+def _redact_dsn(dsn: str) -> str:
+    """Strip the password from a DSN before logging it.
+
+    ``postgres://user:secret@host/db`` -> ``postgres://user:***@host/db``.
+    Conservative — only handles the URL form; raw key=value DSNs are
+    logged verbatim since they're rarer in mesh config.
+    """
+    if "://" not in dsn or "@" not in dsn:
+        return dsn
+    scheme, rest = dsn.split("://", 1)
+    creds, host = rest.split("@", 1)
+    if ":" not in creds:
+        return dsn
+    user, _ = creds.split(":", 1)
+    return f"{scheme}://{user}:***@{host}"
+
+
 class PostgresStateStore:
     def __init__(self, config: RuntimeConfig):
         if not config.database_url:
@@ -651,11 +753,27 @@ class PostgresStateStore:
                 conn.execute(path.read_text(encoding="utf-8"))
 
     def _connect(self):
+        """Return a connection context manager from the shared pool.
+
+        Pre-pool: ``psycopg.connect`` returned a fresh handshaked
+        connection every call (27 call sites, every call paid TCP+TLS+auth
+        cost). Now ``pool.connection()`` checks out from the per-DSN
+        ``ConnectionPool`` and returns it on context exit. Semantics
+        match psycopg3's autocommit=False default: commit on clean exit,
+        rollback on exception — same as before, just without the
+        handshake.
+        """
         try:
-            import psycopg
+            # Touch psycopg early so missing-driver errors surface here
+            # rather than from inside a pool worker thread.
+            import psycopg  # noqa: F401
         except ImportError as exc:
-            raise RuntimeError("Postgres backend requires psycopg. Install psycopg or use MESH_STATE_BACKEND=file.") from exc
-        return psycopg.connect(self.database_url)
+            raise RuntimeError(
+                "Postgres backend requires psycopg. Install with "
+                "`uv pip install 'psycopg[binary,pool]>=3.2,<4'` or "
+                "switch to MESH_STATE_BACKEND=file."
+            ) from exc
+        return _get_or_create_pool(self.config).connection()
 
     def _jsonb(self, value: Any):
         try:

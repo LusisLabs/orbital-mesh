@@ -40,9 +40,9 @@ External-facing claims should map to one of:
 ## Pointers
 
 - Architecture: `architecture.md`
-- Contract: `first-closed-loop-contract.md`
+- HTTP API reference: `docs/api-reference.md`
+- Extending Mesh (plug-ins): `docs/extending-mesh.md`
 - Integrations and readiness: `docs/integrations.md`
-- Research intelligence and drift flags: `docs/research-intelligence.md`
+- Investigation harness: `docs/investigation-harness.md`
 - Production-like local E2E: `docs/production-live-runbook.md`
 - UI workspace model: `docs/ui-auto-canvas-workspace.md`
-- Run history and prior changes: `docs/CODEX_RUN_SUMMARY.md`

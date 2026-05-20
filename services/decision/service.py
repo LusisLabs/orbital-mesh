@@ -151,6 +151,23 @@ class DecisionService:
                 decision.autonomy_tier,
             )
             return decision
+        if trigger.trigger_type == "generic_signal_firing":
+            decision = self._decide_generic_signal(
+                trigger,
+                evidence_pack=evidence_pack,
+                investigation_report=investigation_report,
+            )
+            _attach_reasoning_bank_context(decision, reasoning_bank_packet)
+            _attach_investigation_report(decision, investigation_report)
+            decision.validate()
+            _LOG.info(
+                "decide: emitted decision_type=%s action=%s confidence=%.2f tier=%s",
+                decision.decision_type,
+                decision.execution_plan.get("action"),
+                decision.confidence,
+                decision.autonomy_tier,
+            )
+            return decision
         latency_delta_pct = _delta_pct(
             trigger.metrics["baseline_p95_latency_ms"],
             trigger.metrics["observed_p95_latency_ms"],
@@ -380,6 +397,71 @@ class DecisionService:
         )
 
     # ------------------------------------------------------------------ OTel
+
+    def _decide_generic_signal(
+        self,
+        trigger: Trigger,
+        evidence_pack: dict | None = None,
+        investigation_report: dict | None = None,
+    ) -> Decision:
+        candidates = (
+            investigation_report.get("root_cause_candidates")
+            if isinstance(investigation_report, dict)
+            else []
+        )
+        ranked = [item for item in candidates if isinstance(item, dict)][:8] if isinstance(candidates, list) else []
+        return Decision(
+            decision_id=f"dec_generic_{trigger.trigger_id}",
+            trigger_id=trigger.trigger_id,
+            summary=(
+                f"Escalate unknown signal type for {trigger.service}; no registered profile may auto-act."
+            ),
+            decision_type="escalate",
+            autonomy_tier="escalated",
+            reasoning={
+                "primary_hypothesis": (
+                    "Unknown signal type reached the generic fallback; route to operator review."
+                ),
+                "evidence": [
+                    f"signal_type={trigger.related_context.get('signal_type') or 'unknown'}",
+                    f"trigger_type={trigger.trigger_type}",
+                    f"evidence_sufficient={(evidence_pack or {}).get('sufficient') if isinstance(evidence_pack, dict) else False}",
+                ],
+                "evidence_pack": {
+                    "source": (evidence_pack or {}).get("source") if isinstance(evidence_pack, dict) else None,
+                    "sufficient": (evidence_pack or {}).get("sufficient") if isinstance(evidence_pack, dict) else False,
+                    "missing_fields": (evidence_pack or {}).get("missing_fields", []) if isinstance(evidence_pack, dict) else [],
+                    "investigation_report": investigation_report if isinstance(investigation_report, dict) else {},
+                },
+                "ranked_hypotheses": ranked,
+                "alternatives_considered": [
+                    "auto-act on unknown signal — rejected because no profile is registered",
+                    "ignore unknown signal — rejected because silent skips violate the harness contract",
+                ],
+            },
+            expected_outcome={
+                "target_metrics": {"p95_latency_ms": "unknown", "error_rate": "unknown"},
+                "time_to_effect": "operator_dependent",
+            },
+            risk={
+                "level": "high",
+                "blast_radius": "unknown",
+                "customer_impact_if_wrong": "Unknown signal semantics require human review.",
+            },
+            confidence=0.5,
+            execution_plan={
+                "system": "incident_service",
+                "action": "open_incident",
+                "parameters": {
+                    "service": trigger.service,
+                    "endpoint": trigger.endpoint,
+                    "environment": trigger.environment,
+                    "source": "signal_profile_registry:generic",
+                    "trigger_id": trigger.trigger_id,
+                },
+                "rollback_plan": "no_op",
+            },
+        )
 
     def _decide_reth_node(
         self,

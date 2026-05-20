@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
-from services.runtime import MeshRuntimeEngine
+from services.runtime import MeshRuntimeEngine, _auto_wire_investigation_harness, resolve_signal_profile
 from services.evidence import EvidencePack, EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
@@ -397,13 +397,21 @@ class RunCoordinator:
         self.override_store = OverrideLearningStore(self.config.state_directory)
         self.context_store = ContextStore(self.config.state_directory)
         self.active_memory = ActiveMemoryStore(self.config.state_directory)
+        # InfraGraph is constructed before ReasoningBankService so the
+        # bridge between mesh's typed K8s topology and the memory
+        # graph can be threaded in at retrieval time. See
+        # ``shared/mesh_runtime/reasoning_bank.py`` for what this
+        # buys us (metapath traversal across service → pod → node so
+        # past incidents about topologically-adjacent resources
+        # surface on a new trigger).
+        self.infra_graph = InfraGraph(self.config.state_directory)
         self.reasoning_bank = ReasoningBankService(
             self.state_store,
             max_strategies=self.config.reasoning_bank_max_strategies,
             scaling_mode=self.config.reasoning_bank_scaling_mode,
+            infra_graph=self.infra_graph,
         )
         self._project_corpus_memory_on_startup()
-        self.infra_graph = InfraGraph(self.config.state_directory)
         self.trust_ladder = TrustLadder(
             self.config.state_directory,
             min_draft_runs=self.config.trust_ladder_min_draft_runs,
@@ -429,6 +437,8 @@ class RunCoordinator:
         self._deferred_thread = threading.Thread(target=self._deferred_recheck_loop, daemon=True)
         self._deferred_thread.start()
         self._lock = threading.Lock()
+        self._agent_task_threads: dict[str, threading.Thread] = {}
+        self._agent_task_lock = threading.Lock()
         self.agent_mesh = AgentMeshService(config=self.config, state_store=self.state_store)
         self.simulation_service = SimulationService(self.config)
         self.service_agents = ServiceAgentRegistry(self.config.service_agents_config_path)
@@ -3095,6 +3105,14 @@ class RunCoordinator:
                 self._record_benchmark_if_simulation(run_id)
                 return
 
+            canonical_signal_payload = (
+                normalized_event.payload if isinstance(normalized_event.payload, dict) else signal_payload
+            )
+            signal_profile = resolve_signal_profile(
+                engine.signal_profiles,
+                trigger,
+                canonical_signal_payload if isinstance(canonical_signal_payload, dict) else None,
+            )
             self._set_artifact(run_id, "trigger", trigger.to_dict())
             self._update_session(run_id, stage="trigger_ready", status="running")
             self.state_store.append_run_event(
@@ -3158,15 +3176,21 @@ class RunCoordinator:
                     status="skipped",
                 )
             else:
-                investigation_plan = self._record_reth_investigation_plan(run_id, trigger, signal_payload)
+                investigation_plan = self._record_investigation_plan(
+                    run_id,
+                    trigger,
+                    canonical_signal_payload,
+                    signal_profile=signal_profile,
+                )
                 try:
                     evidence_pack = self._record_evidence_pack(
                         run_id,
                         trigger,
-                        signal_payload,
+                        canonical_signal_payload,
                         investigation_plan=(
                             investigation_plan.to_dict() if investigation_plan is not None else None
                         ),
+                        evidence_service=engine.evidence,
                     )
                 except Exception as exc:
                     # Evidence stage failure is non-fatal: the pipeline falls
@@ -3187,6 +3211,8 @@ class RunCoordinator:
             reasoning_bank_packet = None
             scenario_analysis = None
             investigation_report = None
+            investigation_registry = None
+            investigation_loop_planner = None
             if chaos_probe:
                 self.state_store.append_run_event(
                     run_id,
@@ -3201,6 +3227,13 @@ class RunCoordinator:
                     status="skipped",
                 )
             else:
+                investigation_registry, investigation_loop_planner = _auto_wire_investigation_harness(
+                    signal_payload,
+                    trigger,
+                    run_config,
+                    root_registry=engine.root_registry,
+                    infra_graph=engine.infra_graph,
+                )
                 reasoning_bank_artifact = self._record_reasoning_bank_retrieval(
                     run_id,
                     trigger,
@@ -3216,6 +3249,8 @@ class RunCoordinator:
                         run_id,
                         trigger,
                         evidence_pack.to_dict() if evidence_pack is not None else None,
+                        registry=investigation_registry,
+                        planner=investigation_loop_planner,
                     )
                 except Exception as exc:
                     # Investigation is advisory and read-only. A failure here
@@ -3277,7 +3312,13 @@ class RunCoordinator:
                 reasoning_bank_packet=reasoning_bank_packet if isinstance(reasoning_bank_packet, dict) else None,
                 investigation_report=investigation_report.to_dict() if investigation_report is not None else None,
             )
-            evaluation = self._record_decision_and_evaluation(run_id, engine, trigger, decision)
+            evaluation = self._record_decision_and_evaluation(
+                run_id,
+                engine,
+                trigger,
+                decision,
+                signal_profile=signal_profile,
+            )
             if self._maybe_launch_recovery_run(
                 run_id,
                 scenario_key=scenario_key,
@@ -3329,6 +3370,7 @@ class RunCoordinator:
                         engine,
                         trigger,
                         decision,
+                        signal_profile=signal_profile,
                         allow_rereevaluation=True,
                     )
                     continue
@@ -3932,6 +3974,7 @@ class RunCoordinator:
         signal_payload: dict[str, Any],
         *,
         investigation_plan: dict[str, Any] | None = None,
+        evidence_service: EvidenceService | None = None,
     ) -> EvidencePack:
         """Run the evidence stage and stamp the audited pack onto the run.
 
@@ -3953,7 +3996,8 @@ class RunCoordinator:
             status="running",
         )
 
-        pack = self.evidence.assemble(
+        service = evidence_service or self.evidence
+        pack = service.assemble(
             trigger=trigger,
             signal_payload=signal_payload,
             investigation_plan=investigation_plan,
@@ -3995,15 +4039,15 @@ class RunCoordinator:
         )
         return pack
 
-    def _record_reth_investigation_plan(
+    def _record_investigation_plan(
         self,
         run_id: str,
         trigger: Trigger,
         signal_payload: dict[str, Any],
+        *,
+        signal_profile: Any,
     ):
-        plan = self.reth_planner.plan(trigger=trigger, signal_payload=signal_payload)
-        if plan is None:
-            return None
+        plan = signal_profile.investigation_planner.plan(trigger=trigger, signal_payload=signal_payload)
         payload = plan.to_dict()
         self._set_artifact(run_id, "investigation_plan", payload)
         self.state_store.append_run_event(
@@ -4016,7 +4060,7 @@ class RunCoordinator:
                 "probe_count": len(payload.get("probes", [])),
             },
             artifact_key="investigation_plan",
-            integration_name="reth_planner",
+            integration_name=f"{signal_profile.signal_source}_planner",
             status="recorded",
         )
         return plan
@@ -4026,6 +4070,9 @@ class RunCoordinator:
         run_id: str,
         trigger: Trigger,
         evidence_pack: dict[str, Any] | None,
+        *,
+        registry: Any = None,
+        planner: Any = None,
     ):
         self._update_session(run_id, stage="investigation_ready", status="running")
         memory_packet = {}
@@ -4064,6 +4111,8 @@ class RunCoordinator:
             memory_packet=memory_packet,
             service_context=service_context,
             recent_runs=recent_runs,
+            registry=registry,
+            planner=planner,
         )
         report_payload = report.to_dict()
         self._set_artifact(run_id, "investigation_report", report_payload)
@@ -4170,39 +4219,46 @@ class RunCoordinator:
         engine: MeshRuntimeEngine,
         trigger: Trigger,
         decision: Decision,
+        *,
+        signal_profile: Any | None = None,
         allow_rereevaluation: bool = False,
     ) -> EvaluationResult:
         session = self.state_store.get_run_session(run_id)
         artifacts = session.artifacts if session is not None and isinstance(session.artifacts, dict) else {}
         evidence_pack = artifacts.get("evidence_pack", {})
-        rca_report = build_rca_report(
+        if signal_profile is None:
+            signal_profile = resolve_signal_profile(
+                engine.signal_profiles,
+                trigger,
+                evidence_pack.get("pack") if isinstance(evidence_pack, dict) else None,
+            )
+        rca_report = signal_profile.rca_builder.build(
             trigger=trigger,
             decision=decision,
             evidence_pack=evidence_pack if isinstance(evidence_pack, dict) else None,
         )
-        if rca_report is not None:
-            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
-                "report_id": rca_report.report_id,
+        decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+            "report_id": rca_report.report_id,
+            "likely_cause": rca_report.likely_cause,
+            "confidence": rca_report.confidence,
+            "recommended_next_step": rca_report.recommended_next_step,
+        }
+        rca_payload = rca_report.to_dict()
+        self._set_artifact(run_id, "rca_report", rca_payload)
+        self.state_store.append_run_event(
+            run_id,
+            stage="decision_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=rca_payload,
+            summary={
                 "likely_cause": rca_report.likely_cause,
                 "confidence": rca_report.confidence,
                 "recommended_next_step": rca_report.recommended_next_step,
-            }
-            rca_payload = rca_report.to_dict()
-            self._set_artifact(run_id, "rca_report", rca_payload)
-            self.state_store.append_run_event(
-                run_id,
-                stage="decision_ready",
-                event_type=INTEGRATION_ARTIFACT_RECORDED,
-                payload=rca_payload,
-                summary={
-                    "likely_cause": rca_report.likely_cause,
-                    "confidence": rca_report.confidence,
-                    "recommended_next_step": rca_report.recommended_next_step,
-                },
-                artifact_key="rca_report",
-                integration_name="reth_rca",
-                status="recorded",
-            )
+            },
+            artifact_key="rca_report",
+            integration_name=f"{signal_profile.signal_source}_rca",
+            status="recorded",
+        )
         ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
         if ranked_hypotheses:
             self._set_artifact(run_id, "ranked_hypotheses", ranked_hypotheses)

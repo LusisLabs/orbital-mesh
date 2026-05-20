@@ -1,5 +1,6 @@
-# CPU-only LatentMAS for Docker Desktop (Apple Silicon / amd64) where NVIDIA GPU pass-through
-# is unavailable. Metal/MPS is macOS-only and does not apply inside Linux containers.
+# CPU-only LatentMAS sidecar for Docker Desktop and hosts without NVIDIA
+# container passthrough. Metal/MPS is macOS-only and unavailable inside Linux
+# containers, so the default device remains CPU.
 FROM python:3.11-slim-bookworm
 
 WORKDIR /workspace/orbital-mesh
@@ -15,10 +16,12 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends build-essential git \
   && rm -rf /var/lib/apt/lists/*
 
-RUN python -m pip install --no-cache-dir --upgrade pip \
-  && python -m pip install --no-cache-dir \
+RUN python -m pip install --no-cache-dir --upgrade pip
+COPY latent-mesh/LatentMAS/requirements.txt /tmp/latentmas-requirements.txt
+RUN python -m pip install --no-cache-dir \
     torch --index-url https://download.pytorch.org/whl/cpu \
-  && python -m pip install --no-cache-dir transformers accelerate datasets tqdm numpy
+  && python -m pip install --no-cache-dir -r /tmp/latentmas-requirements.txt \
+  && rm -f /tmp/latentmas-requirements.txt
 
 COPY shared ./shared
 COPY services ./services

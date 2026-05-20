@@ -100,6 +100,18 @@ class RuntimeConfig:
     helix_api_endpoint: str | None = None
     helix_port: int = 6969
     helix_query_namespace: str = "mesh"
+    # Connection pool sizing for ``state_backend=postgres``. The pool is
+    # shared process-wide and keyed by ``database_url`` so a single mesh
+    # instance never opens more than ``postgres_pool_max_size`` concurrent
+    # connections regardless of how many ``PostgresStateStore`` objects
+    # exist. Pre-pool implementation opened a fresh TCP+TLS+auth handshake
+    # on every operation (27 sites in ``postgres_state.py``), so for any
+    # non-trivial deployment the pool is the difference between sub-10ms
+    # and ~100ms per-operation latency.
+    postgres_pool_min_size: int = 1
+    postgres_pool_max_size: int = 10
+    postgres_pool_max_idle_seconds: float = 600.0
+    postgres_pool_connect_timeout_seconds: float = 10.0
     state_directory: str = str(DEFAULT_STATE_DIRECTORY)
     research_directory: str = str(DEFAULT_RESEARCH_DIRECTORY)
     server_host: str = "127.0.0.1"
@@ -370,6 +382,24 @@ class RuntimeConfig:
         self.helix_query_namespace = _normalize_helix_query_namespace(self.helix_query_namespace)
         if self.darkharness_packet_persistence_mode != "ephemeral":
             raise ValueError("darkharness_packet_persistence_mode only supports ephemeral in this phase")
+        if self.postgres_pool_min_size < 1:
+            raise ValueError(
+                f"postgres_pool_min_size must be >= 1, got {self.postgres_pool_min_size}"
+            )
+        if self.postgres_pool_max_size < self.postgres_pool_min_size:
+            raise ValueError(
+                "postgres_pool_max_size must be >= postgres_pool_min_size, got "
+                f"max={self.postgres_pool_max_size} min={self.postgres_pool_min_size}"
+            )
+        if self.postgres_pool_max_idle_seconds <= 0:
+            raise ValueError(
+                f"postgres_pool_max_idle_seconds must be > 0, got {self.postgres_pool_max_idle_seconds}"
+            )
+        if self.postgres_pool_connect_timeout_seconds <= 0:
+            raise ValueError(
+                "postgres_pool_connect_timeout_seconds must be > 0, got "
+                f"{self.postgres_pool_connect_timeout_seconds}"
+            )
         self.observer_prompt_cache_mode = _normalize_prompt_cache_mode(
             self.observer_prompt_cache_mode
         )
@@ -402,6 +432,10 @@ class RuntimeConfig:
             helix_api_endpoint=os.getenv("MESH_HELIX_API_ENDPOINT") or None,
             helix_port=int(os.getenv("MESH_HELIX_PORT", "6969")),
             helix_query_namespace=os.getenv("MESH_HELIX_QUERY_NAMESPACE", "mesh"),
+            postgres_pool_min_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MIN_SIZE", "1"))),
+            postgres_pool_max_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MAX_SIZE", "10"))),
+            postgres_pool_max_idle_seconds=max(1.0, float(os.getenv("MESH_POSTGRES_POOL_MAX_IDLE_SECONDS", "600"))),
+            postgres_pool_connect_timeout_seconds=max(0.1, float(os.getenv("MESH_POSTGRES_POOL_CONNECT_TIMEOUT_SECONDS", "10"))),
             state_directory=state_directory,
             research_directory=research_directory,
             server_host=os.getenv("MESH_SERVER_HOST", "127.0.0.1"),

@@ -5,6 +5,7 @@ from typing import Any
 from uuid import uuid4
 
 from .contracts import ClaimRecord, ObservationRecord, RelationshipRecord, SupersessionRecord
+from .infra_graph import _node_key as _infra_node_key
 from .memory_scoring import confidence_from_factors, freshness_score, support_score
 
 
@@ -116,10 +117,22 @@ class MemoryLifecycleService:
             claim.validate()
             claims.append(self.state_store.save_claim(claim.to_dict()))
 
+        # Bridge to InfraGraph: stamp the canonical service node key on
+        # each relationship row. ``_namespace_from_artifacts`` falls
+        # back to the cloudopsbench / k8s common shapes; missing
+        # namespace is fine — ``_node_key`` substitutes ``_cluster``
+        # and the retrieval expander treats the result as a graph
+        # anchor regardless. Only services get a bridge in v1; the
+        # ``from_id`` here is always a service name. A follow-up can
+        # bridge pod/node/deployment-level claims when those start
+        # being emitted (currently crystallization only emits
+        # service-scoped claims).
         for claim in claims:
             service = _service_from_artifacts(session.artifacts)
             if not service:
                 continue
+            namespace = _namespace_from_artifacts(session.artifacts)
+            infra_key = _infra_node_key("service", namespace, service)
             relationship = RelationshipRecord(
                 relationship_id=f"rel_{uuid4().hex[:12]}",
                 from_id=service,
@@ -128,6 +141,7 @@ class MemoryLifecycleService:
                 confidence=float(claim["confidence"]),
                 supporting_observation_ids=list(claim["supporting_observation_ids"]),
                 state="active",
+                infra_node_key=infra_key,
             )
             relationship.validate()
             relationships.append(self.state_store.save_relationship(relationship.to_dict()))
@@ -218,6 +232,33 @@ def _service_from_artifacts(artifacts: dict[str, Any]) -> str | None:
         service = trigger.get("service")
         if service:
             return str(service)
+    return None
+
+
+def _namespace_from_artifacts(artifacts: dict[str, Any]) -> str | None:
+    """Best-effort namespace extraction for ``InfraGraph`` node-key stamping.
+
+    Triggers don't carry a top-level ``namespace`` field — it's hidden
+    in ``related_context``. Mesh's two common shapes are:
+
+    * CloudOpsBench-style triggers stamp ``cloudopsbench_namespace``
+      (e.g. ``"boutique"``).
+    * Native Kubernetes triggers populate ``namespace`` directly.
+
+    Returns ``None`` if neither is present; ``_node_key`` substitutes
+    ``_cluster`` so the resulting key is still well-formed.
+    """
+    if not isinstance(artifacts, dict):
+        return None
+    trigger = artifacts.get("trigger") if isinstance(artifacts.get("trigger"), dict) else {}
+    related = trigger.get("related_context") if isinstance(trigger.get("related_context"), dict) else {}
+    for key in ("namespace", "cloudopsbench_namespace", "k8s_namespace"):
+        value = related.get(key) if isinstance(related, dict) else None
+        if value:
+            return str(value)
+    direct = trigger.get("namespace") if isinstance(trigger, dict) else None
+    if direct:
+        return str(direct)
     return None
 
 

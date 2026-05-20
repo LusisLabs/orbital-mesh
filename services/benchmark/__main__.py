@@ -6,6 +6,14 @@ from pathlib import Path
 from .compare import compare_benchmark_runs
 from .gaps import generate_gap_report
 from .gates import run_benchmark_gate
+from .harbor_loghub import (
+    HarborResultImportConfig,
+    LoghubCaseBuildConfig,
+    LoghubHarborExportConfig,
+    build_loghub_cases,
+    export_loghub_harbor_dataset,
+    import_harbor_results,
+)
 from .loghub import LoghubExtractionConfig, extract_loghub_scenarios
 from .runner import BenchmarkRunConfig, run_benchmark
 
@@ -117,6 +125,30 @@ def main() -> None:
     loghub_parser.add_argument("--context-lines", type=int, default=3)
     loghub_parser.add_argument("--service", default="loghub-service")
 
+    loghub_build_parser = subparsers.add_parser("loghub-build", help="Build leak-safe Loghub Harbor cases.")
+    loghub_build_parser.add_argument("--dataset", required=True)
+    loghub_build_parser.add_argument("--input", required=True)
+    loghub_build_parser.add_argument("--output", required=True)
+    loghub_build_parser.add_argument("--max-cases", type=int, default=100)
+    loghub_build_parser.add_argument("--context-lines", type=int, default=8)
+    loghub_build_parser.add_argument("--window-lines", type=int, default=80)
+    loghub_build_parser.add_argument("--track", choices=("auto", "gold", "silver", "stress"), default="auto")
+    loghub_build_parser.add_argument("--split-salt", default="mesh-loghub-harbor-v1")
+    loghub_build_parser.add_argument("--service", default="loghub-service")
+
+    loghub_harbor_parser = subparsers.add_parser("loghub-export-harbor", help="Export built Loghub cases as Harbor tasks.")
+    loghub_harbor_parser.add_argument("--cases", required=True)
+    loghub_harbor_parser.add_argument("--output", required=True)
+    loghub_harbor_parser.add_argument("--split", choices=("smoke", "dev", "eval", "full"), default="smoke")
+    loghub_harbor_parser.add_argument("--track", choices=("all", "gold", "silver", "stress"), default="all")
+    loghub_harbor_parser.add_argument("--max-tasks", type=int, default=None)
+    loghub_harbor_parser.add_argument("--benchmark-name", default="Loghub-SRE-Harbor")
+
+    harbor_results_parser = subparsers.add_parser("harbor-import-results", help="Import Harbor result artifacts into Mesh reports.")
+    harbor_results_parser.add_argument("--job", required=True)
+    harbor_results_parser.add_argument("--output", default=None)
+    harbor_results_parser.add_argument("--pass-threshold", type=float, default=0.75)
+
     args = parser.parse_args()
     # When invoked without a subcommand (``python -m services.benchmark``)
     # argparse leaves ``args.command`` as None and never populates the
@@ -196,6 +228,53 @@ def main() -> None:
         print(f"wrote {len(written)} scenarios")
         for path in written:
             print(path)
+        return
+
+    if args.command == "loghub-build":
+        result = build_loghub_cases(
+            LoghubCaseBuildConfig(
+                dataset=args.dataset,
+                input_path=Path(args.input),
+                output_dir=Path(args.output),
+                max_cases=args.max_cases,
+                context_lines=args.context_lines,
+                window_lines=args.window_lines,
+                track=args.track,
+                split_salt=args.split_salt,
+                service=args.service,
+            )
+        )
+        print(f"case_count={len(result.cases)}")
+        print(f"manifest={result.manifest_path}")
+        return
+
+    if args.command == "loghub-export-harbor":
+        result = export_loghub_harbor_dataset(
+            LoghubHarborExportConfig(
+                case_root=Path(args.cases),
+                output_dir=Path(args.output),
+                split=args.split,
+                track=args.track,
+                max_tasks=args.max_tasks,
+                benchmark_name=args.benchmark_name,
+            )
+        )
+        print(f"task_count={len(result.task_dirs)}")
+        print(f"dataset={result.output_dir}")
+        print(f"oracles={result.oracle_dir}")
+        return
+
+    if args.command == "harbor-import-results":
+        result = import_harbor_results(
+            HarborResultImportConfig(
+                job_dir=Path(args.job),
+                output_dir=Path(args.output) if args.output else None,
+                pass_threshold=args.pass_threshold,
+            )
+        )
+        print(f"attempt_count={result.summary['attempt_count']}")
+        print(f"mean_reward={result.summary['mean_reward']:.4f}")
+        print(f"report={result.output_dir / 'report.md'}")
         return
 
     if args.command == "gaps":

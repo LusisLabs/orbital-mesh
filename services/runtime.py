@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from services.decision.llm_fallback import LlmActionProposer
 from services.decision.service import DecisionService
@@ -10,7 +10,7 @@ from services.evidence import EvidenceService
 from services.evidence.runners import build_configured_probe_runner
 from services.feedback.service import FeedbackService, KubernetesFeedbackObserver
 from services.ingest.service import IngestService
-from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
+from services.investigation import InvestigationService, RethInvestigationPlanner
 from services.orchestrator.service import OrchestratorService
 from services.scenario_analysis.service import ScenarioAnalysisService
 from services.signal_history import SignalHistoryStore
@@ -226,6 +226,32 @@ def _auto_wire_investigation_harness(
     return registry, planner
 
 
+def _bind_profile_strategies(signal_profiles: Any, *, evidence_service: EvidenceService) -> None:
+    profiles = list(signal_profiles.profiles())
+    generic = signal_profiles.generic
+    if generic is not None:
+        profiles.append(generic)
+    for profile in profiles:
+        bind = getattr(profile.evidence_strategy, "bind", None)
+        if callable(bind):
+            bind(evidence_service)
+
+
+def resolve_signal_profile(signal_profiles: Any, trigger: object, signal_payload: dict | None) -> Any:
+    """Resolve the one signal profile every migrated stage should share."""
+    trigger_type = str(getattr(trigger, "trigger_type", "") or "")
+    if trigger_type:
+        profile = signal_profiles.get_for_trigger(trigger_type)
+        if profile is not None:
+            return profile
+    signal_type = signal_payload.get("signal_type") if isinstance(signal_payload, dict) else None
+    if signal_type:
+        profile = signal_profiles.get(signal_type)
+        if profile is not None:
+            return profile
+    return signal_profiles.get_or_generic(signal_type)
+
+
 class MeshRuntimeEngine:
     def __init__(
         self,
@@ -275,9 +301,24 @@ class MeshRuntimeEngine:
             learning_store=learning_store,
             signal_history=self.signal_history,
         )
+        # Signal-profile registry — single source of truth for
+        # per-signal-type pipeline behavior. Replaces the silent-skip
+        # paths in the Reth-only investigation planner and RCA builder.
+        # See docs/architecture/signal-profile-spec.md.
+        from services.signal_profiles import build_default_registry
+
+        self.signal_profiles = build_default_registry(self.config)
         self.trigger = trigger or TriggerService()
-        self.evidence = evidence or EvidenceService(probe_runner=build_configured_probe_runner(self.config))
+        self.evidence = evidence or EvidenceService(
+            probe_runner=build_configured_probe_runner(self.config),
+            signal_profiles=self.signal_profiles,
+        )
+        _bind_profile_strategies(self.signal_profiles, evidence_service=self.evidence)
         self.investigation = investigation or InvestigationService()
+        # Legacy attribute kept so existing callers (control_plane,
+        # tests) that reach for ``self.reth_planner`` still work; the
+        # profile's ``RethProfileInvestigationPlanner`` wraps the same
+        # instance internally.
         self.reth_planner = RethInvestigationPlanner(self.config)
         # InfraGraph is the typed view of K8s relationships (service →
         # pod → node → secret/configmap → ...). The control plane
@@ -431,6 +472,10 @@ class MeshRuntimeEngine:
             result["run_metadata"] = run_record.__dict__
             return result
 
+        canonical_signal_payload = (
+            normalized_event.payload if isinstance(normalized_event.payload, dict) else raw_signal
+        )
+
         # Populate the topology graph from this trigger's signal so
         # the always-on ``topology`` tool pack has data to query.
         # Idempotent and best-effort: failures are swallowed so a bad
@@ -478,20 +523,32 @@ class MeshRuntimeEngine:
             status="recorded",
         )
 
-        investigation_plan = self.reth_planner.plan(trigger=trigger, signal_payload=raw_signal)
-        if investigation_plan is not None:
-            record_event(
-                "evidence_pack_ready",
-                "integration_artifact_recorded",
-                investigation_plan.to_dict(),
-                artifact_key="investigation_plan",
-                integration_name="reth_planner",
-                status="recorded",
-            )
+        # Investigation plan: dispatched through the profile registry
+        # so every signal type produces a plan artifact (invariant 1
+        # — no silent skips). Reth gets its specialised multi-probe
+        # plan; K8s/OTel/feature-flag/webhook/generic get a
+        # harness-driven empty-but-audited plan that signals "the
+        # investigation harness owns probe selection for this run."
+        signal_profile = resolve_signal_profile(
+            self.signal_profiles,
+            trigger,
+            canonical_signal_payload if isinstance(canonical_signal_payload, dict) else None,
+        )
+        investigation_plan = signal_profile.investigation_planner.plan(
+            trigger=trigger, signal_payload=canonical_signal_payload
+        )
+        record_event(
+            "evidence_pack_ready",
+            "integration_artifact_recorded",
+            investigation_plan.to_dict(),
+            artifact_key="investigation_plan",
+            integration_name=f"{signal_profile.signal_source}_planner",
+            status="recorded",
+        )
 
         evidence_pack = self.evidence.assemble(
             trigger=trigger,
-            signal_payload=raw_signal,
+            signal_payload=canonical_signal_payload,
             investigation_plan=investigation_plan.to_dict() if investigation_plan is not None else None,
         )
         record_event(
@@ -546,26 +603,30 @@ class MeshRuntimeEngine:
             evidence_pack=evidence_pack.to_dict(),
             investigation_report=investigation_report.to_dict(),
         )
-        rca_report = build_rca_report(
+        # RCA report: dispatched through the profile so every signal
+        # type emits a report (invariant 1). Reth still uses its
+        # specialised RCA builder; K8s/OTel/feature-flag/webhook/
+        # generic profiles synthesise from the investigation harness
+        # output via ``HarnessDrivenRcaBuilder``.
+        rca_report = signal_profile.rca_builder.build(
             trigger=trigger,
             decision=decision,
             evidence_pack=evidence_pack.to_dict(),
         )
-        if rca_report is not None:
-            decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
-                "report_id": rca_report.report_id,
-                "likely_cause": rca_report.likely_cause,
-                "confidence": rca_report.confidence,
-                "recommended_next_step": rca_report.recommended_next_step,
-            }
-            record_event(
-                "decision_ready",
-                "integration_artifact_recorded",
-                rca_report.to_dict(),
-                artifact_key="rca_report",
-                integration_name="reth_rca",
-                status="recorded",
-            )
+        decision.reasoning.setdefault("evidence_pack", {})["rca_report"] = {
+            "report_id": rca_report.report_id,
+            "likely_cause": rca_report.likely_cause,
+            "confidence": rca_report.confidence,
+            "recommended_next_step": rca_report.recommended_next_step,
+        }
+        record_event(
+            "decision_ready",
+            "integration_artifact_recorded",
+            rca_report.to_dict(),
+            artifact_key="rca_report",
+            integration_name=f"{signal_profile.signal_source}_rca",
+            status="recorded",
+        )
         ranked_hypotheses = _ranked_hypotheses_from_decision(decision)
         if ranked_hypotheses:
             record_event(

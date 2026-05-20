@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -48,9 +49,9 @@ class ToolRecorder:
 class SreGymEndpointConfig:
     """SREGym MCP SSE endpoint map.
 
-    The current SREGym server mounts FastMCP apps at /kubectl/sse,
-    /prometheus/sse, /loki/sse, /jaeger/sse, and /submit/sse. Older docs also
-    mention /submit_mcp/sse; callers can override submit_url if needed.
+    SREGym exposes diagnostic MCP tools through its benchmark MCP server,
+    port-forwarded on ``MCP_SERVER_PORT``. The conductor API on ``API_PORT``
+    exposes the stage-aware submit MCP at ``/submit_mcp/sse``.
     """
 
     kubectl_url: str
@@ -60,13 +61,24 @@ class SreGymEndpointConfig:
     submit_url: str
 
     @classmethod
-    def from_server_url(cls, server_url: str, *, submit_path: str = "/submit/sse") -> "SreGymEndpointConfig":
+    def from_server_url(
+        cls,
+        server_url: str,
+        *,
+        submit_path: str = "/submit_mcp/sse",
+        mcp_server_url: str | None = None,
+    ) -> "SreGymEndpointConfig":
         base = server_url.rstrip("/")
+        mcp_base = (
+            mcp_server_url.rstrip("/")
+            if mcp_server_url
+            else f"http://{os.getenv('API_HOSTNAME', 'localhost')}:{os.getenv('MCP_SERVER_PORT', '9954')}"
+        )
         return cls(
-            kubectl_url=f"{base}/kubectl/sse",
-            prometheus_url=f"{base}/prometheus/sse",
-            loki_url=f"{base}/loki/sse",
-            jaeger_url=f"{base}/jaeger/sse",
+            kubectl_url=f"{mcp_base}/kubectl/sse",
+            prometheus_url=f"{mcp_base}/prometheus/sse",
+            loki_url=f"{mcp_base}/loki/sse",
+            jaeger_url=f"{mcp_base}/jaeger/sse",
             submit_url=f"{base}{submit_path}",
         )
 
@@ -74,8 +86,19 @@ class SreGymEndpointConfig:
 class SseMcpSreGymClient:
     """SREGym MCP client using the benchmark server's SSE transports."""
 
-    def __init__(self, server_url: str, *, session_id: str | None = None, submit_path: str = "/submit/sse") -> None:
-        self.endpoints = SreGymEndpointConfig.from_server_url(server_url, submit_path=submit_path)
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        session_id: str | None = None,
+        submit_path: str = "/submit_mcp/sse",
+        mcp_server_url: str | None = None,
+    ) -> None:
+        self.endpoints = SreGymEndpointConfig.from_server_url(
+            server_url,
+            submit_path=submit_path,
+            mcp_server_url=mcp_server_url,
+        )
         self.session_id = session_id or str(uuid.uuid4())
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -158,14 +181,14 @@ def run_mesh_sregym_agent(
         investigation_report=investigation.to_dict(),
     )
     diagnosis = _diagnosis_text(trigger, investigation.to_dict(), scenario_analysis.to_dict())
-    _call_and_record(client, recorder, "submit", {"ans": diagnosis})
+    _required_call_and_record(client, recorder, "submit", {"ans": diagnosis})
 
     mitigation = None
     if allow_mitigation:
         mitigation = _mitigation_command(trigger)
         if mitigation is not None:
             _call_and_record(client, recorder, "exec_kubectl_cmd_safely", mitigation)
-            _call_and_record(client, recorder, "submit", {"ans": "done"})
+            _required_call_and_record(client, recorder, "submit", {"ans": "done"})
 
     return {
         "diagnosis": diagnosis,
@@ -252,6 +275,19 @@ def _call_and_record(
         result = {"error": str(exc)}
         recorder.record(tool_name=tool_name, args=args, result=result, valid=False, relevance=0.0)
         return result
+
+
+def _required_call_and_record(
+    client: SreGymClient,
+    recorder: ToolRecorder,
+    tool_name: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    result = _call_and_record(client, recorder, tool_name, args)
+    status = str(result.get("status") or "").lower()
+    if result.get("error") or status in {"error", "n/a"}:
+        raise RuntimeError(f"required SREGym tool call failed: {tool_name}: {_summary(result)}")
+    return result
 
 
 def _diagnosis_text(trigger: Trigger, investigation_report: dict[str, Any], scenario_analysis: dict[str, Any]) -> str:
@@ -374,7 +410,8 @@ def render_agent_yaml(entry: dict[str, Any]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run Mesh as a SREGym custom agent.")
     parser.add_argument("--server", "--server-url", dest="server_url", default="http://localhost:8000")
-    parser.add_argument("--submit-path", default="/submit/sse")
+    parser.add_argument("--submit-path", default="/submit_mcp/sse")
+    parser.add_argument("--mcp-server-url", default=None)
     parser.add_argument("--trigger-json", default=None)
     parser.add_argument("--target", default="local-kind")
     parser.add_argument("--no-mitigation", action="store_true")
@@ -397,7 +434,11 @@ def main() -> None:
         return
     trigger = Trigger(**json.loads(args.trigger_json)) if args.trigger_json else None
     result = run_mesh_sregym_agent(
-        client=SseMcpSreGymClient(args.server_url, submit_path=args.submit_path),
+        client=SseMcpSreGymClient(
+            args.server_url,
+            submit_path=args.submit_path,
+            mcp_server_url=args.mcp_server_url,
+        ),
         trigger=trigger,
         target=args.target,
         allow_mitigation=not args.no_mitigation,

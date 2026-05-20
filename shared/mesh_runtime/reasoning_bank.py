@@ -18,12 +18,45 @@ class ReasoningBankService:
     The service stores ReasoningBank lessons as ordinary Mesh observations and
     claims. Successful runs become procedural strategy claims; failed, blocked,
     or escalated runs become semantic guardrail claims.
+
+    ``infra_graph`` is the optional bridge to mesh's typed K8s
+    topology layer. When supplied, retrieval uses metapath traversal
+    (service → pod → node, etc.) on top of the lexical + 1-hop
+    relationship channels so a new incident on the same worker as a
+    past incident surfaces the past incident's claims even when the
+    affected service names differ. Without it the service falls back
+    to the pre-bridge retrieval shape, so leaving it ``None`` is
+    safe in test contexts or backends without topology.
     """
 
-    def __init__(self, state_store: Any, *, max_strategies: int = 5, scaling_mode: str = "off") -> None:
+    def __init__(
+        self,
+        state_store: Any,
+        *,
+        max_strategies: int = 5,
+        scaling_mode: str = "off",
+        infra_graph: Any = None,
+    ) -> None:
         self.state_store = state_store
         self.max_strategies = max(1, min(int(max_strategies or 5), 25))
         self.scaling_mode = _normalize_scaling_mode(scaling_mode)
+        self.infra_graph = infra_graph
+
+    def _retrieve(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Retrieve memory, optionally with metapath traversal.
+
+        When ``infra_graph`` is configured, construct
+        ``MemoryRetrievalService`` directly so the graph reference
+        is threaded into the channel ranking — bypassing the
+        ``state_store.retrieve_memory`` wrapper that doesn't know
+        about topology. Otherwise delegate to the wrapper exactly as
+        before, preserving the pre-bridge code path byte-for-byte.
+        """
+        if self.infra_graph is None:
+            return self.state_store.retrieve_memory(request)
+        from .memory_retrieval import MemoryRetrievalService
+
+        return MemoryRetrievalService(self.state_store, infra_graph=self.infra_graph).retrieve(request)
 
     def retrieve_for_trigger(
         self,
@@ -40,7 +73,7 @@ class ReasoningBankService:
             evidence_pack=evidence_pack,
             scenario_analysis=scenario_analysis,
         )
-        response = self.state_store.retrieve_memory(
+        response = self._retrieve(
             {
                 "query": query,
                 "scope": {"service": trigger.service},
@@ -53,7 +86,7 @@ class ReasoningBankService:
         contradictions = list(response.get("contradictions", []))
         channels = list(response.get("channels", _DEFAULT_CHANNELS))
         if len(strategies) < self.max_strategies:
-            shared_response = self.state_store.retrieve_memory(
+            shared_response = self._retrieve(
                 {
                     "query": query,
                     "scope": {"shared": True},
