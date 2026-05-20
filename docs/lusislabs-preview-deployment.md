@@ -6,7 +6,7 @@ State slice: `lusislabs-preview-deployment`.
 
 ## Server Layout
 
-- `/opt/lusis-mesh-webapp/incoming/source`: source tree uploaded by GitHub Actions.
+- `/opt/lusis-mesh-webapp/incoming/source`: optional source tree for manual server deploys; the self-hosted GitHub runner passes its checkout workspace directly.
 - `/opt/lusis-mesh-webapp/releases/<timestamp>-<commit>`: immutable release directories built on the server.
 - `/opt/lusis-mesh-webapp/current`: symlink used by the systemd service.
 - `/opt/lusis-mesh-webapp/shared/state`: persistent app-session state.
