@@ -1,0 +1,34 @@
+name: Deploy Lusis Labs Preview
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-lusislabs-preview
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, lusislabs-preview]
+    env:
+      DEPLOY_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+
+      - name: Prepare deployment source metadata
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DEPLOY_SHA" > .deploy-commit
+          printf '%s\n' "${GITHUB_REF_NAME:-main}" > .deploy-branch
+
+      - name: Run server deployment
+        run: |
+          set -euo pipefail
+          sudo /usr/local/bin/deploy-lusis-mesh-webapp --source "$GITHUB_WORKSPACE"

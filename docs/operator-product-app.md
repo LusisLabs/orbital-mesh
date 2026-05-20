@@ -296,9 +296,29 @@ The runtime identity store also records redacted `auth_events` under `auth-provi
 
 `pnpm run auth-provider:live-capture` opens a fresh Playwright browser profile for the operator and polls redacted Mesh `auth_events` until hCaptcha-backed email signup, Google OAuth, and GitHub OAuth have all established sessions after the capture start time. It writes `.mesh-runtime-state/operator-auth-proof/live-provider-proof.json` only when complete unless `--write-partial` is supplied. The capture proof is derived from event ids and timestamps only; it does not read or store browser cookies, OAuth codes, provider tokens, captcha responses, passwords, or client secrets.
 
+`pnpm run auth-provider:live-stack` runs the same capture with `--manage-local-stack`: it starts the Mesh API and Next product shell from ignored `.env.local`, points OAuth callbacks back to the product URL, uses `.mesh-runtime-state/operator-identity.json` so `pnpm run test:auth-provider:live` validates the same runtime evidence, and redacts known local secret values from captured process output. Managed mode now fails closed when the API or product ports are already occupied; use `--reuse-local-stack` only when intentionally binding proof to already-running local endpoints.
+
+`pnpm run auth-provider:reuse-stack` runs the live capture against already-running loopback Mesh API and product shell endpoints with explicit `stack_mode=reused_local_stack` provenance. It never claims ownership of those processes and still requires the same clean-browser Google, GitHub, and hCaptcha completion before writing `live-provider-proof.json`.
+
+`pnpm run auth-provider:live-attempt` is the bounded managed-stack capture entrypoint. It opens the clean browser, prints operator steps immediately, waits up to five minutes, and writes `.mesh-runtime-state/operator-auth-proof/live-capture-attempt.json` even when provider completion is still missing. That attempt artifact is redacted, records `stack_mode` plus `managed_processes_owned`, and records missing proof components without replacing `live-provider-proof.json`. This attempt command exits zero for a clean blocked attempt because the blocked provider completion is external evidence; `pnpm run auth-provider:live-stack`, `pnpm run auth-provider:live-capture`, and `pnpm run test:auth-provider:live` still fail until the real provider proof is complete.
+
+`pnpm run auth-provider:reuse-attempt` is the same bounded capture attempt for already-running loopback endpoints. It records `managed_processes_owned=false` and is the default local path when ports 8787 and 3000 are intentionally occupied by an operator-run stack.
+
+`pnpm run auth-provider:live-preflight` writes `.mesh-runtime-state/operator-auth-proof/live-preflight.json` and exits zero only when local callback URLs, product redirect, hCaptcha env readiness, identity path binding, and redacted preflight posture are ready for the clean-browser run.
+
+`pnpm run auth-provider:live-stack-smoke` starts the managed local Mesh API and Next product shell, proves `/api/auth/config` and the product shell are reachable with the ignored provider env, writes `.mesh-runtime-state/operator-auth-proof/live-stack-smoke.json`, then shuts the stack down. If an API or product server is already listening, the managed smoke fails closed instead of silently reusing it; rerun with `python3 scripts/operator_auth_live_provider_capture.py --stack-smoke-only --reuse-local-stack` to bind explicit reused-stack provenance. This artifact narrows P0 to external browser/provider completion only; it does not prove Google, GitHub, or hCaptcha completion.
+
+`pnpm run auth-provider:reuse-stack-smoke` is the pnpm entrypoint for that reused-stack smoke proof. It verifies the already-running loopback API and product shell, writes `live-stack-smoke.json`, and records `managed_processes_owned=false`.
+
+`pnpm run auth-provider:checkpoint` writes `.mesh-runtime-state/operator-auth-proof/checkpoint.json`, binding provider readiness, live preflight, explicit local stack smoke, latest capture-attempt status, capture-attempt blockers, source artifact `generated_at` values, and live-provider proof status into one redacted P0 checkpoint. Its local evidence can be complete while the checkpoint remains `blocked_external_provider_proof`; only the live clean-browser proof can move it to `complete`. The checkpoint's `next_required_command` follows the current stack provenance, so reused-stack evidence points back to `pnpm run auth-provider:reuse-stack`.
+
+The live-stack capture fails closed before launching the browser when Google or GitHub redirect URLs do not exactly match the local API callback URL, when `MESH_AUTH_PRODUCT_REDIRECT_URL` does not match the product URL, when hCaptcha provider/site/secret values are incomplete, or when managed-mode local ports are already occupied. The preflight schema is `mesh.operator_auth_live_capture_preflight.v1` and reports only URL shape, readiness booleans, and blockers.
+
 `pnpm run verify:operator-goal` emits `mesh.operator_product_goal_audit.v1`, a machine-readable P0-P6 audit. The current expected status is `blocked_external_provider_proof` when all local product evidence is present but `live_provider_proof_missing` remains. It exits non-zero for local evidence gaps and only requires full completion when invoked with `python3 scripts/operator_product_goal_audit.py --require-complete`.
 
-`scripts/generate_operator_product_contracts.py --check` verifies the generated product schema and TypeScript contract surface. The source contract is `shared/mesh_runtime/operator_product_contracts.py`; generated artifacts are `shared/mesh_runtime/schemas/operator-product.schema.json` and `meshapp/frontend/src/product/types.ts`. `tests/test_operator_product_contracts.py` exercises `/api/auth/config`, `/api/auth/signup`, `/api/auth/team`, `/api/operator/dashboard`, and `/api/operator/settings` against the schema before product UI can drift.
+The goal audit now treats `live-preflight.json`, `live-stack-smoke.json`, `checkpoint.json`, and `live-capture-attempt.json` as local P0 evidence. A missing or locally blocked preflight, stack smoke, checkpoint, capture attempt, ambiguous stack provenance, stale checkpoint/capture-attempt binding, stale checkpoint evidence timestamp binding, stale checkpoint `next_required_command`, or checkpoint completion state that disagrees with provider readiness is `blocked_local_evidence`; ready local artifacts with explicit `managed_local_stack` or `reused_local_stack` provenance and missing live provider proof remain `blocked_external_provider_proof`.
+
+`scripts/generate_operator_product_contracts.py --check` verifies the generated product schema and TypeScript contract surface. The source contract is `shared/mesh_runtime/operator_product_contracts.py`; generated artifacts are `shared/mesh_runtime/schemas/operator-product.schema.json` and `meshapp/frontend/src/product/types.ts`. The `/api/operator/dashboard` schema requires the Mesh section set consumed by the product home surface: health, read model, readiness, connectors, approvals, kill switch, pilot go/no-go, Praxis, trust ladder, watchers, graph, runs, and memory. `tests/test_operator_product_contracts.py` exercises `/api/auth/config`, `/api/auth/signup`, `/api/auth/team`, `/api/operator/dashboard`, and `/api/operator/settings` against the schema before product UI can drift.
 
 ## Evidence Binder
 
@@ -332,6 +352,10 @@ Files that form the proof path:
 - `meshapp/frontend/src/product/product.css`
 - `package.json`
 - `.mesh-runtime-state/operator-auth-proof/latest.json` (local ignored artifact, generated on demand)
+- `.mesh-runtime-state/operator-auth-proof/live-preflight.json` (local ignored artifact, generated on demand)
+- `.mesh-runtime-state/operator-auth-proof/live-stack-smoke.json` (local ignored artifact, generated on demand)
+- `.mesh-runtime-state/operator-auth-proof/checkpoint.json` (local ignored artifact, generated on demand)
+- `.mesh-runtime-state/operator-auth-proof/live-capture-attempt.json` (local ignored artifact, generated on demand)
 - `.mesh-runtime-state/operator-auth-proof/live-provider-proof.json` (local ignored artifact, required only for final live provider proof)
 
 Required validation ladder:
@@ -340,7 +364,15 @@ Required validation ladder:
 pnpm run lint:fast
 pnpm run test:auth-provider:smoke
 pnpm run auth-provider:live-template
+pnpm run auth-provider:live-preflight
+pnpm run auth-provider:live-stack-smoke
+pnpm run auth-provider:reuse-stack-smoke
+pnpm run auth-provider:checkpoint
+pnpm run auth-provider:live-attempt
+pnpm run auth-provider:reuse-attempt
 pnpm run auth-provider:live-capture
+pnpm run auth-provider:live-stack
+pnpm run auth-provider:reuse-stack
 pnpm run verify:operator-goal
 # Final P0 only, after live clean-browser provider completion:
 pnpm run test:auth-provider:live
@@ -361,10 +393,15 @@ Validation transcript from this buildout:
 | `python3 scripts/operator_auth_provider_smoke.py` | Passed redacted readiness generation with `blocked_provider_console_unverified`, no tracked env files, no tracked secret hits, local OAuth callback matches, and hCaptcha env readiness. |
 | `pnpm run test:auth-provider:smoke` | Passes the same redacted provider smoke through the pnpm gate surface; current blocker is `live_provider_proof_missing`. When a live proof file is present, it also requires matching runtime `auth_events`. |
 | `pnpm run auth-provider:live-template` | Prints the redacted fail-closed live proof template. |
+| `pnpm run auth-provider:live-preflight` | Passed local redirect/hCaptcha/identity-path preflight and wrote the ignored redacted preflight artifact. |
+| `pnpm run auth-provider:reuse-stack-smoke` | Verified already-running local Mesh API and product shell with explicit `reused_local_stack` provenance, wrote the ignored redacted stack-smoke artifact, and did not claim process ownership. |
+| `pnpm run auth-provider:checkpoint` | Writes the ignored redacted P0 checkpoint with local evidence complete, source artifact timestamp bindings, explicit reused-stack provenance, latest capture-attempt blockers, and `live_provider_proof_missing` as the remaining external blocker. |
+| `pnpm run auth-provider:reuse-attempt --headless --timeout-seconds 5 --poll-interval 1` | Opened the clean reused-stack browser and wrote the ignored redacted capture-attempt artifact; current attempt remains blocked because no provider auth events were completed. |
+| `pnpm run auth-provider:live-stack` | Starts the local Mesh API, product shell, and clean-browser live capture together when ports are free; fails closed when an existing local stack is already bound to those ports. |
 | `pnpm run verify:operator-goal` | Reports `blocked_external_provider_proof` with only `live_provider_proof_missing` as the known external blocker when local P0-P6 evidence is intact. |
 | `pnpm run test:auth-provider:live` | Blocked as expected until `.mesh-runtime-state/operator-auth-proof/live-provider-proof.json` records clean-browser Google, GitHub, and hCaptcha completion. |
 | `pnpm run lint:fast` | Passed contracts, operator verifier, Praxis verifier, and Python compile checks. |
-| `pnpm run test:focused` | Passed 184 Python tests and 35 frontend tests. |
+| `pnpm run test:focused` | Passed 207 Python tests and 35 frontend tests. |
 | `pnpm run test:product:e2e` | Passed 5 Playwright tests covering first-run team dashboard, Praxis P10 proof flow, solo dashboard, logout cookie clearing, and expired-session recovery. |
 | `pnpm run verify:contracts` | Passed control-plane contract checks, Praxis verifier, and operator product verifier. |
 | `pnpm run verify:full` | Passed contracts, focused tests, Praxis proof packet verifier, web lint, and meshapp frontend lint. |

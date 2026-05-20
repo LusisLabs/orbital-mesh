@@ -93,6 +93,54 @@ class OperatorProductContractTests(unittest.TestCase):
         validate_payload("operator-product.schema.json", {"settings_update_response": settings})
         self.assertEqual(settings["audit"]["state_slice"], "mesh-settings-control")
 
+    def test_operator_dashboard_exposes_every_product_home_section(self) -> None:
+        _, cookie = self._request(
+            "POST",
+            "/api/auth/signup",
+            {
+                "email": "section-contract-operator@example.com",
+                "password": "correct-horse-42",
+                "display_name": "Section Contract Operator",
+                "captcha_token": "dev-captcha-ok",
+            },
+            include_cookie=True,
+        )
+        team_session, cookie = self._request(
+            "POST",
+            "/api/auth/team",
+            {"name": "Section Contracts", "members": [{"email": "viewer@example.com", "role": "viewer"}]},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        team_id = team_session["active_team"]["id"]
+
+        dashboard = self._request("GET", f"/api/operator/dashboard?team_id={team_id}", cookie=cookie)
+
+        validate_payload("operator-product.schema.json", {"dashboard_payload": dashboard})
+        required_mesh_sections = {
+            "health",
+            "read_model",
+            "readiness",
+            "connectors",
+            "approvals",
+            "kill_switch",
+            "pilot_go_no_go",
+            "praxis",
+            "trust_ladder",
+            "watchers",
+            "graph",
+            "runs",
+            "memory",
+        }
+        self.assertEqual(required_mesh_sections - set(dashboard["mesh"]), set())
+        self.assertEqual(dashboard["mesh"]["read_model"]["source"], "/api/operator/dashboard")
+        self.assertEqual(dashboard["mesh"]["read_model"]["authority"], "read_only")
+        self.assertIn("degraded_reason", dashboard["mesh"]["read_model"])
+        self.assertIsInstance(dashboard["mesh"]["runs"]["runs"], list)
+        self.assertIsInstance(dashboard["mesh"]["trust_ladder"]["entries"], list)
+        self.assertIn("active", dashboard["mesh"]["memory"])
+        self.assertIn("graph", dashboard["mesh"]["memory"])
+
     def _request(
         self,
         method: str,

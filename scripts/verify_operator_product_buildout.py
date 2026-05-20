@@ -62,8 +62,18 @@ REQUIRED_DOC_MARKERS = [
     "`pnpm run test:auth-provider:smoke`",
     "`pnpm run test:auth-provider:live`",
     "`pnpm run auth-provider:live-template`",
+    "`pnpm run auth-provider:live-preflight`",
+    "`pnpm run auth-provider:live-stack-smoke`",
+    "`pnpm run auth-provider:reuse-stack-smoke`",
+    "`pnpm run auth-provider:checkpoint`",
+    "`pnpm run auth-provider:live-attempt`",
+    "`pnpm run auth-provider:reuse-attempt`",
     "`pnpm run auth-provider:live-capture`",
+    "`pnpm run auth-provider:live-stack`",
+    "`pnpm run auth-provider:reuse-stack`",
     "`pnpm run verify:operator-goal`",
+    "--reuse-local-stack",
+    "stack_mode",
     "MESH_AUTH_PRODUCT_REDIRECT_URL",
     "mesh.operator_auth_provider_live_proof.v1",
     "mesh.operator_auth_runtime_evidence.v1",
@@ -168,9 +178,30 @@ REQUIRED_TEST_MARKERS = [
     "test_runtime_auth_evidence_completes_from_redacted_identity_events",
     "test_complete_live_proof_requires_runtime_auth_evidence",
     "test_live_capture_builds_complete_redacted_proof_from_runtime_events",
+    "test_live_stack_env_uses_default_identity_path_and_redacts_secret_values",
+    "test_live_capture_preflight_blocks_redirect_mismatch_without_secret_material",
+    "test_live_capture_preflight_blocks_missing_product_redirect_and_nondefault_identity",
+    "test_live_capture_preflight_ready_when_redirects_and_hcaptcha_match",
+    "test_live_stack_smoke_artifacts_are_redacted_and_do_not_claim_provider_completion",
+    "test_managed_stack_fails_closed_when_requested_port_is_already_in_use",
+    "test_auth_checkpoint_binds_local_evidence_without_claiming_live_provider_completion",
+    "test_auth_checkpoint_points_reused_stack_evidence_to_reuse_stack_command",
+    "test_live_capture_attempt_records_missing_components_without_secret_material",
+    "test_blocked_attempt_exit_code_is_allowed_only_for_clean_local_evidence",
     "test_auth_provider_runtime_evidence_records_redacted_provider_sessions",
     "test_goal_audit_blocks_only_on_external_provider_proof_when_local_markers_exist",
+    "test_goal_audit_accepts_explicit_reused_local_stack_provenance",
     "test_goal_audit_completes_when_live_provider_proof_is_complete",
+    "test_goal_audit_fails_local_when_complete_readiness_has_stale_blocked_checkpoint",
+    "test_goal_audit_fails_local_when_auth_live_preflight_is_not_ready",
+    "test_goal_audit_fails_local_when_auth_live_stack_smoke_is_not_ready",
+    "test_goal_audit_fails_local_when_auth_live_stack_smoke_has_ambiguous_stack_provenance",
+    "test_goal_audit_fails_local_when_auth_checkpoint_is_not_bound",
+    "test_goal_audit_fails_local_when_auth_checkpoint_attempt_binding_is_stale",
+    "test_goal_audit_fails_local_when_auth_checkpoint_evidence_timestamps_are_stale",
+    "test_goal_audit_fails_local_when_auth_checkpoint_next_command_is_stale",
+    "test_goal_audit_fails_local_when_auth_live_capture_attempt_is_not_bound",
+    "test_goal_audit_fails_local_when_dashboard_backend_section_contract_marker_is_missing",
     "test_captcha_missing_provider_secret_fails_closed",
     "test_non_local_app_session_signup_requires_captcha_provider",
     "test_non_local_app_session_signup_accepts_complete_captcha_provider",
@@ -181,6 +212,7 @@ REQUIRED_TEST_MARKERS = [
     "test_expired_session_is_rejected_and_removed",
     "test_oauth_authorize_url_requires_complete_provider_config",
     "test_product_auth_dashboard_and_settings_responses_match_schema",
+    "test_operator_dashboard_exposes_every_product_home_section",
 ]
 
 REQUIRED_PRODUCT_E2E_MARKERS = [
@@ -201,6 +233,8 @@ REQUIRED_PRODUCT_TYPE_MARKERS = [
 
 REQUIRED_PRODUCT_CONTRACT_MARKERS = [
     "operator_product_schema",
+    "dashboard_mesh",
+    "degraded_reason",
     "render_typescript_types",
     "settings_update_response",
     "DashboardPayload",
@@ -328,7 +362,15 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
     auth_provider_smoke = str(scripts.get("test:auth-provider:smoke") or "")
     auth_provider_live = str(scripts.get("test:auth-provider:live") or "")
     auth_provider_template = str(scripts.get("auth-provider:live-template") or "")
+    auth_provider_preflight = str(scripts.get("auth-provider:live-preflight") or "")
+    auth_provider_stack_smoke = str(scripts.get("auth-provider:live-stack-smoke") or "")
+    auth_provider_reuse_stack_smoke = str(scripts.get("auth-provider:reuse-stack-smoke") or "")
+    auth_provider_checkpoint = str(scripts.get("auth-provider:checkpoint") or "")
+    auth_provider_attempt = str(scripts.get("auth-provider:live-attempt") or "")
+    auth_provider_reuse_attempt = str(scripts.get("auth-provider:reuse-attempt") or "")
     auth_provider_capture = str(scripts.get("auth-provider:live-capture") or "")
+    auth_provider_stack = str(scripts.get("auth-provider:live-stack") or "")
+    auth_provider_reuse_stack = str(scripts.get("auth-provider:reuse-stack") or "")
     operator_goal = str(scripts.get("verify:operator-goal") or "")
     lint_fast = str(scripts.get("lint:fast") or "")
     meshapp_e2e = str(product_scripts.get("test:e2e") or "")
@@ -354,8 +396,24 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
         raise AssertionError("test:auth-provider:live must run scripts/operator_auth_provider_smoke.py --require-live")
     if "scripts/operator_auth_provider_smoke.py --print-live-proof-template" not in auth_provider_template:
         raise AssertionError("auth-provider:live-template must print the redacted live proof template")
+    if "scripts/operator_auth_live_provider_capture.py --preflight-only" not in auth_provider_preflight:
+        raise AssertionError("auth-provider:live-preflight must run preflight-only capture")
+    if "scripts/operator_auth_live_provider_capture.py --stack-smoke-only" not in auth_provider_stack_smoke:
+        raise AssertionError("auth-provider:live-stack-smoke must run managed local stack smoke")
+    if "scripts/operator_auth_live_provider_capture.py --stack-smoke-only --reuse-local-stack" not in auth_provider_reuse_stack_smoke:
+        raise AssertionError("auth-provider:reuse-stack-smoke must run explicit reused local stack smoke")
+    if "scripts/operator_auth_live_provider_capture.py --checkpoint-only" not in auth_provider_checkpoint:
+        raise AssertionError("auth-provider:checkpoint must write the auth checkpoint")
+    if "scripts/operator_auth_live_provider_capture.py --manage-local-stack --timeout-seconds 300 --allow-blocked-attempt" not in auth_provider_attempt:
+        raise AssertionError("auth-provider:live-attempt must run a bounded managed local stack capture")
+    if "scripts/operator_auth_live_provider_capture.py --reuse-local-stack --timeout-seconds 300 --allow-blocked-attempt" not in auth_provider_reuse_attempt:
+        raise AssertionError("auth-provider:reuse-attempt must run a bounded explicit reused local stack capture")
     if "scripts/operator_auth_live_provider_capture.py" not in auth_provider_capture:
         raise AssertionError("auth-provider:live-capture must run scripts/operator_auth_live_provider_capture.py")
+    if "scripts/operator_auth_live_provider_capture.py --manage-local-stack" not in auth_provider_stack:
+        raise AssertionError("auth-provider:live-stack must run managed local stack capture")
+    if "scripts/operator_auth_live_provider_capture.py --reuse-local-stack" not in auth_provider_reuse_stack:
+        raise AssertionError("auth-provider:reuse-stack must run explicit reused local stack capture")
     if "scripts/operator_product_goal_audit.py" not in operator_goal:
         raise AssertionError("verify:operator-goal must run scripts/operator_product_goal_audit.py")
     if "pnpm run verify:contracts" not in verify_full:
