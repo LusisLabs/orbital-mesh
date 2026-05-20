@@ -1238,63 +1238,40 @@
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 55% 34%, rgba(84, 102, 120, 0.14), transparent 36%),
-    radial-gradient(circle at 26% 48%, rgba(166, 127, 61, 0.08), transparent 34%),
-    linear-gradient(90deg, rgba(0, 0, 0, 0.58), transparent 28%, transparent 74%, rgba(0, 0, 0, 0.56)),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.78), transparent 38%, rgba(0, 0, 0, 0.82));
+    radial-gradient(circle at 70% 8%, rgb(255 140 0 / 17%), transparent 28%),
+    radial-gradient(circle at 13% 42%, rgb(151 191 175 / 13%), transparent 30%),
+    linear-gradient(180deg, #050711 0%, #090a07 38%, #0f110c 100%);
   pointer-events: none;
   z-index: 0;
+}
+
+.auth-scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 48%, transparent 0%, rgb(7 8 6 / 16%) 42%, rgb(7 8 6 / 82%) 100%),
+    linear-gradient(90deg, rgb(7 8 6 / 84%) 0%, rgb(7 8 6 / 24%) 42%, rgb(7 8 6 / 56%) 100%),
+    linear-gradient(180deg, rgb(7 8 6 / 4%) 0%, rgb(7 8 6 / 78%) 100%);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .auth-ascii-flow {
   position: absolute;
-  inset: -4vh -4vw;
+  inset: 0;
   pointer-events: none;
-  z-index: 0;
-  filter: blur(0.2px);
-  mask-image: radial-gradient(ellipse at center, #000 0%, #000 62%, transparent 92%);
+  z-index: 1;
+  overflow: hidden;
+  opacity: 0.98;
 }
 
-.auth-ascii-flow span {
+.auth-ascii-flow canvas {
+  display: block;
+  inset: 0;
   position: absolute;
-  left: var(--particle-x);
-  top: var(--particle-y);
-  color: rgba(195, 204, 208, var(--particle-opacity));
-  font-family: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
-  font-size: var(--particle-size);
-  font-weight: 600;
-  line-height: 0.82;
-  letter-spacing: 0;
-  white-space: pre;
-  text-shadow: 0 0 18px rgba(162, 176, 184, 0.18);
-  transform: translate3d(-50%, -50%, 0) rotate(-4deg);
-  animation: auth-ascii-drift 18s ease-in-out infinite;
-  animation-delay: var(--particle-delay);
-}
-
-@keyframes auth-ascii-drift {
-  0%,
-  100% {
-    opacity: 0.45;
-    transform: translate3d(-50%, -50%, 0) rotate(-4deg) scale(0.96);
-  }
-
-  50% {
-    opacity: 1;
-    transform: translate3d(calc(-50% + 22px), calc(-50% - 18px), 0) rotate(3deg) scale(1.05);
-  }
-}
-
-.auth-orbit {
-  position: absolute;
-  width: 80vw;
-  height: 52vh;
-  border: 1px solid rgba(20, 112, 78, 0.32);
-  border-radius: 50%;
-  transform: rotate(-14deg);
-  box-shadow: 0 0 80px rgba(66, 21, 124, 0.1) inset;
-  opacity: 0.32;
-  z-index: 0;
+  width: 100%;
+  height: 100%;
 }
 
 .auth-card,
@@ -1305,7 +1282,7 @@
   padding: 40px;
   background: rgba(9, 9, 9, 0.92);
   position: relative;
-  z-index: 1;
+  z-index: 3;
 }
 
 .auth-brand {

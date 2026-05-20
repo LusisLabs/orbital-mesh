@@ -30,8 +30,9 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { type CSSProperties, type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
+import AsciiFlowCanvas from "../landing/AsciiFlowCanvas";
 import {
   type AuthConfig,
   type ApprovalCommand,
@@ -363,39 +364,10 @@ function BrandLogo({ compact = false }: { compact?: boolean }) {
   );
 }
 
-const ASCII_FLOW_PARTICLES = [
-  { text: "SxXx\n 5rS\n  AAX\n  AAX", x: "8%", y: "25%", size: "1rem", opacity: "0.2", delay: "-1.5s" },
-  { text: "AAM3\nA 35\nMBr5\n  h5", x: "33%", y: "21%", size: "1.4rem", opacity: "0.42", delay: "-4s" },
-  { text: "rS1i\n sA2h\n M35h\nBXX", x: "43%", y: "16%", size: "1.1rem", opacity: "0.3", delay: "-8s" },
-  { text: "h2X5\n 3G3X\n @##\n #@", x: "54%", y: "19%", size: "1.45rem", opacity: "0.38", delay: "-2s" },
-  { text: "SMH\nAXSM\n H3\n  r", x: "63%", y: "25%", size: "1.25rem", opacity: "0.26", delay: "-7s" },
-  { text: "@@@\n@@@\n @@@", x: "72%", y: "32%", size: "1.55rem", opacity: "0.3", delay: "-5s" },
-  { text: "232X\n232X\n 22Xs", x: "78%", y: "39%", size: "1.15rem", opacity: "0.22", delay: "-9s" },
-  { text: "r5\nr5\n hH\n A2", x: "31%", y: "45%", size: "1.3rem", opacity: "0.33", delay: "-3s" },
-  { text: "3AXrA\nAAXrA\n 1AS\n  f1", x: "50%", y: "40%", size: "1.15rem", opacity: "0.3", delay: "-6s" },
-  { text: "SMH\n r5\n 2A\n S", x: "68%", y: "52%", size: "1.2rem", opacity: "0.24", delay: "-10s" },
-  { text: "A2X\n 25\n 3s\n rr", x: "37%", y: "68%", size: "1.35rem", opacity: "0.28", delay: "-11s" },
-  { text: "55h\nhGM\nX2\n i", x: "54%", y: "71%", size: "1.2rem", opacity: "0.24", delay: "-12s" },
-  { text: "h#MX\nS3s\nxxs\n r", x: "66%", y: "72%", size: "1.1rem", opacity: "0.26", delay: "-13s" },
-] as const;
-
-function AsciiFlowParticles() {
+function AsciiFlowBackground() {
   return (
     <div className="auth-ascii-flow" aria-hidden="true">
-      {ASCII_FLOW_PARTICLES.map((particle, index) => (
-        <span
-          key={`${particle.x}-${particle.y}-${index}`}
-          style={{
-            "--particle-x": particle.x,
-            "--particle-y": particle.y,
-            "--particle-size": particle.size,
-            "--particle-opacity": particle.opacity,
-            "--particle-delay": particle.delay,
-          } as CSSProperties}
-        >
-          {particle.text}
-        </span>
-      ))}
+      <AsciiFlowCanvas progress={0} />
     </div>
   );
 }
@@ -477,8 +449,7 @@ export function AuthScreen({
 
   return (
     <div className="auth-scene">
-      <AsciiFlowParticles />
-      <div className="auth-orbit" />
+      <AsciiFlowBackground />
       <form className="auth-card" onSubmit={submit}>
         <div className="auth-brand">
           <BrandLogo compact />
