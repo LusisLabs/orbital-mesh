@@ -65,6 +65,62 @@ def operator_product_schema() -> dict[str, Any]:
             },
         },
     }
+    dashboard_mesh = {
+        "type": "object",
+        "required": [
+            "health",
+            "read_model",
+            "readiness",
+            "connectors",
+            "approvals",
+            "kill_switch",
+            "pilot_go_no_go",
+            "praxis",
+            "trust_ladder",
+            "watchers",
+            "graph",
+            "runs",
+            "memory",
+        ],
+        "properties": {
+            "health": {"type": "object"},
+            "read_model": {
+                "type": "object",
+                "required": ["source", "authority", "degraded_reason"],
+                "properties": {
+                    "source": {"type": "string"},
+                    "authority": {"type": "string"},
+                    "degraded_reason": {"type": "string"},
+                },
+            },
+            "readiness": {"type": "object"},
+            "connectors": {"type": "object"},
+            "approvals": {"type": "object"},
+            "kill_switch": {"type": "object"},
+            "pilot_go_no_go": {"type": "object"},
+            "praxis": {"type": "object"},
+            "trust_ladder": {
+                "type": "object",
+                "required": ["entries"],
+                "properties": {"entries": {"type": "array"}},
+            },
+            "watchers": {"type": "object"},
+            "graph": {"type": "object"},
+            "runs": {
+                "type": "object",
+                "required": ["runs"],
+                "properties": {"runs": {"type": "array"}},
+            },
+            "memory": {
+                "type": "object",
+                "required": ["active", "graph"],
+                "properties": {
+                    "active": {"type": "object"},
+                    "graph": {"type": "object"},
+                },
+            },
+        },
+    }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "operator-product.schema.json",
@@ -120,7 +176,7 @@ def operator_product_schema() -> dict[str, Any]:
                     "session": session_payload,
                     "settings": string_map,
                     "settings_schema": settings_schema,
-                    "mesh": {"type": "object"},
+                    "mesh": dashboard_mesh,
                     "authority_boundary": {"type": "string"},
                 },
             },

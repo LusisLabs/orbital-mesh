@@ -95,6 +95,106 @@
           "type": "string"
         },
         "mesh": {
+          "properties": {
+            "approvals": {
+              "type": "object"
+            },
+            "connectors": {
+              "type": "object"
+            },
+            "graph": {
+              "type": "object"
+            },
+            "health": {
+              "type": "object"
+            },
+            "kill_switch": {
+              "type": "object"
+            },
+            "memory": {
+              "properties": {
+                "active": {
+                  "type": "object"
+                },
+                "graph": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "active",
+                "graph"
+              ],
+              "type": "object"
+            },
+            "pilot_go_no_go": {
+              "type": "object"
+            },
+            "praxis": {
+              "type": "object"
+            },
+            "read_model": {
+              "properties": {
+                "authority": {
+                  "type": "string"
+                },
+                "degraded_reason": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source",
+                "authority",
+                "degraded_reason"
+              ],
+              "type": "object"
+            },
+            "readiness": {
+              "type": "object"
+            },
+            "runs": {
+              "properties": {
+                "runs": {
+                  "type": "array"
+                }
+              },
+              "required": [
+                "runs"
+              ],
+              "type": "object"
+            },
+            "trust_ladder": {
+              "properties": {
+                "entries": {
+                  "type": "array"
+                }
+              },
+              "required": [
+                "entries"
+              ],
+              "type": "object"
+            },
+            "watchers": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "health",
+            "read_model",
+            "readiness",
+            "connectors",
+            "approvals",
+            "kill_switch",
+            "pilot_go_no_go",
+            "praxis",
+            "trust_ladder",
+            "watchers",
+            "graph",
+            "runs",
+            "memory"
+          ],
           "type": "object"
         },
         "scope": {
