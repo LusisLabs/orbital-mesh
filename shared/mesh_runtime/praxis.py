@@ -3,10 +3,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Any
 
+from .json_store import LockedJsonFile
 from .schema_validation import SchemaValidationError, validate_payload
 
 
@@ -20,6 +22,8 @@ PRAXIS_GENERATED_MCP_CONTRACT_VERSION = "praxis.generated_mcp_contract.v1"
 PRAXIS_AKTO_SECURITY_EVIDENCE_VERSION = "praxis.akto_security_evidence.v1"
 PRAXIS_CERTIFICATION_BINDING_VERSION = "praxis.certification_binding.v1"
 PRAXIS_E2E_PROOF_PACKET_VERSION = "praxis.e2e_proof_packet.v1"
+PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION = "praxis.managed_dry_run_runtime.v1"
+PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE = "praxis.managed-dry-run-runtime.v1"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RAW_SECRET_KEY_RE = re.compile(r"(api[_-]?key|authorization|bearer|client[_-]?secret|cookie|kubeconfig|password|private[_-]?key|token)", re.IGNORECASE)
 _SECRET_VALUE_RE = re.compile(r"(Bearer\s+(?!REDACTED)[A-Za-z0-9._~+/=-]{12,}|sk-[A-Za-z0-9]{12,})")
@@ -114,8 +118,25 @@ def import_praxis_akto_security_evidence(
     evidence_id: str,
     imported_at: str | None = None,
 ) -> dict[str, Any]:
-    validate_payload(PRAXIS_GENERATED_MCP_CONTRACT_SCHEMA, generated_contract)
     payload = json.loads(_resolve_repo_path(str(akto_result_path)).read_text(encoding="utf-8"))
+    return import_praxis_akto_security_evidence_payload(
+        akto_result_payload=payload,
+        generated_contract=generated_contract,
+        evidence_id=evidence_id,
+        imported_at=imported_at,
+    )
+
+
+def import_praxis_akto_security_evidence_payload(
+    *,
+    akto_result_payload: dict[str, Any],
+    generated_contract: dict[str, Any],
+    evidence_id: str,
+    imported_at: str | None = None,
+) -> dict[str, Any]:
+    validate_payload(PRAXIS_GENERATED_MCP_CONTRACT_SCHEMA, generated_contract)
+    payload = akto_result_payload
+    _reject_raw_secret_values(json.dumps(payload, sort_keys=True), evidence_id)
     if payload.get("live_dast_executed") is True:
         raise SchemaValidationError("$.live_dast_executed: live Akto scans are not allowed by default")
     if payload.get("raw_traffic_stored") is True:
@@ -316,9 +337,1111 @@ def build_praxis_demo_proof_packet() -> dict[str, Any]:
     )
 
 
+def build_praxis_product_dashboard() -> dict[str, Any]:
+    source_bundle = load_praxis_source_bundle_fixture()
+    generated_contract = generate_praxis_mcp_contract(
+        source_bundle=source_bundle,
+        contract_id="praxis-generated-contract-demo-001",
+        generated_at="2026-05-20T05:00:10Z",
+    )
+    akto_evidence = import_praxis_akto_security_evidence(
+        akto_result_path="fixtures/praxis/demo-akto-results.json",
+        generated_contract=generated_contract,
+        evidence_id="praxis-akto-evidence-demo-001",
+        imported_at="2026-05-20T05:00:15Z",
+    )
+    certification_binding = build_praxis_certification_binding(
+        generated_contract=generated_contract,
+        akto_evidence=akto_evidence,
+        binding_id="praxis-certification-binding-demo-001",
+        connector_id="praxis-demo-generated-mcp",
+        acp_session_id="praxis-acp-session-demo-001",
+        created_at="2026-05-20T05:00:25Z",
+    )
+    proof_packet = build_praxis_e2e_proof_packet(
+        source_bundle=source_bundle,
+        generated_contract=generated_contract,
+        akto_evidence=akto_evidence,
+        certification_binding=certification_binding,
+        packet_id="praxis-proof-packet-demo-001",
+        generated_at="2026-05-20T05:00:30Z",
+    )
+    bindings_by_tool = {
+        str(binding["tool_candidate_id"]): binding
+        for binding in certification_binding["tool_bindings"]
+    }
+    findings_by_tool = _open_findings_by_tool(akto_evidence)
+    tool_rows = []
+    for tool in generated_contract["tool_candidates"]:
+        binding = bindings_by_tool.get(str(tool["tool_id"]), {})
+        findings = findings_by_tool.get(str(tool["tool_id"]), [])
+        tool_rows.append(
+            {
+                "tool_id": tool["tool_id"],
+                "name": tool["name"],
+                "description": tool["description"],
+                "method": tool["endpoint"]["method"],
+                "path": tool["endpoint"]["path"],
+                "mutation_class": tool["mutation_class"],
+                "approval_posture": tool["approval_posture"],
+                "certification_result": binding.get("certification_result", "candidate"),
+                "allowed_scopes": binding.get("allowed_scopes", []),
+                "readiness_blockers": binding.get("readiness_blockers", tool.get("blockers", [])),
+                "finding_count": len(findings),
+                "source_evidence_refs": tool["source_evidence_refs"],
+            }
+        )
+    return {
+        "schema_version": "praxis.product_dashboard.v1",
+        "state_slice": "praxis.pilot-runtime.v1",
+        "status": "bounded_dry_run_ready" if proof_packet["status"] == "complete" else "blocked",
+        "product_entrypoint": "meshapp.home.praxis",
+        "summary": {
+            "source_packets": len(source_bundle["source_packets"]),
+            "tool_candidates": len(generated_contract["tool_candidates"]),
+            "akto_findings": len(akto_evidence["findings"]),
+            "certified_read_only_tools": len(proof_packet["mcp_readiness"]["certified_tool_ids"]),
+            "denied_tools": len(proof_packet["mcp_readiness"]["denied_tool_ids"]),
+        },
+        "proof_packet": proof_packet,
+        "source_bundle": {
+            "bundle_id": source_bundle["bundle_id"],
+            "redaction_status": source_bundle["redaction"]["status"],
+            "raw_payload_stored": source_bundle["redaction"]["raw_payload_stored"],
+            "packets": [
+                {
+                    "packet_id": packet["packet_id"],
+                    "source_type": packet["source_type"],
+                    "source_ref": packet["source_ref"],
+                    "evidence_gaps": packet["evidence_gaps"],
+                    "raw_credentials_present": packet["secret_scan"]["raw_credentials_present"],
+                }
+                for packet in source_bundle["source_packets"]
+            ],
+        },
+        "generated_contract": {
+            "contract_id": generated_contract["contract_id"],
+            "generator_version": generated_contract["generator_version"],
+            "tools": tool_rows,
+        },
+        "security_evidence": {
+            "evidence_id": akto_evidence["evidence_id"],
+            "source": akto_evidence["source"],
+            "scan_status": akto_evidence["scan_status"],
+            "live_dast_executed": akto_evidence["live_dast_executed"],
+            "raw_traffic_stored": akto_evidence["raw_traffic_stored"],
+            "findings": akto_evidence["findings"],
+            "authority": akto_evidence["authority"],
+        },
+        "pilot_runtime": {
+            "runtime_id": "praxis-demo-generated-mcp-dry-run",
+            "connector_id": certification_binding["connector_id"],
+            "status": proof_packet["mcp_readiness"]["status"],
+            "dry_run_only": True,
+            "managed_runtime_deployed": proof_packet["authority"]["managed_runtime_deployed"],
+            "mcp_endpoint_ref": "mcp-dry-run://praxis-demo-generated-mcp",
+            "credential_boundary": "runtime-secret://praxis/generated-mcp",
+            "revocation_ref": certification_binding["revocation"]["revocation_ref"],
+            "controls": [
+                {
+                    "control_id": "start_dry_run",
+                    "label": "Start dry-run MCP endpoint",
+                    "state": "ready",
+                    "requires_mesh_approval": False,
+                },
+                {
+                    "control_id": "revoke_runtime",
+                    "label": "Revoke generated connector",
+                    "state": "ready",
+                    "requires_mesh_approval": True,
+                },
+                {
+                    "control_id": "deploy_managed_runtime",
+                    "label": "Deploy managed pilot runtime",
+                    "state": "blocked",
+                    "requires_mesh_approval": True,
+                    "reason": "Managed runtime deployment stays blocked until production-like proof, live target ownership, and credential rotation evidence exist.",
+                },
+            ],
+        },
+        "authority": {
+            "mesh_owns_certification": True,
+            "mesh_owns_approval": True,
+            "mesh_owns_revocation": True,
+            "akto_advisory_only": True,
+            "acp_grants_runtime_authority": False,
+            "generated_tools_are_candidates_until_certified": True,
+        },
+    }
+
+
+class PraxisManagedRuntimeStore:
+    """File-backed Praxis generation and dry-run runtime state."""
+
+    def __init__(self, state_path: str | Path):
+        self.path = Path(state_path)
+        self.source_root = self.path.parent / "sources"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.source_root.mkdir(parents=True, exist_ok=True)
+
+    def list_records(self, *, scope: dict[str, str] | None = None) -> dict[str, Any]:
+        with LockedJsonFile(self.path) as payload:
+            store = _managed_runtime_store(payload)
+            records = [
+                _record_copy(record)
+                for record in store["records"].values()
+                if _record_in_scope(record, scope)
+            ]
+        records.sort(key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""), reverse=True)
+        return {
+            "schema_version": PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION,
+            "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+            "runs": [_record_summary(record) for record in records],
+        }
+
+    def get_record(self, request_id: str, *, scope: dict[str, str] | None = None) -> dict[str, Any] | None:
+        with LockedJsonFile(self.path) as payload:
+            store = _managed_runtime_store(payload)
+            record = store["records"].get(request_id)
+            if not record or not _record_in_scope(record, scope):
+                return None
+            return _record_copy(record)
+
+    def build_product_dashboard(self, *, scope: dict[str, str] | None = None) -> dict[str, Any]:
+        with LockedJsonFile(self.path) as payload:
+            store = _managed_runtime_store(payload)
+            records = [
+                _record_copy(record)
+                for record in store["records"].values()
+                if _record_in_scope(record, scope)
+            ]
+        records.sort(key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""), reverse=True)
+        latest = records[0] if records else None
+        if latest is None:
+            return _empty_product_dashboard(records=[])
+        return _record_product_dashboard(latest, records=records)
+
+    def create_generation_request(
+        self,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        sources = payload.get("sources")
+        if not isinstance(sources, list) or not sources:
+            raise ValueError("sources must be a non-empty list")
+        now = _timestamp()
+        request_id = _request_id(payload.get("request_id"))
+        bundle_id = str(payload.get("bundle_id") or f"{request_id}-source-bundle")
+        contract_id = str(payload.get("contract_id") or f"{request_id}-generated-contract")
+        materialized_sources = self._materialize_sources(
+            request_id=request_id,
+            scope=scope,
+            sources=sources,
+        )
+        source_bundle = build_praxis_source_bundle(
+            bundle_id=bundle_id,
+            tenant_id=scope["scope_id"],
+            sources=materialized_sources,
+            created_at=now,
+        )
+        generated_contract = generate_praxis_mcp_contract(
+            source_bundle=source_bundle,
+            contract_id=contract_id,
+            generated_at=now,
+            generator_version=str(payload.get("generator_version") or "praxis-contract-builder-product"),
+        )
+        record = {
+            "schema_version": PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION,
+            "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+            "request_id": request_id,
+            "created_at": now,
+            "updated_at": now,
+            "status": "candidate_generated",
+            "owner_scope": dict(scope),
+            "operator": _operator_ref(operator),
+            "source_bundle": source_bundle,
+            "generated_contract": generated_contract,
+            "akto_evidence": None,
+            "certification_binding": None,
+            "proof_packet": None,
+            "p10_proof_packet": None,
+            "dry_run_runtime": _initial_dry_run_runtime(),
+            "audit_events": [],
+        }
+        _append_praxis_event(
+            record,
+            event_type="praxis.generation_request_created",
+            operator=operator,
+            details={
+                "source_bundle_id": source_bundle["bundle_id"],
+                "generated_contract_id": generated_contract["contract_id"],
+                "source_packet_count": len(source_bundle["source_packets"]),
+            },
+        )
+        _refresh_p10_proof(record)
+        with LockedJsonFile(self.path) as payload_data:
+            store = _managed_runtime_store(payload_data)
+            if request_id in store["records"]:
+                raise ValueError(f"Praxis generation request already exists: {request_id}")
+            store["records"][request_id] = record
+        return _record_copy(record)
+
+    def import_akto_evidence(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        def mutate(record: dict[str, Any]) -> None:
+            evidence_id = str(payload.get("evidence_id") or f"{request_id}-akto-evidence")
+            if isinstance(payload.get("akto_result"), dict):
+                evidence = import_praxis_akto_security_evidence_payload(
+                    akto_result_payload=payload["akto_result"],
+                    generated_contract=record["generated_contract"],
+                    evidence_id=evidence_id,
+                    imported_at=_timestamp(),
+                )
+            else:
+                akto_result_path = payload.get("akto_result_path")
+                if not akto_result_path:
+                    raise ValueError("akto_result_path or akto_result is required")
+                evidence = import_praxis_akto_security_evidence(
+                    akto_result_path=str(akto_result_path),
+                    generated_contract=record["generated_contract"],
+                    evidence_id=evidence_id,
+                    imported_at=_timestamp(),
+                )
+            record["akto_evidence"] = evidence
+            record["status"] = "security_evidence_imported"
+            _append_praxis_event(
+                record,
+                event_type="praxis.akto_evidence_imported",
+                operator=operator,
+                details={
+                    "evidence_id": evidence["evidence_id"],
+                    "finding_count": len(evidence["findings"]),
+                    "akto_advisory_only": True,
+                },
+            )
+
+        return self._mutate_record(request_id, scope=scope, mutate=mutate)
+
+    def build_certification_binding(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        def mutate(record: dict[str, Any]) -> None:
+            evidence = record.get("akto_evidence")
+            if not isinstance(evidence, dict):
+                raise ValueError("Akto evidence must be imported before certification binding")
+            binding = build_praxis_certification_binding(
+                generated_contract=record["generated_contract"],
+                akto_evidence=evidence,
+                binding_id=str(payload.get("binding_id") or f"{request_id}-certification-binding"),
+                connector_id=str(payload.get("connector_id") or f"{request_id}-generated-mcp"),
+                acp_session_id=str(payload.get("acp_session_id") or f"{request_id}-operator-review"),
+                created_at=_timestamp(),
+            )
+            record["certification_binding"] = binding
+            record["proof_packet"] = build_praxis_e2e_proof_packet(
+                source_bundle=record["source_bundle"],
+                generated_contract=record["generated_contract"],
+                akto_evidence=evidence,
+                certification_binding=binding,
+                packet_id=str(payload.get("packet_id") or f"{request_id}-certification-proof"),
+                generated_at=_timestamp(),
+            )
+            record["dry_run_runtime"] = _dry_run_runtime_for_binding(binding, status="dry_run_ready")
+            record["status"] = "certification_bound"
+            _append_praxis_event(
+                record,
+                event_type="praxis.certification_binding_built",
+                operator=operator,
+                details={
+                    "binding_id": binding["binding_id"],
+                    "connector_id": binding["connector_id"],
+                    "managed_runtime_deployed": False,
+                },
+            )
+
+        return self._mutate_record(request_id, scope=scope, mutate=mutate)
+
+    def start_dry_run_endpoint(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        def mutate(record: dict[str, Any]) -> None:
+            binding = record.get("certification_binding")
+            if not isinstance(binding, dict):
+                raise ValueError("certification binding is required before dry-run start")
+            certified = _certified_tool_ids(binding)
+            if not certified:
+                raise ValueError("at least one read-only certified tool is required before dry-run start")
+            runtime = _dry_run_runtime_for_binding(binding, status="running")
+            runtime["started_at"] = _timestamp()
+            runtime["mcp_endpoint_ref"] = str(payload.get("mcp_endpoint_ref") or f"mcp-dry-run://{binding['connector_id']}")
+            record["dry_run_runtime"] = runtime
+            record["status"] = "dry_run_running"
+            _append_praxis_event(
+                record,
+                event_type="praxis.dry_run_endpoint_started",
+                operator=operator,
+                details={
+                    "runtime_id": runtime["runtime_id"],
+                    "mcp_endpoint_ref": runtime["mcp_endpoint_ref"],
+                    "certified_tool_ids": certified,
+                    "managed_runtime_deployed": False,
+                },
+            )
+
+        return self._mutate_record(request_id, scope=scope, mutate=mutate)
+
+    def call_dry_run_tool(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        call_result: dict[str, Any] = {}
+
+        def mutate(record: dict[str, Any]) -> None:
+            runtime = record.get("dry_run_runtime")
+            if not isinstance(runtime, dict) or runtime.get("status") != "running":
+                raise ValueError("dry-run endpoint is not running")
+            tool_id = str(payload.get("tool_id") or "")
+            if not tool_id:
+                raise ValueError("tool_id is required")
+            binding = _binding_for_tool(record.get("certification_binding"), tool_id)
+            if binding is None:
+                raise ValueError(f"tool not found in certification binding: {tool_id}")
+            details = {
+                "tool_id": tool_id,
+                "arguments_sha256": _canonical_sha256(payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {}),
+                "side_effects_executed": False,
+            }
+            if binding["certification_result"] != "read_only":
+                event = _append_praxis_event(
+                    record,
+                    event_type="praxis.dry_run_tool_call_denied",
+                    operator=operator,
+                    details={**details, "reason": "tool is not certified read-only"},
+                )
+                call_result.update(
+                    {
+                        "schema_version": "praxis.dry_run_tool_call.v1",
+                        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+                        "request_id": request_id,
+                        "tool_id": tool_id,
+                        "status": "denied",
+                        "allowed": False,
+                        "reason": "tool is not certified read-only",
+                        "audit_event_id": event["event_id"],
+                        "side_effects_executed": False,
+                    }
+                )
+                return
+            event = _append_praxis_event(
+                record,
+                event_type="praxis.dry_run_tool_called",
+                operator=operator,
+                details={**details, "result_ref": f"dry-run-result://{request_id}/{tool_id}"},
+            )
+            call_result.update(
+                {
+                    "schema_version": "praxis.dry_run_tool_call.v1",
+                    "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+                    "request_id": request_id,
+                    "tool_id": tool_id,
+                    "status": "simulated",
+                    "allowed": True,
+                    "result": {
+                        "mode": "dry_run",
+                        "endpoint": _tool_endpoint(record["generated_contract"], tool_id),
+                        "side_effects_executed": False,
+                    },
+                    "audit_event_id": event["event_id"],
+                    "side_effects_executed": False,
+                }
+            )
+
+        self._mutate_record(request_id, scope=scope, mutate=mutate)
+        return call_result
+
+    def mcp_json_rpc(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        rpc_id = payload.get("id")
+        method = str(payload.get("method") or "")
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        if payload.get("jsonrpc") != "2.0":
+            return _mcp_error(rpc_id, -32600, "JSON-RPC 2.0 envelope is required")
+        if method == "initialize":
+            self._append_mcp_runtime_event(
+                request_id,
+                event_type="praxis.mcp_initialize",
+                operator=operator,
+                scope=scope,
+                details={"protocol_version": str(params.get("protocolVersion") or "unknown")},
+            )
+            return _mcp_result(
+                rpc_id,
+                {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {"tools": {"listChanged": False}},
+                    "serverInfo": {
+                        "name": "praxis-managed-dry-run-runtime",
+                        "version": PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION,
+                    },
+                },
+            )
+        if method == "tools/list":
+            record = self._running_mcp_record(request_id, scope=scope)
+            self._append_mcp_runtime_event(
+                request_id,
+                event_type="praxis.mcp_tools_listed",
+                operator=operator,
+                scope=scope,
+                details={"certified_tool_count": len(_certified_tool_ids(record["certification_binding"]))},
+            )
+            return _mcp_result(rpc_id, {"tools": _mcp_tools_for_record(record)})
+        if method == "tools/call":
+            tool_name = str(params.get("name") or params.get("tool_id") or "")
+            arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+            result = self.call_dry_run_tool(
+                request_id,
+                {"tool_id": tool_name, "arguments": arguments},
+                operator=operator,
+                scope=scope,
+            )
+            return _mcp_result(
+                rpc_id,
+                {
+                    "content": [{"type": "text", "text": json.dumps(result, sort_keys=True)}],
+                    "isError": result.get("allowed") is not True,
+                },
+            )
+        return _mcp_error(rpc_id, -32601, f"Unsupported Praxis MCP method: {method}")
+
+    def revoke_generated_connector(
+        self,
+        request_id: str,
+        payload: dict[str, Any],
+        *,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+    ) -> dict[str, Any]:
+        def mutate(record: dict[str, Any]) -> None:
+            binding = record.get("certification_binding")
+            if not isinstance(binding, dict):
+                raise ValueError("certification binding is required before revocation")
+            runtime = dict(record.get("dry_run_runtime") or _dry_run_runtime_for_binding(binding, status="dry_run_ready"))
+            runtime.update(
+                {
+                    "status": "revoked",
+                    "revoked_at": _timestamp(),
+                    "revocation_reason": str(payload.get("reason") or "operator_revocation"),
+                    "mcp_endpoint_ref": None,
+                    "managed_runtime_deployed": False,
+                    "controls": _dry_run_controls(status="revoked", connector_id=str(binding["connector_id"])),
+                }
+            )
+            record["dry_run_runtime"] = runtime
+            record["status"] = "revoked"
+            _append_praxis_event(
+                record,
+                event_type="praxis.generated_connector_revoked",
+                operator=operator,
+                details={
+                    "connector_id": binding["connector_id"],
+                    "revocation_ref": binding["revocation"]["revocation_ref"],
+                    "reason": runtime["revocation_reason"],
+                },
+            )
+
+        return self._mutate_record(request_id, scope=scope, mutate=mutate)
+
+    def export_p10_proof_packet(self, request_id: str, *, scope: dict[str, str]) -> dict[str, Any]:
+        record = self.get_record(request_id, scope=scope)
+        if record is None:
+            raise KeyError(request_id)
+        packet = record.get("p10_proof_packet")
+        if not isinstance(packet, dict):
+            raise ValueError("P10 proof packet has not been materialized")
+        return _record_copy(packet)
+
+    def _running_mcp_record(self, request_id: str, *, scope: dict[str, str]) -> dict[str, Any]:
+        record = self.get_record(request_id, scope=scope)
+        if record is None:
+            raise KeyError(request_id)
+        runtime = record.get("dry_run_runtime")
+        if not isinstance(runtime, dict) or runtime.get("status") != "running":
+            raise ValueError("dry-run MCP endpoint is not running")
+        if not isinstance(record.get("certification_binding"), dict):
+            raise ValueError("certification binding is required before MCP serving")
+        return record
+
+    def _append_mcp_runtime_event(
+        self,
+        request_id: str,
+        *,
+        event_type: str,
+        operator: dict[str, Any],
+        scope: dict[str, str],
+        details: dict[str, Any],
+    ) -> None:
+        def mutate(record: dict[str, Any]) -> None:
+            runtime = record.get("dry_run_runtime")
+            if not isinstance(runtime, dict) or runtime.get("status") != "running":
+                raise ValueError("dry-run MCP endpoint is not running")
+            _append_praxis_event(record, event_type=event_type, operator=operator, details=details)
+
+        self._mutate_record(request_id, scope=scope, mutate=mutate)
+
+    def _mutate_record(
+        self,
+        request_id: str,
+        *,
+        scope: dict[str, str],
+        mutate,
+    ) -> dict[str, Any]:
+        with LockedJsonFile(self.path) as payload:
+            store = _managed_runtime_store(payload)
+            record = store["records"].get(request_id)
+            if not record or not _record_in_scope(record, scope):
+                raise KeyError(request_id)
+            mutate(record)
+            record["updated_at"] = _timestamp()
+            _refresh_p10_proof(record)
+            return _record_copy(record)
+
+    def _materialize_sources(
+        self,
+        *,
+        request_id: str,
+        scope: dict[str, str],
+        sources: list[Any],
+    ) -> list[dict[str, str]]:
+        materialized = []
+        for index, source in enumerate(sources, start=1):
+            if not isinstance(source, dict):
+                raise ValueError("each source must be an object")
+            source_type = str(source.get("source_type") or "").strip()
+            if not source_type:
+                raise ValueError("source_type is required")
+            if source.get("source_ref"):
+                materialized.append({"source_type": source_type, "source_ref": str(source["source_ref"])})
+                continue
+            if "content" not in source:
+                raise ValueError("source_ref or content is required for each source")
+            text = _source_content_text(source["content"])
+            _reject_raw_secret_material(text, f"{request_id}:{source_type}")
+            target = self._source_content_path(
+                request_id=request_id,
+                scope=scope,
+                index=index,
+                source_type=source_type,
+                filename=str(source.get("filename") or source_type),
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text, encoding="utf-8")
+            materialized.append({"source_type": source_type, "source_ref": str(target)})
+        return materialized
+
+    def _source_content_path(
+        self,
+        *,
+        request_id: str,
+        scope: dict[str, str],
+        index: int,
+        source_type: str,
+        filename: str,
+    ) -> Path:
+        source_name = Path(filename).name
+        stem = _slug(Path(source_name).stem or source_type) or _slug(source_type)
+        suffix = Path(source_name).suffix or _source_suffix(source_type)
+        return self.source_root / _slug(scope["scope_id"]) / _slug(request_id) / f"{index:02d}-{stem}{suffix}"
+
+
 def _canonical_sha256(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _managed_runtime_store(payload: dict[str, Any]) -> dict[str, Any]:
+    payload["schema_version"] = PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION
+    payload["state_slice"] = PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE
+    if not isinstance(payload.get("records"), dict):
+        payload["records"] = {}
+    return payload
+
+
+def _record_copy(record: dict[str, Any]) -> dict[str, Any]:
+    return json.loads(json.dumps(record))
+
+
+def _record_in_scope(record: dict[str, Any], scope: dict[str, str] | None) -> bool:
+    if scope is None:
+        return True
+    owner_scope = record.get("owner_scope")
+    return isinstance(owner_scope, dict) and owner_scope.get("scope_id") == scope.get("scope_id")
+
+
+def _record_summary(record: dict[str, Any]) -> dict[str, Any]:
+    runtime = record.get("dry_run_runtime") if isinstance(record.get("dry_run_runtime"), dict) else {}
+    proof = record.get("p10_proof_packet") if isinstance(record.get("p10_proof_packet"), dict) else {}
+    contract = record.get("generated_contract") if isinstance(record.get("generated_contract"), dict) else {}
+    bundle = record.get("source_bundle") if isinstance(record.get("source_bundle"), dict) else {}
+    binding = record.get("certification_binding") if isinstance(record.get("certification_binding"), dict) else {}
+    return {
+        "request_id": record.get("request_id"),
+        "state_slice": record.get("state_slice"),
+        "status": record.get("status"),
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+        "owner_scope": record.get("owner_scope"),
+        "source_bundle_id": bundle.get("bundle_id"),
+        "generated_contract_id": contract.get("contract_id"),
+        "connector_id": binding.get("connector_id") or runtime.get("connector_id"),
+        "dry_run_status": runtime.get("status"),
+        "mcp_endpoint_ref": runtime.get("mcp_endpoint_ref"),
+        "managed_runtime_deployed": runtime.get("managed_runtime_deployed") is True,
+        "certified_tool_count": len(runtime.get("certified_tool_ids") or []),
+        "denied_tool_count": len(runtime.get("denied_tool_ids") or []),
+        "audit_event_count": len(record.get("audit_events") or []),
+        "p10_status": proof.get("status", "blocked"),
+    }
+
+
+def _empty_product_dashboard(*, records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "schema_version": "praxis.product_dashboard.v1",
+        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+        "status": "no_runs",
+        "product_entrypoint": "meshapp.home.praxis",
+        "summary": {
+            "runs": len(records),
+            "source_packets": 0,
+            "tool_candidates": 0,
+            "akto_findings": 0,
+            "certified_read_only_tools": 0,
+            "denied_tools": 0,
+            "audit_events": 0,
+        },
+        "runs": [_record_summary(record) for record in records],
+        "proof_packet": {"status": "not_started", "checks": {}},
+        "p10_proof_packet": {"status": "not_started", "checks": {}},
+        "source_bundle": {
+            "bundle_id": None,
+            "redaction_status": "not_started",
+            "raw_payload_stored": False,
+            "packets": [],
+        },
+        "generated_contract": {
+            "contract_id": None,
+            "generator_version": None,
+            "tools": [],
+        },
+        "security_evidence": {
+            "evidence_id": None,
+            "source": None,
+            "scan_status": "not_run",
+            "live_dast_executed": False,
+            "raw_traffic_stored": False,
+            "findings": [],
+            "authority": {
+                "advisory_only": True,
+                "grants_policy_authority": False,
+                "grants_certification": False,
+            },
+        },
+        "pilot_runtime": _initial_dry_run_runtime(),
+        "authority": _product_authority(),
+    }
+
+
+def _record_product_dashboard(record: dict[str, Any], *, records: list[dict[str, Any]]) -> dict[str, Any]:
+    source_bundle = record["source_bundle"]
+    generated_contract = record["generated_contract"]
+    akto_evidence = record.get("akto_evidence") if isinstance(record.get("akto_evidence"), dict) else None
+    proof_packet = record.get("proof_packet") if isinstance(record.get("proof_packet"), dict) else {"status": "not_ready", "checks": {}}
+    runtime = record.get("dry_run_runtime") if isinstance(record.get("dry_run_runtime"), dict) else _initial_dry_run_runtime()
+    tools = _dashboard_tool_rows(generated_contract, record.get("certification_binding"), akto_evidence)
+    return {
+        "schema_version": "praxis.product_dashboard.v1",
+        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+        "status": record.get("status", "unknown"),
+        "product_entrypoint": "meshapp.home.praxis",
+        "summary": {
+            "runs": len(records),
+            "source_packets": len(source_bundle["source_packets"]),
+            "tool_candidates": len(generated_contract["tool_candidates"]),
+            "akto_findings": len(akto_evidence["findings"]) if akto_evidence else 0,
+            "certified_read_only_tools": len(runtime.get("certified_tool_ids") or []),
+            "denied_tools": len(runtime.get("denied_tool_ids") or []),
+            "audit_events": len(record.get("audit_events") or []),
+        },
+        "runs": [_record_summary(item) for item in records],
+        "proof_packet": proof_packet,
+        "p10_proof_packet": record.get("p10_proof_packet") or {"status": "blocked", "checks": {}},
+        "source_bundle": {
+            "bundle_id": source_bundle["bundle_id"],
+            "redaction_status": source_bundle["redaction"]["status"],
+            "raw_payload_stored": source_bundle["redaction"]["raw_payload_stored"],
+            "packets": [
+                {
+                    "packet_id": packet["packet_id"],
+                    "source_type": packet["source_type"],
+                    "source_ref": packet["source_ref"],
+                    "evidence_gaps": packet["evidence_gaps"],
+                    "raw_credentials_present": packet["secret_scan"]["raw_credentials_present"],
+                }
+                for packet in source_bundle["source_packets"]
+            ],
+        },
+        "generated_contract": {
+            "contract_id": generated_contract["contract_id"],
+            "generator_version": generated_contract["generator_version"],
+            "tools": tools,
+        },
+        "security_evidence": {
+            "evidence_id": akto_evidence["evidence_id"] if akto_evidence else None,
+            "source": akto_evidence["source"] if akto_evidence else None,
+            "scan_status": akto_evidence["scan_status"] if akto_evidence else "not_run",
+            "live_dast_executed": False,
+            "raw_traffic_stored": False,
+            "findings": akto_evidence["findings"] if akto_evidence else [],
+            "authority": akto_evidence["authority"] if akto_evidence else {
+                "advisory_only": True,
+                "grants_policy_authority": False,
+                "grants_certification": False,
+            },
+        },
+        "pilot_runtime": runtime,
+        "authority": _product_authority(),
+    }
+
+
+def _dashboard_tool_rows(
+    generated_contract: dict[str, Any],
+    certification_binding: Any,
+    akto_evidence: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    bindings_by_tool = {}
+    if isinstance(certification_binding, dict):
+        bindings_by_tool = {
+            str(binding["tool_candidate_id"]): binding
+            for binding in certification_binding.get("tool_bindings", [])
+            if isinstance(binding, dict)
+        }
+    findings_by_tool = _open_findings_by_tool(akto_evidence or {})
+    rows = []
+    for tool in generated_contract.get("tool_candidates", []):
+        binding = bindings_by_tool.get(str(tool["tool_id"]), {})
+        findings = findings_by_tool.get(str(tool["tool_id"]), [])
+        rows.append(
+            {
+                "tool_id": tool["tool_id"],
+                "name": tool["name"],
+                "description": tool["description"],
+                "method": tool["endpoint"]["method"],
+                "path": tool["endpoint"]["path"],
+                "mutation_class": tool["mutation_class"],
+                "approval_posture": tool["approval_posture"],
+                "certification_result": binding.get("certification_result", "candidate"),
+                "allowed_scopes": binding.get("allowed_scopes", []),
+                "readiness_blockers": binding.get("readiness_blockers", tool.get("blockers", [])),
+                "finding_count": len(findings),
+                "source_evidence_refs": tool["source_evidence_refs"],
+            }
+        )
+    return rows
+
+
+def _product_authority() -> dict[str, bool]:
+    return {
+        "mesh_owns_certification": True,
+        "mesh_owns_approval": True,
+        "mesh_owns_revocation": True,
+        "akto_advisory_only": True,
+        "acp_grants_runtime_authority": False,
+        "generated_tools_are_candidates_until_certified": True,
+    }
+
+
+def _request_id(raw: Any) -> str:
+    if raw:
+        cleaned = re.sub(r"[^A-Za-z0-9_.:-]+", "-", str(raw)).strip("-")
+        if cleaned:
+            return cleaned
+    return f"praxis-request-{int(time.time() * 1000)}-{secrets.token_hex(4)}"
+
+
+def _operator_ref(operator: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "operator_id": operator.get("operator_id") or "unknown",
+        "user_id": operator.get("user_id"),
+        "team_id": operator.get("team_id"),
+        "roles": sorted(operator.get("roles") or []),
+        "source": operator.get("source") or "unknown",
+    }
+
+
+def _append_praxis_event(
+    record: dict[str, Any],
+    *,
+    event_type: str,
+    operator: dict[str, Any],
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    events = record.setdefault("audit_events", [])
+    event = {
+        "event_id": f"praxis-event-{len(events) + 1:06d}",
+        "timestamp": _timestamp(),
+        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+        "request_id": record.get("request_id"),
+        "event_type": event_type,
+        "operator": _operator_ref(operator),
+        "details": details,
+    }
+    events.append(event)
+    return event
+
+
+def _refresh_p10_proof(record: dict[str, Any]) -> None:
+    events = record.get("audit_events") or []
+    event_types = {event.get("event_type") for event in events if isinstance(event, dict)}
+    runtime = record.get("dry_run_runtime") if isinstance(record.get("dry_run_runtime"), dict) else {}
+    checks = {
+        "source_upload_bound": isinstance(record.get("source_bundle"), dict),
+        "generated_tools_bound": bool((record.get("generated_contract") or {}).get("tool_candidates")),
+        "security_evidence_bound": isinstance(record.get("akto_evidence"), dict),
+        "certification_binding_bound": isinstance(record.get("certification_binding"), dict),
+        "dry_run_mcp_endpoint_started": "praxis.dry_run_endpoint_started" in event_types,
+        "tool_call_audit_event_bound": "praxis.dry_run_tool_called" in event_types,
+        "revocation_bound": "praxis.generated_connector_revoked" in event_types,
+        "managed_runtime_deploy_blocked": runtime.get("managed_runtime_deployed") is False,
+    }
+    record["p10_proof_packet"] = {
+        "schema_version": "praxis.managed_dry_run_proof_packet.v1",
+        "packet_id": f"{record.get('request_id')}-p10-proof-packet",
+        "generated_at": _timestamp(),
+        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+        "status": "complete" if all(checks.values()) else "blocked",
+        "request_id": record.get("request_id"),
+        "source_bundle_id": (record.get("source_bundle") or {}).get("bundle_id"),
+        "generated_contract_id": (record.get("generated_contract") or {}).get("contract_id"),
+        "akto_evidence_id": (record.get("akto_evidence") or {}).get("evidence_id"),
+        "certification_binding_id": (record.get("certification_binding") or {}).get("binding_id"),
+        "dry_run_runtime": runtime,
+        "audit_event_ids": [event.get("event_id") for event in events if isinstance(event, dict)],
+        "checks": checks,
+        "authority": {
+            "akto_advisory_only": True,
+            "mesh_owns_certification": True,
+            "mesh_owns_revocation": True,
+            "managed_runtime_deployed": False,
+        },
+    }
+
+
+def _initial_dry_run_runtime() -> dict[str, Any]:
+    return {
+        "runtime_id": None,
+        "connector_id": None,
+        "status": "not_started",
+        "dry_run_only": True,
+        "managed_runtime_deployed": False,
+        "mcp_endpoint_ref": None,
+        "credential_boundary": "runtime-secret://praxis/generated-mcp",
+        "revocation_ref": None,
+        "certified_tool_ids": [],
+        "denied_tool_ids": [],
+        "approval_required_tool_ids": [],
+        "controls": _dry_run_controls(status="not_started", connector_id=None),
+    }
+
+
+def _dry_run_runtime_for_binding(certification_binding: dict[str, Any], *, status: str) -> dict[str, Any]:
+    connector_id = str(certification_binding["connector_id"])
+    return {
+        "runtime_id": f"{connector_id}-dry-run",
+        "connector_id": connector_id,
+        "status": status,
+        "dry_run_only": True,
+        "managed_runtime_deployed": False,
+        "mcp_endpoint_ref": f"mcp-dry-run://{connector_id}" if status == "running" else None,
+        "credential_boundary": "runtime-secret://praxis/generated-mcp",
+        "revocation_ref": certification_binding["revocation"]["revocation_ref"],
+        "certified_tool_ids": _certified_tool_ids(certification_binding),
+        "denied_tool_ids": _denied_tool_ids(certification_binding),
+        "approval_required_tool_ids": _approval_required_tool_ids(certification_binding),
+        "controls": _dry_run_controls(status=status, connector_id=connector_id),
+    }
+
+
+def _dry_run_controls(*, status: str, connector_id: str | None) -> list[dict[str, Any]]:
+    start_state = "blocked"
+    start_reason = "Certification binding is required before dry-run start."
+    if status == "dry_run_ready":
+        start_state = "ready"
+        start_reason = "Read-only certification is bound; local MCP dry-run can start."
+    elif status == "running":
+        start_state = "running"
+        start_reason = "Local dry-run MCP endpoint is active."
+    elif status == "revoked":
+        start_reason = "Generated connector has been revoked."
+    revoke_state = "blocked"
+    revoke_reason = "No generated connector is bound."
+    if connector_id and status in {"dry_run_ready", "running"}:
+        revoke_state = "ready"
+        revoke_reason = "Mesh can revoke the generated connector and deactivate the endpoint."
+    elif connector_id and status == "revoked":
+        revoke_state = "complete"
+        revoke_reason = "Generated connector has been revoked."
+    return [
+        {
+            "control_id": "start_dry_run",
+            "label": "Start dry-run MCP endpoint",
+            "state": start_state,
+            "requires_mesh_approval": False,
+            "reason": start_reason,
+        },
+        {
+            "control_id": "revoke_runtime",
+            "label": "Revoke generated connector",
+            "state": revoke_state,
+            "requires_mesh_approval": True,
+            "reason": revoke_reason,
+        },
+        {
+            "control_id": "deploy_managed_runtime",
+            "label": "Deploy managed pilot runtime",
+            "state": "blocked",
+            "requires_mesh_approval": True,
+            "reason": "Managed runtime deployment stays blocked until production-like proof, live target ownership, and credential rotation evidence exist.",
+        },
+    ]
+
+
+def _certified_tool_ids(certification_binding: dict[str, Any]) -> list[str]:
+    return sorted(
+        str(binding["tool_candidate_id"])
+        for binding in certification_binding.get("tool_bindings", [])
+        if isinstance(binding, dict) and binding.get("certification_result") == "read_only"
+    )
+
+
+def _denied_tool_ids(certification_binding: dict[str, Any]) -> list[str]:
+    return sorted(
+        str(binding["tool_candidate_id"])
+        for binding in certification_binding.get("tool_bindings", [])
+        if isinstance(binding, dict) and binding.get("certification_result") == "denied"
+    )
+
+
+def _approval_required_tool_ids(certification_binding: dict[str, Any]) -> list[str]:
+    return sorted(
+        str(binding["tool_candidate_id"])
+        for binding in certification_binding.get("tool_bindings", [])
+        if isinstance(binding, dict) and binding.get("certification_result") == "approval_required"
+    )
+
+
+def _binding_for_tool(certification_binding: Any, tool_id: str) -> dict[str, Any] | None:
+    if not isinstance(certification_binding, dict):
+        return None
+    for binding in certification_binding.get("tool_bindings", []):
+        if isinstance(binding, dict) and binding.get("tool_candidate_id") == tool_id:
+            return binding
+    return None
+
+
+def _tool_endpoint(generated_contract: dict[str, Any], tool_id: str) -> dict[str, Any]:
+    for tool in generated_contract.get("tool_candidates", []):
+        if isinstance(tool, dict) and tool.get("tool_id") == tool_id:
+            return {
+                "method": tool["endpoint"]["method"],
+                "path": tool["endpoint"]["path"],
+                "mutation_class": tool["mutation_class"],
+            }
+    return {}
+
+
+def _mcp_result(rpc_id: Any, result: dict[str, Any]) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": rpc_id, "result": result}
+
+
+def _mcp_error(rpc_id: Any, code: int, message: str) -> dict[str, Any]:
+    return {"jsonrpc": "2.0", "id": rpc_id, "error": {"code": code, "message": message}}
+
+
+def _mcp_tools_for_record(record: dict[str, Any]) -> list[dict[str, Any]]:
+    certified = set(_certified_tool_ids(record["certification_binding"]))
+    tools = []
+    for tool in record["generated_contract"].get("tool_candidates", []):
+        if not isinstance(tool, dict) or str(tool.get("tool_id")) not in certified:
+            continue
+        endpoint = tool.get("endpoint") if isinstance(tool.get("endpoint"), dict) else {}
+        tools.append(
+            {
+                "name": str(tool["tool_id"]),
+                "description": str(tool.get("description") or tool.get("name") or tool["tool_id"]),
+                "inputSchema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "dry_run_reason": {
+                            "type": "string",
+                            "description": "Operator reason for exercising this certified dry-run tool.",
+                        }
+                    },
+                },
+                "annotations": {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "idempotentHint": True,
+                    "openWorldHint": False,
+                    "title": str(tool.get("name") or tool["tool_id"]),
+                },
+                "praxis": {
+                    "method": str(endpoint.get("method") or "GET"),
+                    "path": str(endpoint.get("path") or "/"),
+                    "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+                },
+            }
+        )
+    return tools
+
+
+def _source_content_text(content: Any) -> str:
+    if isinstance(content, (dict, list)):
+        return json.dumps(content, indent=2, sort_keys=True) + "\n"
+    return str(content)
+
+
+def _source_suffix(source_type: str) -> str:
+    if source_type == "sop_markdown":
+        return ".md"
+    return ".json"
 
 
 def _tool_certification_binding(tool: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
@@ -610,6 +1733,11 @@ def _reject_raw_secret_material(text: str, source_ref: str) -> None:
             continue
         if "REDACTED" not in window and "env" not in window.lower() and "environment variable" not in window.lower():
             raise SchemaValidationError(f"{source_ref}: possible unredacted credential field near {match.group(0)!r}")
+
+
+def _reject_raw_secret_values(text: str, source_ref: str) -> None:
+    if _SECRET_VALUE_RE.search(text):
+        raise SchemaValidationError(f"{source_ref}: raw secret-like value is forbidden")
 
 
 def _resolve_repo_path(path: str) -> Path:

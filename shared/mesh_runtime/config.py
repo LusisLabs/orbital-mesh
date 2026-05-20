@@ -175,6 +175,7 @@ class RuntimeConfig:
     operator_identity_path: str = str(DEFAULT_OPERATOR_IDENTITY_PATH)
     session_cookie_name: str = "mesh_session"
     auth_allowed_origins: tuple[str, ...] = ()
+    auth_product_redirect_url: str = ""
     signup_enabled: bool = True
     password_auth_enabled: bool = True
     captcha_provider: str = "disabled"
@@ -686,6 +687,7 @@ class RuntimeConfig:
             ),
             session_cookie_name=os.getenv("MESH_SESSION_COOKIE_NAME", "mesh_session"),
             auth_allowed_origins=_csv_env("MESH_AUTH_ALLOWED_ORIGINS"),
+            auth_product_redirect_url=os.getenv("MESH_AUTH_PRODUCT_REDIRECT_URL", ""),
             signup_enabled=_env_bool("MESH_SIGNUP_ENABLED", default=True),
             password_auth_enabled=_env_bool("MESH_PASSWORD_AUTH_ENABLED", default=True),
             captcha_provider=os.getenv("MESH_CAPTCHA_PROVIDER", "disabled").lower(),

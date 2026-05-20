@@ -74,6 +74,11 @@ class OperatorProductContractTests(unittest.TestCase):
         dashboard = self._request("GET", f"/api/operator/dashboard?team_id={team_id}", cookie=cookie)
         validate_payload("operator-product.schema.json", {"dashboard_payload": dashboard})
         self.assertIn("Mesh remains the authority", dashboard["authority_boundary"])
+        self.assertEqual(dashboard["mesh"]["praxis"]["product_entrypoint"], "meshapp.home.praxis")
+        self.assertEqual(dashboard["mesh"]["praxis"]["state_slice"], "praxis.managed-dry-run-runtime.v1")
+        self.assertEqual(dashboard["mesh"]["praxis"]["status"], "no_runs")
+        self.assertTrue(dashboard["mesh"]["praxis"]["pilot_runtime"]["dry_run_only"])
+        self.assertFalse(dashboard["mesh"]["praxis"]["pilot_runtime"]["managed_runtime_deployed"])
 
         settings = self._request(
             "POST",

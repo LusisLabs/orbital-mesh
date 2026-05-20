@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from shared.mesh_runtime.praxis import (
+    PraxisManagedRuntimeStore,
     build_praxis_certification_binding,
     build_praxis_demo_proof_packet,
     build_praxis_e2e_proof_packet,
@@ -230,6 +231,132 @@ class PraxisProofPacketTests(unittest.TestCase):
 
         self.assertEqual(packet["status"], "blocked")
         self.assertFalse(packet["checks"]["source_bundle_bound"])
+
+
+class PraxisManagedDryRunRuntimeTests(unittest.TestCase):
+    def test_managed_runtime_persists_generation_to_revocation_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = PraxisManagedRuntimeStore(Path(tmp_dir) / "praxis" / "managed-dry-run-runtime.json")
+            scope = {"kind": "team", "id": "team_demo", "scope_id": "team:team_demo"}
+            operator = {"operator_id": "operator@example.com", "roles": ["admin"], "user_id": "usr_demo", "team_id": "team_demo"}
+
+            record = store.create_generation_request(
+                {
+                    "request_id": "praxis-request-runtime-001",
+                    "sources": [
+                        {"source_type": "openapi", "source_ref": "fixtures/praxis/demo-openapi.redacted.json"},
+                        {"source_type": "postman_json", "source_ref": "fixtures/praxis/demo-postman.redacted.json"},
+                        {"source_type": "sop_markdown", "source_ref": "fixtures/praxis/demo-sop.redacted.md"},
+                        {"source_type": "redacted_traffic_ref", "source_ref": "fixtures/praxis/demo-traffic-ref.redacted.json"},
+                    ],
+                },
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(record["state_slice"], "praxis.managed-dry-run-runtime.v1")
+            self.assertEqual(record["status"], "candidate_generated")
+            self.assertTrue((Path(tmp_dir) / "praxis" / "managed-dry-run-runtime.json").exists())
+
+            record = store.import_akto_evidence(
+                "praxis-request-runtime-001",
+                {
+                    "evidence_id": "praxis-akto-runtime-001",
+                    "akto_result_path": "fixtures/praxis/demo-akto-results.json",
+                },
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(record["akto_evidence"]["authority"]["grants_certification"], False)
+
+            record = store.build_certification_binding(
+                "praxis-request-runtime-001",
+                {
+                    "binding_id": "praxis-binding-runtime-001",
+                    "connector_id": "praxis-runtime-generated-mcp",
+                    "acp_session_id": "praxis-acp-runtime-001",
+                },
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(record["dry_run_runtime"]["status"], "dry_run_ready")
+            self.assertFalse(record["dry_run_runtime"]["managed_runtime_deployed"])
+            self.assertEqual(record["dry_run_runtime"]["certified_tool_ids"], ["tool.listorders"])
+
+            record = store.start_dry_run_endpoint(
+                "praxis-request-runtime-001",
+                {},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(record["dry_run_runtime"]["status"], "running")
+            self.assertEqual(record["dry_run_runtime"]["mcp_endpoint_ref"], "mcp-dry-run://praxis-runtime-generated-mcp")
+
+            allowed_call = store.call_dry_run_tool(
+                "praxis-request-runtime-001",
+                {"tool_id": "tool.listorders", "arguments": {}},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertTrue(allowed_call["allowed"])
+            self.assertFalse(allowed_call["side_effects_executed"])
+
+            denied_call = store.call_dry_run_tool(
+                "praxis-request-runtime-001",
+                {"tool_id": "tool.cancelorder", "arguments": {"order_id": "ord_demo"}},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertFalse(denied_call["allowed"])
+            self.assertEqual(denied_call["status"], "denied")
+
+            record = store.revoke_generated_connector(
+                "praxis-request-runtime-001",
+                {"reason": "runtime test complete"},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(record["dry_run_runtime"]["status"], "revoked")
+            self.assertEqual(record["p10_proof_packet"]["status"], "complete")
+            self.assertTrue(record["p10_proof_packet"]["checks"]["revocation_bound"])
+
+            dashboard = store.build_product_dashboard(scope=scope)
+            self.assertEqual(dashboard["state_slice"], "praxis.managed-dry-run-runtime.v1")
+            self.assertEqual(dashboard["summary"]["runs"], 1)
+            self.assertEqual(dashboard["pilot_runtime"]["status"], "revoked")
+
+    def test_managed_runtime_rejects_raw_secret_source_uploads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = PraxisManagedRuntimeStore(Path(tmp_dir) / "praxis" / "managed-dry-run-runtime.json")
+            scope = {"kind": "team", "id": "team_demo", "scope_id": "team:team_demo"}
+            operator = {"operator_id": "operator@example.com", "roles": ["admin"], "user_id": "usr_demo", "team_id": "team_demo"}
+
+            with self.assertRaises(SchemaValidationError):
+                store.create_generation_request(
+                    {
+                        "request_id": "praxis-request-secret-001",
+                        "sources": [
+                            {
+                                "source_type": "openapi",
+                                "filename": "bad-openapi.json",
+                                "content": {
+                                    "openapi": "3.1.0",
+                                    "paths": {},
+                                    "components": {
+                                        "securitySchemes": {
+                                            "apiKeyAuth": {
+                                                "type": "apiKey",
+                                                "name": "Authorization",
+                                                "value": "Bearer abcdefghijklmnopqrstuvwxyz",
+                                            }
+                                        }
+                                    },
+                                },
+                            }
+                        ],
+                    },
+                    operator=operator,
+                    scope=scope,
+                )
 
 
 if __name__ == "__main__":

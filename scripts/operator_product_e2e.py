@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -57,6 +58,14 @@ def main() -> int:
     web_port = _free_port()
     api_url = f"http://127.0.0.1:{api_port}"
     web_url = f"http://127.0.0.1:{web_port}"
+    next_dist_dir = f".next-e2e-{web_port}"
+    next_generated_files = [
+        REPO_ROOT / "meshapp" / "frontend" / "next-env.d.ts",
+        REPO_ROOT / "meshapp" / "frontend" / "tsconfig.json",
+    ]
+    next_generated_snapshots = {
+        path: path.read_text(encoding="utf-8") for path in next_generated_files if path.exists()
+    }
 
     with tempfile.TemporaryDirectory(prefix="mesh-product-e2e-") as tmp:
         tmp_path = Path(tmp)
@@ -77,6 +86,9 @@ def main() -> int:
                 "NEXT_PUBLIC_MESH_API_URL": api_url,
                 "MESH_PRODUCT_E2E_BASE_URL": web_url,
                 "MESH_PRODUCT_E2E_API_URL": api_url,
+                "MESH_AUTH_PRODUCT_REDIRECT_URL": web_url,
+                "MESH_AUTH_ALLOWED_ORIGINS": web_url,
+                "MESH_NEXT_DIST_DIR": next_dist_dir,
             }
         )
 
@@ -105,6 +117,9 @@ def main() -> int:
         finally:
             web.stop()
             api.stop()
+            shutil.rmtree(REPO_ROOT / "meshapp" / "frontend" / next_dist_dir, ignore_errors=True)
+            for path, contents in next_generated_snapshots.items():
+                path.write_text(contents, encoding="utf-8")
 
 
 def _wait_for_http(url: str, process: ManagedProcess, *, timeout: float) -> None:

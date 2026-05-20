@@ -2222,6 +2222,7 @@ class RunCoordinator:
         steering_mode = payload.get("steering_mode", self.config.default_steering_mode)
         if self.config.force_approval_gate:
             steering_mode = "approval_gate"
+        audit_reason = str(payload.get("audit_reason") or "").strip()
         auto_mode = steering_mode == "interruptible_auto"
         raw_pause_points = (
             payload["pause_points"]
@@ -2248,6 +2249,12 @@ class RunCoordinator:
         artifacts = {"input_signal": signal_payload, "ownership_boundary": ownership_boundary}
         if operator is not None:
             artifacts["operator"] = operator
+            artifacts["operator_audit"] = {
+                "state_slice": "meshapp.run-admission-launch.v1",
+                "reason": audit_reason or "not_provided",
+                "operator_id": operator.get("operator_id"),
+                "recorded_at": _timestamp(),
+            }
         if payload.get("chaos_probe") is True:
             artifacts["chaos_probe"] = True
         if payload.get("correlation_key"):
@@ -2321,8 +2328,13 @@ class RunCoordinator:
                 "steering_mode": steering_mode,
                 "pause_points": pause_points,
                 "operator": operator,
+                "audit_reason": audit_reason or None,
             },
-            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            summary={
+                "status": "queued",
+                "operator_id": operator.get("operator_id") if operator else None,
+                "audit_reason_recorded": bool(audit_reason),
+            },
             status="queued",
         )
         self.state_store.append_run_event(

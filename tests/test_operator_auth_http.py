@@ -6,6 +6,7 @@ import time
 import unittest
 from http import HTTPStatus
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -77,16 +78,139 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(dashboard["scope"]["kind"], "team")
         self.assertIn("Mesh remains the authority", dashboard["authority_boundary"])
         self.assertIn("readiness", dashboard["mesh"])
+        self.assertEqual(dashboard["mesh"]["praxis"]["state_slice"], "praxis.managed-dry-run-runtime.v1")
+        self.assertEqual(dashboard["mesh"]["praxis"]["status"], "no_runs")
+        self.assertEqual(dashboard["mesh"]["praxis"]["pilot_runtime"]["status"], "not_started")
+        self.assertTrue(dashboard["mesh"]["praxis"]["pilot_runtime"]["dry_run_only"])
+        self.assertFalse(dashboard["mesh"]["praxis"]["pilot_runtime"]["managed_runtime_deployed"])
 
         run, _ = self._request(
             "POST",
             "/api/runs",
-            {"scenario_key": "reth_peer_starvation"},
+            {"scenario_key": "reth_peer_starvation", "audit_reason": "prove product-native run admission"},
             cookie=cookie,
             include_cookie=True,
         )
         self.assertIn("run_id", run)
         self.assertIn(run["status"], {"queued", "pending", "running", "completed", "failed"})
+        self.assertEqual(run["artifacts"]["run_admission"]["schema_version"], "mesh.run_admission.v1")
+        self.assertEqual(run["artifacts"]["operator_audit"]["state_slice"], "meshapp.run-admission-launch.v1")
+        self.assertEqual(run["artifacts"]["operator_audit"]["reason"], "prove product-native run admission")
+
+    def test_praxis_generation_runtime_api_persists_team_scoped_dry_run(self) -> None:
+        _, cookie = self._request(
+            "POST",
+            "/api/auth/signup",
+            {
+                "email": "praxis@example.com",
+                "password": "correct-horse-42",
+                "captcha_token": "dev-captcha-ok",
+            },
+            include_cookie=True,
+        )
+        team_payload, _ = self._request(
+            "POST",
+            "/api/auth/team",
+            {"name": "Praxis Operators"},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        team_id = team_payload["active_team"]["id"]
+
+        generation, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests",
+            {
+                "team_id": team_id,
+                "request_id": "praxis-request-http-001",
+                "sources": [
+                    {"source_type": "openapi", "source_ref": "fixtures/praxis/demo-openapi.redacted.json"},
+                    {"source_type": "postman_json", "source_ref": "fixtures/praxis/demo-postman.redacted.json"},
+                    {"source_type": "sop_markdown", "source_ref": "fixtures/praxis/demo-sop.redacted.md"},
+                    {"source_type": "redacted_traffic_ref", "source_ref": "fixtures/praxis/demo-traffic-ref.redacted.json"},
+                ],
+            },
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(generation["status"], "candidate_generated")
+        self.assertEqual(generation["owner_scope"]["scope_id"], f"team:{team_id}")
+
+        evidence, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/akto-evidence",
+            {
+                "team_id": team_id,
+                "evidence_id": "praxis-akto-http-001",
+                "akto_result_path": "fixtures/praxis/demo-akto-results.json",
+            },
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(evidence["status"], "security_evidence_imported")
+
+        binding, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/certification-binding",
+            {
+                "team_id": team_id,
+                "binding_id": "praxis-binding-http-001",
+                "connector_id": "praxis-http-generated-mcp",
+                "acp_session_id": "praxis-acp-http-001",
+            },
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(binding["dry_run_runtime"]["status"], "dry_run_ready")
+        self.assertFalse(binding["dry_run_runtime"]["managed_runtime_deployed"])
+
+        running, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/dry-run/start",
+            {"team_id": team_id},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(running["dry_run_runtime"]["status"], "running")
+
+        call, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/dry-run/call",
+            {"team_id": team_id, "tool_id": "tool.listorders", "arguments": {}},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertTrue(call["allowed"])
+        self.assertFalse(call["side_effects_executed"])
+
+        with self.assertRaises(HTTPError) as denied:
+            self._request(
+                "POST",
+                "/api/operator/praxis/generation-requests/praxis-request-http-001/dry-run/call",
+                {"team_id": team_id, "tool_id": "tool.cancelorder", "arguments": {"order_id": "ord_demo"}},
+                cookie=cookie,
+            )
+        self.assertEqual(denied.exception.code, HTTPStatus.FORBIDDEN)
+
+        revoked, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/revoke",
+            {"team_id": team_id, "reason": "operator test complete"},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(revoked["dry_run_runtime"]["status"], "revoked")
+        self.assertEqual(revoked["p10_proof_packet"]["status"], "complete")
+
+        runs, _ = self._request("GET", f"/api/operator/praxis/runs?team_id={team_id}", cookie=cookie, include_cookie=True)
+        self.assertEqual(runs["state_slice"], "praxis.managed-dry-run-runtime.v1")
+        self.assertEqual(runs["runs"][0]["request_id"], "praxis-request-http-001")
+        self.assertEqual(runs["runs"][0]["dry_run_status"], "revoked")
+
+        dashboard, _ = self._request("GET", f"/api/operator/dashboard?team_id={team_id}", cookie=cookie, include_cookie=True)
+        self.assertEqual(dashboard["mesh"]["praxis"]["summary"]["runs"], 1)
+        self.assertEqual(dashboard["mesh"]["praxis"]["pilot_runtime"]["status"], "revoked")
+        self.assertEqual(dashboard["mesh"]["praxis"]["p10_proof_packet"]["status"], "complete")
 
     def test_dashboard_read_model_degrades_failed_sections_explicitly(self) -> None:
         def broken_readiness():
@@ -279,6 +403,120 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(missing_code.exception.code, HTTPStatus.FOUND)
         self.assertEqual(missing_code.exception.headers["Location"], "/?auth_error=missing_oauth_code")
 
+    def test_oauth_callback_redirects_to_configured_local_product_url(self) -> None:
+        self.server.config.google_oauth_client_id = "google-client"
+        self.server.config.google_oauth_client_secret = "google-secret"
+        self.server.config.google_oauth_redirect_url = f"{self.base_url}/api/auth/oauth/google/callback"
+        self.server.config.auth_product_redirect_url = "http://127.0.0.1:3000"
+
+        self._complete_oauth_callback(
+            "google",
+            {
+                "provider_user_id": "google-redirect-user",
+                "email": "google-redirect@example.com",
+                "display_name": "Google Redirect",
+            },
+            expected_location="http://127.0.0.1:3000?auth=ok",
+        )
+
+        with self.assertRaises(HTTPError) as missing_code:
+            self._request_no_redirect("GET", "/api/auth/oauth/google/callback")
+        self.assertEqual(missing_code.exception.code, HTTPStatus.FOUND)
+        self.assertEqual(missing_code.exception.headers["Location"], "http://127.0.0.1:3000?auth_error=missing_oauth_code")
+
+    def test_oauth_callback_rejects_unallowed_product_redirect_url(self) -> None:
+        self.server.config.github_oauth_client_id = "github-client"
+        self.server.config.github_oauth_client_secret = "github-secret"
+        self.server.config.github_oauth_redirect_url = f"{self.base_url}/api/auth/oauth/github/callback"
+        self.server.config.auth_product_redirect_url = "https://evil.example.test/"
+
+        self._complete_oauth_callback(
+            "github",
+            {
+                "provider_user_id": "github-redirect-user",
+                "email": "github-redirect@example.com",
+                "display_name": "GitHub Redirect",
+            },
+            expected_location="/?auth=ok",
+        )
+
+    def test_oauth_callback_allows_configured_auth_origin(self) -> None:
+        self.server.config.github_oauth_client_id = "github-client"
+        self.server.config.github_oauth_client_secret = "github-secret"
+        self.server.config.github_oauth_redirect_url = f"{self.base_url}/api/auth/oauth/github/callback"
+        self.server.config.auth_product_redirect_url = "https://operators.example.com/product"
+        self.server.config.auth_allowed_origins = ("https://operators.example.com",)
+
+        self._complete_oauth_callback(
+            "github",
+            {
+                "provider_user_id": "github-origin-user",
+                "email": "github-origin@example.com",
+                "display_name": "GitHub Origin",
+            },
+            expected_location="https://operators.example.com/product?auth=ok",
+        )
+
+    def test_auth_provider_runtime_evidence_records_redacted_provider_sessions(self) -> None:
+        self.server.config.captcha_dev_bypass_enabled = False
+        self.server.config.captcha_provider = "hcaptcha"
+        self.server.config.captcha_site_key = "site-key"
+        self.server.config.captcha_secret_key = "secret-key"
+        self.server.config.google_oauth_client_id = "google-client"
+        self.server.config.google_oauth_client_secret = "google-secret"
+        self.server.config.google_oauth_redirect_url = f"{self.base_url}/api/auth/oauth/google/callback"
+        self.server.config.github_oauth_client_id = "github-client"
+        self.server.config.github_oauth_client_secret = "github-secret"
+        self.server.config.github_oauth_redirect_url = f"{self.base_url}/api/auth/oauth/github/callback"
+
+        with patch("shared.mesh_runtime.operator_identity.verify_captcha_token", return_value=None):
+            _, signup_cookie = self._request(
+                "POST",
+                "/api/auth/signup",
+                {
+                    "email": "provider-proof@example.com",
+                    "password": "correct-horse-42",
+                    "captcha_token": "provider-browser-token-redacted",
+                },
+                include_cookie=True,
+            )
+        self.assertIn("mesh_session=", signup_cookie)
+
+        self._complete_oauth_callback(
+            "google",
+            {
+                "provider_user_id": "google-user-1",
+                "email": "google-proof@example.com",
+                "display_name": "Google Proof",
+            },
+        )
+        self._complete_oauth_callback(
+            "github",
+            {
+                "provider_user_id": "github-user-1",
+                "email": "github-proof@example.com",
+                "display_name": "GitHub Proof",
+            },
+        )
+
+        evidence = self.server.operator_identity.auth_provider_evidence()
+        self.assertEqual(evidence["schema_version"], "mesh.operator_auth_runtime_evidence.v1")
+        self.assertEqual(evidence["state_slice"], "auth-provider-proof.v1")
+        self.assertEqual(evidence["status"], "complete")
+        self.assertEqual(evidence["email_signup"]["status"], "complete")
+        self.assertEqual(evidence["providers"]["google_oauth"]["status"], "complete")
+        self.assertEqual(evidence["providers"]["github_oauth"]["status"], "complete")
+        self.assertEqual(evidence["captcha"]["status"], "complete")
+        self.assertTrue(evidence["captcha"]["browser_token_verified"])
+
+        data = json.loads(Path(self.config.operator_identity_path).read_text(encoding="utf-8"))
+        events_json = json.dumps(data["auth_events"], sort_keys=True)
+        self.assertIn("session_token_hash", events_json)
+        self.assertNotIn("provider-browser-token-redacted", events_json)
+        self.assertNotIn("google-secret", events_json)
+        self.assertNotIn("github-secret", events_json)
+        self.assertNotIn("access_token", events_json)
+
     def test_oauth_start_routes_fail_closed_without_provider_config(self) -> None:
         for provider in ("google", "github"):
             with self.subTest(provider=provider):
@@ -345,6 +583,19 @@ class OperatorAuthHttpTests(unittest.TestCase):
         opener = build_opener(_NoRedirectHandler)
         with opener.open(req, timeout=10) as response:
             return response
+
+    def _complete_oauth_callback(self, provider: str, profile: dict[str, str], *, expected_location: str = "/?auth=ok") -> str:
+        start, _ = self._request("GET", f"/api/auth/oauth/{provider}/start", include_cookie=True)
+        query = parse_qs(urlparse(start["authorize_url"]).query)
+        state = query["state"][0]
+        with patch("control_plane_server.exchange_oauth_profile", return_value=profile):
+            with self.assertRaises(HTTPError) as redirect:
+                self._request_no_redirect("GET", f"/api/auth/oauth/{provider}/callback?code=provider-code-redacted&state={state}")
+        self.assertEqual(redirect.exception.code, HTTPStatus.FOUND)
+        self.assertEqual(redirect.exception.headers["Location"], expected_location)
+        cookie = redirect.exception.headers.get("Set-Cookie", "")
+        self.assertIn("mesh_session=", cookie)
+        return cookie
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):

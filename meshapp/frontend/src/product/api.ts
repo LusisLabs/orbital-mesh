@@ -19,12 +19,105 @@ export class HttpError extends Error {
   }
 }
 
+export type RunAdmissionPacket = {
+  schema_version?: string;
+  decision?: "admitted" | "blocked" | string;
+  blockers?: string[];
+  tenant_id?: string;
+  target_lock_key?: string;
+  queue?: {
+    current_depth?: number;
+    max_size?: number;
+    worker_count?: number;
+  };
+  quotas?: {
+    tenant_active_runs?: number;
+    tenant_active_run_quota?: number;
+  };
+  lock?: {
+    granted?: boolean;
+    holder_run_id?: string | null;
+  };
+};
+
+export type RunLaunchPayload = {
+  scenario_key: string;
+  audit_reason: string;
+  evaluation_mode?: string;
+  orchestration_mode?: string;
+  steering_mode?: string;
+  require_target_lock?: boolean;
+};
+
+export type RunLaunchResponse = {
+  run_id: string;
+  scenario_key?: string;
+  status?: string;
+  stage?: string;
+  error?: string;
+  artifacts?: {
+    run_admission?: RunAdmissionPacket;
+    operator_audit?: {
+      reason?: string;
+      state_slice?: string;
+      operator_id?: string;
+    };
+  };
+};
+
+export type RunDetailResponse = RunLaunchResponse & {
+  events?: Array<Record<string, any>>;
+  artifacts?: Record<string, any>;
+  merkle?: Record<string, any>;
+};
+
+export type ApprovalCommand = "approve" | "resume" | "cancel" | "explain_blockers" | "override_decision";
+
+export type PraxisSourceInput = {
+  source_type: "openapi" | "postman_json" | "sop_markdown" | "redacted_traffic_ref" | string;
+  filename?: string;
+  content?: string | Record<string, any>;
+  source_ref?: string;
+};
+
+export type PraxisGenerationPayload = {
+  team_id?: string | null;
+  sources: PraxisSourceInput[];
+};
+
+export type PraxisMcpRequest = {
+  jsonrpc: "2.0";
+  id: string | number;
+  method: "initialize" | "tools/list" | "tools/call" | string;
+  params?: Record<string, any>;
+};
+
 const DEFAULT_API_BASE_URL = process.env.NEXT_PUBLIC_MESH_API_URL?.trim() || "http://127.0.0.1:8787";
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function isLoopbackHost(hostname: string): boolean {
+  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
+}
+
+export function normalizeLoopbackBaseUrl(baseUrl: string, pageLocation?: Pick<Location, "hostname">): string {
+  const trimmed = baseUrl.replace(/\/+$/, "");
+  if (!pageLocation?.hostname || !isLoopbackHost(pageLocation.hostname)) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (!isLoopbackHost(parsed.hostname) || parsed.hostname === pageLocation.hostname) return trimmed;
+    parsed.hostname = pageLocation.hostname;
+    return parsed.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmed;
+  }
+}
 
 export function resolveBaseUrl(): string {
   if (typeof window === "undefined") return DEFAULT_API_BASE_URL;
   const params = new URLSearchParams(window.location.search);
-  return (params.get("server") || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
+  const explicitServer = params.get("server");
+  if (explicitServer) return explicitServer.replace(/\/+$/, "");
+  return normalizeLoopbackBaseUrl(DEFAULT_API_BASE_URL, window.location);
 }
 
 export function backendUnavailableMessage(): string {
@@ -111,5 +204,85 @@ export const productApi = {
       method: "POST",
       body: JSON.stringify({ team_id: teamId, settings, reason }),
     });
+  },
+  createRun(payload: RunLaunchPayload) {
+    return request<RunLaunchResponse>("/api/runs", { method: "POST", body: JSON.stringify(payload) });
+  },
+  steerRun(runId: string, payload: { command: ApprovalCommand; reason?: string }) {
+    return request<RunDetailResponse>(`/api/runs/${encodeURIComponent(runId)}/steer`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  runDetail(runId: string) {
+    return request<RunDetailResponse>(`/api/runs/${encodeURIComponent(runId)}`);
+  },
+  runEvents(runId: string) {
+    return request<{ events: Array<Record<string, any>> }>(`/api/runs/${encodeURIComponent(runId)}/events`);
+  },
+  evidenceGraph(runId: string) {
+    return request<Record<string, any>>(`/api/runs/${encodeURIComponent(runId)}/evidence-graph`);
+  },
+  scenarioAnalysis(runId: string) {
+    return request<Record<string, any>>(`/api/runs/${encodeURIComponent(runId)}/scenario-analysis`);
+  },
+  merkle(runId: string) {
+    return request<Record<string, any>>(`/api/runs/${encodeURIComponent(runId)}/merkle`);
+  },
+  timelineProof(runId: string) {
+    return request<Record<string, any>>(`/api/runs/${encodeURIComponent(runId)}/timeline-proof`);
+  },
+  exportRun(runId: string) {
+    return request<Record<string, any>>(`/api/runs/${encodeURIComponent(runId)}/export`, { method: "POST", body: "{}" });
+  },
+  praxisRuns(teamId?: string | null) {
+    const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
+    return request<Record<string, any>>(`/api/operator/praxis/runs${query}`);
+  },
+  createPraxisGenerationRequest(payload: PraxisGenerationPayload) {
+    return request<Record<string, any>>("/api/operator/praxis/generation-requests", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  importPraxisAktoEvidence(requestId: string, payload: { team_id?: string | null; akto_result: Record<string, any>; evidence_id?: string }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/akto-evidence`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  buildPraxisCertificationBinding(requestId: string, payload: { team_id?: string | null }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/certification-binding`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  startPraxisDryRunEndpoint(requestId: string, payload: { team_id?: string | null }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/dry-run/start`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  callPraxisDryRunTool(requestId: string, payload: { team_id?: string | null; tool_id: string; arguments?: Record<string, any> }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/dry-run/call`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  praxisMcp(requestId: string, payload: PraxisMcpRequest & { team_id?: string | null }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/mcp`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  revokePraxisGeneratedConnector(requestId: string, payload: { team_id?: string | null; reason?: string }) {
+    return request<Record<string, any>>(`/api/operator/praxis/generation-requests/${encodeURIComponent(requestId)}/revoke`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  },
+  exportPraxisP10Proof(requestId: string, teamId?: string | null) {
+    const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
+    return request<Record<string, any>>(`/api/operator/praxis/runs/${encodeURIComponent(requestId)}/p10-proof${query}`);
   },
 };

@@ -22,6 +22,7 @@ TEAM_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 OAUTH_STATE_TTL_SECONDS = 60 * 10
 PBKDF2_ITERATIONS = 210_000
+AUTH_EVENT_LIMIT = 500
 SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
     "default_evaluation_mode": {
         "values": ["native", "promptfoo"],
@@ -152,7 +153,15 @@ class OperatorIdentityStore:
         data["email_index"][normalized_email] = user_id
         data["active_team_by_user"][user_id] = None
         self._write(data)
-        return self.create_session(user_id, now=now_value)
+        return self.create_session(
+            user_id,
+            now=now_value,
+            auth_event={
+                "event_type": "password_signup",
+                "auth_method": "password",
+                "captcha": self._captcha_event(captcha),
+            },
+        )
 
     def login_user(self, *, email: str, password: str, now: float | None = None) -> dict[str, Any]:
         normalized_email = self._validate_email(email)
@@ -163,9 +172,13 @@ class OperatorIdentityStore:
         user = data["users"].get(user_id)
         if not user or not _verify_password(password, str(user.get("password_hash") or "")):
             raise ValueError("invalid email or password")
-        return self.create_session(user_id, now=now)
+        return self.create_session(
+            user_id,
+            now=now,
+            auth_event={"event_type": "password_login", "auth_method": "password"},
+        )
 
-    def create_session(self, user_id: str, *, now: float | None = None) -> dict[str, Any]:
+    def create_session(self, user_id: str, *, now: float | None = None, auth_event: dict[str, Any] | None = None) -> dict[str, Any]:
         now_value = now or time.time()
         data = self._read()
         if user_id not in data["users"]:
@@ -178,6 +191,8 @@ class OperatorIdentityStore:
             "expires_at": _iso(now_value + SESSION_TTL_SECONDS),
         }
         data["sessions"][session["token_hash"]] = session
+        if auth_event is not None:
+            self._append_auth_event(data, user_id=user_id, session=session, event=auth_event, now=now_value)
         self._write(data)
         return {"token": token, "session": self.session_payload(token)}
 
@@ -410,7 +425,15 @@ class OperatorIdentityStore:
             data["active_team_by_user"][user_id] = None
         data["oauth_index"][oauth_key] = user_id
         self._write(data)
-        return self.create_session(user_id, now=now_value)
+        return self.create_session(
+            user_id,
+            now=now_value,
+            auth_event={
+                "event_type": "oauth_session_established",
+                "auth_method": "oauth",
+                "provider": provider,
+            },
+        )
 
     def verify_captcha(self, token: str, captcha: CaptchaConfig) -> None:
         if self._captcha_configured(captcha):
@@ -419,6 +442,9 @@ class OperatorIdentityStore:
         if captcha.dev_bypass_enabled and token == "dev-captcha-ok":
             return
         raise ValueError("captcha is not configured")
+
+    def auth_provider_evidence(self) -> dict[str, Any]:
+        return build_auth_provider_evidence(self._read())
 
     def _read(self) -> dict[str, Any]:
         with LockedJsonFile(self.path) as data:
@@ -467,6 +493,52 @@ class OperatorIdentityStore:
 
     def _captcha_configured(self, captcha: CaptchaConfig) -> bool:
         return captcha.provider in {"hcaptcha", "recaptcha", "turnstile"} and bool(captcha.site_key and captcha.secret)
+
+    def _captcha_event(self, captcha: CaptchaConfig | None) -> dict[str, Any]:
+        if captcha is None:
+            return {
+                "provider": "not_required",
+                "configured": False,
+                "verified": False,
+                "dev_bypass": False,
+            }
+        configured = self._captcha_configured(captcha)
+        return {
+            "provider": captcha.provider or "missing",
+            "configured": configured,
+            "verified": True,
+            "dev_bypass": bool(captcha.dev_bypass_enabled and not configured),
+        }
+
+    def _append_auth_event(
+        self,
+        data: dict[str, Any],
+        *,
+        user_id: str,
+        session: dict[str, Any],
+        event: dict[str, Any],
+        now: float,
+    ) -> None:
+        record = {
+            "event_id": self._new_id("auth_evt"),
+            "event_type": str(event.get("event_type") or "unknown"),
+            "auth_method": str(event.get("auth_method") or "unknown"),
+            "provider": str(event.get("provider") or ""),
+            "state_slice": "auth-provider-proof.v1",
+            "user_id": user_id,
+            "session_token_hash": session["token_hash"],
+            "recorded_at": _iso(now),
+        }
+        captcha = event.get("captcha")
+        if isinstance(captcha, dict):
+            record["captcha"] = {
+                "provider": str(captcha.get("provider") or "missing"),
+                "configured": captcha.get("configured") is True,
+                "verified": captcha.get("verified") is True,
+                "dev_bypass": captcha.get("dev_bypass") is True,
+            }
+        data["auth_events"].append(record)
+        data["auth_events"] = data["auth_events"][-AUTH_EVENT_LIMIT:]
 
     def _validate_email(self, email: str) -> str:
         normalized = email.strip().lower()
@@ -595,6 +667,7 @@ def _empty_store() -> dict[str, Any]:
         "email_index": {},
         "oauth_index": {},
         "sessions": {},
+        "auth_events": [],
         "teams": {},
         "team_slug_index": {},
         "memberships": {},
@@ -609,7 +682,97 @@ def _merge_defaults(data: dict[str, Any]) -> dict[str, Any]:
     for key in merged:
         if isinstance(data.get(key), dict):
             merged[key] = data[key]
+        elif isinstance(merged[key], list) and isinstance(data.get(key), list):
+            merged[key] = data[key]
     return merged
+
+
+def build_auth_provider_evidence(data: dict[str, Any]) -> dict[str, Any]:
+    events = data.get("auth_events") if isinstance(data.get("auth_events"), list) else []
+    google = _oauth_event_status(events, "google")
+    github = _oauth_event_status(events, "github")
+    captcha = _captcha_event_status(events, "hcaptcha")
+    email_signup = _password_signup_status(events)
+    complete = (
+        email_signup["status"] == "complete"
+        and google["status"] == "complete"
+        and github["status"] == "complete"
+        and captcha["status"] == "complete"
+    )
+    return {
+        "schema_version": "mesh.operator_auth_runtime_evidence.v1",
+        "state_slice": "auth-provider-proof.v1",
+        "status": "complete" if complete else "blocked",
+        "email_signup": email_signup,
+        "providers": {
+            "google_oauth": google,
+            "github_oauth": github,
+        },
+        "captcha": captcha,
+        "event_count": len(events),
+        "authority_boundary": "Runtime auth evidence records only redacted session-establishment metadata; it does not store OAuth tokens, cookies, captcha tokens, or provider secrets.",
+    }
+
+
+def _oauth_event_status(events: list[Any], provider: str) -> dict[str, Any]:
+    matched = [
+        event for event in events
+        if isinstance(event, dict)
+        and event.get("event_type") == "oauth_session_established"
+        and event.get("auth_method") == "oauth"
+        and event.get("provider") == provider
+    ]
+    latest = matched[-1] if matched else {}
+    callback_path = f"/api/auth/oauth/{provider}/callback"
+    return {
+        "status": "complete" if matched else "blocked",
+        "session_established": bool(matched),
+        "callback_path": callback_path,
+        "callback_path_match": bool(matched),
+        "event_id": str(latest.get("event_id") or ""),
+        "completed_at": str(latest.get("recorded_at") or ""),
+    }
+
+
+def _captcha_event_status(events: list[Any], provider: str) -> dict[str, Any]:
+    matched: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("event_type") != "password_signup":
+            continue
+        captcha = event.get("captcha")
+        if (
+            isinstance(captcha, dict)
+            and captcha.get("provider") == provider
+            and captcha.get("verified") is True
+            and captcha.get("dev_bypass") is not True
+        ):
+            matched.append(event)
+    latest = matched[-1] if matched else {}
+    return {
+        "status": "complete" if matched else "blocked",
+        "provider": provider,
+        "challenge_completed": bool(matched),
+        "browser_token_verified": bool(matched),
+        "browser_token_status": "verified" if matched else "requires_clean_browser_provider_completion",
+        "event_id": str(latest.get("event_id") or ""),
+        "completed_at": str(latest.get("recorded_at") or ""),
+    }
+
+
+def _password_signup_status(events: list[Any]) -> dict[str, Any]:
+    matched = [
+        event for event in events
+        if isinstance(event, dict)
+        and event.get("event_type") == "password_signup"
+        and event.get("auth_method") == "password"
+    ]
+    latest = matched[-1] if matched else {}
+    return {
+        "status": "complete" if matched else "blocked",
+        "session_established": bool(matched),
+        "event_id": str(latest.get("event_id") or ""),
+        "completed_at": str(latest.get("recorded_at") or ""),
+    }
 
 
 def _file_sha256(path: Path) -> str:

@@ -9,7 +9,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, urlencode, unquote, urlparse
 
 from services.control_plane import RunCoordinator, TERMINAL_STAGES
 from services.ingest.webhook_service import (
@@ -26,6 +26,8 @@ from shared.mesh_runtime.operator_identity import (
     oauth_authorize_url,
     write_settings_audit,
 )
+from shared.mesh_runtime.praxis import PraxisManagedRuntimeStore, build_praxis_product_dashboard
+from shared.mesh_runtime.schema_validation import SchemaValidationError
 
 _LOG = logging.getLogger("mesh.control_plane")
 TIMELINE_PROOF_ROUTE_TEMPLATE = "/api/runs/{run_id}/timeline-proof"
@@ -109,6 +111,7 @@ class MeshControlPlaneServer(ThreadingHTTPServer):
         self.config = config
         self.coordinator = RunCoordinator(config)
         self.operator_identity = OperatorIdentityStore(config.operator_identity_path)
+        self.praxis_store = PraxisManagedRuntimeStore(Path(config.state_directory) / "praxis" / "managed-dry-run-runtime.json")
 
     def server_close(self) -> None:
         if hasattr(self, "coordinator"):
@@ -142,7 +145,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
-        if path.startswith("/api/auth/") or path == "/api/operator/dashboard":
+        if path.startswith("/api/auth/") or path.startswith("/api/operator/"):
             self._handle_operator_get(parsed)
             return
         if path == "/api/health":
@@ -946,7 +949,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             code = (query.get("code") or [""])[0]
             state = (query.get("state") or [""])[0]
             if not code or not state:
-                self._redirect("/?auth_error=missing_oauth_code")
+                self._redirect(self._auth_callback_redirect({"auth_error": "missing_oauth_code"}))
                 return
             try:
                 self.server.operator_identity.consume_oauth_state(provider, state)
@@ -954,9 +957,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 session = self.server.operator_identity.upsert_oauth_user(provider=provider, **profile)
             except Exception as exc:
                 _LOG.warning("%s oauth callback failed: %s", provider, exc)
-                self._redirect(f"/?auth_error={provider}_oauth_failed")
+                self._redirect(self._auth_callback_redirect({"auth_error": f"{provider}_oauth_failed"}))
                 return
-            self._redirect("/?auth=ok", headers=[self._session_cookie_header(session["token"])])
+            self._redirect(self._auth_callback_redirect({"auth": "ok"}), headers=[self._session_cookie_header(session["token"])])
             return
         if path == "/api/operator/dashboard":
             token = self._session_token()
@@ -965,12 +968,16 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             team_id = (query.get("team_id") or [None])[0] or None
             try:
+                dashboard = self.server.operator_identity.dashboard(
+                    token,
+                    team_id=team_id,
+                    mesh={},
+                )
+                dashboard["mesh"] = self._mesh_dashboard_snapshot(
+                    praxis_scope=self._praxis_scope_from_dashboard(dashboard),
+                )
                 self._send_json(
-                    self.server.operator_identity.dashboard(
-                        token,
-                        team_id=team_id,
-                        mesh=self._mesh_dashboard_snapshot(),
-                    )
+                    dashboard
                 )
             except PermissionError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
@@ -979,9 +986,40 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
+        if path == "/api/operator/praxis/runs":
+            context = self._operator_product_context({"team_id": query.get("team_id", [None])[0]} if query.get("team_id") else None)
+            if context is None:
+                return
+            self._send_json(self.server.praxis_store.list_records(scope=context["scope"]))
+            return
+        if path.startswith("/api/operator/praxis/runs/"):
+            context = self._operator_product_context({"team_id": query.get("team_id", [None])[0]} if query.get("team_id") else None)
+            if context is None:
+                return
+            request_id = _safe_segment(path, 4)
+            if request_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if path.endswith("/p10-proof"):
+                try:
+                    self._send_json(self.server.praxis_store.export_p10_proof_packet(request_id, scope=context["scope"]))
+                except KeyError:
+                    self._send_json({"error": "Praxis generation request not found"}, status=HTTPStatus.NOT_FOUND)
+                except ValueError as exc:
+                    self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            record = self.server.praxis_store.get_record(request_id, scope=context["scope"])
+            if record is None:
+                self._send_json({"error": "Praxis generation request not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(record)
+            return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def _handle_operator_post(self, path: str, payload: dict[str, Any]) -> None:
+        if path.startswith("/api/operator/praxis/"):
+            self._handle_operator_praxis_post(path, payload)
+            return
         if path == "/api/auth/signup":
             if not self.server.config.signup_enabled or not self.server.config.password_auth_enabled:
                 self._send_json({"error": "password signup is disabled"}, status=HTTPStatus.FORBIDDEN)
@@ -1095,6 +1133,143 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
+    def _handle_operator_praxis_post(self, path: str, payload: dict[str, Any]) -> None:
+        context = self._operator_product_context(payload)
+        if context is None:
+            return
+        try:
+            if path == "/api/operator/praxis/generation-requests":
+                record = self.server.praxis_store.create_generation_request(
+                    payload,
+                    operator=context["operator"],
+                    scope=context["scope"],
+                )
+                self._send_json(record, status=HTTPStatus.CREATED)
+                return
+            prefix = "/api/operator/praxis/generation-requests/"
+            if not path.startswith(prefix):
+                self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            parts = [part for part in path[len(prefix):].split("/") if part]
+            if len(parts) < 2:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            request_id = parts[0]
+            action = "/".join(parts[1:])
+            if action == "akto-evidence":
+                self._send_json(
+                    self.server.praxis_store.import_akto_evidence(
+                        request_id,
+                        payload,
+                        operator=context["operator"],
+                        scope=context["scope"],
+                    )
+                )
+                return
+            if action == "certification-binding":
+                self._send_json(
+                    self.server.praxis_store.build_certification_binding(
+                        request_id,
+                        payload,
+                        operator=context["operator"],
+                        scope=context["scope"],
+                    )
+                )
+                return
+            if action == "dry-run/start":
+                self._send_json(
+                    self.server.praxis_store.start_dry_run_endpoint(
+                        request_id,
+                        payload,
+                        operator=context["operator"],
+                        scope=context["scope"],
+                    )
+                )
+                return
+            if action == "dry-run/call":
+                result = self.server.praxis_store.call_dry_run_tool(
+                    request_id,
+                    payload,
+                    operator=context["operator"],
+                    scope=context["scope"],
+                )
+                status = HTTPStatus.FORBIDDEN if result.get("status") == "denied" else HTTPStatus.OK
+                self._send_json(result, status=status)
+                return
+            if action == "mcp":
+                self._send_json(
+                    self.server.praxis_store.mcp_json_rpc(
+                        request_id,
+                        payload,
+                        operator=context["operator"],
+                        scope=context["scope"],
+                    )
+                )
+                return
+            if action == "revoke":
+                self._send_json(
+                    self.server.praxis_store.revoke_generated_connector(
+                        request_id,
+                        payload,
+                        operator=context["operator"],
+                        scope=context["scope"],
+                    )
+                )
+                return
+            self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+        except KeyError:
+            self._send_json({"error": "Praxis generation request not found"}, status=HTTPStatus.NOT_FOUND)
+        except SchemaValidationError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+        except ValueError as exc:
+            if self._send_session_value_error(exc):
+                return
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def _operator_product_context(self, payload: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        token = self._session_token()
+        if not token:
+            self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+            return None
+        team_id = None
+        if isinstance(payload, dict) and payload.get("team_id"):
+            team_id = str(payload.get("team_id"))
+        try:
+            dashboard = self.server.operator_identity.dashboard(token, team_id=team_id, mesh={})
+            operator = self.server.operator_identity.operator_context_from_session(token) or {}
+            scope = self._praxis_scope_from_dashboard(dashboard)
+            if scope["kind"] == "team":
+                operator["team_id"] = scope["id"]
+            return {"dashboard": dashboard, "operator": operator, "scope": scope}
+        except PermissionError as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+        except ValueError as exc:
+            if self._send_session_value_error(exc):
+                return None
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+        return None
+
+    def _praxis_scope_from_dashboard(self, dashboard: dict[str, Any]) -> dict[str, str]:
+        scope = dashboard.get("scope") if isinstance(dashboard.get("scope"), dict) else {}
+        team = scope.get("team") if isinstance(scope.get("team"), dict) else None
+        if scope.get("kind") == "team" and team:
+            team_id = str(team["id"])
+            return {
+                "kind": "team",
+                "id": team_id,
+                "scope_id": f"team:{team_id}",
+                "name": str(team.get("name") or ""),
+            }
+        session = dashboard.get("session") if isinstance(dashboard.get("session"), dict) else {}
+        user = session.get("user") if isinstance(session.get("user"), dict) else {}
+        user_id = str(user.get("id") or "unknown")
+        return {
+            "kind": "user",
+            "id": user_id,
+            "scope_id": f"user:{user_id}",
+            "email": str(user.get("email") or ""),
+        }
+
     def _handle_otlp_metrics(self, otlp_payload: dict[str, Any]) -> None:
         """Accept an OTLP/HTTP JSON metrics payload and spawn a Mesh run.
 
@@ -1206,7 +1381,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             f"{self.server.config.session_cookie_name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
         )
 
-    def _mesh_dashboard_snapshot(self) -> dict[str, Any]:
+    def _mesh_dashboard_snapshot(self, *, praxis_scope: dict[str, str] | None = None) -> dict[str, Any]:
         coordinator = self.server.coordinator
         return {
             "health": {
@@ -1226,6 +1401,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             "approvals": _safe_dashboard_call(coordinator.build_approval_queue),
             "kill_switch": _safe_dashboard_call(coordinator.kill_switch_status),
             "pilot_go_no_go": _safe_dashboard_call(coordinator.generate_pilot_go_no_go),
+            "praxis": _safe_dashboard_call(
+                lambda: self.server.praxis_store.build_product_dashboard(scope=praxis_scope),
+                default=build_praxis_product_dashboard(),
+            ),
             "trust_ladder": {"entries": _safe_dashboard_call(coordinator.trust_ladder_list, default=[])},
             "watchers": _safe_dashboard_call(coordinator.watchers_status),
             "graph": _safe_dashboard_call(coordinator.graph_status),
@@ -1245,6 +1424,26 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Location", location)
         self.send_header("Content-Length", "0")
         self.end_headers()
+
+    def _auth_callback_redirect(self, params: dict[str, str]) -> str:
+        query = urlencode(params)
+        target = self.server.config.auth_product_redirect_url.strip()
+        if target and self._auth_redirect_allowed(target):
+            separator = "&" if "?" in target else "?"
+            return f"{target}{separator}{query}"
+        return f"/?{query}"
+
+    def _auth_redirect_allowed(self, target: str) -> bool:
+        parsed = urlparse(target)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        host = (parsed.hostname or "").lower()
+        if host in {"127.0.0.1", "localhost", "::1"}:
+            return True
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        return origin in set(self.server.config.auth_allowed_origins)
 
     def _operator_context(self) -> dict[str, Any]:
         if self.server.config.auth_mode == "app_session":
@@ -1302,7 +1501,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "error": "web assets not built",
-                    "detail": "Run `npm --prefix web install` and `npm --prefix web run build` in orbital-mesh before opening the browser.",
+                    "detail": "Run `pnpm --dir meshapp/frontend run build` in orbital-mesh before opening the browser.",
                 },
                 status=HTTPStatus.SERVICE_UNAVAILABLE,
             )

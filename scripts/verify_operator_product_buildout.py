@@ -21,11 +21,15 @@ IDENTITY_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "operator_identity.py"
 PRODUCT_CONTRACTS_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "operator_product_contracts.py"
 PRODUCT_SCHEMA_PATH = REPO_ROOT / "shared" / "mesh_runtime" / "schemas" / "operator-product.schema.json"
 HTTP_TEST_PATH = REPO_ROOT / "tests" / "test_operator_auth_http.py"
+AUTH_PROVIDER_SMOKE_TEST_PATH = REPO_ROOT / "tests" / "test_operator_auth_provider_smoke.py"
 IDENTITY_TEST_PATH = REPO_ROOT / "tests" / "test_operator_identity.py"
 CONFIG_TEST_PATH = REPO_ROOT / "tests" / "test_mesh_runtime_config.py"
 INGRESS_DEPLOYMENT_TEST_PATH = REPO_ROOT / "tests" / "test_authenticated_ingress_deployment.py"
 PRODUCT_CONTRACT_TEST_PATH = REPO_ROOT / "tests" / "test_operator_product_contracts.py"
 PRODUCT_E2E_SCRIPT_PATH = REPO_ROOT / "scripts" / "operator_product_e2e.py"
+AUTH_PROVIDER_SMOKE_PATH = REPO_ROOT / "scripts" / "operator_auth_provider_smoke.py"
+AUTH_PROVIDER_CAPTURE_PATH = REPO_ROOT / "scripts" / "operator_auth_live_provider_capture.py"
+PRODUCT_GOAL_AUDIT_PATH = REPO_ROOT / "scripts" / "operator_product_goal_audit.py"
 PRODUCT_CONTRACT_GENERATOR_PATH = REPO_ROOT / "scripts" / "generate_operator_product_contracts.py"
 PACKAGE_PATH = REPO_ROOT / "package.json"
 
@@ -42,6 +46,8 @@ REQUIRED_DOC_MARKERS = [
     "`auth-identity`",
     "`mesh-dashboard-read-model`",
     "`mesh-settings-control`",
+    "`meshapp.praxis-product-home.v1`",
+    "`praxis.managed-dry-run-runtime.v1`",
     "Akto evidence is advisory security evidence and cannot grant production authority.",
     "ACP remains a supervised session surface and cannot grant runtime authority.",
     "State slices: `auth state`, `API route`, `persisted artifact`",
@@ -53,6 +59,18 @@ REQUIRED_DOC_MARKERS = [
     "Audit, approval, readiness, evidence, and run state stay Mesh-owned",
     "Mesh remains owner of readiness, approvals, evidence, run state, connectors, memory, and pilot packets.",
     "`pnpm run test:product:e2e`",
+    "`pnpm run test:auth-provider:smoke`",
+    "`pnpm run test:auth-provider:live`",
+    "`pnpm run auth-provider:live-template`",
+    "`pnpm run auth-provider:live-capture`",
+    "`pnpm run verify:operator-goal`",
+    "MESH_AUTH_PRODUCT_REDIRECT_URL",
+    "mesh.operator_auth_provider_live_proof.v1",
+    "mesh.operator_auth_runtime_evidence.v1",
+    "mesh.operator_product_goal_audit.v1",
+    "runtime_auth_evidence",
+    "auth_events",
+    "live-provider-proof.json",
     "`scripts/generate_operator_product_contracts.py --check`",
     "`shared/mesh_runtime/schemas/operator-product.schema.json`",
 ]
@@ -106,12 +124,21 @@ REQUIRED_CONTROL_PLANE_PATHS = [
     '"/api/auth/oauth/github/start"',
     '"/api/auth/oauth/google/callback"',
     '"/api/auth/oauth/github/callback"',
+    "auth_product_redirect_url",
+    "_auth_callback_redirect",
     '"/api/operator/dashboard"',
     '"/api/operator/settings"',
+    "build_praxis_product_dashboard",
 ]
 
 REQUIRED_PRODUCT_UI_MARKERS = [
-    "LegacyMeshConsole",
+    "OperatorCommandCenter",
+    "buildDashboardControlModel",
+    "Mesh Control Summary",
+    "PraxisHomeModule",
+    "PraxisView",
+    "buildPraxisProductModel",
+    "praxis.managed-dry-run-runtime.v1",
     "backendUnavailableMessage",
     "CaptchaWidget",
     "TeamSetupScreen",
@@ -120,6 +147,7 @@ REQUIRED_PRODUCT_UI_MARKERS = [
     "evidenceTraceSteps",
     "ReadModelCard",
     "readModelCardPayload",
+    "settingsParityRows",
     "SettingsView",
     "Audit reason",
     "Mesh controls policy",
@@ -131,7 +159,18 @@ REQUIRED_TEST_MARKERS = [
     "test_team_isolation_and_scoped_settings_are_forbidden_for_non_member",
     "test_operator_settings_requires_reason_and_writes_shared_audit",
     "test_oauth_start_urls_and_callback_failures_are_clear",
+    "test_oauth_callback_redirects_to_configured_local_product_url",
+    "test_oauth_callback_rejects_unallowed_product_redirect_url",
+    "test_oauth_callback_allows_configured_auth_origin",
     "test_oauth_start_routes_fail_closed_without_provider_config",
+    "test_live_provider_proof_completes_only_with_clean_browser_evidence",
+    "test_live_provider_proof_rejects_raw_secret_fields",
+    "test_runtime_auth_evidence_completes_from_redacted_identity_events",
+    "test_complete_live_proof_requires_runtime_auth_evidence",
+    "test_live_capture_builds_complete_redacted_proof_from_runtime_events",
+    "test_auth_provider_runtime_evidence_records_redacted_provider_sessions",
+    "test_goal_audit_blocks_only_on_external_provider_proof_when_local_markers_exist",
+    "test_goal_audit_completes_when_live_provider_proof_is_complete",
     "test_captcha_missing_provider_secret_fails_closed",
     "test_non_local_app_session_signup_requires_captcha_provider",
     "test_non_local_app_session_signup_accepts_complete_captcha_provider",
@@ -185,6 +224,8 @@ def main() -> int:
         tests = "\n".join(
             [
                 HTTP_TEST_PATH.read_text(encoding="utf-8"),
+                AUTH_PROVIDER_SMOKE_TEST_PATH.read_text(encoding="utf-8"),
+                (REPO_ROOT / "tests" / "test_operator_product_goal_audit.py").read_text(encoding="utf-8"),
                 IDENTITY_TEST_PATH.read_text(encoding="utf-8"),
                 CONFIG_TEST_PATH.read_text(encoding="utf-8"),
                 INGRESS_DEPLOYMENT_TEST_PATH.read_text(encoding="utf-8"),
@@ -207,7 +248,16 @@ def main() -> int:
         _require_markers(
             "shared/mesh_runtime/operator_identity.py",
             identity,
-            ["SETTINGS_SCHEMA", "verify_captcha", "oauth_authorize_url", "operator_context_from_session", "write_settings_audit"],
+            [
+                "SETTINGS_SCHEMA",
+                "verify_captcha",
+                "oauth_authorize_url",
+                "operator_context_from_session",
+                "write_settings_audit",
+                "auth_events",
+                "auth_provider_evidence",
+                "mesh.operator_auth_runtime_evidence.v1",
+            ],
         )
         _require_markers("operator product focused tests", tests, REQUIRED_TEST_MARKERS)
         _require_package_wiring(package, product_package)
@@ -232,11 +282,15 @@ def _require_files() -> None:
         PRODUCT_CONTRACTS_PATH,
         PRODUCT_SCHEMA_PATH,
         HTTP_TEST_PATH,
+        AUTH_PROVIDER_SMOKE_TEST_PATH,
         IDENTITY_TEST_PATH,
         CONFIG_TEST_PATH,
         INGRESS_DEPLOYMENT_TEST_PATH,
         PRODUCT_CONTRACT_TEST_PATH,
         PRODUCT_E2E_SCRIPT_PATH,
+        AUTH_PROVIDER_SMOKE_PATH,
+        AUTH_PROVIDER_CAPTURE_PATH,
+        PRODUCT_GOAL_AUDIT_PATH,
         PRODUCT_CONTRACT_GENERATOR_PATH,
         INGRESS_DOC_PATH,
         PACKAGE_PATH,
@@ -271,6 +325,11 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
     verify_full = str(scripts.get("verify:full") or "")
     test_focused = str(scripts.get("test:focused") or "")
     product_e2e = str(scripts.get("test:product:e2e") or "")
+    auth_provider_smoke = str(scripts.get("test:auth-provider:smoke") or "")
+    auth_provider_live = str(scripts.get("test:auth-provider:live") or "")
+    auth_provider_template = str(scripts.get("auth-provider:live-template") or "")
+    auth_provider_capture = str(scripts.get("auth-provider:live-capture") or "")
+    operator_goal = str(scripts.get("verify:operator-goal") or "")
     lint_fast = str(scripts.get("lint:fast") or "")
     meshapp_e2e = str(product_scripts.get("test:e2e") or "")
     if "scripts/verify_operator_product_buildout.py" not in verify_contracts:
@@ -281,10 +340,24 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
         raise AssertionError("verify:contracts must json-check operator product schema")
     if "tests.test_operator_product_contracts" not in test_focused:
         raise AssertionError("test:focused must run operator product contract tests")
+    if "tests.test_operator_auth_provider_smoke" not in test_focused:
+        raise AssertionError("test:focused must run operator auth provider smoke tests")
+    if "tests.test_operator_product_goal_audit" not in test_focused:
+        raise AssertionError("test:focused must run operator product goal audit tests")
     if "pnpm --dir meshapp/frontend run test" not in test_focused:
         raise AssertionError("test:focused must run meshapp Vitest")
     if "scripts/operator_product_e2e.py" not in product_e2e:
         raise AssertionError("test:product:e2e must run scripts/operator_product_e2e.py")
+    if "scripts/operator_auth_provider_smoke.py" not in auth_provider_smoke:
+        raise AssertionError("test:auth-provider:smoke must run scripts/operator_auth_provider_smoke.py")
+    if "scripts/operator_auth_provider_smoke.py --require-live" not in auth_provider_live:
+        raise AssertionError("test:auth-provider:live must run scripts/operator_auth_provider_smoke.py --require-live")
+    if "scripts/operator_auth_provider_smoke.py --print-live-proof-template" not in auth_provider_template:
+        raise AssertionError("auth-provider:live-template must print the redacted live proof template")
+    if "scripts/operator_auth_live_provider_capture.py" not in auth_provider_capture:
+        raise AssertionError("auth-provider:live-capture must run scripts/operator_auth_live_provider_capture.py")
+    if "scripts/operator_product_goal_audit.py" not in operator_goal:
+        raise AssertionError("verify:operator-goal must run scripts/operator_product_goal_audit.py")
     if "pnpm run verify:contracts" not in verify_full:
         raise AssertionError("verify:full must include verify:contracts")
     if "pnpm run test:product:e2e" not in verify_full:
@@ -293,6 +366,10 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
         raise AssertionError("lint:fast must py_compile operator identity")
     if "shared/mesh_runtime/operator_product_contracts.py" not in lint_fast:
         raise AssertionError("lint:fast must py_compile operator product contracts")
+    if "scripts/operator_product_goal_audit.py" not in lint_fast:
+        raise AssertionError("lint:fast must py_compile operator product goal audit")
+    if "scripts/operator_auth_live_provider_capture.py" not in lint_fast:
+        raise AssertionError("lint:fast must py_compile operator auth live provider capture")
     if "playwright test --config playwright.config.ts" not in meshapp_e2e:
         raise AssertionError("meshapp test:e2e must run the product Playwright config")
     if "npm" in meshapp_e2e or "tail" in meshapp_e2e:
