@@ -1,0 +1,37 @@
+{
+  "source": "akto_fixture",
+  "scan_status": "imported",
+  "live_dast_executed": false,
+  "raw_traffic_stored": false,
+  "inventory": [
+    {
+      "endpoint_id": "akto-endpoint-orders-list",
+      "method": "GET",
+      "path": "/orders",
+      "source_packet_id": "src-openapi-1"
+    },
+    {
+      "endpoint_id": "akto-endpoint-orders-cancel",
+      "method": "POST",
+      "path": "/orders/{order_id}/cancel",
+      "source_packet_id": "src-openapi-1"
+    }
+  ],
+  "findings": [
+    {
+      "finding_id": "akto-finding-cancel-missing-confirmation",
+      "severity": "high",
+      "status": "open",
+      "summary": "Mutation endpoint lacks fixture evidence for confirmation and authorization boundary.",
+      "affected_endpoint_ids": ["akto-endpoint-orders-cancel"],
+      "affected_endpoints": [
+        {
+          "method": "POST",
+          "path": "/orders/{order_id}/cancel"
+        }
+      ],
+      "evidence_ref": "akto://fixture/demo/findings/cancel-missing-confirmation",
+      "remediation_ref": null
+    }
+  ]
+}

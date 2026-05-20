@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import threading
 
 from control_plane_server import build_server
 
@@ -13,10 +14,14 @@ def main() -> None:
 
     server = build_server()
     server.coordinator.ensure_sidecar()
+    shutdown_started = threading.Event()
 
     def _shutdown(signum: int, frame: object) -> None:
         logging.getLogger("mesh.control_plane").info("Received signal %s, shutting down", signum)
-        server.shutdown()
+        if shutdown_started.is_set():
+            return
+        shutdown_started.set()
+        threading.Thread(target=server.shutdown, name="mesh-control-plane-shutdown", daemon=True).start()
 
     signal.signal(signal.SIGTERM, _shutdown)
     signal.signal(signal.SIGINT, _shutdown)

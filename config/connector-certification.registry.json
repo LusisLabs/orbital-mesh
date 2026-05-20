@@ -248,6 +248,116 @@
       "blockers": []
     },
     {
+      "connector_id": "langgraph_checkpointing",
+      "display_name": "LangGraph checkpointing",
+      "domain": "agent",
+      "state": "proposal-only",
+      "required_before": "pilot",
+      "authority_posture": "proposal workflow checkpointing only; Mesh owns policy, approval, tests, audit, and actuation",
+      "credential_policy": "checkpointer credentials remain runtime secrets and cannot grant production authority",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "record failed proposal attempts and keep Mesh-native proposal routing online",
+      "allowed_scopes": ["checkpoint-read", "checkpoint-write", "proposal"],
+      "evidence_refs": ["docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "zaxy",
+      "display_name": "Zaxy memory sidecar",
+      "domain": "memory",
+      "state": "read-only",
+      "required_before": "expansion",
+      "authority_posture": "memory sidecar only; Mesh state store and memory verifier remain authoritative",
+      "credential_policy": "sidecar credentials remain runtime secrets and cannot grant actuation or repository write authority",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "keep Mesh-native state, memory retrieval, and run execution online",
+      "allowed_scopes": ["memory-read", "event-mirror"],
+      "evidence_refs": ["docs/memory-architecture.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "eventloom",
+      "display_name": "Zaxy Eventloom mirror",
+      "domain": "audit",
+      "state": "read-only",
+      "required_before": "expansion",
+      "authority_posture": "append-only audit mirror; Mesh event log and Merkle roots remain authoritative",
+      "credential_policy": "event sink credentials remain runtime secrets",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "buffer to optional outbox when configured and keep Mesh runs online",
+      "allowed_scopes": ["event-mirror"],
+      "evidence_refs": ["docs/memory-architecture.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "neo4j_projection",
+      "display_name": "Zaxy Neo4j projection",
+      "domain": "memory",
+      "state": "read-only",
+      "required_before": "expansion",
+      "authority_posture": "temporal graph projection only; not a control-plane backend",
+      "credential_policy": "graph credentials remain runtime secrets",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "skip projection and keep canonical Mesh memory retrieval online",
+      "allowed_scopes": ["graph-read", "projection-write"],
+      "evidence_refs": ["docs/memory-architecture.md"],
+      "blockers": []
+    },
+    {
+      "connector_id": "zaxy_mcp",
+      "display_name": "Zaxy MCP memory checkout",
+      "domain": "memory",
+      "state": "read-only",
+      "required_before": "expansion",
+      "authority_posture": "bounded memory checkout only; checkout candidates require Mesh verification",
+      "credential_policy": "MCP credentials remain runtime secrets and cannot grant production authority",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "read-only-secret",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "record checkout diagnostics and keep verified Mesh memory packets online",
+      "allowed_scopes": ["memory-checkout"],
+      "evidence_refs": ["docs/memory-architecture.md"],
+      "blockers": []
+    },
+    {
       "connector_id": "airflow",
       "display_name": "Apache Airflow orchestration lane",
       "domain": "orchestration",

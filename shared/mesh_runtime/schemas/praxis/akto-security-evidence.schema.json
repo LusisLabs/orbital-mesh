@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/akto-security-evidence.schema.json",
+  "title": "PraxisAktoSecurityEvidence",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "imported_at",
+    "source",
+    "scan_status",
+    "live_dast_executed",
+    "raw_traffic_stored",
+    "inventory",
+    "findings",
+    "authority"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.akto_security_evidence.v1"]
+    },
+    "evidence_id": { "type": "string" },
+    "imported_at": { "type": "string" },
+    "source": {
+      "type": "string",
+      "enum": ["akto_fixture", "akto_export", "akto_ci"]
+    },
+    "scan_status": {
+      "type": "string",
+      "enum": ["not_run", "imported", "passed", "failed", "blocked"]
+    },
+    "live_dast_executed": {
+      "type": "boolean",
+      "enum": [false]
+    },
+    "raw_traffic_stored": {
+      "type": "boolean",
+      "enum": [false]
+    },
+    "inventory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["endpoint_id", "method", "path", "source_packet_id", "tool_candidate_ids"],
+        "additionalProperties": false,
+        "properties": {
+          "endpoint_id": { "type": "string" },
+          "method": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+          },
+          "path": { "type": "string" },
+          "source_packet_id": { "type": "string" },
+          "tool_candidate_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "finding_id",
+          "severity",
+          "status",
+          "summary",
+          "affected_endpoint_ids",
+          "tool_candidate_ids",
+          "evidence_ref",
+          "remediation_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "finding_id": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["info", "low", "medium", "high", "critical"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "remediated", "waived"]
+          },
+          "summary": { "type": "string" },
+          "affected_endpoint_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "tool_candidate_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence_ref": { "type": "string" },
+          "remediation_ref": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": ["advisory_only", "grants_policy_authority", "grants_certification"],
+      "additionalProperties": false,
+      "properties": {
+        "advisory_only": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "grants_policy_authority": {
+          "type": "boolean",
+          "enum": [false]
+        },
+        "grants_certification": {
+          "type": "boolean",
+          "enum": [false]
+        }
+      }
+    }
+  }
+}

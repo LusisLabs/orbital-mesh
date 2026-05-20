@@ -1,0 +1,294 @@
+{
+  "mcp_generation_request": {
+    "schema_version": "praxis.mcp_generation_request.v1",
+    "request_id": "praxis-request-demo-001",
+    "requested_at": "2026-05-20T05:00:00Z",
+    "tenant_id": "tenant_demo",
+    "owner_ref": "owner://platform/praxis-demo",
+    "requested_by": {
+      "operator_id": "operator://mesh/demo",
+      "role": "platform_operator",
+      "decision_ref": "mesh-approval://pending/praxis-request-demo-001"
+    },
+    "source_bundle_refs": ["praxis-source-bundle-demo-001"],
+    "target_agent_platforms": ["mcp", "acp", "meshapp_review"],
+    "auth_declarations": [
+      {
+        "auth_id": "auth-demo-readonly",
+        "auth_type": "api_key",
+        "credential_ref": {
+          "ref_kind": "env_var",
+          "ref": "PRAXIS_DEMO_API_KEY"
+        },
+        "raw_credentials_present": false,
+        "credential_boundary": "read_only_secret"
+      }
+    ],
+    "policy": {
+      "mesh_authority_required": true,
+      "operator_approval_required_for_mutation": true,
+      "live_dast_allowed": false,
+      "persist_raw_source_payloads": false
+    }
+  },
+  "source_bundle": {
+    "schema_version": "praxis.source_bundle.v1",
+    "bundle_id": "praxis-source-bundle-demo-001",
+    "created_at": "2026-05-20T05:00:05Z",
+    "tenant_id": "tenant_demo",
+    "source_packets": [
+      {
+        "packet_id": "src-openapi-demo",
+        "source_type": "openapi",
+        "source_ref": "fixtures/praxis/demo-openapi.redacted.json",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "citation_refs": ["source://openapi/demo#paths./orders.get"],
+        "extracted_at": "2026-05-20T05:00:05Z",
+        "evidence_gaps": [],
+        "secret_scan": {
+          "status": "pass",
+          "raw_credentials_present": false,
+          "redacted_fields": []
+        }
+      },
+      {
+        "packet_id": "src-sop-demo",
+        "source_type": "sop_markdown",
+        "source_ref": "fixtures/praxis/demo-sop.redacted.md",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "citation_refs": ["source://sop/demo#read-only-order-review"],
+        "extracted_at": "2026-05-20T05:00:06Z",
+        "evidence_gaps": ["no_live_target_bound"],
+        "secret_scan": {
+          "status": "pass",
+          "raw_credentials_present": false,
+          "redacted_fields": ["Authorization"]
+        }
+      }
+    ],
+    "redaction": {
+      "status": "redacted",
+      "raw_payload_stored": false,
+      "secret_material_refs": []
+    }
+  },
+  "generated_mcp_contract": {
+    "schema_version": "praxis.generated_mcp_contract.v1",
+    "contract_id": "praxis-generated-contract-demo-001",
+    "source_bundle_id": "praxis-source-bundle-demo-001",
+    "generated_at": "2026-05-20T05:00:10Z",
+    "generator_version": "praxis-contract-builder-p1",
+    "tool_candidates": [
+      {
+        "tool_id": "tool.orders.list",
+        "name": "orders_list",
+        "description": "List redacted order summaries for operator review.",
+        "endpoint": {
+          "method": "GET",
+          "path": "/orders",
+          "source_packet_id": "src-openapi-demo"
+        },
+        "args_schema": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string"
+            }
+          }
+        },
+        "auth_scope": {
+          "scope_id": "orders.read",
+          "credential_ref": "auth-demo-readonly",
+          "allowed_scopes": ["orders.read"],
+          "raw_credentials_present": false
+        },
+        "mutation_class": "read_only",
+        "approval_posture": "read_only",
+        "workflow_hints": ["operator_reviews_order_context"],
+        "test_plan": {
+          "fixture_refs": ["fixtures/praxis/p1_contracts.json"],
+          "negative_cases": ["reject_raw_credentials", "block_mutation_without_certification"],
+          "requires_live_target": false
+        },
+        "source_evidence_refs": ["source://openapi/demo#paths./orders.get"],
+        "certification_state": "candidate",
+        "blockers": ["connector_certification_missing"]
+      },
+      {
+        "tool_id": "tool.orders.cancel",
+        "name": "orders_cancel",
+        "description": "Cancel an order candidate; denied until Mesh certification and approval admit the scope.",
+        "endpoint": {
+          "method": "POST",
+          "path": "/orders/{order_id}/cancel",
+          "source_packet_id": "src-openapi-demo"
+        },
+        "args_schema": {
+          "type": "object",
+          "properties": {
+            "order_id": {
+              "type": "string"
+            }
+          }
+        },
+        "auth_scope": {
+          "scope_id": "orders.write",
+          "credential_ref": "auth-demo-readonly",
+          "allowed_scopes": [],
+          "raw_credentials_present": false
+        },
+        "mutation_class": "mutation",
+        "approval_posture": "denied",
+        "workflow_hints": ["requires_operator_approval", "requires_connector_certification"],
+        "test_plan": {
+          "fixture_refs": ["fixtures/praxis/p1_contracts.json"],
+          "negative_cases": ["mutation_defaults_denied"],
+          "requires_live_target": false
+        },
+        "source_evidence_refs": ["source://openapi/demo#paths./orders.{order_id}.cancel"],
+        "certification_state": "candidate",
+        "blockers": ["mutation_scope_not_certified", "operator_approval_missing"]
+      }
+    ]
+  },
+  "akto_security_evidence": {
+    "schema_version": "praxis.akto_security_evidence.v1",
+    "evidence_id": "praxis-akto-evidence-demo-001",
+    "imported_at": "2026-05-20T05:00:15Z",
+    "source": "akto_fixture",
+    "scan_status": "imported",
+    "live_dast_executed": false,
+    "raw_traffic_stored": false,
+    "inventory": [
+      {
+        "endpoint_id": "akto-endpoint-orders-list",
+        "method": "GET",
+        "path": "/orders",
+        "source_packet_id": "src-openapi-demo",
+        "tool_candidate_ids": ["tool.orders.list"]
+      },
+      {
+        "endpoint_id": "akto-endpoint-orders-cancel",
+        "method": "POST",
+        "path": "/orders/{order_id}/cancel",
+        "source_packet_id": "src-openapi-demo",
+        "tool_candidate_ids": ["tool.orders.cancel"]
+      }
+    ],
+    "findings": [
+      {
+        "finding_id": "akto-finding-cancel-missing-confirmation",
+        "severity": "high",
+        "status": "open",
+        "summary": "Mutation endpoint lacks fixture evidence for confirmation and authorization boundary.",
+        "affected_endpoint_ids": ["akto-endpoint-orders-cancel"],
+        "tool_candidate_ids": ["tool.orders.cancel"],
+        "evidence_ref": "akto://fixture/demo/findings/cancel-missing-confirmation",
+        "remediation_ref": null
+      }
+    ],
+    "authority": {
+      "advisory_only": true,
+      "grants_policy_authority": false,
+      "grants_certification": false
+    }
+  },
+  "acp_agent_session": {
+    "schema_version": "praxis.acp_agent_session.v1",
+    "session_id": "praxis-acp-session-demo-001",
+    "created_at": "2026-05-20T05:00:20Z",
+    "operator_ref": "operator://mesh/demo",
+    "source_bundle_id": "praxis-source-bundle-demo-001",
+    "generated_contract_refs": ["praxis-generated-contract-demo-001"],
+    "transcript_ref": "artifact://praxis/demo/acp-transcript.redacted.json",
+    "permission_requests": [
+      {
+        "request_id": "acp-permission-orders-list",
+        "tool_candidate_id": "tool.orders.list",
+        "requested_scope": "orders.read",
+        "mutation_class": "read_only",
+        "status": "proposed",
+        "maps_to_mesh_approval_ref": null
+      },
+      {
+        "request_id": "acp-permission-orders-cancel",
+        "tool_candidate_id": "tool.orders.cancel",
+        "requested_scope": "orders.write",
+        "mutation_class": "mutation",
+        "status": "denied",
+        "maps_to_mesh_approval_ref": "mesh-approval://denied/orders-cancel"
+      }
+    ],
+    "operator_decisions": [
+      {
+        "decision_id": "decision-orders-cancel-denied",
+        "request_id": "acp-permission-orders-cancel",
+        "operator_decision": "deny",
+        "mesh_approval_ref": "mesh-approval://denied/orders-cancel",
+        "evidence_refs": ["akto://fixture/demo/findings/cancel-missing-confirmation"]
+      }
+    ],
+    "authority": {
+      "supervised_session_surface": true,
+      "mesh_approval_required": true,
+      "grants_runtime_authority": false
+    }
+  },
+  "certification_binding": {
+    "schema_version": "praxis.certification_binding.v1",
+    "binding_id": "praxis-certification-binding-demo-001",
+    "created_at": "2026-05-20T05:00:25Z",
+    "generated_contract_id": "praxis-generated-contract-demo-001",
+    "security_evidence_id": "praxis-akto-evidence-demo-001",
+    "acp_session_id": "praxis-acp-session-demo-001",
+    "mesh_connector_certification_version": "mesh.connector_certification.v1",
+    "connector_id": "praxis-demo-generated-mcp",
+    "tool_bindings": [
+      {
+        "tool_candidate_id": "tool.orders.list",
+        "requested_scope": "orders.read",
+        "mutation_class": "read_only",
+        "certification_result": "read_only",
+        "allowed_scopes": ["orders.read"],
+        "readiness_blockers": [],
+        "evidence_refs": [
+          "praxis-generated-contract-demo-001",
+          "praxis-akto-evidence-demo-001"
+        ]
+      },
+      {
+        "tool_candidate_id": "tool.orders.cancel",
+        "requested_scope": "orders.write",
+        "mutation_class": "mutation",
+        "certification_result": "denied",
+        "allowed_scopes": [],
+        "readiness_blockers": [
+          "mutation_scope_not_certified",
+          "akto_high_finding_open",
+          "operator_approval_missing"
+        ],
+        "evidence_refs": [
+          "praxis-generated-contract-demo-001",
+          "praxis-akto-evidence-demo-001",
+          "mesh-approval://denied/orders-cancel"
+        ]
+      }
+    ],
+    "authority": {
+      "mesh_owns_policy": true,
+      "mesh_owns_certification": true,
+      "mesh_owns_approval": true,
+      "mesh_owns_audit": true,
+      "mesh_owns_bounded_execution": true,
+      "mesh_owns_revocation": true,
+      "akto_grants_authority": false,
+      "acp_grants_runtime_authority": false,
+      "generated_mcp_is_candidate_until_certified": true
+    },
+    "revocation": {
+      "revocable": true,
+      "deactivation_required": true,
+      "revocation_ref": "mesh-revocation://praxis-demo-generated-mcp"
+    }
+  }
+}

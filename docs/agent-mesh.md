@@ -43,6 +43,7 @@ Each run that reaches evaluation records an `agent_tasks` artifact.
 
 - `MESH_AGENT_FABRIC_MODE=native` keeps default read-only attempts for Goose, Hermes, Codex, Claude Code, OpenClaw, and native orchestration platform lanes: Airflow, Temporal, Dagster, Prefect, Flyte, Luigi, Oozie, Kubernetes, and n8n. These attempts are proposal and evaluator-contract artifacts, not real CLI/API invocations.
 - `MESH_AGENT_FABRIC_MODE=deepagents` routes those lanes through `services/orchestrator/deepagents_adapter.py`. Mesh creates a per-run sandbox workspace under `MESH_DEEPAGENTS_WORKSPACE_ROOT`, copies only allowed files into that workspace for patch-shaped tasks, and records Deep Agents output as proposal artifacts. Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
+- `MESH_AGENT_FABRIC_MODE=langgraph` routes non-LatentMAS lanes through `services/orchestrator/langgraph_adapter.py`. LangGraph records checkpoint and workflow metadata inside normal `AgentAttempt.output` records. It does not create a new authority path, execution record, approval, policy override, or actuation capability. Missing LangGraph packages or checkpointers degrade the attempt and leave the Mesh run alive.
 
 LatentMAS can be enabled as a first-class full-inference worker lane. It runs through a separate PyTorch/Hugging Face sidecar and records an additional `latentmas_http` attempt ahead of the native lanes. LatentMAS output is advisory only: Mesh still owns policy, tests, audit, Kubernetes actuation, and production promotion.
 

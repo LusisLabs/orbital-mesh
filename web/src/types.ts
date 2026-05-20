@@ -133,6 +133,11 @@ export interface IntegrationReadiness {
   goose: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
+  zaxy: IntegrationStatus;
+  eventloom: IntegrationStatus;
+  neo4j_projection: IntegrationStatus;
+  zaxy_mcp: IntegrationStatus;
+  langgraph_checkpointing: IntegrationStatus;
   vault_path: string;
   state_path: string;
   integrations_config_path: string;

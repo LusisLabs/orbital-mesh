@@ -24,6 +24,7 @@ from .mesh_state_store import RunFilters
 from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_payload
 from .state import RuntimeStateStore
 from .vault import VaultManager
+from .zaxy_langgraph import mirror_run_event_to_zaxy
 
 
 _EVENT_CACHE_SIZE = 512
@@ -278,6 +279,7 @@ class FileStateStore:
         self._append_event_to_cache(run_id, event)
 
         self._advance_session_event_cursor(run_id, event)
+        mirror_run_event_to_zaxy(self.config, event)
         return event
 
     def append_event(self, run_id: str, event: RunEvent) -> RunEvent:
@@ -291,6 +293,7 @@ class FileStateStore:
             self._append_event_record(run_id, event)
         self._append_event_to_cache(run_id, event)
         self._advance_session_event_cursor(run_id, event)
+        mirror_run_event_to_zaxy(self.config, event)
         return event
 
     def _advance_session_event_cursor(self, run_id: str, event: RunEvent) -> None:

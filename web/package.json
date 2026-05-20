@@ -10,9 +10,9 @@
     "contracts:generate": "python3 ../scripts/generate_control_plane_contracts.py",
     "contracts:check": "python3 ../scripts/generate_control_plane_contracts.py --check",
     "dev": "vite",
-    "lint": "npm run contracts:check && tsc --noEmit",
+    "lint": "pnpm run contracts:check && tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "build": "npm run contracts:check && npm run typecheck && vite build",
+    "build": "pnpm run contracts:check && pnpm run typecheck && vite build",
     "test": "vitest run",
     "test:e2e": "bash ../scripts/e2e_ui_operator.sh",
     "test:e2e:playwright": "playwright test --config playwright.config.ts"

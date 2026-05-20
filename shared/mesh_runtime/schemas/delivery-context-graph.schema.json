@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/delivery-context-graph.schema.json",
+  "title": "DeliveryContextGraph",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "state_slice",
+    "graph_id",
+    "generated_at",
+    "service",
+    "environment",
+    "nodes",
+    "edges",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.delivery_context_graph.v1"]
+    },
+    "state_slice": {
+      "type": "string",
+      "enum": ["delivery-context-graph-contracts"]
+    },
+    "graph_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "service": { "type": "string" },
+    "environment": { "type": ["string", "null"] },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "observed_at",
+          "source",
+          "summary",
+          "metadata",
+          "evidence_refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "PullRequest",
+              "Commit",
+              "CheckSuite",
+              "WorkflowRun",
+              "BuildArtifact",
+              "DeploymentEvent",
+              "RuntimeSignal",
+              "PolicyDecision",
+              "AgentAttempt",
+              "FeedbackEvent",
+              "EvidenceGap",
+              "ZaxyMirror"
+            ]
+          },
+          "observed_at": { "type": "string" },
+          "source": { "type": "string" },
+          "summary": { "type": "string" },
+          "metadata": { "type": "object" },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "from_node_id",
+          "to_node_id",
+          "observed_at",
+          "source",
+          "metadata"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string" },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "pr_contains_commit",
+              "commit_has_check_suite",
+              "check_suite_runs_workflow",
+              "workflow_produces_build",
+              "build_released_to_deployment",
+              "deployment_emits_runtime_signal",
+              "runtime_signal_informs_policy",
+              "policy_routes_agent",
+              "agent_attempt_addresses_gap",
+              "node_has_evidence_gap",
+              "policy_records_gap",
+              "feedback_updates_policy",
+              "feedback_confirms_deployment",
+              "zaxy_mirrors_node"
+            ]
+          },
+          "from_node_id": { "type": "string" },
+          "to_node_id": { "type": "string" },
+          "observed_at": { "type": "string" },
+          "source": { "type": "string" },
+          "metadata": { "type": "object" }
+        }
+      }
+    },
+    "metadata": { "type": "object" }
+  }
+}

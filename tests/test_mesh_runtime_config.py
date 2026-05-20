@@ -38,6 +38,52 @@ class RuntimeConfigPathTests(unittest.TestCase):
             cfg = RuntimeConfig.from_env()
         self.assertTrue(cfg.correlation_enabled)
 
+    def test_non_local_app_session_signup_requires_captcha_provider(self) -> None:
+        for environment in ("staging", "pilot"):
+            with self.subTest(environment=environment):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "captcha must be configured for app_session signup outside local",
+                ):
+                    RuntimeConfig(
+                        environment=environment,
+                        auth_mode="app_session",
+                        operator_identity_path="/tmp/operator-identity.json",
+                        signup_enabled=True,
+                        password_auth_enabled=True,
+                        captcha_provider="disabled",
+                    )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "captcha must be configured for app_session signup outside local",
+        ):
+            RuntimeConfig(
+                environment="staging",
+                auth_mode="app_session",
+                operator_identity_path="/tmp/operator-identity.json",
+                signup_enabled=True,
+                password_auth_enabled=True,
+                captcha_provider="hcaptcha",
+                captcha_site_key="site-key",
+                captcha_secret_key="",
+            )
+
+    def test_non_local_app_session_signup_accepts_complete_captcha_provider(self) -> None:
+        cfg = RuntimeConfig(
+            environment="staging",
+            auth_mode="app_session",
+            operator_identity_path="/tmp/operator-identity.json",
+            signup_enabled=True,
+            password_auth_enabled=True,
+            captcha_provider="hcaptcha",
+            captcha_site_key="site-key",
+            captcha_secret_key="secret-key",
+        )
+
+        self.assertEqual(cfg.auth_mode, "app_session")
+        self.assertEqual(cfg.captcha_provider, "hcaptcha")
+
     def test_correlation_can_be_disabled(self) -> None:
         with patch.dict("os.environ", {"MESH_CORRELATION_ENABLED": "false"}, clear=True):
             cfg = RuntimeConfig.from_env()

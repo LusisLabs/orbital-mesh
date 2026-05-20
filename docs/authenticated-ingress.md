@@ -2,6 +2,8 @@
 
 Mesh does not terminate external SSO itself. Production and staging deployments must put the control plane behind an authenticated TLS reverse proxy and must not expose the raw HTTP service to external clients.
 
+`MESH_AUTH_MODE=proxy_header` remains the default production ingress model. `MESH_AUTH_MODE=app_session` enables the product app's first-party session, OAuth, captcha, and team setup layer for deployments that choose it. App-session identity scopes product dashboards and feeds the same Mesh role checks, but it does not replace the Mesh control plane authority or add runtime tenant isolation. See `docs/operator-product-app.md`.
+
 ## Runtime Contract
 
 Set:

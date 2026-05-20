@@ -21,6 +21,7 @@ from .merkle import build_merkle_proof, build_merkle_snapshot, leaf_hash_for_pay
 from .mesh_state_store import RunFilters
 from .state import RuntimeStateStore
 from .vault import VaultManager
+from .zaxy_langgraph import mirror_run_event_to_zaxy
 
 MIGRATION_DIR = Path(__file__).resolve().parents[2] / "migrations" / "postgres"
 _VAULT_FORCE_STAGES = {"completed", "failed", "cancelled", "no_trigger", "awaiting_operator", "recovery_spawned"}
@@ -328,6 +329,7 @@ class PostgresStateStore:
                     (run_id, event.event_id, snapshot.root_hash),
                 )
         self._schedule_materialize_vault(run_id)
+        mirror_run_event_to_zaxy(self.config, event)
         return event
 
     def append_event(self, run_id: str, event: RunEvent) -> RunEvent:
@@ -354,6 +356,7 @@ class PostgresStateStore:
                     (run_id, event.event_id, snapshot.root_hash),
                 )
         self._schedule_materialize_vault(run_id)
+        mirror_run_event_to_zaxy(self.config, event)
         return event
 
     def list_run_events(self, run_id: str, after_sequence: int = 0) -> list[RunEvent]:

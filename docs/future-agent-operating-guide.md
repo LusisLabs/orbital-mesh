@@ -44,7 +44,7 @@ Always run:
 ```bash
 git status --short --branch
 git diff --check
-npm run lint
+pnpm run lint
 ```
 
 Documentation-only changes:
@@ -52,7 +52,7 @@ Documentation-only changes:
 ```bash
 rg -n "<stale-name-or-path>" <files-you-touched>
 git diff --check
-npm run lint
+pnpm run lint
 ```
 
 Docs touching production readiness, release, schemas, config, API contracts, or deployment claims:
@@ -60,7 +60,7 @@ Docs touching production readiness, release, schemas, config, API contracts, or 
 ```bash
 ./scripts/verify_release_cut_list.py
 git diff --check
-npm run lint
+pnpm run lint
 ```
 
 Python runtime or contract changes:
@@ -74,18 +74,18 @@ TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagen
 Web UI or generated contract changes:
 
 ```bash
-npm --prefix web run lint
-npm --prefix web run test
-npm --prefix web run build
-npm --prefix meshapp/frontend run lint
-npm --prefix meshapp/frontend run test
-npm --prefix meshapp/frontend run build
+pnpm --dir web run lint
+pnpm --dir web run test
+pnpm --dir web run build
+pnpm --dir meshapp/frontend run lint
+pnpm --dir meshapp/frontend run test
+pnpm --dir meshapp/frontend run build
 ```
 
 Live UI e2e, when browser and localhost bind are available:
 
 ```bash
-npm --prefix web run test:e2e
+pnpm --dir web run test:e2e
 ```
 
 Compose or deployment config changes:

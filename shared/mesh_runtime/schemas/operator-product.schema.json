@@ -1,0 +1,630 @@
+{
+  "$id": "operator-product.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "auth_config": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_mode": {
+          "type": "string"
+        },
+        "captcha": {
+          "additionalProperties": false,
+          "properties": {
+            "configured": {
+              "type": "boolean"
+            },
+            "dev_bypass_enabled": {
+              "type": "boolean"
+            },
+            "provider": {
+              "enum": [
+                "disabled",
+                "hcaptcha",
+                "recaptcha",
+                "turnstile"
+              ]
+            },
+            "site_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "provider",
+            "site_key",
+            "configured",
+            "dev_bypass_enabled"
+          ],
+          "type": "object"
+        },
+        "oauth": {
+          "additionalProperties": false,
+          "properties": {
+            "github": {
+              "additionalProperties": false,
+              "properties": {
+                "configured": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "configured"
+              ],
+              "type": "object"
+            },
+            "google": {
+              "additionalProperties": false,
+              "properties": {
+                "configured": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "configured"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "google",
+            "github"
+          ],
+          "type": "object"
+        },
+        "password_auth_enabled": {
+          "type": "boolean"
+        },
+        "signup_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "auth_mode",
+        "signup_enabled",
+        "password_auth_enabled",
+        "captcha",
+        "oauth"
+      ],
+      "type": "object"
+    },
+    "dashboard_payload": {
+      "additionalProperties": false,
+      "properties": {
+        "authority_boundary": {
+          "type": "string"
+        },
+        "mesh": {
+          "type": "object"
+        },
+        "scope": {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "solo",
+                "team"
+              ]
+            },
+            "team": {
+              "additionalProperties": false,
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "members": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "roles": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "display_name",
+                "slug",
+                "role",
+                "roles",
+                "members"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "team"
+          ],
+          "type": "object"
+        },
+        "session": {
+          "additionalProperties": false,
+          "properties": {
+            "active_team": {
+              "additionalProperties": false,
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "members": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "email": {
+                        "type": "string"
+                      },
+                      "role": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "email",
+                      "role",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "role": {
+                  "type": "string"
+                },
+                "roles": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "slug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "display_name",
+                "slug",
+                "role",
+                "roles",
+                "members"
+              ],
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "settings": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "teams": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "members": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "email": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "email",
+                        "role",
+                        "status"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "roles": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "slug": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "name",
+                  "display_name",
+                  "slug",
+                  "role",
+                  "roles",
+                  "members"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "user": {
+              "additionalProperties": false,
+              "properties": {
+                "display_name": {
+                  "type": "string"
+                },
+                "email": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "email",
+                "display_name"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "user",
+            "teams",
+            "active_team",
+            "settings"
+          ],
+          "type": "object"
+        },
+        "settings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "settings_schema": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "values",
+              "default",
+              "description"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "scope",
+        "session",
+        "settings",
+        "settings_schema",
+        "mesh",
+        "authority_boundary"
+      ],
+      "type": "object"
+    },
+    "logout_response": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "type": "object"
+    },
+    "session_payload": {
+      "additionalProperties": false,
+      "properties": {
+        "active_team": {
+          "additionalProperties": false,
+          "properties": {
+            "display_name": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "members": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email",
+                  "role",
+                  "status"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            },
+            "role": {
+              "type": "string"
+            },
+            "roles": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "display_name",
+            "slug",
+            "role",
+            "roles",
+            "members"
+          ],
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "settings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "teams": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "display_name": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "members": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "email": {
+                      "type": "string"
+                    },
+                    "role": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "email",
+                    "role",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              },
+              "roles": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "slug": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "display_name",
+              "slug",
+              "role",
+              "roles",
+              "members"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "user": {
+          "additionalProperties": false,
+          "properties": {
+            "display_name": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "email",
+            "display_name"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "user",
+        "teams",
+        "active_team",
+        "settings"
+      ],
+      "type": "object"
+    },
+    "settings_update_response": {
+      "additionalProperties": false,
+      "properties": {
+        "audit": {
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "recorded": {
+              "type": "boolean"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "state_slice": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "recorded",
+            "state_slice",
+            "scope",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "settings": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "settings_schema": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "values",
+              "default",
+              "description"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "settings",
+        "settings_schema",
+        "audit"
+      ],
+      "type": "object"
+    }
+  },
+  "title": "Mesh operator product contracts",
+  "type": "object"
+}

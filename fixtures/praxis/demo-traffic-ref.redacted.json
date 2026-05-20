@@ -1,0 +1,19 @@
+{
+  "capture_id": "traffic-demo-orders-redacted",
+  "capture_kind": "har_ref",
+  "raw_traffic_stored": false,
+  "redacted_artifact_ref": "artifact://praxis/demo/orders.har.redacted",
+  "observed_endpoints": [
+    {
+      "method": "GET",
+      "path": "/orders",
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "path": "/orders/{order_id}/cancel",
+      "status": 403
+    }
+  ],
+  "redacted_fields": ["Authorization", "Cookie"]
+}

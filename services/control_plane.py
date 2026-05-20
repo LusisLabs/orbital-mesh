@@ -110,6 +110,16 @@ from services.watchers.base import WatcherRegistry
 from services.watchers.compat import LEGACY_WATCHER_NAME, register_legacy_watchers
 from shared.mesh_runtime.context_store import ContextStore
 from shared.mesh_runtime.deferred_runs import DeferredRunStore
+from shared.mesh_runtime.delivery_context import (
+    bind_release_provenance_to_build_artifact,
+    bind_runtime_signal_to_deployment_event,
+    build_delivery_context_graph,
+    build_delivery_edge,
+    build_delivery_node,
+    build_zaxy_mirror_node,
+    delivery_summary_metrics,
+    evaluate_delivery_policy_gate,
+)
 from shared.mesh_runtime.infra_graph import InfraGraph
 from shared.mesh_runtime.trust_ladder import TrustLadder
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
@@ -826,6 +836,218 @@ class RunCoordinator:
             events=events,
             merkle_snapshot=self.state_store.get_merkle_snapshot(run_id),
             proof_event_id=session.latest_event_id,
+        )
+
+    def get_delivery_context(self, run_id: str) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        return self._record_delivery_context(run_id, emit_event=False)
+
+    def _record_delivery_context(self, run_id: str, *, emit_event: bool = True) -> dict[str, Any] | None:
+        session = self.state_store.get_run_session(run_id)
+        if session is None:
+            return None
+        graph = self._build_delivery_context_graph(session)
+        view = _delivery_context_operator_view(session, graph)
+        summary = delivery_summary_metrics(graph)
+        self._set_artifact(run_id, "delivery_context_graph", graph)
+        self._set_artifact(run_id, "delivery_context_summary", summary)
+        self._set_artifact(run_id, "delivery_context", view)
+        if emit_event:
+            self.state_store.append_run_event(
+                run_id,
+                stage=session.stage,
+                event_type=INTEGRATION_ARTIFACT_RECORDED,
+                payload={"graph": graph, "summary": summary},
+                summary={
+                    "graph_id": graph["graph_id"],
+                    "node_count": len(graph["nodes"]),
+                    "evidence_gap_count": summary["evidence_gap_count"],
+                },
+                artifact_key="delivery_context",
+                integration_name="delivery_context",
+                status="recorded",
+            )
+        return view
+
+    def _build_delivery_context_graph(self, session: RunSession) -> dict[str, Any]:
+        artifacts = session.artifacts if isinstance(session.artifacts, dict) else {}
+        trigger = artifacts.get("trigger") if isinstance(artifacts.get("trigger"), dict) else {}
+        input_signal = artifacts.get("input_signal") if isinstance(artifacts.get("input_signal"), dict) else {}
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+
+        service = _first_text(trigger.get("service"), input_signal.get("service"), "unknown-service")
+        environment = _first_text(trigger.get("environment"), input_signal.get("environment"))
+        repository = _delivery_repository(trigger, input_signal)
+        pr_node_id: str | None = None
+        commit_node_id: str | None = None
+
+        pr_number = _first_text(trigger.get("pr_number"), input_signal.get("pr_number"))
+        commit_sha = _first_text(trigger.get("commit_sha"), trigger.get("sha"), input_signal.get("commit_sha"), input_signal.get("sha"))
+        if pr_number:
+            pr_node_id = f"pr:{repository or 'unknown'}:{pr_number}"
+            nodes.append(
+                build_delivery_node(
+                    node_id=pr_node_id,
+                    kind="PullRequest",
+                    source="run_context",
+                    summary=f"PR {pr_number}",
+                    observed_at=session.created_at,
+                    metadata={"repository": repository, "pr_number": pr_number},
+                    evidence_refs=[str(pr_number)],
+                )
+            )
+        if commit_sha:
+            commit_node_id = f"commit:{commit_sha}"
+            nodes.append(
+                build_delivery_node(
+                    node_id=commit_node_id,
+                    kind="Commit",
+                    source="run_context",
+                    summary=f"Commit {commit_sha[:12]}",
+                    observed_at=session.created_at,
+                    metadata={"repository": repository, "commit_sha": commit_sha},
+                    evidence_refs=[commit_sha],
+                )
+            )
+        if pr_node_id and commit_node_id:
+            edges.append(
+                build_delivery_edge(
+                    edge_id=f"edge:{pr_node_id}:{commit_node_id}",
+                    kind="pr_contains_commit",
+                    from_node_id=pr_node_id,
+                    to_node_id=commit_node_id,
+                    source="run_context",
+                    observed_at=session.created_at,
+                )
+            )
+
+        release = artifacts.get("release_provenance")
+        if not isinstance(release, dict):
+            try:
+                release = self._release_provenance_record(self.build_readiness())
+            except Exception:  # noqa: BLE001 - delivery context is diagnostic
+                release = {}
+        build_node, release_gaps = bind_release_provenance_to_build_artifact(release)
+        nodes.append(build_node)
+        nodes.extend(release_gaps)
+        if commit_node_id:
+            check_node = build_delivery_node(
+                node_id=f"check:{session.run_id}",
+                kind="CheckSuite",
+                source="release_provenance",
+                summary="CI checks from release provenance",
+                observed_at=session.updated_at,
+                metadata={"checks": release.get("checks", {}) if isinstance(release, dict) else {}},
+            )
+            workflow_node = build_delivery_node(
+                node_id=f"workflow:{session.run_id}",
+                kind="WorkflowRun",
+                source="release_provenance",
+                summary="Release workflow from CI attestation",
+                observed_at=session.updated_at,
+                metadata={"ci_attestation": release.get("ci_attestation", {}) if isinstance(release, dict) else {}},
+            )
+            nodes.extend([check_node, workflow_node])
+            edges.extend([
+                build_delivery_edge(edge_id=f"edge:{commit_node_id}:{check_node['id']}", kind="commit_has_check_suite", from_node_id=commit_node_id, to_node_id=check_node["id"], source="release_provenance", observed_at=session.updated_at),
+                build_delivery_edge(edge_id=f"edge:{check_node['id']}:{workflow_node['id']}", kind="check_suite_runs_workflow", from_node_id=check_node["id"], to_node_id=workflow_node["id"], source="release_provenance", observed_at=session.updated_at),
+                build_delivery_edge(edge_id=f"edge:{workflow_node['id']}:{build_node['id']}", kind="workflow_produces_build", from_node_id=workflow_node["id"], to_node_id=build_node["id"], source="release_provenance", observed_at=session.updated_at),
+            ])
+
+        runtime_binding = bind_runtime_signal_to_deployment_event(input_signal or trigger)
+        deployment_node = runtime_binding["deployment_event"]
+        runtime_node = runtime_binding["runtime_signal"]
+        nodes.extend([deployment_node, runtime_node, *runtime_binding["evidence_gaps"]])
+        edges.append(runtime_binding["edge"])
+        if deployment_node["metadata"].get("artifact_ref") or deployment_node["metadata"].get("revision"):
+            edges.append(
+                build_delivery_edge(
+                    edge_id=f"edge:{build_node['id']}:{deployment_node['id']}",
+                    kind="build_released_to_deployment",
+                    from_node_id=build_node["id"],
+                    to_node_id=deployment_node["id"],
+                    source="release_runtime_binding",
+                    observed_at=session.updated_at,
+                )
+            )
+
+        gap_nodes = [node for node in nodes if node["kind"] == "EvidenceGap"]
+        for gap in gap_nodes:
+            subject = gap.get("metadata", {}).get("subject_node_id") if isinstance(gap.get("metadata"), dict) else None
+            if isinstance(subject, str) and any(node["id"] == subject for node in nodes):
+                edges.append(build_delivery_edge(edge_id=f"edge:{subject}:{gap['id']}", kind="node_has_evidence_gap", from_node_id=subject, to_node_id=gap["id"], source="delivery_context", observed_at=session.updated_at))
+
+        pre_policy_graph = build_delivery_context_graph(
+            graph_id=f"delivery:{session.run_id}:pre-policy",
+            service=service,
+            environment=environment,
+            nodes=_dedupe_delivery_nodes(nodes),
+            edges=_dedupe_delivery_edges(edges),
+            metadata={"run_id": session.run_id, "repository": repository},
+        )
+        policy_node = evaluate_delivery_policy_gate(pre_policy_graph, decision_id=f"policy:{session.run_id}:promotion", gate_name="delivery-promotion", mode="observe")
+        nodes.append(policy_node)
+        edges.append(build_delivery_edge(edge_id=f"edge:{runtime_node['id']}:{policy_node['id']}", kind="runtime_signal_informs_policy", from_node_id=runtime_node["id"], to_node_id=policy_node["id"], source="delivery_policy_gate", observed_at=session.updated_at))
+        for gap in gap_nodes:
+            edges.append(build_delivery_edge(edge_id=f"edge:{policy_node['id']}:{gap['id']}", kind="policy_records_gap", from_node_id=policy_node["id"], to_node_id=gap["id"], source="delivery_policy_gate", observed_at=session.updated_at))
+
+        for task in _artifact_agent_tasks(artifacts):
+            for attempt in task.get("attempts", []):
+                if not isinstance(attempt, dict) or not attempt.get("attempt_id"):
+                    continue
+                output = attempt.get("output") if isinstance(attempt.get("output"), dict) else {}
+                attempt_node = build_delivery_node(
+                    node_id=f"agent:{attempt.get('attempt_id')}",
+                    kind="AgentAttempt",
+                    source="agent_mesh",
+                    summary=str(attempt.get("summary") or attempt.get("agent") or "Agent attempt"),
+                    observed_at=str(attempt.get("completed_at") or session.updated_at),
+                    metadata={
+                        "agent_attempt_id": attempt.get("attempt_id"),
+                        "agent": attempt.get("agent"),
+                        "adapter": attempt.get("adapter"),
+                        "status": attempt.get("status"),
+                        "delivery_packet_seen": output.get("delivery_packet_seen"),
+                        "workflow_record": output.get("workflow_record"),
+                    },
+                    evidence_refs=[str(attempt.get("attempt_id"))],
+                )
+                nodes.append(attempt_node)
+                edges.append(build_delivery_edge(edge_id=f"edge:{policy_node['id']}:{attempt_node['id']}", kind="policy_routes_agent", from_node_id=policy_node["id"], to_node_id=attempt_node["id"], source="agent_mesh", observed_at=session.updated_at))
+
+        feedback = artifacts.get("feedback") if isinstance(artifacts.get("feedback"), dict) else None
+        if feedback:
+            feedback_node = build_delivery_node(node_id=f"feedback:{session.run_id}", kind="FeedbackEvent", source="run_feedback", summary=str(feedback.get("summary") or feedback.get("outcome") or "Feedback recorded"), observed_at=session.updated_at, metadata=feedback)
+            nodes.append(feedback_node)
+            edges.extend([
+                build_delivery_edge(edge_id=f"edge:{feedback_node['id']}:{policy_node['id']}", kind="feedback_updates_policy", from_node_id=feedback_node["id"], to_node_id=policy_node["id"], source="run_feedback", observed_at=session.updated_at),
+                build_delivery_edge(edge_id=f"edge:{feedback_node['id']}:{deployment_node['id']}", kind="feedback_confirms_deployment", from_node_id=feedback_node["id"], to_node_id=deployment_node["id"], source="run_feedback", observed_at=session.updated_at),
+            ])
+
+        if session.latest_event_id and session.latest_merkle_root:
+            zaxy_node = build_zaxy_mirror_node(
+                mirror_id=f"zaxy:{session.latest_event_id}",
+                mesh_event_id=session.latest_event_id,
+                sequence=session.latest_event_sequence,
+                merkle_root=session.latest_merkle_root,
+                citation_refs=[f"run://{session.run_id}/events/{session.latest_event_id}"],
+                redaction_status="redacted",
+                observed_at=session.updated_at,
+                metadata={"enabled": bool(self.config.zaxy_enabled), "eventloom_integrity": "mesh_merkle_bound", "graph_available": bool(self.config.zaxy_mcp_url)},
+            )
+            nodes.append(zaxy_node)
+            edges.append(build_delivery_edge(edge_id=f"edge:{policy_node['id']}:{zaxy_node['id']}", kind="zaxy_mirrors_node", from_node_id=policy_node["id"], to_node_id=zaxy_node["id"], source="zaxy_eventloom_mirror", observed_at=session.updated_at))
+
+        return build_delivery_context_graph(
+            graph_id=f"delivery:{session.run_id}",
+            service=service,
+            environment=environment,
+            nodes=_dedupe_delivery_nodes(nodes),
+            edges=_dedupe_delivery_edges(edges),
+            metadata={"run_id": session.run_id, "repository": repository, "summary": "Delivery context links PR, CI, build, deployment, runtime, policy, agent, feedback, and optional Zaxy mirror evidence."},
         )
 
     def simulate_policy(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -4311,6 +4533,7 @@ class RunCoordinator:
             status=evaluation.final_recommendation,
         )
         self._record_trajectory_artifacts(run_id, engine, trigger=trigger, decision=decision, evaluation=evaluation)
+        self._record_delivery_context(run_id, emit_event=False)
         if allow_rereevaluation:
             self.state_store.append_run_event(
                 run_id,
@@ -5376,6 +5599,9 @@ class RunCoordinator:
             "trigger",
             "evidence_pack",
             "evidence_graph",
+            "delivery_context",
+            "delivery_context_graph",
+            "delivery_context_summary",
             "investigation_report",
             "scenario_analysis",
             "subdecisions",
@@ -6142,6 +6368,244 @@ def _trajectory_artifact_summary(artifact_key: str, payload: Any) -> dict[str, A
         task = payload.get("task") if isinstance(payload.get("task"), dict) else {}
         return {"trace_version": payload.get("trace_version"), "trigger_type": task.get("trigger_type")}
     return {"artifact_key": artifact_key}
+
+
+def _first_text(*values: Any) -> str | None:
+    for value in values:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _delivery_repository(trigger: dict[str, Any], input_signal: dict[str, Any]) -> str | None:
+    for container in (trigger, input_signal):
+        repo = container.get("repository") or container.get("repo")
+        if isinstance(repo, str) and repo.strip():
+            return repo.strip()
+        github = container.get("github")
+        if isinstance(github, dict):
+            value = github.get("repository") or github.get("repo")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
+def _artifact_agent_tasks(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
+    tasks = artifacts.get("agent_tasks")
+    if isinstance(tasks, list):
+        return [item for item in tasks if isinstance(item, dict)]
+    if isinstance(tasks, dict):
+        raw_tasks = tasks.get("tasks")
+        if isinstance(raw_tasks, list):
+            return [item for item in raw_tasks if isinstance(item, dict)]
+    return []
+
+
+def _dedupe_delivery_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        if not node_id or node_id in seen:
+            continue
+        seen.add(node_id)
+        result.append(node)
+    return result
+
+
+def _dedupe_delivery_edges(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for edge in edges:
+        edge_id = str(edge.get("id") or "")
+        if not edge_id or edge_id in seen:
+            continue
+        seen.add(edge_id)
+        result.append(edge)
+    return result
+
+
+def _delivery_context_operator_view(session: RunSession, graph: dict[str, Any]) -> dict[str, Any]:
+    metadata = graph.get("metadata") if isinstance(graph.get("metadata"), dict) else {}
+    nodes = [_delivery_operator_node(node) for node in graph.get("nodes", []) if isinstance(node, dict)]
+    edges = [
+        {
+            "id": str(edge.get("id") or ""),
+            "source": str(edge.get("from_node_id") or ""),
+            "target": str(edge.get("to_node_id") or ""),
+            "relation": str(edge.get("kind") or ""),
+            "status": "passed",
+            "evidence_ref": None,
+        }
+        for edge in graph.get("edges", [])
+        if isinstance(edge, dict)
+    ]
+    return {
+        "schema_version": graph.get("schema_version"),
+        "run_id": session.run_id,
+        "service": graph.get("service"),
+        "repository": metadata.get("repository"),
+        "generated_at": graph.get("generated_at"),
+        "summary": metadata.get("summary"),
+        "nodes": nodes,
+        "edges": edges,
+        "evidence_gaps": [_delivery_gap(node) for node in graph.get("nodes", []) if isinstance(node, dict) and node.get("kind") == "EvidenceGap"],
+        "zaxy_mirror": _delivery_zaxy_status(graph),
+        "langgraph_workflows": _delivery_langgraph_refs(graph),
+        "agent_attempt_refs": [
+            str(node.get("metadata", {}).get("agent_attempt_id"))
+            for node in graph.get("nodes", [])
+            if isinstance(node, dict)
+            and node.get("kind") == "AgentAttempt"
+            and isinstance(node.get("metadata"), dict)
+            and node.get("metadata", {}).get("agent_attempt_id")
+        ],
+    }
+
+
+def _delivery_operator_node(node: dict[str, Any]) -> dict[str, Any]:
+    metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    kind = str(node.get("kind") or "")
+    return {
+        "id": str(node.get("id") or ""),
+        "kind": _delivery_ui_kind(kind),
+        "stage": _delivery_ui_stage(kind),
+        "title": _delivery_node_title(kind, node),
+        "status": _delivery_ui_status(kind, node),
+        "summary": node.get("summary"),
+        "occurred_at": node.get("observed_at"),
+        "refs": _delivery_refs(metadata, node.get("evidence_refs") if isinstance(node.get("evidence_refs"), list) else []),
+        "metadata": metadata,
+    }
+
+
+def _delivery_ui_kind(kind: str) -> str:
+    return {
+        "PullRequest": "pull_request",
+        "Commit": "commit",
+        "CheckSuite": "ci",
+        "WorkflowRun": "ci",
+        "BuildArtifact": "build",
+        "DeploymentEvent": "deploy",
+        "RuntimeSignal": "runtime",
+        "PolicyDecision": "policy",
+        "AgentAttempt": "agent_attempt",
+        "FeedbackEvent": "feedback",
+        "EvidenceGap": "evidence_gap",
+        "ZaxyMirror": "zaxy_mirror",
+    }.get(kind, "runtime")
+
+
+def _delivery_ui_stage(kind: str) -> str:
+    return {
+        "PullRequest": "pr",
+        "Commit": "pr",
+        "CheckSuite": "ci",
+        "WorkflowRun": "ci",
+        "BuildArtifact": "build",
+        "DeploymentEvent": "deploy",
+        "RuntimeSignal": "runtime",
+        "PolicyDecision": "policy",
+        "AgentAttempt": "agent",
+        "FeedbackEvent": "feedback",
+        "EvidenceGap": "evidence",
+        "ZaxyMirror": "zaxy",
+    }.get(kind, "runtime")
+
+
+def _delivery_node_title(kind: str, node: dict[str, Any]) -> str:
+    metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    if kind == "PolicyDecision":
+        return str(metadata.get("gate_name") or "Policy decision")
+    if kind == "AgentAttempt":
+        return str(metadata.get("agent") or "Agent attempt")
+    if kind == "EvidenceGap":
+        return str(metadata.get("missing_evidence") or "Evidence gap")
+    return str(node.get("summary") or kind)
+
+
+def _delivery_ui_status(kind: str, node: dict[str, Any]) -> str:
+    metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    if kind == "EvidenceGap":
+        severity = metadata.get("severity")
+        return "blocked" if severity == "hard" else "missing"
+    if kind == "PolicyDecision":
+        outcome = metadata.get("outcome")
+        if outcome == "allow":
+            return "passed"
+        if outcome == "block_promotion":
+            return "blocked"
+        return "pending"
+    if kind == "AgentAttempt":
+        status = str(metadata.get("status") or "")
+        return "passed" if status == "completed" else ("failed" if status == "failed" else "pending")
+    if kind == "ZaxyMirror":
+        return "mirrored" if metadata.get("enabled") else "pending"
+    return "passed"
+
+
+def _delivery_refs(metadata: dict[str, Any], evidence_refs: list[Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for key in ("repository", "commit_sha", "image_digest", "agent_attempt_id"):
+        value = metadata.get(key)
+        if value:
+            refs.append({"label": key, "value": str(value)})
+    refs.extend({"label": "evidence", "value": str(item)} for item in evidence_refs[:3])
+    return refs
+
+
+def _delivery_gap(node: dict[str, Any]) -> dict[str, Any]:
+    metadata = node.get("metadata") if isinstance(node.get("metadata"), dict) else {}
+    severity = metadata.get("severity")
+    return {
+        "id": str(node.get("id") or ""),
+        "title": str(metadata.get("missing_evidence") or node.get("summary") or "Evidence gap"),
+        "severity": "blocker" if severity == "hard" else ("warn" if severity in {"high", "medium"} else "info"),
+        "summary": str(node.get("summary") or ""),
+        "missing_ref": str(metadata.get("missing_evidence") or "") or None,
+        "owner": str(metadata.get("subject_node_id") or "") or None,
+    }
+
+
+def _delivery_zaxy_status(graph: dict[str, Any]) -> dict[str, Any] | None:
+    mirrors = [node for node in graph.get("nodes", []) if isinstance(node, dict) and node.get("kind") == "ZaxyMirror"]
+    if not mirrors:
+        return None
+    mirror = mirrors[-1]
+    metadata = mirror.get("metadata") if isinstance(mirror.get("metadata"), dict) else {}
+    return {
+        "enabled": bool(metadata.get("enabled")),
+        "status": "mirrored" if metadata.get("enabled") else "pending",
+        "latest_sequence": metadata.get("sequence"),
+        "latest_event_id": metadata.get("mesh_event_id"),
+        "merkle_root": metadata.get("merkle_root"),
+        "projection_lag_ms": None,
+        "graph_available": bool(metadata.get("graph_available")),
+        "redaction_status": metadata.get("redaction_status"),
+    }
+
+
+def _delivery_langgraph_refs(graph: dict[str, Any]) -> list[dict[str, Any]]:
+    refs: list[dict[str, Any]] = []
+    for node in graph.get("nodes", []):
+        metadata = node.get("metadata") if isinstance(node, dict) and isinstance(node.get("metadata"), dict) else {}
+        workflow = metadata.get("workflow_record")
+        if not isinstance(workflow, dict):
+            continue
+        refs.append(
+            {
+                "workflow_id": str(workflow.get("record_hash") or workflow.get("checkpoint_id") or metadata.get("agent_attempt_id")),
+                "thread_id": workflow.get("checkpoint_id"),
+                "status": "completed",
+                "evidence_packet_id": workflow.get("evidence_packet_id"),
+                "zaxy_checkout_ref": None,
+                "agent_attempt_ids": [metadata["agent_attempt_id"]] if metadata.get("agent_attempt_id") else [],
+            }
+        )
+    return refs
 
 
 def _ranked_hypotheses_from_decision(decision: Decision) -> list[dict[str, Any]]:

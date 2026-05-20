@@ -2,3 +2,4 @@
 @import "@xyflow/react/dist/style.css";
 @import "../src/mesh-tokens.css";
 @import "../src/index.css";
+@import "../src/product/product.css";

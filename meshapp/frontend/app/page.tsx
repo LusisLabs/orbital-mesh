@@ -1,10 +1,6 @@
 "use client";
 
-import dynamic from "next/dynamic";
-
-const OperatorApp = dynamic(() => import("../src/App"), {
-  ssr: false,
-});
+import OperatorApp from "../src/product/ProductApp";
 
 export default function Home() {
   return <OperatorApp />;

@@ -27,6 +27,11 @@ import { Background, Handle, Position, ReactFlow, type NodeProps } from "@xyflow
 import { api, connectRunStream, connectSystemStream, resolveBaseUrl } from "./api";
 import { AmbientAsciiSignal } from "./components/AmbientAsciiSignal";
 import { Inspector } from "./components/Inspector";
+import { ConfidenceStep } from "./components/rca/ConfidenceStep";
+import { DecisionCard } from "./components/rca/DecisionCard";
+import { LiveEventTicker } from "./components/rca/LiveEventTicker";
+import { RcaCandidateCard } from "./components/rca/RcaCandidateCard";
+import { ToolCallRow } from "./components/rca/ToolCallRow";
 import { Toaster, useToast } from "./components/Toaster";
 import { formatTimestamp, humanize, relativeTime, safeJsonParse } from "./lib/format";
 import {
@@ -60,6 +65,10 @@ import type {
   HealthSnapshot,
   KillSwitchStatus,
   ConnectionStatus,
+  DeliveryContextGraph,
+  DeliveryContextNode,
+  DeliveryContextStage,
+  DeliveryContextStatus,
   EvidenceGraph,
   GoalRecord,
   InspectorTab,
@@ -130,7 +139,7 @@ type AppView =
   | "packets"
   | "roadmap"
   | "settings";
-type RunDetailTab = "timeline" | "evidence" | "rca" | "approvals" | "actions" | "darkharness" | "audit" | "agents" | "topology";
+type RunDetailTab = "timeline" | "delivery" | "evidence" | "rca" | "approvals" | "actions" | "darkharness" | "audit" | "agents" | "topology";
 type ConnectorState =
   | "ready"
   | "degraded"
@@ -190,6 +199,9 @@ interface ConfidencePoint {
 interface RcaSnapshot extends RcaGraphInput {
   confidenceMovement: ConfidencePoint[];
   report: Record<string, any> | null;
+  decisionType: string | null;
+  autonomyTier: string | null;
+  decisionContext: string | null;
 }
 
 const AUTHORITY_PIPELINE = [
@@ -243,6 +255,20 @@ const ROADMAP_PRIORITY_SURFACES = [
   ["Trust ladder", "Autonomy earned per service and action class"],
   ["Run export", "Postmortem, audit, Merkle, decision, evaluation records"],
   ["Kill switch", "Watcher, live execution, namespace, action gate controls"],
+];
+
+const DELIVERY_STAGE_ORDER: DeliveryContextStage[] = [
+  "pr",
+  "ci",
+  "build",
+  "deploy",
+  "runtime",
+  "policy",
+  "agent",
+  "feedback",
+  "evidence",
+  "zaxy",
+  "langgraph",
 ];
 
 const EVIDENCE_PACKET_LINKS = [
@@ -385,6 +411,8 @@ export default function App() {
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
   const [scenarioAnalysis, setScenarioAnalysis] = useState<ScenarioAnalysis | null>(null);
   const [evidenceGraph, setEvidenceGraph] = useState<EvidenceGraph | null>(null);
+  const [deliveryContext, setDeliveryContext] = useState<DeliveryContextGraph | null>(null);
+  const [deliveryContextError, setDeliveryContextError] = useState("");
   const [memoryCrystallization, setMemoryCrystallization] = useState<Record<string, unknown> | null>(null);
   const [watchers, setWatchers] = useState<WatcherStatus | null>(null);
   const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
@@ -503,6 +531,8 @@ export default function App() {
       setAgentTasks([]);
       setScenarioAnalysis(null);
       setEvidenceGraph(null);
+      setDeliveryContext(null);
+      setDeliveryContextError("");
       setMemoryCrystallization(null);
       setRunExport(null);
       setDarkharnessPacket(null);
@@ -668,11 +698,17 @@ export default function App() {
 
   async function loadRun(runId: string) {
     try {
-      const [run, taskResponse, analysisResponse, evidenceResponse, memoryResponse, darkharnessResponse] = await Promise.all([
+      const [run, taskResponse, analysisResponse, evidenceResponse, deliveryResponse, memoryResponse, darkharnessResponse] = await Promise.all([
         api.getRun(baseUrl, runId),
         api.getAgentTasks(baseUrl, runId).catch(() => ({ tasks: [] as AgentTask[] })),
         api.getScenarioAnalysis(baseUrl, runId).catch(() => null),
         api.getEvidenceGraph(baseUrl, runId).catch(() => null),
+        api.getRunDeliveryContext(baseUrl, runId)
+          .then((context) => ({ context, error: "" }))
+          .catch((error) => ({
+            context: null,
+            error: error instanceof Error ? error.message : "Delivery context unavailable",
+          })),
         api.getMemoryCrystallization(baseUrl, runId).catch(() => null),
         api.getRunDarkharnessPacket(baseUrl, runId).catch(() => null),
       ]);
@@ -680,6 +716,8 @@ export default function App() {
       setAgentTasks(taskResponse.tasks);
       setScenarioAnalysis(analysisResponse);
       setEvidenceGraph(evidenceResponse);
+      setDeliveryContext(deliveryResponse.context);
+      setDeliveryContextError(deliveryResponse.error);
       setMemoryCrystallization(memoryResponse);
       setDarkharnessPacket(darkharnessResponse);
       setRunExport((current) => (current?.run_id === runId ? current : null));
@@ -1156,10 +1194,15 @@ export default function App() {
         readiness.goose,
         readiness.latentmas,
         readiness.deepagents,
+        readiness.zaxy,
+        readiness.eventloom,
+        readiness.neo4j_projection,
+        readiness.zaxy_mcp,
+        readiness.langgraph_checkpointing,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 5;
+  const integrationsTotal = readinessItems.length || 10;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -1403,6 +1446,7 @@ export default function App() {
             <p className="mesh-kicker">Production deployment control plane</p>
             <h2>{viewTitle(activeView)}</h2>
             <span>{activeGoal?.title ?? "No active goal"} / {activeRun ? activeRun.run_id.slice(0, 12) : "no run"}</span>
+            <LiveEventTicker activeRuns={runs} />
           </div>
           <div className="mesh-topbar-metrics">
             <HeaderMetric icon={<Codicon name="server-environment" />} label="Environment" value={environmentLabel} subline={buildSubline} />
@@ -1482,6 +1526,8 @@ export default function App() {
               activeRunId={activeRunId}
               selectedEvent={selectedEvent}
               runDetailTab={runDetailTab}
+              deliveryContext={deliveryContext}
+              deliveryContextError={deliveryContextError}
               canvasMode={canvasMode}
               canvasAvailability={canvasAvailability}
               canvasGraph={canvasGraph}
@@ -2073,6 +2119,8 @@ function RunsView({
   activeRunId,
   selectedEvent,
   runDetailTab,
+  deliveryContext,
+  deliveryContextError,
   canvasMode,
   canvasAvailability,
   canvasGraph,
@@ -2106,6 +2154,8 @@ function RunsView({
   activeRunId: string;
   selectedEvent: RunEventRecord | null;
   runDetailTab: RunDetailTab;
+  deliveryContext: DeliveryContextGraph | null;
+  deliveryContextError: string;
   canvasMode: CanvasMode;
   canvasAvailability: Record<CanvasMode, boolean>;
   canvasGraph: { nodes: any[]; edges: any[] };
@@ -2168,7 +2218,7 @@ function RunsView({
           {activeRun ? <StatusChip label={humanize(activeRun.stage)} tone={toneForStage(activeRun.stage)} /> : null}
         </div>
         <div className="mesh-tab-list" role="tablist" aria-label="Run detail">
-          {(["timeline", "evidence", "rca", "approvals", "actions", "darkharness", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
+          {(["timeline", "delivery", "evidence", "rca", "approvals", "actions", "darkharness", "audit", "agents", "topology"] as RunDetailTab[]).map((tab) => (
             <button key={tab} className={runDetailTab === tab ? "tab active" : "tab"} type="button" onClick={() => onRunDetailTabChange(tab)}>
               {runDetailTabLabel(tab)}
             </button>
@@ -2176,6 +2226,8 @@ function RunsView({
         </div>
         {runDetailTab === "timeline" ? (
           <TimelineTable run={activeRun} selectedEventId={selectedEventId} timelineRef={timelineRef} onSelectEvent={onSelectEvent} />
+        ) : runDetailTab === "delivery" ? (
+          <DeliveryContextPanel run={activeRun} graph={deliveryContext} error={deliveryContextError} tasks={agentTasks} />
         ) : runDetailTab === "evidence" ? (
           <EvidencePanel events={recentEvidenceEvents} selectedEvent={selectedEvent} insights={selectedEventInsights} onJumpContext={onJumpContext} />
         ) : runDetailTab === "rca" ? (
@@ -2464,7 +2516,7 @@ function ControlPlaneView({
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
-  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents">][];
+  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents" | "zaxy" | "eventloom" | "neo4j_projection" | "zaxy_mcp" | "langgraph_checkpointing">][];
   integrationsReady: number;
   integrationsTotal: number;
   systemConnection: ConnectionStatus;
@@ -2683,8 +2735,17 @@ function ReadinessGateList({
             : [record.certification, record.detail].filter(Boolean).map(String).join(" / ") || summarizeRecord(record);
         const blockerDetail = blocked ? asRecord(blockerDetails?.[name]) : {};
         const remediation = typeof blockerDetail.remediation === "string" ? blockerDetail.remediation : "";
+        const stateSlice = typeof blockerDetail.state_slice === "string" ? `State: ${blockerDetail.state_slice}` : "";
+        const evidencePath = typeof blockerDetail.evidence_path === "string" && blockerDetail.evidence_path
+          ? `Evidence: ${blockerDetail.evidence_path}`
+          : "";
         const env = stringList(blockerDetail.env);
-        const operatorDetail = [remediation, env.length ? `Inputs: ${env.join(", ")}` : ""].filter(Boolean).join(" / ");
+        const operatorDetail = [
+          remediation,
+          stateSlice,
+          evidencePath,
+          env.length ? `Inputs: ${env.join(", ")}` : "",
+        ].filter(Boolean).join(" / ");
         return (
           <div key={name} className={`gate-matrix-row ${blocked ? "blocked" : ""}`}>
             <span>{humanize(name)}</span>
@@ -3041,6 +3102,13 @@ function PilotPacketView({
   activeRun: RunDetail | null;
 }) {
   const checks = Object.entries(packet?.checks ?? {});
+  const observed = packet?.observed;
+  const proofIds = (ids?: string[]) => (ids ?? []).slice(0, 3).join(", ") || "none";
+  const canaryLanes = (observed?.mesh_brain_canary_lanes ?? [])
+    .map((lane) => [lane.tenant_id, lane.task_type].filter(Boolean).join(":"))
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(", ") || "none";
   return (
     <div className="mesh-dashboard-grid">
       <section className="mesh-card mesh-card-span">
@@ -3084,10 +3152,14 @@ function PilotPacketView({
       <section className="mesh-card">
         <SectionTitle icon={<FolderGit2 size={15} />} title="Observed Proofs" />
         <div className="mesh-stack">
-          <ContextStat label="Approved" value={(packet?.observed.approved_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Live action" value={(packet?.observed.live_action_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Denied action" value={(packet?.observed.denied_action_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
-          <ContextStat label="Merkle" value={(packet?.observed.merkle_run_ids ?? []).slice(0, 3).join(", ") || "none"} />
+          <ContextStat label="Approved" value={proofIds(observed?.approved_run_ids)} />
+          <ContextStat label="Live action" value={proofIds(observed?.live_action_run_ids)} />
+          <ContextStat label="Denied action" value={proofIds(observed?.denied_action_run_ids)} />
+          <ContextStat label="Merkle" value={proofIds(observed?.merkle_run_ids)} />
+          <ContextStat label="Model kernel" value={proofIds(observed?.mesh_brain_model_kernel_run_ids)} />
+          <ContextStat label="Live canary" value={proofIds(observed?.mesh_brain_live_canary_smoke_run_ids)} />
+          <ContextStat label="Canary lanes" value={canaryLanes} />
+          <ContextStat label="Rollback drill" value={proofIds(observed?.mesh_brain_rollback_drill_run_ids)} />
         </div>
       </section>
       <section className="mesh-card">
@@ -3628,6 +3700,295 @@ function TimelineTable({
   );
 }
 
+export function DeliveryContextPanel({
+  run,
+  graph,
+  error,
+  tasks,
+}: {
+  run: RunDetail | null;
+  graph: DeliveryContextGraph | null;
+  error?: string;
+  tasks: AgentTask[];
+}) {
+  if (!run) return <EmptyState text="Select a run to inspect delivery context." />;
+
+  const resolvedGraph = graph ?? deliveryGraphFromRunArtifact(run);
+  if (!resolvedGraph) {
+    return (
+      <div className="mesh-detail-grid" data-testid="delivery-context-panel">
+        <section className="context-panel">
+          <div className="context-panel-header">
+            <div>
+              <p className="eyebrow">Delivery Context</p>
+              <h4>{run.run_id}</h4>
+            </div>
+            <StatusPill state="config-only" label="Reserved endpoint" />
+          </div>
+          <p className="inspector-muted">
+            Delivery context will load from <code>/api/runs/{run.run_id}/delivery-context</code> when the backend graph contract is available.
+            {error ? ` Current response: ${error}` : ""}
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  const nodes = [...resolvedGraph.nodes].sort(compareDeliveryNodes);
+  const gaps = resolvedGraph.evidence_gaps;
+  const stageStats = DELIVERY_STAGE_ORDER.map((stage) => {
+    const stageNodes = nodes.filter((node) => node.stage === stage);
+    return {
+      stage,
+      count: stageNodes.length,
+      status: strongestDeliveryStatus(stageNodes.map((node) => node.status)),
+    };
+  }).filter((item) => item.count > 0 || ["pr", "ci", "build", "deploy", "runtime", "policy", "agent", "feedback"].includes(item.stage));
+  const agentAttemptIds = deliveryAgentAttemptIds(resolvedGraph);
+  const attempts = tasks.flatMap((task) => task.attempts).filter((attempt) => agentAttemptIds.has(attempt.attempt_id));
+
+  return (
+    <div className="mesh-detail-grid" data-testid="delivery-context-panel">
+      <section className="context-panel">
+        <div className="context-panel-header">
+          <div>
+            <p className="eyebrow">Delivery Context</p>
+            <h4>{resolvedGraph.service || resolvedGraph.repository || run.run_id}</h4>
+          </div>
+          <StatusPill state={gaps.some((gap) => gap.severity === "blocker") ? "degraded" : "ready"} label={gaps.length ? `${gaps.length} gap${gaps.length === 1 ? "" : "s"}` : "Linked"} />
+        </div>
+        {resolvedGraph.summary ? <p className="inspector-muted">{resolvedGraph.summary}</p> : null}
+        <div className="context-stat-grid">
+          <ContextStat label="Run" value={resolvedGraph.run_id} />
+          <ContextStat label="Generated" value={formatTimestamp(resolvedGraph.generated_at)} />
+          <ContextStat label="Repository" value={resolvedGraph.repository ?? "Not recorded"} />
+          <ContextStat label="Edges" value={String(resolvedGraph.edges.length)} />
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<GitBranch size={14} />} title="Delivery Timeline" />
+        <div className="context-stat-grid">
+          {stageStats.map((item) => (
+            <div key={item.stage} className="context-stat-card">
+              <span>{deliveryStageLabel(item.stage)}</span>
+              <strong>{item.count ? String(item.count) : "missing"}</strong>
+              <StatusPill state={deliveryStatusState(item.status)} label={humanize(item.status)} />
+            </div>
+          ))}
+        </div>
+        <div className="mesh-table-wrap">
+          <table className="mesh-table">
+            <thead>
+              <tr><th>Stage</th><th>Status</th><th>Item</th><th>References</th><th>Recorded</th></tr>
+            </thead>
+            <tbody>
+              {nodes.map((node) => (
+                <tr key={node.id}>
+                  <td>
+                    <span className="section-title">
+                      <span>{deliveryStageIcon(node.stage)}</span>
+                      <strong>{deliveryStageLabel(node.stage)}</strong>
+                    </span>
+                  </td>
+                  <td><StatusPill state={deliveryStatusState(node.status)} label={humanize(node.status)} /></td>
+                  <td>
+                    <strong>{node.title}</strong>
+                    <small>{node.summary ?? humanize(node.kind)}</small>
+                  </td>
+                  <td>{deliveryRefs(node)}</td>
+                  <td>{node.occurred_at ? formatTimestamp(node.occurred_at) : "Not recorded"}</td>
+                </tr>
+              ))}
+              {nodes.length === 0 ? <tr><td colSpan={5}>No delivery timeline nodes returned.</td></tr> : null}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<AlertTriangle size={14} />} title="Evidence Gaps" />
+        <div className="mesh-stack">
+          {gaps.map((gap) => (
+            <ConnectorRow
+              key={gap.id}
+              name={gap.title}
+              detail={[gap.summary, gap.owner ? `Owner: ${gap.owner}` : "", gap.missing_ref ? `Missing: ${gap.missing_ref}` : ""].filter(Boolean).join(" / ")}
+              state={gap.severity === "blocker" ? "degraded" : gap.severity === "warn" ? "config-only" : "ready"}
+            />
+          ))}
+          {gaps.length === 0 ? <EmptyState text="No evidence gaps reported by the delivery context graph." /> : null}
+        </div>
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<Binary size={14} />} title="Zaxy Mirror" />
+        {resolvedGraph.zaxy_mirror ? (
+          <div className="mesh-stack">
+            <div className="context-stat-grid">
+              <ContextStat label="Status" value={humanize(resolvedGraph.zaxy_mirror.status)} />
+              <ContextStat label="Latest sequence" value={String(resolvedGraph.zaxy_mirror.latest_sequence ?? "Unavailable")} />
+              <ContextStat label="Graph" value={resolvedGraph.zaxy_mirror.graph_available ? "Available" : "Unavailable"} />
+              <ContextStat label="Redaction" value={resolvedGraph.zaxy_mirror.redaction_status ?? "Not recorded"} />
+            </div>
+            <ConnectorRow
+              name="Eventloom projection"
+              detail={[
+                resolvedGraph.zaxy_mirror.latest_event_id ? `event ${resolvedGraph.zaxy_mirror.latest_event_id}` : "no event id",
+                resolvedGraph.zaxy_mirror.merkle_root ? `root ${resolvedGraph.zaxy_mirror.merkle_root.slice(0, 18)}` : "no root",
+                typeof resolvedGraph.zaxy_mirror.projection_lag_ms === "number" ? `${resolvedGraph.zaxy_mirror.projection_lag_ms}ms lag` : "lag unknown",
+              ].join(" / ")}
+              state={resolvedGraph.zaxy_mirror.status === "mirrored" ? "ready" : resolvedGraph.zaxy_mirror.status === "degraded" ? "degraded" : "config-only"}
+            />
+          </div>
+        ) : <EmptyState text="No Zaxy mirror status returned for this run." />}
+      </section>
+
+      <section className="context-panel">
+        <SectionTitle icon={<Bot size={14} />} title="LangGraph Workflows and Agent Attempts" />
+        <div className="mesh-stack">
+          {(resolvedGraph.langgraph_workflows ?? []).map((workflow) => (
+            <ConnectorRow
+              key={workflow.workflow_id}
+              name={`LangGraph ${workflow.workflow_id}`}
+              detail={[
+                workflow.thread_id ? `thread ${workflow.thread_id}` : "",
+                workflow.evidence_packet_id ? `packet ${workflow.evidence_packet_id}` : "",
+                workflow.zaxy_checkout_ref ? `Zaxy checkout ${workflow.zaxy_checkout_ref}` : "",
+              ].filter(Boolean).join(" / ") || "workflow reference"}
+              state={workflow.status === "completed" || workflow.status === "succeeded" ? "ready" : workflow.status === "failed" ? "degraded" : "config-only"}
+            />
+          ))}
+          {attempts.map((attempt) => (
+            <ConnectorRow
+              key={attempt.attempt_id}
+              name={`AgentAttempt ${attempt.attempt_id}`}
+              detail={`${humanize(attempt.agent)} / ${humanize(attempt.status)} / ${attempt.summary}`}
+              state={attempt.status === "completed" ? "ready" : attempt.risk_flags.length ? "degraded" : "config-only"}
+            />
+          ))}
+          {(resolvedGraph.langgraph_workflows ?? []).length === 0 && attempts.length === 0 ? (
+            <EmptyState text="No LangGraph workflow or AgentAttempt references were returned." />
+          ) : null}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function deliveryGraphFromRunArtifact(run: RunDetail | null): DeliveryContextGraph | null {
+  const record = firstRecord(run?.artifacts?.delivery_context, run?.artifacts?.deliveryContextGraph);
+  if (!run || !record) return null;
+  const nodes = firstArray(record.nodes) as DeliveryContextGraph["nodes"];
+  const edges = firstArray(record.edges) as DeliveryContextGraph["edges"];
+  return {
+    schema_version: String(record.schema_version ?? "delivery_context.v0"),
+    run_id: String(record.run_id ?? run.run_id),
+    service: typeof record.service === "string" ? record.service : null,
+    repository: typeof record.repository === "string" ? record.repository : null,
+    generated_at: String(record.generated_at ?? run.updated_at),
+    summary: typeof record.summary === "string" ? record.summary : null,
+    nodes,
+    edges,
+    evidence_gaps: firstArray(record.evidence_gaps) as DeliveryContextGraph["evidence_gaps"],
+    zaxy_mirror: firstRecord(record.zaxy_mirror) as DeliveryContextGraph["zaxy_mirror"],
+    langgraph_workflows: firstArray(record.langgraph_workflows) as DeliveryContextGraph["langgraph_workflows"],
+    agent_attempt_refs: stringList(record.agent_attempt_refs),
+  };
+}
+
+function compareDeliveryNodes(a: DeliveryContextNode, b: DeliveryContextNode): number {
+  const stageDelta = DELIVERY_STAGE_ORDER.indexOf(a.stage) - DELIVERY_STAGE_ORDER.indexOf(b.stage);
+  if (stageDelta !== 0) return stageDelta;
+  const aTime = a.occurred_at ? Date.parse(a.occurred_at) : 0;
+  const bTime = b.occurred_at ? Date.parse(b.occurred_at) : 0;
+  return aTime - bTime || a.id.localeCompare(b.id);
+}
+
+function strongestDeliveryStatus(statuses: DeliveryContextStatus[]): DeliveryContextStatus {
+  const order: DeliveryContextStatus[] = ["blocked", "failed", "missing", "degraded", "running", "pending", "unknown", "mirrored", "passed"];
+  return order.find((status) => statuses.includes(status)) ?? "missing";
+}
+
+function deliveryStatusState(status: DeliveryContextStatus): ConnectorState {
+  if (status === "passed" || status === "mirrored") return "ready";
+  if (status === "failed" || status === "blocked" || status === "degraded") return "degraded";
+  if (status === "missing") return "disconnected";
+  return "config-only";
+}
+
+function deliveryStageLabel(stage: DeliveryContextStage): string {
+  switch (stage) {
+    case "pr":
+      return "PR";
+    case "ci":
+      return "CI";
+    case "zaxy":
+      return "Zaxy";
+    case "langgraph":
+      return "LangGraph";
+    default:
+      return humanize(stage);
+  }
+}
+
+function deliveryStageIcon(stage: DeliveryContextStage): React.ReactNode {
+  switch (stage) {
+    case "pr":
+      return <FolderGit2 size={13} />;
+    case "ci":
+    case "build":
+      return <Activity size={13} />;
+    case "deploy":
+      return <Play size={13} />;
+    case "runtime":
+      return <Waves size={13} />;
+    case "policy":
+      return <ShieldCheck size={13} />;
+    case "agent":
+    case "langgraph":
+      return <Bot size={13} />;
+    case "feedback":
+      return <BookOpen size={13} />;
+    case "zaxy":
+      return <Binary size={13} />;
+    default:
+      return <CircleDot size={13} />;
+  }
+}
+
+function deliveryRefs(node: DeliveryContextNode): React.ReactNode {
+  const refs = node.refs ?? [];
+  if (refs.length === 0) return <span className="mesh-muted">No refs</span>;
+  return (
+    <div className="context-link-list compact">
+      {refs.slice(0, 3).map((ref) => (
+        <span key={`${node.id}-${ref.label}-${ref.value}`}>
+          {ref.url ? (
+            <a className="mesh-link-button" href={ref.url} target="_blank" rel="noreferrer">{ref.label}: {ref.value}</a>
+          ) : (
+            <span>{ref.label}: <code>{ref.value}</code></span>
+          )}
+        </span>
+      ))}
+      {refs.length > 3 ? <span className="mesh-muted">+{refs.length - 3} more</span> : null}
+    </div>
+  );
+}
+
+function deliveryAgentAttemptIds(graph: DeliveryContextGraph): Set<string> {
+  const ids = new Set<string>(graph.agent_attempt_refs ?? []);
+  for (const workflow of graph.langgraph_workflows ?? []) {
+    for (const id of workflow.agent_attempt_ids ?? []) ids.add(id);
+  }
+  for (const node of graph.nodes) {
+    const metadata = asRecord(node.metadata);
+    const id = stringField(metadata, "agent_attempt_id");
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
 function EvidencePanel({
   events,
   selectedEvent,
@@ -3707,21 +4068,23 @@ function RcaPanel({
           <button className="action-button compact" type="button" onClick={() => onJumpContext("evidence")}>Evidence inspector</button>
           <button className="action-button compact" type="button" onClick={() => onJumpContext("merkle")}>Audit proof</button>
         </div>
+        <DecisionCard
+          decisionType={snapshot.decisionType}
+          autonomyTier={snapshot.autonomyTier}
+          context={snapshot.decisionContext}
+        />
       </section>
 
       <section className="context-panel">
         <SectionTitle icon={<Activity size={14} />} title="Tool Trajectory" />
         <div className="rca-tool-list">
           {snapshot.tools.map((tool, index) => (
-            <article key={tool.id} className={`rca-tool-row ${tool.valid ? "valid" : "invalid"}`}>
-              <span className="rca-rank">{index + 1}</span>
-              <div>
-                <strong>{tool.name}</strong>
-                <small>{tool.summary || humanize(tool.status)}</small>
-                {tool.citationIds.length > 0 ? <code>{tool.citationIds.slice(0, 3).join(" / ")}</code> : null}
-              </div>
-              <StatusPill state={tool.valid ? "ready" : "degraded"} label={humanize(tool.status || "recorded")} />
-            </article>
+            <ToolCallRow
+              key={tool.id}
+              tool={tool}
+              rank={index + 1}
+              isActive={!snapshot.stopReason && index === snapshot.tools.length - 1}
+            />
           ))}
           {snapshot.tools.length === 0 ? <EmptyState text="No read-only RCA tool calls are recorded." /> : null}
         </div>
@@ -3731,14 +4094,7 @@ function RcaPanel({
         <SectionTitle icon={<AlertTriangle size={14} />} title="Ranked Candidates" />
         <div className="rca-candidate-grid">
           {snapshot.candidates.map((candidate) => (
-            <article key={candidate.id} className="rca-candidate-card">
-              <div className="agent-attempt-header">
-                <strong>#{candidate.rank} {candidate.cause}</strong>
-                <span>{formatPercent(candidate.confidence)}</span>
-              </div>
-              {candidate.support.length > 0 ? <p>{candidate.support.slice(0, 4).join(", ")}</p> : null}
-              {candidate.citationIds.length > 0 ? <code>{candidate.citationIds.slice(0, 4).join(" / ")}</code> : null}
-            </article>
+            <RcaCandidateCard key={candidate.id} candidate={candidate} />
           ))}
           {snapshot.candidates.length === 0 ? <EmptyState text="No root-cause candidates are ranked yet." /> : null}
         </div>
@@ -3748,12 +4104,7 @@ function RcaPanel({
         <SectionTitle icon={<CircleDot size={14} />} title="Confidence Movement" />
         <div className="confidence-movement">
           {snapshot.confidenceMovement.map((point) => (
-            <div key={point.id} className="confidence-step">
-              <span>{point.label}</span>
-              <div className="confidence-track"><i style={{ width: `${Math.round(point.value * 100)}%`, background: point.tone }} /></div>
-              <strong>{Math.round(point.value * 100)}%</strong>
-              <small>{point.detail}</small>
-            </div>
+            <ConfidenceStep key={point.id} point={point} />
           ))}
           {snapshot.confidenceMovement.length === 0 ? <EmptyState text="No confidence-bearing artifacts are recorded." /> : null}
         </div>
@@ -4263,6 +4614,15 @@ function buildRcaSnapshot(
   const blockers = buildRcaBlockers(report, artifacts, tools, approvalBlockingReasons);
   const citations = buildRcaCitations(report, tools, candidates, run);
   const confidenceMovement = buildConfidenceMovement(report, candidates, artifacts, analysis, tasks);
+  const decision = asRecord(artifacts.decision);
+  const evaluation = asRecord(artifacts.evaluation);
+  const decisionType = stringField(decision, "decision_type") ?? stringField(decision, "action");
+  const autonomyTier = stringField(decision, "autonomy_tier") ?? stringField(evaluation, "autonomy_tier");
+  const decisionContext =
+    stringField(decision, "rationale") ??
+    stringField(decision, "summary") ??
+    stringField(evaluation, "final_recommendation") ??
+    stringField(report, "likely_cause");
 
   return {
     tools,
@@ -4271,6 +4631,9 @@ function buildRcaSnapshot(
     citations,
     confidenceMovement,
     report,
+    decisionType,
+    autonomyTier,
+    decisionContext,
     stopReason: stringField(report, "stop_reason") ?? stringField(report, "status"),
   };
 }
@@ -4502,7 +4865,7 @@ function buildConfidenceMovement(
 export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents" | "zaxy" | "langgraph_checkpointing") => readiness?.[key] ?? null;
   const certification = readiness?.connector_certification ?? {};
   const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
@@ -4528,6 +4891,8 @@ export function buildAgentConnectors(readiness: IntegrationReadiness | null, tas
     { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
     { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
     { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "langgraph", name: "LangGraph", role: "Proposal checkpointing", adapter: "langgraph", status: readinessFor("langgraph_checkpointing"), primary: false },
+    { id: "zaxy", name: "Zaxy", role: "Memory sidecar", adapter: "eventloom/mcp", status: readinessFor("zaxy"), primary: false },
     { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
     { id: "temporal", name: "Temporal", role: "Durable workflow history and supervisor lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
     { id: "dagster", name: "Dagster", role: "Asset lineage and materialization evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },

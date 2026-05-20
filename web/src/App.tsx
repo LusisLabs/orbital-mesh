@@ -1154,10 +1154,15 @@ export default function App() {
         readiness.goose,
         readiness.latentmas,
         readiness.deepagents,
+        readiness.zaxy,
+        readiness.eventloom,
+        readiness.neo4j_projection,
+        readiness.zaxy_mcp,
+        readiness.langgraph_checkpointing,
       ]
     : [];
   const integrationsReady = readinessItems.filter((i) => i?.ready).length;
-  const integrationsTotal = readinessItems.length || 5;
+  const integrationsTotal = readinessItems.length || 10;
   const inferencePrimaryRoute = readiness?.goose.primary_route ?? "Booting";
   const inferenceFallbackRoute = readiness?.goose.fallback_route ?? null;
   const inferenceWarning = readiness?.goose.warnings?.[0] ?? null;
@@ -2461,7 +2466,7 @@ function ControlPlaneView({
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
-  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents">][];
+  readinessItems: IntegrationReadiness[keyof Pick<IntegrationReadiness, "promptfoo" | "hermes" | "goose" | "latentmas" | "deepagents" | "zaxy" | "eventloom" | "neo4j_projection" | "zaxy_mcp" | "langgraph_checkpointing">][];
   integrationsReady: number;
   integrationsTotal: number;
   systemConnection: ConnectionStatus;
@@ -4519,7 +4524,7 @@ function buildConfidenceMovement(
 export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents" | "zaxy" | "langgraph_checkpointing") => readiness?.[key] ?? null;
   const certification = readiness?.connector_certification ?? {};
   const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
@@ -4545,6 +4550,8 @@ export function buildAgentConnectors(readiness: IntegrationReadiness | null, tas
     { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
     { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
     { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "langgraph", name: "LangGraph", role: "Proposal checkpointing", adapter: "langgraph", status: readinessFor("langgraph_checkpointing"), primary: false },
+    { id: "zaxy", name: "Zaxy", role: "Memory sidecar", adapter: "eventloom/mcp", status: readinessFor("zaxy"), primary: false },
     { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
     { id: "temporal", name: "Temporal", role: "Durable workflow history and supervisor lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
     { id: "dagster", name: "Dagster", role: "Asset lineage and materialization evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },

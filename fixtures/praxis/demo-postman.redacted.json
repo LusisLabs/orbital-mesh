@@ -1,0 +1,46 @@
+{
+  "info": {
+    "name": "Praxis Demo Orders",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "List orders",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "https://api.example.invalid/orders?status=open",
+          "path": ["orders"],
+          "query": [
+            {
+              "key": "status",
+              "value": "open"
+            }
+          ]
+        },
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "REDACTED"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Cancel order",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "https://api.example.invalid/orders/{{order_id}}/cancel",
+          "path": ["orders", "{{order_id}}", "cancel"]
+        },
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "REDACTED"
+          }
+        ]
+      }
+    }
+  ]
+}

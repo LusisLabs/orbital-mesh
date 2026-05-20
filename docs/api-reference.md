@@ -150,6 +150,14 @@ Analyzer's evidence graph for the run — failure-class hypotheses, evidence nod
 
 Lower-level evidence graph the analyzer consumes (probe outputs, citations, contradictions).
 
+### `GET /api/runs/:id/delivery-context`
+
+Pipeline-native delivery graph for the run. It links PR, commit, CI, build,
+deployment, runtime, policy, agent, feedback, evidence-gap, Zaxy mirror, and
+LangGraph proposal metadata. Missing release, artifact, digest, or deployment
+proof is returned as explicit `evidence_gaps`; Zaxy and LangGraph records are
+non-authoritative diagnostic/proposal surfaces.
+
 ### `GET /api/runs/:id/merkle`
 
 Merkle snapshot:

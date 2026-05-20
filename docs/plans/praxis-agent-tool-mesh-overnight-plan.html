@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Praxis Agent-Tool Mesh Overnight Plan</title>
+  <style>
+    :root {
+      --bg: #f6f4ef;
+      --paper: #fffdf8;
+      --surface: #ffffff;
+      --surface-2: #f0ece3;
+      --ink: #191714;
+      --muted: #70685d;
+      --border: rgba(25, 23, 20, 0.11);
+      --border-strong: rgba(25, 23, 20, 0.22);
+      --gold: #b7791f;
+      --gold-soft: rgba(183, 121, 31, 0.12);
+      --teal: #0f766e;
+      --teal-soft: rgba(15, 118, 110, 0.11);
+      --green: #3f7d20;
+      --green-soft: rgba(63, 125, 32, 0.12);
+      --red: #9f1239;
+      --red-soft: rgba(159, 18, 57, 0.11);
+      --blue: #1e3a5f;
+      --blue-soft: rgba(30, 58, 95, 0.11);
+      --violet-avoidance: #4b5563;
+      --shadow: 0 18px 50px rgba(25, 23, 20, 0.08), 0 2px 8px rgba(25, 23, 20, 0.05);
+      --font-body: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+      --font-display: Georgia, "Times New Roman", serif;
+      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #10120f;
+        --paper: #171a16;
+        --surface: #1d211c;
+        --surface-2: #252a23;
+        --ink: #f2eee6;
+        --muted: #b6ad9e;
+        --border: rgba(242, 238, 230, 0.10);
+        --border-strong: rgba(242, 238, 230, 0.21);
+        --gold: #eab75e;
+        --gold-soft: rgba(234, 183, 94, 0.13);
+        --teal: #5eead4;
+        --teal-soft: rgba(94, 234, 212, 0.12);
+        --green: #a3e635;
+        --green-soft: rgba(163, 230, 53, 0.11);
+        --red: #fb7185;
+        --red-soft: rgba(251, 113, 133, 0.12);
+        --blue: #93c5fd;
+        --blue-soft: rgba(147, 197, 253, 0.12);
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.26);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 18% 8%, var(--gold-soft), transparent 36rem),
+        radial-gradient(circle at 90% 32%, var(--teal-soft), transparent 34rem),
+        linear-gradient(135deg, transparent 0 26px, rgba(25, 23, 20, 0.035) 26px 27px, transparent 27px 54px),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font-body);
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--teal);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    code {
+      font-family: var(--font-mono);
+      font-size: 0.92em;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 0.08rem 0.34rem;
+    }
+
+    .wrap {
+      max-width: 1500px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 205px minmax(0, 1fr);
+      gap: 0 42px;
+      padding: 30px 34px 64px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 22px;
+      align-self: start;
+      max-height: calc(100dvh - 44px);
+      overflow-y: auto;
+      padding: 14px 0;
+      grid-row: 1 / -1;
+    }
+
+    .toc-title {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.8px;
+      color: var(--muted);
+      padding-bottom: 12px;
+      margin-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .toc a {
+      display: block;
+      padding: 6px 9px;
+      margin-bottom: 2px;
+      border-left: 2px solid transparent;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+      text-decoration: none;
+    }
+
+    .toc a:hover,
+    .toc a.active {
+      color: var(--ink);
+      background: var(--surface-2);
+      border-left-color: var(--gold);
+    }
+
+    .main {
+      min-width: 0;
+    }
+
+    .hero {
+      background: color-mix(in srgb, var(--paper) 92%, var(--gold) 8%);
+      border: 1px solid color-mix(in srgb, var(--border) 55%, var(--gold) 45%);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: clamp(28px, 5vw, 56px);
+      margin-bottom: 26px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -70px -120px auto;
+      width: 330px;
+      height: 330px;
+      background: radial-gradient(circle, var(--teal-soft), transparent 68%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--gold);
+      margin-bottom: 12px;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    h1 {
+      font-family: var(--font-display);
+      font-size: clamp(42px, 7vw, 76px);
+      line-height: 0.95;
+      letter-spacing: 0;
+      margin: 0 0 20px;
+      max-width: 980px;
+    }
+
+    .lead {
+      font-size: clamp(17px, 2vw, 22px);
+      max-width: 980px;
+      color: var(--muted);
+      margin: 0;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+
+    .metric b {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      margin-bottom: 5px;
+    }
+
+    .metric span {
+      display: block;
+      font-weight: 700;
+      font-size: 18px;
+    }
+
+    section {
+      margin: 26px 0;
+      scroll-margin-top: 24px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 13px;
+    }
+
+    h2 {
+      font-family: var(--font-display);
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1.04;
+      letter-spacing: 0;
+      margin: 0;
+    }
+
+    .section-note {
+      font-family: var(--font-mono);
+      color: var(--muted);
+      font-size: 12px;
+      text-align: right;
+      max-width: 440px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      box-shadow: 0 1px 0 rgba(25, 23, 20, 0.02);
+    }
+
+    .card.hero-card {
+      background: color-mix(in srgb, var(--surface) 94%, var(--blue) 6%);
+      border-color: color-mix(in srgb, var(--border) 55%, var(--blue) 45%);
+    }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.four {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      color: var(--teal);
+      margin-bottom: 9px;
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .card p,
+    .card ul {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    ul {
+      padding-left: 1.15rem;
+    }
+
+    li + li {
+      margin-top: 0.32rem;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow-step {
+      min-height: 132px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      padding: 14px;
+      position: relative;
+    }
+
+    .flow-step::after {
+      content: ">";
+      position: absolute;
+      right: -10px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--gold);
+      font-family: var(--font-mono);
+      font-weight: 800;
+      z-index: 2;
+    }
+
+    .flow-step:last-child::after {
+      display: none;
+    }
+
+    .flow-step .num {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 800;
+      color: var(--gold);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .flow-step strong {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 6px;
+    }
+
+    .flow-step span {
+      display: block;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .table-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 1060px;
+      font-size: 13px;
+    }
+
+    th {
+      text-align: left;
+      background: var(--surface-2);
+      color: var(--muted);
+      border-bottom: 1px solid var(--border-strong);
+      padding: 13px 14px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.1px;
+      white-space: nowrap;
+    }
+
+    td {
+      vertical-align: top;
+      border-bottom: 1px solid var(--border);
+      padding: 14px;
+    }
+
+    tbody tr:nth-child(even) {
+      background: color-mix(in srgb, var(--surface) 92%, var(--gold) 8%);
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .priority {
+      font-family: var(--font-mono);
+      font-weight: 800;
+      color: var(--ink);
+      white-space: nowrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      padding: 3px 8px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      white-space: nowrap;
+    }
+
+    .badge.gold { color: var(--gold); background: var(--gold-soft); }
+    .badge.teal { color: var(--teal); background: var(--teal-soft); }
+    .badge.green { color: var(--green); background: var(--green-soft); }
+    .badge.red { color: var(--red); background: var(--red-soft); }
+    .badge.blue { color: var(--blue); background: var(--blue-soft); }
+
+    .lane {
+      display: grid;
+      grid-template-columns: 120px minmax(0, 1fr);
+      gap: 12px;
+      padding: 13px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .lane:last-child {
+      border-bottom: 0;
+    }
+
+    .lane b {
+      font-family: var(--font-mono);
+      color: var(--gold);
+      font-size: 12px;
+    }
+
+    .lane span {
+      color: var(--muted);
+    }
+
+    .callout {
+      border-left: 4px solid var(--red);
+      background: var(--red-soft);
+      border-radius: 12px;
+      padding: 18px 20px;
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .source-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .source-list li {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .source-list b {
+      display: block;
+      color: var(--ink);
+      margin-bottom: 3px;
+    }
+
+    .checklist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .check {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .check b {
+      display: block;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+
+    .check span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .hero,
+    section {
+      animation: fadeUp 0.36s ease-out both;
+      animation-delay: calc(var(--i, 0) * 0.04s);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-delay: 0ms !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    @media (max-width: 1120px) {
+      .wrap {
+        grid-template-columns: 1fr;
+        padding: 0 22px 52px;
+      }
+
+      .toc {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        max-height: none;
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        overflow-x: auto;
+        background: color-mix(in srgb, var(--bg) 92%, var(--surface) 8%);
+        border-bottom: 1px solid var(--border);
+        padding: 10px 22px;
+        margin: 0 -22px 22px;
+      }
+
+      .toc-title {
+        display: none;
+      }
+
+      .toc a {
+        white-space: nowrap;
+        flex-shrink: 0;
+        border-left: none;
+        border-bottom: 2px solid transparent;
+      }
+
+      .toc a.active {
+        border-bottom-color: var(--gold);
+      }
+
+      .hero-grid,
+      .grid.two,
+      .grid.three,
+      .grid.four,
+      .checklist,
+      .source-list {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step::after {
+        content: "v";
+        right: 18px;
+        top: auto;
+        bottom: -18px;
+        transform: none;
+      }
+
+      .section-head {
+        display: block;
+      }
+
+      .section-note {
+        text-align: left;
+        margin-top: 6px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc" id="toc" aria-label="Plan sections">
+      <div class="toc-title">Plan</div>
+      <a href="#summary">Summary</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#deliverables">P0-Pn</a>
+      <a href="#overnight">Overnight Order</a>
+      <a href="#interfaces">Interfaces</a>
+      <a href="#gates">Gates</a>
+      <a href="#risks">Risks</a>
+      <a href="#sources">Sources</a>
+    </nav>
+
+    <main class="main">
+      <header class="hero" id="summary" style="--i: 0">
+        <div class="eyebrow">State slice: praxis-mcp-generator-overnight-plan-doc</div>
+        <h1>Praxis Agent-Tool Mesh Overnight Build Plan</h1>
+        <p class="lead">
+          Build Praxis as a Mesh-governed MCP connector factory. Praxis generates candidate tool servers and workflow contracts. Akto supplies API security evidence. ACP supplies the supervised agent session surface. Mesh remains the authority for certification, policy, approvals, audit, deployment posture, and revocation.
+        </p>
+        <div class="hero-grid">
+          <div class="metric">
+            <b>Product posture</b>
+            <span>Governed agent-tool mesh</span>
+          </div>
+          <div class="metric">
+            <b>Overnight target</b>
+            <span>Contracted vertical slice</span>
+          </div>
+          <div class="metric">
+            <b>Hard boundary</b>
+            <span>Mesh owns authority</span>
+          </div>
+          <div class="metric">
+            <b>Validation</b>
+            <span>pnpm gates, no tail</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="architecture" style="--i: 1">
+        <div class="section-head">
+          <h2>Target Architecture</h2>
+          <div class="section-note">Praxis expands the mesh. It does not replace Mesh.</div>
+        </div>
+        <div class="flow" aria-label="Praxis agent-tool mesh flow">
+          <div class="flow-step">
+            <div class="num">Input</div>
+            <strong>API specs and SOPs</strong>
+            <span>OpenAPI, Postman, HAR, traffic exports, source-derived endpoint lists, process documents.</span>
+          </div>
+          <div class="flow-step">
+            <div class="num">Generate</div>
+            <strong>Praxis contract builder</strong>
+            <span>Extracts tool candidates, workflow hints, auth needs, schemas, mutation classes, and evidence gaps.</span>
+          </div>
+          <div class="flow-step">
+            <div class="num">Scan</div>
+            <strong>Akto evidence lane</strong>
+            <span>Imports API inventory, sensitive data findings, DAST results, auth risks, and CI scan status.</span>
+          </div>
+          <div class="flow-step">
+            <div class="num">Certify</div>
+            <strong>Mesh connector gate</strong>
+            <span>Maps security and ownership evidence into scopes: denied, read-only, approval-required, staging, pilot.</span>
+          </div>
+          <div class="flow-step">
+            <div class="num">Supervise</div>
+            <strong>ACP operator session</strong>
+            <span>Human reviews tool proposals, permission requests, generated diffs, and deployment posture.</span>
+          </div>
+          <div class="flow-step">
+            <div class="num">Expose</div>
+            <strong>MCP server runtime</strong>
+            <span>Agents call only certified MCP tools. Mesh records events, audit, revocation, and outcomes.</span>
+          </div>
+        </div>
+
+        <div class="grid three" style="margin-top: 14px">
+          <div class="card">
+            <div class="label">Authority</div>
+            <h3>Mesh decides</h3>
+            <p>Policy, certification, approvals, run events, proof continuity, readiness, and bounded actuation remain Mesh-owned.</p>
+          </div>
+          <div class="card">
+            <div class="label">Generation</div>
+            <h3>Praxis proposes</h3>
+            <p>Generated servers are candidates until contracts, security evidence, and connector certification admit them.</p>
+          </div>
+          <div class="card">
+            <div class="label">Security</div>
+            <h3>Akto informs</h3>
+            <p>Akto findings are evidence. Critical or unresolved findings block certification; they do not become policy by themselves.</p>
+          </div>
+        </div>
+
+        <div class="callout" style="margin-top: 14px">
+          <strong>P0 scope lock</strong>
+          Praxis generates candidate MCP contracts and tool-server manifests. Akto supplies advisory security evidence. ACP supplies supervised operator-session artifacts. MCP exposes only what Mesh certification admits. Mesh owns connector policy, certification, approval, audit, bounded execution, proof continuity, readiness posture, and revocation. Managed hosting, marketplace distribution, live DAST triggers, and pilot runtime authority stay out of the overnight MVP until the proof packet path exists.
+        </div>
+      </section>
+
+      <section id="deliverables" style="--i: 2">
+        <div class="section-head">
+          <h2>P0-Pn Deliverables</h2>
+          <div class="section-note">Each row names the state slice before mutation. Do not infer ownership from imports.</div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>State slice</th>
+                  <th>Deliverable</th>
+                  <th>Core work</th>
+                  <th>Exit criteria</th>
+                  <th>Validation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="priority">P0</span></td>
+                  <td><code>praxis.product-boundary.v1</code></td>
+                  <td><span class="badge gold">Scope lock</span></td>
+                  <td>Commit the doctrine: Praxis generates, Akto scans, ACP supervises, MCP exposes, Mesh certifies and revokes.</td>
+                  <td>One authoritative plan, no replacement-control-plane language, no production-ready claims without gates.</td>
+                  <td><code>git diff --check</code>; review plan against <code>README.md</code>, <code>architecture.md</code>, and operating guide.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P1</span></td>
+                  <td><code>praxis.contracts.v1</code></td>
+                  <td><span class="badge blue">Schemas</span></td>
+                  <td>Add schema-only contracts for generation request, source bundle, generated MCP contract, security evidence, ACP session, and certification binding.</td>
+                  <td>Invalid contracts fail closed. Secrets and raw credentials are rejected. Generated tools include mutation class and source evidence.</td>
+                  <td><code>pnpm run verify:contracts</code>; focused schema tests.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P2</span></td>
+                  <td><code>praxis.source-ingest.v1</code></td>
+                  <td><span class="badge teal">Input intake</span></td>
+                  <td>Implement deterministic ingestion for OpenAPI, Postman JSON, Markdown SOPs, and fixture HAR/traffic references. Store redacted refs, not raw secrets.</td>
+                  <td>One fixture source bundle produces a normalized, cited source packet with explicit unknowns and evidence gaps.</td>
+                  <td><code>pnpm run lint:fast</code>; source-ingest unit tests.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P3</span></td>
+                  <td><code>praxis.generated-mcp-contract.v1</code></td>
+                  <td><span class="badge teal">MCP candidate generator</span></td>
+                  <td>Generate MCP tool manifests from source packets: tool name, endpoint, args schema, auth scope, mutation class, workflow hints, test plan, and blockers.</td>
+                  <td>Candidate MCP tools are generated but not certified. Mutating tools default to denied or approval-required until certification.</td>
+                  <td>Golden fixture tests; <code>pnpm run test:focused</code> once wired into focused suite.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P4</span></td>
+                  <td><code>praxis.akto-security-evidence.v1</code></td>
+                  <td><span class="badge red">Akto lane</span></td>
+                  <td>Add optional Akto result importer first. Later add trigger support for CLI/CI scans. Normalize inventory, findings, severities, affected endpoints, and scan status.</td>
+                  <td>Akto evidence can block or downgrade generated MCP tools. Missing Akto is degraded-safe and visible in readiness.</td>
+                  <td>Fixture import tests; no live DAST by default; <code>pnpm run lint:fast</code>.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P5</span></td>
+                  <td><code>mesh.connector-certification.praxis.v1</code></td>
+                  <td><span class="badge green">Certification bridge</span></td>
+                  <td>Map generated tool contracts plus Akto evidence into <code>connector-certification.registry.json</code> compatible certification packets and readiness blockers.</td>
+                  <td>Read-only tools can reach staging-ready when evidence passes. Mutating tools require approval, ownership, policy, and security clearance.</td>
+                  <td><code>pnpm run verify:contracts</code>; integration tests for readiness downgrade and blocker rendering.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P6</span></td>
+                  <td><code>praxis.acp-session.v1</code></td>
+                  <td><span class="badge blue">ACP supervised agent</span></td>
+                  <td>Expose a Praxis proposal agent through ACP. Permission prompts map to Mesh approval records; ACP cannot grant runtime authority.</td>
+                  <td>Session artifact records prompt, source packet, proposed tools, permission decisions, and generated contract refs.</td>
+                  <td>Adapter tests with fake ACP client; <code>pnpm run test:focused</code> after inclusion.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P7</span></td>
+                  <td><code>meshapp.praxis-operator-ui.v1</code></td>
+                  <td><span class="badge gold">Operator UI</span></td>
+                  <td>Add a Praxis panel to show uploaded sources, generated tools, Akto findings, certification state, approval posture, and MCP endpoint readiness.</td>
+                  <td>Operator can inspect why a tool is denied, read-only, approval-required, or staged. No invisible authority upgrades.</td>
+                  <td><code>pnpm --dir meshapp/frontend run lint</code>; targeted UI tests.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P8</span></td>
+                  <td><code>praxis.e2e-proof-packet.v1</code></td>
+                  <td><span class="badge green">Vertical proof</span></td>
+                  <td>Seed a sample API plus SOP, generate candidate MCP tools, import Akto fixture evidence, certify read-only tool, deny unsafe mutation, expose dry-run MCP endpoint.</td>
+                  <td>One exported proof packet binds source -> generated contract -> security evidence -> certification -> MCP readiness -> operator decision.</td>
+                  <td><code>pnpm run verify:full</code>; run export verifier once added.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P9</span></td>
+                  <td><code>praxis.security-readiness.v1</code></td>
+                  <td><span class="badge red">Security hardening</span></td>
+                  <td>Extend threat model, data classification, procurement/security package, credential rotation proof, and docs for Praxis/Akto/ACP/MCP boundaries.</td>
+                  <td>Security docs distinguish repository evidence from target-environment proof. Active DAST requires explicit test-safe target.</td>
+                  <td>Add <code>verify:security</code> only if backed by real scripts; keep <code>pnpm run lint</code> as heavy gate.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">P10</span></td>
+                  <td><code>praxis.pilot-runtime.v1</code></td>
+                  <td><span class="badge green">Pilot runtime</span></td>
+                  <td>Deploy generated MCP server in a bounded runtime, add revocation path, credential boundary checks, audit sink refs, and rollback/deactivate controls.</td>
+                  <td>One pilot-like environment proves generated MCP tool use under Mesh approval and revocation with no raw secret leakage.</td>
+                  <td>Production-like proof packet, Postgres state, connector certification drill, and <code>pnpm run lint</code>.</td>
+                </tr>
+                <tr>
+                  <td><span class="priority">Pn</span></td>
+                  <td><code>praxis.expansion-roadmap.v1</code></td>
+                  <td><span class="badge blue">Backlog</span></td>
+                  <td>Marketplace templates, tenant isolation, private-cloud deployment, continuous Akto scanning, source-code API extraction, generated workflow simulation, pricing and packaging.</td>
+                  <td>Each expansion item has proof requirements before marketing or production-readiness claims.</td>
+                  <td>Separate milestone gates. Do not fold backlog into overnight MVP.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="overnight" style="--i: 3">
+        <div class="section-head">
+          <h2>Overnight Execution Order</h2>
+          <div class="section-note">Measure twice, cut once. Contract first, runtime after.</div>
+        </div>
+        <div class="grid two">
+          <div class="card hero-card">
+            <div class="label">First six hours</div>
+            <div class="lane"><b>00:00-00:45</b><span>P0 scope lock. Write state slices, non-goals, artifact names, and acceptance tests before touching runtime.</span></div>
+            <div class="lane"><b>00:45-02:15</b><span>P1 schema-only contracts and contract tests. No UI, no adapters, no generated server code until schemas pass.</span></div>
+            <div class="lane"><b>02:15-04:00</b><span>P2 source-ingest fixture path for OpenAPI, SOP Markdown, and redacted traffic reference.</span></div>
+            <div class="lane"><b>04:00-06:00</b><span>P3 deterministic MCP contract generator. Start with manifest output, not managed deployment.</span></div>
+          </div>
+          <div class="card hero-card">
+            <div class="label">Second six hours</div>
+            <div class="lane"><b>06:00-07:30</b><span>P4 Akto evidence importer using fixture outputs. No live active scanning by default.</span></div>
+            <div class="lane"><b>07:30-09:00</b><span>P5 certification bridge and readiness blockers for generated connectors.</span></div>
+            <div class="lane"><b>09:00-10:30</b><span>P6/P7 minimal ACP session artifact and Meshapp panel for review state.</span></div>
+            <div class="lane"><b>10:30-12:00</b><span>P8 proof packet and focused validation. Stop on evidence truth, not cosmetic greenwashing.</span></div>
+          </div>
+        </div>
+        <div class="callout" style="margin-top: 14px">
+          <strong>Detached run rule</strong>
+          For an actual overnight build run, use a named <code>tmux</code> session and a durable run directory under <code>.mesh-runtime-state/praxis-overnight/&lt;stamp&gt;/</code> with <code>manifest.json</code>, <code>report.md</code>, and lane logs. Do not use <code>tail</code>. Poll manifests and final report files.
+        </div>
+      </section>
+
+      <section id="interfaces" style="--i: 4">
+        <div class="section-head">
+          <h2>Interface Contracts</h2>
+          <div class="section-note">The minimum surfaces needed to make the plan buildable.</div>
+        </div>
+        <div class="grid three">
+          <div class="card">
+            <div class="label">Generation input</div>
+            <h3><code>praxis.mcp_generation_request.v1</code></h3>
+            <ul>
+              <li>source bundle refs</li>
+              <li>tenant and ownership refs</li>
+              <li>desired agent platforms</li>
+              <li>auth method declarations</li>
+              <li>no raw credentials</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Generated output</div>
+            <h3><code>praxis.generated_mcp_contract.v1</code></h3>
+            <ul>
+              <li>tool names and schemas</li>
+              <li>endpoint bindings</li>
+              <li>mutation class</li>
+              <li>approval posture</li>
+              <li>test plan and blockers</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Security evidence</div>
+            <h3><code>praxis.akto_security_evidence.v1</code></h3>
+            <ul>
+              <li>inventory endpoint id</li>
+              <li>finding severity</li>
+              <li>affected tool candidates</li>
+              <li>scan status and timestamp</li>
+              <li>remediation or waiver refs</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Operator session</div>
+            <h3><code>praxis.acp_agent_session.v1</code></h3>
+            <ul>
+              <li>prompt and source refs</li>
+              <li>proposal transcript refs</li>
+              <li>permission request ids</li>
+              <li>operator decisions</li>
+              <li>generated contract refs</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Mesh binding</div>
+            <h3><code>mesh.connector_certification.v1</code></h3>
+            <ul>
+              <li>certified state</li>
+              <li>allowed scopes</li>
+              <li>credential boundary</li>
+              <li>degraded behavior</li>
+              <li>known blockers</li>
+            </ul>
+          </div>
+          <div class="card">
+            <div class="label">Proof export</div>
+            <h3><code>praxis.e2e_proof_packet.v1</code></h3>
+            <ul>
+              <li>source bundle hash</li>
+              <li>contract hash</li>
+              <li>security evidence hash</li>
+              <li>certification result</li>
+              <li>MCP readiness and audit refs</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="gates" style="--i: 5">
+        <div class="section-head">
+          <h2>Validation Gates</h2>
+          <div class="section-note">Current root scripts use pnpm. Keep <code>pnpm run lint</code> as the heavy root gate.</div>
+        </div>
+        <div class="checklist">
+          <div class="check">
+            <b>Fast preflight</b>
+            <span><code>pnpm run lint:fast</code> for contracts plus focused Python compile checks.</span>
+          </div>
+          <div class="check">
+            <b>Contract truth</b>
+            <span><code>pnpm run verify:contracts</code> before generated UI types or runtime claims.</span>
+          </div>
+          <div class="check">
+            <b>Focused behavior</b>
+            <span><code>pnpm run test:focused</code> after adding source ingest, generation, certification, or session behavior.</span>
+          </div>
+          <div class="check">
+            <b>Frontend surfaces</b>
+            <span><code>pnpm --dir meshapp/frontend run lint</code> and <code>pnpm --dir web run lint</code> when generated contracts or UI change.</span>
+          </div>
+          <div class="check">
+            <b>Full gate</b>
+            <span><code>pnpm run verify:full</code> before calling the vertical slice complete.</span>
+          </div>
+          <div class="check">
+            <b>Heavy gate</b>
+            <span><code>pnpm run lint</code> remains the root hard gate; do not replace it with narrow checks.</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="risks" style="--i: 6">
+        <div class="section-head">
+          <h2>Hard Risks</h2>
+          <div class="section-note">These are blockers, not polish items.</div>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <div class="label">Authority creep</div>
+            <h3>Generated tools bypass Mesh</h3>
+            <p>Block by default. Generated MCP servers are candidates until connector certification admits exact scopes. ACP permission requests become Mesh operator decisions, not direct runtime grants.</p>
+          </div>
+          <div class="card">
+            <div class="label">Security scan harm</div>
+            <h3>Active DAST against unsafe targets</h3>
+            <p>Start with Akto result import and fixtures. Live scans require explicit test-safe target, rate limits, target ownership, and operator approval.</p>
+          </div>
+          <div class="card">
+            <div class="label">Secret leakage</div>
+            <h3>Specs and traffic carry credentials</h3>
+            <p>Persist refs, hashes, redacted summaries, and credential environment variable names. Never commit API keys, bearer tokens, cookies, kubeconfigs, or customer traffic.</p>
+          </div>
+          <div class="card">
+            <div class="label">False certainty</div>
+            <h3>SOPs become executable truth</h3>
+            <p>SOPs are context and policy evidence. They can suggest workflows, approvals, and owners. They cannot certify behavior without API tests and Mesh policy gates.</p>
+          </div>
+          <div class="card">
+            <div class="label">Overnight sprawl</div>
+            <h3>Too many surfaces change at once</h3>
+            <p>Ship schema, source fixture, generator, Akto import, certification bridge, and proof packet first. Managed hosting and marketplace wait for Pn.</p>
+          </div>
+          <div class="card">
+            <div class="label">Dirty tree collision</div>
+            <h3>Unrelated changes get mixed in</h3>
+            <p>Start and finish with status. Do not stage unrelated files. If a touched file has user edits, inspect and preserve them.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="sources" style="--i: 7">
+        <div class="section-head">
+          <h2>Source Anchors</h2>
+          <div class="section-note">Use these before implementation begins.</div>
+        </div>
+        <ul class="source-list">
+          <li><b>Mesh authority boundary</b><code>README.md</code>, <code>architecture.md</code>, <code>docs/future-agent-operating-guide.md</code></li>
+          <li><b>Connector certification</b><code>config/connector-certification.registry.json</code>, <code>docs/production-hardening-records.md</code></li>
+          <li><b>Zaxy/LangGraph precedent</b><code>docs/plans/zaxy-langgraph-integration-prd.md</code>, <code>docs/plans/pipeline-native-delivery-context-prd.md</code></li>
+          <li><b>Current root gates</b><code>package.json</code> scripts: <code>lint:fast</code>, <code>test:focused</code>, <code>verify:contracts</code>, <code>verify:full</code>, <code>lint</code></li>
+          <li><b>Akto repo</b><a href="https://github.com/akto-api-security/akto">akto-api-security/akto</a> for API inventory, security testing, and runtime issue posture.</li>
+          <li><b>Akto traffic sources</b><a href="https://docs.akto.io/traffic-connector/traffic-data-sources">traffic connector docs</a> for OpenAPI, Postman, HAR, gateways, Kubernetes, eBPF, source-code, and CI options.</li>
+          <li><b>Akto CI/CD</b><a href="https://docs.akto.io/integrations/ci-cd-integrations/how-to/run-tests-in-cicd">CI/CD test trigger docs</a> for later scan automation.</li>
+          <li><b>ACP</b><a href="https://agentclientprotocol.com/protocol/overview">Agent Client Protocol overview</a> for supervised agent session integration.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const toc = document.getElementById("toc");
+      const links = Array.from(toc.querySelectorAll("a"));
+      const sections = links
+        .map((link) => {
+          const id = link.getAttribute("href").slice(1);
+          const el = document.getElementById(id);
+          return el ? { id, el, link } : null;
+        })
+        .filter(Boolean);
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          links.forEach((link) => link.classList.remove("active"));
+          const match = sections.find((section) => section.el === entry.target);
+          if (match) {
+            match.link.classList.add("active");
+            if (window.innerWidth <= 1120) {
+              match.link.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+            }
+          }
+        });
+      }, { rootMargin: "-10% 0px -80% 0px" });
+
+      sections.forEach((section) => observer.observe(section.el));
+    })();
+  </script>
+</body>
+</html>

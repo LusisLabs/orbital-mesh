@@ -7,6 +7,7 @@ from uuid import uuid4
 from .contracts import MemoryPacket, RetrievalRecord
 from .memory_scoring import reciprocal_rank_fusion
 from .memory_verifier import verify_memory_candidates
+from .zaxy_langgraph import checkout_zaxy_memory
 
 
 class MemoryRetrievalService:
@@ -45,6 +46,11 @@ class MemoryRetrievalService:
         observations = self.state_store.list_observations(scope, {"limit": 250})
         claims = self.state_store.list_claims(scope, {"limit": 250})
         relationships = self.state_store.list_relationships(scope=scope)
+        zaxy_checkout = checkout_zaxy_memory(getattr(self.state_store, "config", None), {
+            "query": query,
+            "scope": scope,
+            "limit": limit,
+        })
 
         lexical_ids = self._lexical_rank(query, observations, claims)
         graph_ids = self._graph_rank(lexical_ids, relationships)
@@ -107,7 +113,7 @@ class MemoryRetrievalService:
                     "state": item["state"],
                 }
                 for item in ordered_verified
-            ],
+            ] + [_zaxy_checkout_citation(zaxy_checkout)],
             generated_at=_timestamp(),
         )
         packet.validate()
@@ -142,6 +148,7 @@ class MemoryRetrievalService:
             ],
             "contradictions": contradictions[:limit],
             "channels": channels,
+            "zaxy_checkout": zaxy_checkout,
         }
 
     def legacy_search(self, query: str, scope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -338,6 +345,27 @@ def _overlap_score(query_tokens: set[str], content_tokens: set[str]) -> float:
     if intersection == 0:
         return 0.0
     return intersection / len(query_tokens)
+
+
+def _zaxy_checkout_citation(checkout: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "item_id": "zaxy_memory_checkout",
+        "citation_refs": [
+            {
+                "source_type": "zaxy_memory_checkout",
+                "status": checkout.get("status"),
+                "candidate_count": checkout.get("candidate_count", 0),
+            }
+        ],
+        "channels": ["zaxy_external"],
+        "rank_score": 0.0,
+        "verified_confidence": 0.0,
+        "state": "diagnostic_only",
+        "authority": {
+            "mesh_verification_required": True,
+            "zaxy_checkout_authoritative": False,
+        },
+    }
 
 
 def _parse_infra_node_key(key: str) -> tuple[str, str | None, str] | None:

@@ -40,6 +40,7 @@ from .procurement_security import procurement_security_package_ready
 from .provider_adapter import provider_adapter_proof_ready
 from .public_proof import public_proof_package_ready
 from .threat_model import threat_model_register_ready
+from .zaxy_langgraph import langgraph_readiness, zaxy_readiness
 
 
 DEFAULT_GITNEXUS_PORT = 4747
@@ -177,6 +178,19 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.latentmas_url,
         runtime_config.latentmas_model_name,
         runtime_config.agent_fabric_mode,
+        runtime_config.zaxy_enabled,
+        runtime_config.zaxy_namespace,
+        runtime_config.zaxy_tenant_id,
+        runtime_config.zaxy_project_id,
+        runtime_config.zaxy_eventloom_url,
+        runtime_config.zaxy_eventloom_outbox_path,
+        runtime_config.zaxy_mcp_url,
+        runtime_config.zaxy_neo4j_projection_enabled,
+        runtime_config.zaxy_packet_capture_enabled,
+        runtime_config.zaxy_timeout_seconds,
+        runtime_config.langgraph_enabled,
+        runtime_config.langgraph_checkpointer_url,
+        runtime_config.langgraph_timeout_seconds,
         runtime_config.mesh_deepagents_model,
         runtime_config.run_export_retention_days,
         runtime_config.run_export_retention_reviewed,
@@ -189,17 +203,21 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
                 return entry[1]
     resolved = resolve_integrations_config(runtime_config)
     checked_at = _timestamp()
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         promptfoo_future = executor.submit(_command_status, "promptfoo", resolved.promptfoo_command)
         hermes_future = executor.submit(_command_status, "hermes", resolved.hermes_command)
         goose_future = executor.submit(_command_status, "goose", resolved.goose_command)
         latentmas_future = executor.submit(_latentmas_status, runtime_config)
         deepagents_future = executor.submit(_deepagents_status, runtime_config)
+        zaxy_future = executor.submit(_zaxy_statuses, runtime_config)
+        langgraph_future = executor.submit(_langgraph_checkpointing_status, runtime_config)
         promptfoo_status = promptfoo_future.result()
         hermes_status = hermes_future.result()
         goose_status = goose_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+        zaxy_status, eventloom_status, neo4j_status, zaxy_mcp_status = zaxy_future.result()
+        langgraph_status = langgraph_future.result()
     staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
     promptfoo_status = _staging_contract_status(
         promptfoo_status,
@@ -256,6 +274,36 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         required_before="pilot",
         posture="sandboxed proposal fabric",
     )
+    zaxy_status = _with_certification(
+        zaxy_status,
+        "read-only" if zaxy_status.ready else "disabled",
+        required_before="expansion",
+        posture="memory sidecar",
+    )
+    eventloom_status = _with_certification(
+        eventloom_status,
+        "read-only" if eventloom_status.ready else "disabled",
+        required_before="expansion",
+        posture="audit mirror sidecar",
+    )
+    neo4j_status = _with_certification(
+        neo4j_status,
+        "read-only" if neo4j_status.ready else "disabled",
+        required_before="expansion",
+        posture="temporal graph projection",
+    )
+    zaxy_mcp_status = _with_certification(
+        zaxy_mcp_status,
+        "read-only" if zaxy_mcp_status.ready else "disabled",
+        required_before="expansion",
+        posture="bounded memory checkout",
+    )
+    langgraph_status = _with_certification(
+        langgraph_status,
+        "proposal-only" if langgraph_status.ready else "disabled",
+        required_before="pilot",
+        posture="proposal checkpointing",
+    )
     runtime_connector_states = _connector_certification(runtime_config, resolved)
     runtime_connector_states.update(
         {
@@ -264,6 +312,11 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
             "goose": _status_connector_state(goose_status),
             "latentmas": _status_connector_state(latentmas_status),
             "deepagents": _status_connector_state(deepagents_status),
+            "zaxy": _status_connector_state(zaxy_status),
+            "eventloom": _status_connector_state(eventloom_status),
+            "neo4j_projection": _status_connector_state(neo4j_status),
+            "zaxy_mcp": _status_connector_state(zaxy_mcp_status),
+            "langgraph_checkpointing": _status_connector_state(langgraph_status),
         }
     )
     connector_certification_packet = build_connector_certification_matrix(
@@ -282,6 +335,11 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
             "goose": goose_status,
             "latentmas": latentmas_status,
             "deepagents": deepagents_status,
+            "zaxy": zaxy_status,
+            "eventloom": eventloom_status,
+            "neo4j_projection": neo4j_status,
+            "zaxy_mcp": zaxy_mcp_status,
+            "langgraph_checkpointing": langgraph_status,
         },
         connector_certification,
     )
@@ -300,6 +358,11 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         goose=goose_status,
         latentmas=latentmas_status,
         deepagents=deepagents_status,
+        zaxy=zaxy_status,
+        eventloom=eventloom_status,
+        neo4j_projection=neo4j_status,
+        zaxy_mcp=zaxy_mcp_status,
+        langgraph_checkpointing=langgraph_status,
         vault_path=runtime_config.vault_path,
         state_path=runtime_config.state_directory,
         integrations_config_path=runtime_config.integrations_config_path,
@@ -1049,6 +1112,55 @@ def _deepagents_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
         ready=True,
         detail=detail,
         warnings=warnings,
+    )
+
+
+def _zaxy_statuses(runtime_config: RuntimeConfig) -> tuple[IntegrationStatus, IntegrationStatus, IntegrationStatus, IntegrationStatus]:
+    status = zaxy_readiness(runtime_config)
+    zaxy = IntegrationStatus(
+        name="zaxy",
+        ready=bool(status["ready"]),
+        detail=str(status["detail"]),
+        url=runtime_config.zaxy_eventloom_url or runtime_config.zaxy_mcp_url,
+        warnings=list(status.get("warnings") or []),
+    )
+    eventloom_ready = bool(runtime_config.zaxy_enabled and (runtime_config.zaxy_eventloom_url or runtime_config.zaxy_eventloom_outbox_path))
+    eventloom = IntegrationStatus(
+        name="eventloom",
+        ready=eventloom_ready,
+        detail="configured optional event mirror" if eventloom_ready else ("disabled" if not runtime_config.zaxy_enabled else "eventloom sink not configured"),
+        url=runtime_config.zaxy_eventloom_url,
+        warnings=[] if eventloom_ready or not runtime_config.zaxy_enabled else ["zaxy_eventloom_sink_missing"],
+    )
+    neo4j = IntegrationStatus(
+        name="neo4j_projection",
+        ready=bool(runtime_config.zaxy_enabled and runtime_config.zaxy_neo4j_projection_enabled),
+        detail=(
+            "enabled optional graph projection"
+            if runtime_config.zaxy_enabled and runtime_config.zaxy_neo4j_projection_enabled
+            else "disabled"
+        ),
+        warnings=[],
+    )
+    mcp_ready = bool(runtime_config.zaxy_enabled and runtime_config.zaxy_mcp_url)
+    zaxy_mcp = IntegrationStatus(
+        name="zaxy_mcp",
+        ready=mcp_ready,
+        detail="configured optional memory checkout" if mcp_ready else ("disabled" if not runtime_config.zaxy_enabled else "MESH_ZAXY_MCP_URL is not configured"),
+        url=runtime_config.zaxy_mcp_url,
+        warnings=[] if mcp_ready or not runtime_config.zaxy_enabled else ["zaxy_mcp_checkout_missing"],
+    )
+    return zaxy, eventloom, neo4j, zaxy_mcp
+
+
+def _langgraph_checkpointing_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
+    status = langgraph_readiness(runtime_config)
+    return IntegrationStatus(
+        name="langgraph_checkpointing",
+        ready=bool(status["ready"]),
+        detail=str(status["detail"]),
+        url=runtime_config.langgraph_checkpointer_url,
+        warnings=list(status.get("warnings") or []),
     )
 
 

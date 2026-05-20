@@ -37,6 +37,7 @@ DEFAULT_ON_CALL_DRILL_PATH = DEFAULT_STATE_DIRECTORY / "on-call-drill.json"
 DEFAULT_DEEPAGENTS_WORKSPACE = DEFAULT_STATE_DIRECTORY / "deepagents"
 DEFAULT_BENCHMARK_EXPORT_PATH = DEFAULT_STATE_DIRECTORY / "benchmarks" / "runs.jsonl"
 DEFAULT_CORPUS_DATABASE_PATH = DEFAULT_STATE_DIRECTORY / "corpus" / "incident_corpus.sqlite"
+DEFAULT_OPERATOR_IDENTITY_PATH = DEFAULT_STATE_DIRECTORY / "operator-identity.json"
 
 
 def _env_path_anchored_to_repo(raw: str | None, *, default: str) -> str:
@@ -100,6 +101,16 @@ class RuntimeConfig:
     helix_api_endpoint: str | None = None
     helix_port: int = 6969
     helix_query_namespace: str = "mesh"
+    zaxy_enabled: bool = False
+    zaxy_namespace: str = "mesh"
+    zaxy_tenant_id: str = "local"
+    zaxy_project_id: str = "mesh"
+    zaxy_eventloom_url: str | None = None
+    zaxy_eventloom_outbox_path: str | None = None
+    zaxy_mcp_url: str | None = None
+    zaxy_neo4j_projection_enabled: bool = False
+    zaxy_packet_capture_enabled: bool = False
+    zaxy_timeout_seconds: float = 2.0
     # Connection pool sizing for ``state_backend=postgres``. The pool is
     # shared process-wide and keyed by ``database_url`` so a single mesh
     # instance never opens more than ``postgres_pool_max_size`` concurrent
@@ -160,6 +171,22 @@ class RuntimeConfig:
     operator_identity_required: bool = False
     operator_header_name: str = "X-Mesh-Operator"
     operator_roles_header_name: str = "X-Mesh-Roles"
+    auth_mode: str = "proxy_header"
+    operator_identity_path: str = str(DEFAULT_OPERATOR_IDENTITY_PATH)
+    session_cookie_name: str = "mesh_session"
+    auth_allowed_origins: tuple[str, ...] = ()
+    signup_enabled: bool = True
+    password_auth_enabled: bool = True
+    captcha_provider: str = "disabled"
+    captcha_site_key: str = ""
+    captcha_secret_key: str = ""
+    captcha_dev_bypass_enabled: bool = False
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_redirect_url: str = ""
+    github_oauth_client_id: str = ""
+    github_oauth_client_secret: str = ""
+    github_oauth_redirect_url: str = ""
     force_approval_gate: bool = False
     run_worker_count: int = 4
     run_queue_size: int = 100
@@ -203,6 +230,9 @@ class RuntimeConfig:
     agent_tasks_mode: str = "async"
     agent_mesh_agents: tuple[str, ...] = ()
     agent_mesh_task_timeout_seconds: float = 15.0
+    langgraph_enabled: bool = False
+    langgraph_checkpointer_url: str | None = None
+    langgraph_timeout_seconds: float = 30.0
     mesh_deepagents_model: str = "openai:MiniMax-M2.7"
     mesh_deepagents_timeout_seconds: float = 120.0
     mesh_deepagents_workspace_root: str = str(DEFAULT_DEEPAGENTS_WORKSPACE)
@@ -347,6 +377,17 @@ class RuntimeConfig:
             raise ValueError(f"run_queue_size must be > 0, got {self.run_queue_size}")
         if self.tenant_active_run_quota <= 0:
             raise ValueError(f"tenant_active_run_quota must be > 0, got {self.tenant_active_run_quota}")
+        if self.auth_mode not in {"proxy_header", "app_session"}:
+            raise ValueError("auth_mode must be proxy_header or app_session")
+        if self.captcha_provider not in {"disabled", "hcaptcha", "recaptcha", "turnstile"}:
+            raise ValueError("captcha_provider must be disabled, hcaptcha, recaptcha, or turnstile")
+        if self.auth_mode == "app_session":
+            if not self.operator_identity_path:
+                raise ValueError("operator_identity_path is required for app_session auth")
+            if self.signup_enabled and self.password_auth_enabled:
+                captcha_configured = self.captcha_provider != "disabled" and bool(self.captcha_site_key and self.captcha_secret_key)
+                if self.environment != "local" and not captcha_configured:
+                    raise ValueError("captcha must be configured for app_session signup outside local")
         if self.watch_interval_seconds < 10:
             raise ValueError(f"watch_interval_seconds must be >= 10, got {self.watch_interval_seconds}")
         if self.reasoning_bank_max_strategies < 1:
@@ -380,6 +421,10 @@ class RuntimeConfig:
         if self.helix_port <= 0:
             raise ValueError(f"helix_port must be > 0, got {self.helix_port}")
         self.helix_query_namespace = _normalize_helix_query_namespace(self.helix_query_namespace)
+        if self.zaxy_timeout_seconds <= 0:
+            raise ValueError(f"zaxy_timeout_seconds must be > 0, got {self.zaxy_timeout_seconds}")
+        if self.langgraph_timeout_seconds <= 0:
+            raise ValueError(f"langgraph_timeout_seconds must be > 0, got {self.langgraph_timeout_seconds}")
         if self.darkharness_packet_persistence_mode != "ephemeral":
             raise ValueError("darkharness_packet_persistence_mode only supports ephemeral in this phase")
         if self.postgres_pool_min_size < 1:
@@ -432,6 +477,20 @@ class RuntimeConfig:
             helix_api_endpoint=os.getenv("MESH_HELIX_API_ENDPOINT") or None,
             helix_port=int(os.getenv("MESH_HELIX_PORT", "6969")),
             helix_query_namespace=os.getenv("MESH_HELIX_QUERY_NAMESPACE", "mesh"),
+            zaxy_enabled=_env_bool("MESH_ZAXY_ENABLED", default=False),
+            zaxy_namespace=os.getenv("MESH_ZAXY_NAMESPACE", "mesh"),
+            zaxy_tenant_id=os.getenv("MESH_ZAXY_TENANT_ID", "local"),
+            zaxy_project_id=os.getenv("MESH_ZAXY_PROJECT_ID", "mesh"),
+            zaxy_eventloom_url=os.getenv("MESH_ZAXY_EVENTLOOM_URL") or None,
+            zaxy_eventloom_outbox_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_ZAXY_EVENTLOOM_OUTBOX_PATH"), default="")
+                if os.getenv("MESH_ZAXY_EVENTLOOM_OUTBOX_PATH")
+                else None
+            ),
+            zaxy_mcp_url=os.getenv("MESH_ZAXY_MCP_URL") or None,
+            zaxy_neo4j_projection_enabled=_env_bool("MESH_ZAXY_NEO4J_PROJECTION_ENABLED", default=False),
+            zaxy_packet_capture_enabled=_env_bool("MESH_ZAXY_PACKET_CAPTURE_ENABLED", default=False),
+            zaxy_timeout_seconds=max(0.1, float(os.getenv("MESH_ZAXY_TIMEOUT_SECONDS", "2"))),
             postgres_pool_min_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MIN_SIZE", "1"))),
             postgres_pool_max_size=max(1, int(os.getenv("MESH_POSTGRES_POOL_MAX_SIZE", "10"))),
             postgres_pool_max_idle_seconds=max(1.0, float(os.getenv("MESH_POSTGRES_POOL_MAX_IDLE_SECONDS", "600"))),
@@ -620,6 +679,25 @@ class RuntimeConfig:
             operator_identity_required=_env_bool("MESH_OPERATOR_IDENTITY_REQUIRED", default=False),
             operator_header_name=os.getenv("MESH_OPERATOR_HEADER", "X-Mesh-Operator"),
             operator_roles_header_name=os.getenv("MESH_OPERATOR_ROLES_HEADER", "X-Mesh-Roles"),
+            auth_mode=os.getenv("MESH_AUTH_MODE", "proxy_header"),
+            operator_identity_path=_env_path_anchored_to_repo(
+                os.getenv("MESH_OPERATOR_IDENTITY_PATH"),
+                default=str(Path(state_directory) / "operator-identity.json"),
+            ),
+            session_cookie_name=os.getenv("MESH_SESSION_COOKIE_NAME", "mesh_session"),
+            auth_allowed_origins=_csv_env("MESH_AUTH_ALLOWED_ORIGINS"),
+            signup_enabled=_env_bool("MESH_SIGNUP_ENABLED", default=True),
+            password_auth_enabled=_env_bool("MESH_PASSWORD_AUTH_ENABLED", default=True),
+            captcha_provider=os.getenv("MESH_CAPTCHA_PROVIDER", "disabled").lower(),
+            captcha_site_key=os.getenv("MESH_CAPTCHA_SITE_KEY", ""),
+            captcha_secret_key=os.getenv("MESH_CAPTCHA_SECRET_KEY", ""),
+            captcha_dev_bypass_enabled=_env_bool("MESH_CAPTCHA_DEV_BYPASS", default=False),
+            google_oauth_client_id=os.getenv("MESH_GOOGLE_OAUTH_CLIENT_ID", ""),
+            google_oauth_client_secret=os.getenv("MESH_GOOGLE_OAUTH_CLIENT_SECRET", ""),
+            google_oauth_redirect_url=os.getenv("MESH_GOOGLE_OAUTH_REDIRECT_URL", ""),
+            github_oauth_client_id=os.getenv("MESH_GITHUB_OAUTH_CLIENT_ID", ""),
+            github_oauth_client_secret=os.getenv("MESH_GITHUB_OAUTH_CLIENT_SECRET", ""),
+            github_oauth_redirect_url=os.getenv("MESH_GITHUB_OAUTH_REDIRECT_URL", ""),
             force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),
             run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
             run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),
@@ -675,6 +753,9 @@ class RuntimeConfig:
             agent_tasks_mode=_normalize_agent_tasks_mode(os.getenv("MESH_AGENT_TASKS_MODE", "async")),
             agent_mesh_agents=_csv_env("MESH_AGENT_MESH_AGENTS"),
             agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
+            langgraph_enabled=_env_bool("MESH_LANGGRAPH_ENABLED", default=False),
+            langgraph_checkpointer_url=os.getenv("MESH_LANGGRAPH_CHECKPOINTER_URL") or None,
+            langgraph_timeout_seconds=max(0.1, float(os.getenv("MESH_LANGGRAPH_TIMEOUT_SECONDS", "30"))),
             mesh_deepagents_model=os.getenv("MESH_DEEPAGENTS_MODEL", "openai:MiniMax-M2.7"),
             mesh_deepagents_timeout_seconds=float(os.getenv("MESH_DEEPAGENTS_TIMEOUT_SECONDS", "120")),
             mesh_deepagents_workspace_root=_env_path_anchored_to_repo(
@@ -837,7 +918,7 @@ def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
 
 def _normalize_agent_fabric_mode(raw: str) -> str:
     mode = (raw or "native").strip().lower()
-    return mode if mode in ("native", "deepagents") else "native"
+    return mode if mode in ("native", "deepagents", "langgraph") else "native"
 
 
 def _normalize_agent_tasks_mode(raw: str) -> str:

@@ -119,7 +119,11 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("codex", connectors)
         self.assertIn("claudecode", connectors)
         self.assertIn("openclaw", connectors)
+        optional_sidecars = {"zaxy", "eventloom", "neo4j_projection", "zaxy_mcp", "langgraph_checkpointing"}
         for connector_id, connector in connectors.items():
+            if connector_id in optional_sidecars:
+                self.assertEqual(connector["state"], "disabled", connector_id)
+                continue
             if connector_id == "kubernetes":
                 self.assertIn(connector["state"], {"staging-ready", "pilot-ready"})
             else:
@@ -133,6 +137,38 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(readiness["goose"]["ready"])
         self.assertTrue(readiness["latentmas"]["ready"])
         self.assertTrue(readiness["deepagents"]["ready"])
+        self.assertFalse(readiness["zaxy"]["ready"])
+        self.assertFalse(readiness["eventloom"]["ready"])
+        self.assertFalse(readiness["neo4j_projection"]["ready"])
+        self.assertFalse(readiness["zaxy_mcp"]["ready"])
+        self.assertFalse(readiness["langgraph_checkpointing"]["ready"])
+
+    def test_zaxy_langgraph_readiness_is_optional_and_degraded_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            readiness = build_readiness(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    vault_path=str(Path(temp_dir) / "vault"),
+                    integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                    zaxy_enabled=True,
+                    zaxy_eventloom_outbox_path=str(Path(temp_dir) / "zaxy.jsonl"),
+                    zaxy_neo4j_projection_enabled=True,
+                    langgraph_enabled=True,
+                    langgraph_checkpointer_url="file:///tmp/langgraph-checkpoints",
+                    feature_flag_credentials_available=False,
+                    incident_credentials_available=False,
+                ),
+                force=True,
+            ).to_dict()
+
+        self.assertEqual(readiness["status"], "ready")
+        self.assertTrue(readiness["zaxy"]["ready"])
+        self.assertTrue(readiness["eventloom"]["ready"])
+        self.assertTrue(readiness["neo4j_projection"]["ready"])
+        self.assertFalse(readiness["zaxy_mcp"]["ready"])
+        self.assertIn("zaxy_mcp_checkout_missing", readiness["zaxy_mcp"]["warnings"])
+        self.assertIn("langgraph_checkpointing", readiness)
+        self.assertNotIn("langgraph_checkpointing", readiness["blockers"])
 
     def test_promptfoo_output_parser_extracts_real_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

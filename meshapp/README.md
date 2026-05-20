@@ -13,7 +13,7 @@ State slices:
 `zig build dev`, `zig build run`, and `zig build package` install frontend dependencies automatically. To install them explicitly, run:
 
 ```sh
-npm install --prefix frontend
+pnpm --dir frontend install
 ```
 
 The generated native build defaults to this zero-native framework path:
@@ -47,6 +47,8 @@ Frontend:
 Set `NEXT_PUBLIC_MESH_API_URL` at build time or pass `?server=<url>` at runtime to target another control-plane API.
 
 Local browser sessions on `localhost`, `127.0.0.1`, or `::1` send `X-Mesh-Operator: local-operator` and `X-Mesh-Roles: viewer,launcher,approver` by default so protected read paths such as `/api/approvals` do not stall the console. Override with `NEXT_PUBLIC_MESH_OPERATOR_ID` and `NEXT_PUBLIC_MESH_OPERATOR_ROLES`, `?operator=<id>&roles=<csv>`, `?operator_id=<id>&operator_roles=<csv>`, or `localStorage` keys `mesh.operator.id` and `mesh.operator.roles`. Production ingress must still strip client-supplied identity headers and stamp trusted identity, as documented in `docs/authenticated-ingress.md`.
+
+Set `MESH_AUTH_MODE=app_session` to use the production product shell's first-party session layer, including email/password signup, configured OAuth providers, captcha verification, team setup, active-team switching, and scoped dashboards. See `docs/operator-product-app.md` for environment variables and the matching `scripts/operator_config.py` CLI settings path.
 
 ## HelixDB Memory Projection
 

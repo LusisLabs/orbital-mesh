@@ -310,6 +310,9 @@
         "deepagents": {
           "$ref": "#/$defs/IntegrationStatus"
         },
+        "eventloom": {
+          "$ref": "#/$defs/IntegrationStatus"
+        },
         "goose": {
           "$ref": "#/$defs/IntegrationStatus"
         },
@@ -319,7 +322,13 @@
         "integrations_config_path": {
           "type": "string"
         },
+        "langgraph_checkpointing": {
+          "$ref": "#/$defs/IntegrationStatus"
+        },
         "latentmas": {
+          "$ref": "#/$defs/IntegrationStatus"
+        },
+        "neo4j_projection": {
           "$ref": "#/$defs/IntegrationStatus"
         },
         "optional_checks": {
@@ -348,6 +357,12 @@
         },
         "vault_path": {
           "type": "string"
+        },
+        "zaxy": {
+          "$ref": "#/$defs/IntegrationStatus"
+        },
+        "zaxy_mcp": {
+          "$ref": "#/$defs/IntegrationStatus"
         }
       },
       "required": [
@@ -365,6 +380,11 @@
         "goose",
         "latentmas",
         "deepagents",
+        "zaxy",
+        "eventloom",
+        "neo4j_projection",
+        "zaxy_mcp",
+        "langgraph_checkpointing",
         "vault_path",
         "state_path",
         "integrations_config_path"

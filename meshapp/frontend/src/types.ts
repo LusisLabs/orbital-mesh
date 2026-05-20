@@ -133,6 +133,11 @@ export interface IntegrationReadiness {
   goose: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
+  zaxy: IntegrationStatus;
+  eventloom: IntegrationStatus;
+  neo4j_projection: IntegrationStatus;
+  zaxy_mcp: IntegrationStatus;
+  langgraph_checkpointing: IntegrationStatus;
   vault_path: string;
   state_path: string;
   integrations_config_path: string;
@@ -211,6 +216,116 @@ export interface ConnectorCertificationPacket {
   registry_sha256?: string | null;
   blockers: string[];
   connectors: Record<string, ConnectorCertificationRecord>;
+}
+
+export type DeliveryContextNodeKind =
+  | "pull_request"
+  | "commit"
+  | "ci"
+  | "build"
+  | "deploy"
+  | "runtime"
+  | "policy"
+  | "agent"
+  | "feedback"
+  | "evidence_gap"
+  | "zaxy_mirror"
+  | "langgraph_workflow"
+  | "agent_attempt";
+
+export type DeliveryContextStage =
+  | "pr"
+  | "ci"
+  | "build"
+  | "deploy"
+  | "runtime"
+  | "policy"
+  | "agent"
+  | "feedback"
+  | "evidence"
+  | "zaxy"
+  | "langgraph";
+
+export type DeliveryContextStatus =
+  | "passed"
+  | "failed"
+  | "blocked"
+  | "missing"
+  | "running"
+  | "pending"
+  | "mirrored"
+  | "degraded"
+  | "unknown";
+
+export interface DeliveryContextRef {
+  label: string;
+  value: string;
+  url?: string | null;
+}
+
+export interface DeliveryContextNode {
+  id: string;
+  kind: DeliveryContextNodeKind;
+  stage: DeliveryContextStage;
+  title: string;
+  status: DeliveryContextStatus;
+  summary?: string | null;
+  occurred_at?: string | null;
+  refs?: DeliveryContextRef[] | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface DeliveryContextEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  status?: DeliveryContextStatus | null;
+  evidence_ref?: string | null;
+}
+
+export interface DeliveryEvidenceGap {
+  id: string;
+  title: string;
+  severity: "info" | "warn" | "blocker";
+  summary: string;
+  missing_ref?: string | null;
+  owner?: string | null;
+}
+
+export interface ZaxyMirrorStatus {
+  enabled: boolean;
+  status: "mirrored" | "pending" | "degraded" | "unavailable";
+  latest_sequence?: number | null;
+  latest_event_id?: string | null;
+  merkle_root?: string | null;
+  projection_lag_ms?: number | null;
+  graph_available?: boolean | null;
+  redaction_status?: string | null;
+}
+
+export interface LangGraphWorkflowRef {
+  workflow_id: string;
+  thread_id?: string | null;
+  status: string;
+  evidence_packet_id?: string | null;
+  zaxy_checkout_ref?: string | null;
+  agent_attempt_ids?: string[] | null;
+}
+
+export interface DeliveryContextGraph {
+  schema_version: string;
+  run_id: string;
+  service?: string | null;
+  repository?: string | null;
+  generated_at: string;
+  summary?: string | null;
+  nodes: DeliveryContextNode[];
+  edges: DeliveryContextEdge[];
+  evidence_gaps: DeliveryEvidenceGap[];
+  zaxy_mirror?: ZaxyMirrorStatus | null;
+  langgraph_workflows?: LangGraphWorkflowRef[] | null;
+  agent_attempt_refs?: string[] | null;
 }
 
 export interface ApprovalQueueItem {

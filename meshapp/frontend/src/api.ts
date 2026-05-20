@@ -3,6 +3,7 @@ import type {
   GoalRecord,
   ConnectorCertificationPacket,
   DarkharnessPilotPacket,
+  DeliveryContextGraph,
   HealthSnapshot,
   IntegrationReadiness,
   EvidenceGraph,
@@ -41,6 +42,9 @@ export function resolveBaseUrl(): string {
   const server = params.get("server");
   if (server) {
     return server.replace(/\/+$/, "");
+  }
+  if (DEFAULT_API_BASE_URL) {
+    return DEFAULT_API_BASE_URL.replace(/\/+$/, "");
   }
   if (window.location.protocol === "http:" || window.location.protocol === "https:") {
     return window.location.origin;
@@ -367,6 +371,10 @@ export const api = {
       `/api/runs/${runId}/darkharness-packet`,
       [409],
     );
+  },
+
+  getRunDeliveryContext(baseUrl: string, runId: string) {
+    return request<DeliveryContextGraph>(baseUrl, `/api/runs/${encodeURIComponent(runId)}/delivery-context`);
   },
 
   getRunExportArchive(baseUrl: string, runId: string) {

@@ -208,6 +208,11 @@ class IntegrationReadiness(JsonModel):
     goose: IntegrationStatus
     latentmas: IntegrationStatus
     deepagents: IntegrationStatus
+    zaxy: IntegrationStatus
+    eventloom: IntegrationStatus
+    neo4j_projection: IntegrationStatus
+    zaxy_mcp: IntegrationStatus
+    langgraph_checkpointing: IntegrationStatus
     vault_path: str
     state_path: str
     integrations_config_path: str

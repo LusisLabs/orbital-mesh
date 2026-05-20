@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mesh Operator Product Overnight Buildout Plan</title>
+  <style>
+    :root {
+      --bg: #f7f4ee;
+      --paper: #fffdf7;
+      --surface: #ffffff;
+      --surface-soft: #efe9dc;
+      --ink: #171611;
+      --muted: #6f6659;
+      --line: rgba(23, 22, 17, 0.13);
+      --line-strong: rgba(23, 22, 17, 0.24);
+      --blue: #1e3a5f;
+      --blue-soft: rgba(30, 58, 95, 0.11);
+      --teal: #0f766e;
+      --teal-soft: rgba(15, 118, 110, 0.12);
+      --gold: #b7791f;
+      --gold-soft: rgba(183, 121, 31, 0.14);
+      --green: #3f7d20;
+      --green-soft: rgba(63, 125, 32, 0.13);
+      --red: #9f1239;
+      --red-soft: rgba(159, 18, 57, 0.12);
+      --shadow: 0 18px 48px rgba(23, 22, 17, 0.08), 0 2px 9px rgba(23, 22, 17, 0.05);
+      --font-body: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+      --font-display: Georgia, "Times New Roman", serif;
+      --font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #10120f;
+        --paper: #171914;
+        --surface: #1d211b;
+        --surface-soft: #252a22;
+        --ink: #f2eee5;
+        --muted: #b6ad9d;
+        --line: rgba(242, 238, 229, 0.11);
+        --line-strong: rgba(242, 238, 229, 0.24);
+        --blue: #93c5fd;
+        --blue-soft: rgba(147, 197, 253, 0.12);
+        --teal: #5eead4;
+        --teal-soft: rgba(94, 234, 212, 0.12);
+        --gold: #eab75e;
+        --gold-soft: rgba(234, 183, 94, 0.13);
+        --green: #a3e635;
+        --green-soft: rgba(163, 230, 53, 0.11);
+        --red: #fb7185;
+        --red-soft: rgba(251, 113, 133, 0.12);
+        --shadow: 0 18px 48px rgba(0, 0, 0, 0.28), 0 2px 9px rgba(0, 0, 0, 0.24);
+      }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 16% 8%, var(--gold-soft), transparent 32rem),
+        radial-gradient(circle at 94% 34%, var(--teal-soft), transparent 34rem),
+        linear-gradient(135deg, transparent 0 25px, rgba(23, 22, 17, 0.035) 25px 26px, transparent 26px 52px),
+        var(--bg);
+      color: var(--ink);
+      font-family: var(--font-body);
+      line-height: 1.54;
+    }
+
+    a {
+      color: var(--teal);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 3px;
+    }
+
+    code {
+      display: inline-block;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+      padding: 0.08rem 0.34rem;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      background: var(--surface-soft);
+      font-family: var(--font-mono);
+      font-size: 0.91em;
+    }
+
+    .wrap {
+      width: min(1540px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 220px minmax(0, 1fr);
+      gap: 40px;
+      padding: 30px 34px 72px;
+    }
+
+    .toc {
+      position: sticky;
+      top: 22px;
+      align-self: start;
+      max-height: calc(100dvh - 44px);
+      overflow-y: auto;
+      padding: 14px 0;
+    }
+
+    .toc-title {
+      margin: 0 0 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.7px;
+      text-transform: uppercase;
+    }
+
+    .toc a {
+      display: block;
+      margin-bottom: 2px;
+      padding: 7px 9px;
+      border-left: 2px solid transparent;
+      border-radius: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.32;
+      text-decoration: none;
+    }
+
+    .toc a:hover {
+      color: var(--ink);
+      background: var(--surface-soft);
+      border-left-color: var(--gold);
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      margin-bottom: 26px;
+      padding: clamp(30px, 5vw, 58px);
+      border: 1px solid color-mix(in srgb, var(--line) 50%, var(--gold) 50%);
+      border-radius: 20px;
+      background: color-mix(in srgb, var(--paper) 92%, var(--gold) 8%);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -95px;
+      bottom: -140px;
+      width: 380px;
+      height: 380px;
+      border-radius: 999px;
+      background: radial-gradient(circle, var(--teal-soft), transparent 68%);
+      pointer-events: none;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 13px;
+      color: var(--gold);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .eyebrow::before {
+      content: "";
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    h1 {
+      max-width: 1040px;
+      margin: 0 0 18px;
+      font-family: var(--font-display);
+      font-size: clamp(40px, 6vw, 76px);
+      font-weight: 700;
+      letter-spacing: 0;
+      line-height: 0.96;
+    }
+
+    .lead {
+      max-width: 1040px;
+      margin: 0;
+      color: var(--muted);
+      font-size: clamp(17px, 2vw, 22px);
+    }
+
+    .metric-grid {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 30px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface);
+    }
+
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      display: block;
+      margin-top: 5px;
+      font-size: 22px;
+      line-height: 1.1;
+    }
+
+    section {
+      margin-bottom: 26px;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 32px 0 14px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 36px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .section-head p {
+      max-width: 660px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 13px;
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      min-width: 0;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: var(--surface);
+      box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+    }
+
+    .card.hero-card {
+      border-color: color-mix(in srgb, var(--line) 50%, var(--teal) 50%);
+      background: color-mix(in srgb, var(--surface) 90%, var(--teal) 10%);
+    }
+
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    .card p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 12px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      color: var(--muted);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+
+    .tag.must {
+      border-color: color-mix(in srgb, var(--line) 42%, var(--red) 58%);
+      background: var(--red-soft);
+      color: var(--red);
+    }
+
+    .tag.ready {
+      border-color: color-mix(in srgb, var(--line) 42%, var(--green) 58%);
+      background: var(--green-soft);
+      color: var(--green);
+    }
+
+    .priority-list {
+      display: grid;
+      gap: 12px;
+    }
+
+    .priority {
+      display: grid;
+      grid-template-columns: 76px minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface);
+    }
+
+    .p-label {
+      display: grid;
+      place-items: center;
+      min-height: 58px;
+      border: 1px solid var(--line-strong);
+      border-radius: 13px;
+      background: var(--blue-soft);
+      color: var(--blue);
+      font-family: var(--font-mono);
+      font-size: 18px;
+      font-weight: 900;
+    }
+
+    .priority h3 {
+      margin: 0 0 5px;
+      font-size: 19px;
+    }
+
+    .priority p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .priority table {
+      margin-top: 12px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: var(--surface-soft);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .phase-row {
+      display: grid;
+      grid-template-columns: 145px minmax(0, 1fr);
+      gap: 12px;
+      align-items: stretch;
+      margin-bottom: 11px;
+    }
+
+    .time {
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--surface-soft);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .checklist {
+      margin: 10px 0 0;
+      padding-left: 19px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .checklist li {
+      margin: 5px 0;
+    }
+
+    .callout {
+      padding: 18px;
+      border: 1px solid color-mix(in srgb, var(--line) 45%, var(--gold) 55%);
+      border-radius: 16px;
+      background: color-mix(in srgb, var(--surface) 86%, var(--gold) 14%);
+    }
+
+    .callout strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--gold);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+    }
+
+    pre {
+      max-width: 100%;
+      margin: 10px 0 0;
+      padding: 14px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: #141713;
+      color: #f4efe5;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .footer {
+      margin-top: 30px;
+      padding: 18px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .wrap {
+        grid-template-columns: 1fr;
+        padding: 20px 18px 56px;
+      }
+
+      .toc {
+        position: static;
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        max-height: none;
+        padding: 0 0 12px;
+      }
+
+      .toc-title {
+        display: none;
+      }
+
+      .toc a {
+        flex: 0 0 auto;
+        border-left: 0;
+        border-bottom: 2px solid transparent;
+        white-space: nowrap;
+      }
+
+      .grid,
+      .grid.two,
+      .metric-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .grid,
+      .grid.two,
+      .metric-grid,
+      .phase-row,
+      .priority {
+        grid-template-columns: 1fr;
+      }
+
+      .section-head {
+        align-items: start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="toc" aria-label="Plan navigation">
+      <p class="toc-title">Buildout Plan</p>
+      <a href="#north-star">North Star</a>
+      <a href="#current-truth">Current Truth</a>
+      <a href="#parity">Web to Meshapp</a>
+      <a href="#auth-notes">Auth Field Notes</a>
+      <a href="#priorities">P0 to Pn</a>
+      <a href="#overnight">Overnight Run</a>
+      <a href="#agents">Agent Ownership</a>
+      <a href="#validation">Validation</a>
+      <a href="#handoff">Handoff</a>
+    </nav>
+
+    <main>
+      <header class="hero" id="north-star">
+        <div class="eyebrow">Mesh operator product buildout</div>
+        <h1>Overnight plan for a production-grade operator web app.</h1>
+        <p class="lead">
+          Build the product surface around real identity, scoped dashboards, Mesh-controlled run authority, configuration parity, and evidence-first operations. The app can improve UX and orchestration ergonomics, but Mesh remains the authority for policy, approvals, readiness, evidence, run state, and actuation.
+        </p>
+        <div class="metric-grid">
+          <div class="metric"><span>Target</span><strong>P0-P5 by morning</strong></div>
+          <div class="metric"><span>Mode</span><strong>slice-gated</strong></div>
+          <div class="metric"><span>Runtime</span><strong>Mesh-owned</strong></div>
+          <div class="metric"><span>Validation</span><strong>pnpm ladder</strong></div>
+        </div>
+      </header>
+
+      <section id="current-truth">
+        <div class="section-head">
+          <h2>Current Truth</h2>
+          <p>What is already materially present versus what still needs hardening before we can call the product surface complete.</p>
+        </div>
+        <div class="grid">
+          <article class="card hero-card">
+            <h3>Already landed</h3>
+            <p>Product shell, app-session auth, email/password path, dev captcha bypass, team creation, active team switching, scoped dashboard read model, preserved control-plane console, RCA polish, UI/CLI settings parity surface.</p>
+            <div class="tag-row">
+              <span class="tag ready">verified locally</span>
+              <span class="tag">meshapp/frontend</span>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Still incomplete</h3>
+            <p>Complete <code>web/</code> to <code>meshapp/</code> parity inventory, provider-backed OAuth smoke, real captcha provider smoke, product-native launch/evaluation/settings mutation workflows, role-specific denial screens, complete browser e2e, deployment ingress proof.</p>
+            <div class="tag-row">
+              <span class="tag must">must gate</span>
+              <span class="tag">no overclaim</span>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Authority boundary</h3>
+            <p>The product app scopes the operator experience. It does not become the source of truth for approvals, policy, readiness, evidence packets, run state, memory truth, or actuation.</p>
+            <div class="tag-row">
+              <span class="tag">control plane</span>
+              <span class="tag">fail closed</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="parity">
+        <div class="section-head">
+          <h2>Web to Meshapp Parity Lock</h2>
+          <p>Prevent repeated rewrites by making <code>web/</code> the source inventory and <code>meshapp/frontend</code> the production product destination.</p>
+        </div>
+        <div class="callout">
+          <strong>Parity rule</strong>
+          Before new product UI is added, inventory every production-relevant route, component, API adapter, asset, UX state, and operator workflow in <code>web/</code>. Each item must be classified as <code>port</code>, <code>reuse</code>, <code>replace</code>, or <code>deprecate</code>. Nothing remains duplicated without an owner and removal path.
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>State Slice</th>
+              <th>Deliverable</th>
+              <th>Acceptance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ui-product-shell</code><br><code>dashboard read model</code><br><code>API route</code><br><code>persisted artifact</code></td>
+              <td>Route/component/API/asset inventory for <code>web/</code>, migration classification, production parity checklist, and explicit deprecation notes for anything not moved.</td>
+              <td>Every production-relevant <code>web/</code> surface exists in <code>meshapp/frontend</code> or is documented as deprecated, read-only, or demo-only. No production route depends on a stale duplicate source.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="auth-notes">
+        <div class="section-head">
+          <h2>Auth Field Notes</h2>
+          <p>Known local auth wiring truth from provider-path inspection. Raw secrets stay out of source, docs, terminal output, and committed artifacts.</p>
+        </div>
+        <div class="grid two">
+          <article class="card hero-card">
+            <h3>Verified without real secrets</h3>
+            <p>Using dummy provider values, <code>hcaptcha</code> config was accepted, Google OAuth start returned <code>200</code>, GitHub OAuth start returned <code>200</code>, and no real secrets were written to the repo.</p>
+            <div class="tag-row">
+              <span class="tag ready">auth wiring sound</span>
+              <span class="tag">dummy values only</span>
+            </div>
+          </article>
+          <article class="card">
+            <h3>Connection-refused cause</h3>
+            <p><code>ERR_CONNECTION_REFUSED</code> for <code>127.0.0.1:8787/api/auth/...</code> means the Mesh API is not running, or the frontend is pointed at the wrong <code>NEXT_PUBLIC_MESH_API_URL</code>.</p>
+            <div class="tag-row">
+              <span class="tag must">boot order</span>
+              <span class="tag">api url</span>
+            </div>
+          </article>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Ignored local environment</h3>
+            <pre># .env.local
+MESH_ENVIRONMENT=local
+MESH_AUTH_MODE=app_session
+MESH_OPERATOR_IDENTITY_PATH=.mesh-runtime-state/operator-identity.json
+MESH_SIGNUP_ENABLED=1
+MESH_PASSWORD_AUTH_ENABLED=1
+
+MESH_CAPTCHA_PROVIDER=hcaptcha
+MESH_CAPTCHA_SITE_KEY=&lt;hcaptcha-sitekey&gt;
+MESH_CAPTCHA_SECRET_KEY=&lt;hcaptcha-secret&gt;
+
+MESH_GOOGLE_OAUTH_CLIENT_ID=&lt;google-client-id&gt;
+MESH_GOOGLE_OAUTH_CLIENT_SECRET=&lt;google-client-secret&gt;
+MESH_GOOGLE_OAUTH_REDIRECT_URL=http://127.0.0.1:8787/api/auth/oauth/google/callback
+
+MESH_GITHUB_OAUTH_CLIENT_ID=&lt;github-client-id&gt;
+MESH_GITHUB_OAUTH_CLIENT_SECRET=&lt;github-client-secret&gt;
+MESH_GITHUB_OAUTH_REDIRECT_URL=http://127.0.0.1:8787/api/auth/oauth/github/callback</pre>
+          </article>
+          <article class="card">
+            <h3>Local startup and checks</h3>
+            <pre>set -a
+source .env.local
+set +a
+python run_server.py
+
+NEXT_PUBLIC_MESH_API_URL=http://127.0.0.1:8787 pnpm --dir meshapp/frontend run dev --hostname 127.0.0.1 --port 3000
+
+curl -sS http://127.0.0.1:8787/api/auth/config | python -m json.tool
+curl -I http://127.0.0.1:8787/api/auth/oauth/google/start
+curl -I http://127.0.0.1:8787/api/auth/oauth/github/start</pre>
+          </article>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Required Console Setting</th>
+              <th>Failure Mode</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Google OAuth</td>
+              <td><code>http://127.0.0.1:8787/api/auth/oauth/google/callback</code></td>
+              <td>Wrong redirect URI fails at provider or callback with a clear auth error.</td>
+            </tr>
+            <tr>
+              <td>GitHub OAuth</td>
+              <td><code>http://127.0.0.1:8787/api/auth/oauth/github/callback</code></td>
+              <td>Wrong callback URL prevents login completion even when the start route works.</td>
+            </tr>
+            <tr>
+              <td>hCaptcha</td>
+              <td>Allow <code>127.0.0.1</code> and <code>localhost</code> for local browser testing.</td>
+              <td>Disallowed local host rejects the browser challenge before backend verification.</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>Secret handling</strong>
+          Use an ignored local env file only. Do not commit provider secrets. If real credentials were pasted into chat or logs, rotate them before staging or production use.
+        </div>
+      </section>
+
+      <section id="priorities">
+        <div class="section-head">
+          <h2>P0 to Pn Deliverables</h2>
+          <p>Priority order for the overnight build. Each priority names the state slice, deliverables, touched surfaces, and acceptance criteria.</p>
+        </div>
+
+        <div class="priority-list">
+          <article class="priority">
+            <div class="p-label">P0</div>
+            <div>
+              <h3>Web-to-meshapp parity lock</h3>
+              <p>Stop duplicate rewiring by making <code>web/</code> a complete source inventory and <code>meshapp/frontend</code> the single production product surface.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>ui-product-shell</code><br><code>dashboard read model</code><br><code>API route</code><br><code>persisted artifact</code></td>
+                    <td>Inventory <code>web/</code> routes, components, API adapters, assets, UX states, and operator workflows; classify each as <code>port</code>, <code>reuse</code>, <code>replace</code>, or <code>deprecate</code>; migrate production-relevant surfaces into <code>meshapp/frontend</code>.</td>
+                    <td>No production-relevant <code>web/</code> route or workflow remains unaccounted for. <code>meshapp/frontend</code> is the product source of truth, while Mesh remains runtime authority.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P1</div>
+            <div>
+              <h3>Local boot and auth reliability</h3>
+              <p>Make the first ten minutes deterministic: API running, frontend pointed at API, signup/login/captcha/OAuth states obvious, no raw browser errors.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>auth-identity</code><br><code>API route</code><br><code>UI shell</code></td>
+                    <td>Backend-unavailable banner, real form semantics, provider-unavailable messaging, dev captcha path, documented startup commands.</td>
+                    <td>API-down browser smoke shows clear fix. API-up signup, team create, logout, login, and dashboard pass.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P2</div>
+            <div>
+              <h3>Production OAuth and captcha provider proof</h3>
+              <p>Move beyond configured URLs: prove Google, GitHub, and one captcha provider can complete callback/token verification in a controlled environment.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>auth-identity</code><br><code>API route</code><br><code>schema</code></td>
+                    <td>Provider env checklist, redirect URL validation, callback error screens, captcha token verification test seam, provider smoke notes.</td>
+                    <td>Google/GitHub start routes produce valid authorize URLs; callback failure is clear; one real captcha provider passes in browser or is explicitly blocked by missing credentials.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P3</div>
+            <div>
+              <h3>Team tenancy and access checks</h3>
+              <p>Ensure every dashboard and mutation path is scoped by user/team, with forbidden and unauthorized states that operators can understand.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>team state</code><br><code>user profile state</code><br><code>API route</code></td>
+                    <td>Join/invite handling, member role editing or read-only status, active-team switch persistence, forbidden-team dashboard test, expired-session recovery.</td>
+                    <td>User cannot read another team dashboard. Expired session clears cleanly. Roles map to Mesh operator roles without bypassing Mesh policy.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P4</div>
+            <div>
+              <h3>Dashboard read model completeness</h3>
+              <p>Bind every product card to real control-plane data or mark it read-only with the exact reason. Remove production-looking mock-only paths.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>dashboard read model</code><br><code>contracts-and-schemas</code></td>
+                    <td>Readiness, run admission, connector status, topology, evidence, policy approvals, remediation, memory, settings, degraded/backend-unavailable states.</td>
+                    <td>Cards load from Mesh APIs/contracts. Empty/degraded/blocked states are distinct. Contract checks pass after any payload change.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P5</div>
+            <div>
+              <h3>Product-native operator workflows</h3>
+              <p>Reduce reliance on the preserved control-plane bridge by implementing product-native flows where the API already supports the action.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>Mesh runtime config</code><br><code>API route</code><br><code>UI shell</code></td>
+                    <td>Run launch wizard, approval queue actions, evidence packet drill-in, readiness blocker drill-in, connector detail pages, safe settings editor.</td>
+                    <td>Mutations call existing Mesh APIs and preserve role checks. Unsupported actions route to control plane or show read-only reason.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P6</div>
+            <div>
+              <h3>UI and CLI settings parity</h3>
+              <p>Every operator setting exposed in the product has a matching non-interactive CLI path and validated storage semantics.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>mesh-settings-control</code><br><code>CLI config</code><br><code>persisted artifact</code></td>
+                    <td>Editable settings form, schema-driven selects, audit reason, CLI examples, fail-closed validation, redacted audit records.</td>
+                    <td>UI and <code>scripts/operator_config.py</code> mutate the same settings slice. Invalid values fail in UI, API, and CLI.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P7</div>
+            <div>
+              <h3>Evidence, approvals, and RCA polish</h3>
+              <p>Make Mesh's real control-plane authority visible: proof packets, approvals, RCA candidates, blocker reasons, audit citations, and read-only tool traces.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>dashboard read model</code><br><code>UI shell</code></td>
+                    <td>Evidence explorer, approval decision card, RCA graph entry points, confidence movement, live event ticker, explicit blocked-state copy.</td>
+                    <td>Operators can trace a run from signal to evidence to policy to decision without confusing UI authority with Mesh authority.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P8</div>
+            <div>
+              <h3>Deployment and ingress hardening</h3>
+              <p>Move from local app-session proof to production-like deployment posture with authenticated ingress, cookies, provider redirects, and environment docs.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>auth state</code><br><code>API route</code><br><code>persisted artifact</code></td>
+                    <td>Secure cookie flags, same-site policy, deployment env matrix, reverse-proxy assumptions, provider redirect checklist, frontend/API URL contract.</td>
+                    <td>Local, staging, and pilot env configs are documented. Missing provider/captcha credentials fail closed with clear UI and API errors.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">P9</div>
+            <div>
+              <h3>Browser e2e and contract drift guard</h3>
+              <p>Stop relying on manual smoke. Add automated browser flows around auth, team setup, dashboard scoping, settings, and preserved control-plane routing.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>tests-and-validation</code><br><code>contracts-and-schemas</code></td>
+                    <td>Playwright or equivalent e2e, seeded app-session state, backend-down test, role-forbidden test, provider-unconfigured test, contract regeneration gate.</td>
+                    <td>One command exercises first-run signup through dashboard. Contract drift breaks CI before stale UI ships.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="priority">
+            <div class="p-label">Pn</div>
+            <div>
+              <h3>Launch package and operator evidence binder</h3>
+              <p>Package the finished product surface with proof: screenshots, runbook, env matrix, validation transcript, known gaps, and authority boundaries.</p>
+              <table>
+                <thead><tr><th>State Slice</th><th>Deliverables</th><th>Acceptance</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td><code>docs-and-operator-guide</code><br><code>persisted artifact</code></td>
+                    <td>Operator runbook, setup guide, provider setup, CLI parity docs, screenshots, final validation report, remaining risks.</td>
+                    <td>A new operator can run the app from clean checkout and understand exactly which capabilities are live, blocked, or read-only.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="overnight">
+        <div class="section-head">
+          <h2>Overnight Execution Sequence</h2>
+          <p>Serialize heavy validation. Parallelize only disjoint read, docs, UI, and tests work. Do not run two full root gates at the same time.</p>
+        </div>
+        <div class="phase-row">
+          <div class="time">T+0 to T+1h</div>
+          <article class="card">
+            <h3>Lock P0 and stabilize P1</h3>
+            <p>Inventory <code>web/</code> production surfaces, confirm local API/frontend startup, backend-down state, login/signup/team path, OAuth-unconfigured state, and captcha-dev path. Capture exact commands and screenshots.</p>
+          </article>
+        </div>
+        <div class="phase-row">
+          <div class="time">T+1 to T+3h</div>
+          <article class="card">
+            <h3>Land P1 and P2</h3>
+            <p>Finish provider/captcha production checks, team access tests, expired-session recovery, and clear unauthorized/forbidden product states.</p>
+          </article>
+        </div>
+        <div class="phase-row">
+          <div class="time">T+3 to T+5h</div>
+          <article class="card">
+            <h3>Land P3 and P4</h3>
+            <p>Fill read-model gaps and product-native operator paths that map to existing Mesh APIs. Keep unsupported mutations read-only with reasons.</p>
+          </article>
+        </div>
+        <div class="phase-row">
+          <div class="time">T+5 to T+7h</div>
+          <article class="card">
+            <h3>Land P5 through P8 tests</h3>
+            <p>Finish settings parity, e2e scaffolding, role-denial tests, browser smoke scripts, contract-drift checks, and docs updates.</p>
+          </article>
+        </div>
+        <div class="phase-row">
+          <div class="time">T+7h to morning</div>
+          <article class="card">
+            <h3>Validate and package</h3>
+            <p>Run full validation ladder, browser proof, capture output, write the operator evidence binder, and list remaining risks without promotion language.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="agents">
+        <div class="section-head">
+          <h2>Parallel Agent Ownership</h2>
+          <p>Use subagents only where write scopes do not conflict. The integrator owns final assembly and validation.</p>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Owned Scope</th>
+              <th>Primary Files</th>
+              <th>Exit Report</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Agent A</td>
+              <td><code>web/</code> to <code>meshapp/</code> parity inventory, frontend shell, routing, product-native workflows, responsive behavior.</td>
+              <td><code>web/*</code>, <code>meshapp/frontend/src/product/*</code>, <code>meshapp/frontend/src/App.tsx</code>, <code>meshapp/frontend/src/index.css</code></td>
+              <td>Parity classification, changed UI states, browser smoke evidence, remaining UX gaps.</td>
+            </tr>
+            <tr>
+              <td>Agent B</td>
+              <td>Auth, captcha, OAuth, sessions, team tenancy, roles, access checks.</td>
+              <td><code>shared/mesh_runtime/operator_identity.py</code>, <code>control_plane_server.py</code>, auth tests.</td>
+              <td>Provider status, access-control proofs, failure modes.</td>
+            </tr>
+            <tr>
+              <td>Agent C</td>
+              <td>Mesh read-model and runtime adapter coverage.</td>
+              <td><code>services/control_plane.py</code>, <code>shared/mesh_runtime/*</code>, generated contracts, dashboard API.</td>
+              <td>API surfaces used, contract changes, mock/read-only inventory.</td>
+            </tr>
+            <tr>
+              <td>Agent D</td>
+              <td>CLI parity, docs, e2e tests, validation ladder, evidence binder.</td>
+              <td><code>scripts/operator_config.py</code>, <code>docs/operator-product-app.md</code>, <code>tests/*</code>, e2e scripts.</td>
+              <td>Commands run, docs changed, final validation transcript.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="validation">
+        <div class="section-head">
+          <h2>Validation Ladder</h2>
+          <p>Run lightweight gates after each slice; run full gates only after integration or before handoff.</p>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Per-slice gates</h3>
+            <pre>pnpm --dir meshapp/frontend run lint
+pnpm --dir meshapp/frontend run test
+PYTHONPATH=. uv run --with-editable . python -m unittest tests.test_operator_identity tests.test_operator_auth_http
+git diff --check</pre>
+          </article>
+          <article class="card">
+            <h3>Integration gates</h3>
+            <pre>pnpm run lint:fast
+pnpm run test:focused
+pnpm run verify:contracts
+pnpm run verify:full
+pnpm run lint
+git diff --check</pre>
+          </article>
+        </div>
+        <div class="callout">
+          <strong>Stop rule</strong>
+          If the same error occurs twice, stop patching randomly. Research 3-5 plausible fixes, choose the smallest correct fix for this repo, implement it, and document the choice.
+        </div>
+      </section>
+
+      <section id="handoff">
+        <div class="section-head">
+          <h2>Morning Handoff Format</h2>
+          <p>The overnight run is only useful if the next operator can trust what happened.</p>
+        </div>
+        <div class="grid two">
+          <article class="card">
+            <h3>Required final report</h3>
+            <ul class="checklist">
+              <li>Changed state slices.</li>
+              <li><code>web/</code> to <code>meshapp/</code> parity inventory with <code>port</code>, <code>reuse</code>, <code>replace</code>, and <code>deprecate</code> classifications.</li>
+              <li>Files changed, grouped by owner.</li>
+              <li>Validation command results with exact pass/fail status.</li>
+              <li>Browser smoke scenarios and screenshots.</li>
+              <li>Blocked provider credentials or environment requirements.</li>
+              <li>Remaining risks and non-claims.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Non-negotiable boundaries</h3>
+            <ul class="checklist">
+              <li>Use <code>pnpm</code>, not npm.</li>
+              <li>Do not run <code>tail</code>.</li>
+              <li>Preserve unrelated dirty worktree changes.</li>
+              <li>Every mutation names its state slice before editing.</li>
+              <li>Keep Mesh as authority for policy, approvals, readiness, evidence, run state, and actuation.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="footer">
+          Source context: <code>web/</code>, <code>docs/operator-product-app.md</code>, <code>package.json</code>, <code>meshapp/frontend</code>, <code>shared/mesh_runtime/operator_identity.py</code>, <code>control_plane_server.py</code>. This plan is an execution artifact, not a claim that every listed capability is already complete.
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

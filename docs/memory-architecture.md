@@ -104,6 +104,42 @@ It is not a replacement for Postgres pilot persistence until equivalent
 restart, migration, backup/restore, load, and release provenance gates exist
 and pass.
 
+## Zaxy Sidecar
+
+State slice: `zaxy-langgraph-end-to-end-integration-prd`.
+
+Zaxy is optional memory and audit infrastructure, not Mesh control-plane
+authority. When `MESH_ZAXY_ENABLED=1`, Mesh mirrors persisted run events into a
+sanitized Eventloom record after the Mesh event write and Merkle leaf are
+complete. The mirror record carries Mesh `run_id`, `event_id`, sequence,
+artifact key, integration name, status, Merkle leaf hash, source refs,
+citations, tenant/project/service scope, and an explicit authority block that
+marks Zaxy as non-authoritative.
+
+Packet capture is non-default. Unless `MESH_ZAXY_PACKET_CAPTURE_ENABLED=1`, the
+mirror stores summaries and redacted metadata instead of full event payloads.
+Secrets are redacted by key name before an outbox or HTTP sidecar receives the
+record.
+
+Zaxy memory checkout can add external candidates to retrieval diagnostics, but
+it cannot directly populate `MemoryPacket.observations` or
+`MemoryPacket.claims`. Mesh still assembles packets only from verified first-party
+records that pass the existing source-ref, active-state, supersession, and
+contradiction filters. Checkout candidates remain scoped by tenant, project,
+service, run, and agent/session metadata and are recorded as diagnostic
+citations until Mesh verification admits matching records.
+
+Configuration:
+
+```bash
+MESH_ZAXY_ENABLED=1
+MESH_ZAXY_EVENTLOOM_URL=http://127.0.0.1:9008/eventloom
+MESH_ZAXY_EVENTLOOM_OUTBOX_PATH=.mesh-runtime-state/zaxy-eventloom.jsonl
+MESH_ZAXY_MCP_URL=http://127.0.0.1:9010/checkout
+MESH_ZAXY_NEO4J_PROJECTION_ENABLED=1
+MESH_ZAXY_PACKET_CAPTURE_ENABLED=0
+```
+
 Focused proof:
 
 ```bash

@@ -11,12 +11,26 @@ Before non-trivial repo-wide work, read:
 
 - Every mutation must name the state slice it touches. Do not infer state ownership from imports; identify the explicit slice, store, schema, runtime state file, API resource, or persisted artifact before editing.
 
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for `LusisLabs/orbital-mesh`; use the `gh` CLI from this checkout. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the default Matt Pocock skill label vocabulary unless the GitHub repository labels are deliberately remapped. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repo for skill consumption; use root operating docs plus `architecture.md` and `docs/` as the current domain source set. See `docs/agents/domain.md`.
+
 ## Stack
 
 | Area | Stack |
 |------|--------|
 | Core services & runtime | Python 3.x, `uv` |
-| Web UI | TypeScript, Vite, `npm` |
+| Web UI | TypeScript, Vite/Next, `pnpm` |
 | LatentMAS (vendored path) | Rust, `cargo` under `latent-mesh/LatentMAS/` |
 
 ## Commands (validation gates)
@@ -36,8 +50,8 @@ TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagen
 Web build (from repo root):
 
 ```bash
-npm --prefix web ci
-npm --prefix web run build
+pnpm --dir web install
+pnpm --dir web run build
 ```
 
 Rust (when touching LatentMAS):

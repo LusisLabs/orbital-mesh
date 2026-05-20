@@ -18,6 +18,14 @@ from services.ingest.webhook_service import (
     WebhookIngestError,
 )
 from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime.operator_identity import (
+    CaptchaConfig,
+    OAuthProviderConfig,
+    OperatorIdentityStore,
+    exchange_oauth_profile,
+    oauth_authorize_url,
+    write_settings_audit,
+)
 
 _LOG = logging.getLogger("mesh.control_plane")
 TIMELINE_PROOF_ROUTE_TEMPLATE = "/api/runs/{run_id}/timeline-proof"
@@ -48,6 +56,13 @@ def _roles_for_steering(command: object) -> set[str]:
     if command in {"override_review", "postmortem_review"}:
         return {"viewer", "launcher", "approver", "admin"}
     return {"launcher", "approver", "admin"}
+
+
+def _safe_dashboard_call(fn, default: Any | None = None) -> Any:
+    try:
+        return fn()
+    except Exception as exc:  # pragma: no cover - dashboard must degrade instead of masking auth.
+        return default if default is not None else {"status": "unavailable", "error": str(exc)}
 
 
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -93,6 +108,7 @@ class MeshControlPlaneServer(ThreadingHTTPServer):
         super().__init__(server_address, MeshControlPlaneRequestHandler)
         self.config = config
         self.coordinator = RunCoordinator(config)
+        self.operator_identity = OperatorIdentityStore(config.operator_identity_path)
 
     def server_close(self) -> None:
         if hasattr(self, "coordinator"):
@@ -126,6 +142,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/auth/") or path == "/api/operator/dashboard":
+            self._handle_operator_get(parsed)
+            return
         if path == "/api/health":
             self._send_json(
                 {
@@ -290,6 +309,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             payload = self.server.coordinator.get_evidence_graph(run_id)
             if payload is None:
                 self._send_json({"error": "evidence graph not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            self._send_json(payload)
+            return
+        if path.startswith("/api/runs/") and path.endswith("/delivery-context"):
+            run_id = _safe_segment(path, 2)
+            if run_id is None:
+                self._send_json({"error": "invalid path"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            payload = self.server.coordinator.get_delivery_context(run_id)
+            if payload is None:
+                self._send_json({"error": "run not found"}, status=HTTPStatus.NOT_FOUND)
                 return
             self._send_json(payload)
             return
@@ -536,6 +566,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             # Webhook vendors occasionally ship JSON arrays at the root;
             # wrap them so path expressions like "$.alerts[0]" still work.
             payload = {"root": payload}
+        if parsed.path.startswith("/api/auth/") or parsed.path.startswith("/api/operator/"):
+            self._handle_operator_post(parsed.path, payload)
+            return
         if parsed.path == "/v1/metrics":
             # OTLP/HTTP metrics receiver — opt-in. When enabled, an OTel
             # Collector (or any OTLP producer) posts here and the payload
@@ -615,6 +648,8 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     action_class, service, level, reason=reason,
                 )
             except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(entry)
@@ -866,6 +901,200 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
+    def _handle_operator_get(self, parsed) -> None:
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        if path == "/api/auth/config":
+            self._send_json(
+                {
+                    "auth_mode": self.server.config.auth_mode,
+                    "signup_enabled": self.server.config.signup_enabled,
+                    "password_auth_enabled": self.server.config.password_auth_enabled,
+                    **self.server.operator_identity.public_auth_config(
+                        captcha=self._captcha_config(),
+                        google=self._oauth_config("google"),
+                        github=self._oauth_config("github"),
+                    ),
+                }
+            )
+            return
+        if path == "/api/auth/me":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            try:
+                self._send_json(self.server.operator_identity.session_payload(token))
+            except ValueError as exc:
+                self._send_json(
+                    {"error": str(exc)},
+                    status=HTTPStatus.UNAUTHORIZED,
+                    headers=[self._clear_session_cookie_header()],
+                )
+            return
+        if path in {"/api/auth/oauth/google/start", "/api/auth/oauth/github/start"}:
+            provider = "google" if "google" in path else "github"
+            config = self._oauth_config(provider)
+            if not config.configured:
+                self._send_json({"error": f"{provider} oauth is not configured"}, status=HTTPStatus.SERVICE_UNAVAILABLE)
+                return
+            state = self.server.operator_identity.create_oauth_state(provider)["state"]
+            self._send_json({"authorize_url": oauth_authorize_url(config, state)})
+            return
+        if path in {"/api/auth/oauth/google/callback", "/api/auth/oauth/github/callback"}:
+            provider = "google" if "google" in path else "github"
+            code = (query.get("code") or [""])[0]
+            state = (query.get("state") or [""])[0]
+            if not code or not state:
+                self._redirect("/?auth_error=missing_oauth_code")
+                return
+            try:
+                self.server.operator_identity.consume_oauth_state(provider, state)
+                profile = exchange_oauth_profile(self._oauth_config(provider), code)
+                session = self.server.operator_identity.upsert_oauth_user(provider=provider, **profile)
+            except Exception as exc:
+                _LOG.warning("%s oauth callback failed: %s", provider, exc)
+                self._redirect(f"/?auth_error={provider}_oauth_failed")
+                return
+            self._redirect("/?auth=ok", headers=[self._session_cookie_header(session["token"])])
+            return
+        if path == "/api/operator/dashboard":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            team_id = (query.get("team_id") or [None])[0] or None
+            try:
+                self._send_json(
+                    self.server.operator_identity.dashboard(
+                        token,
+                        team_id=team_id,
+                        mesh=self._mesh_dashboard_snapshot(),
+                    )
+                )
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _handle_operator_post(self, path: str, payload: dict[str, Any]) -> None:
+        if path == "/api/auth/signup":
+            if not self.server.config.signup_enabled or not self.server.config.password_auth_enabled:
+                self._send_json({"error": "password signup is disabled"}, status=HTTPStatus.FORBIDDEN)
+                return
+            try:
+                session = self.server.operator_identity.create_user(
+                    email=str(payload.get("email") or ""),
+                    password=str(payload.get("password") or ""),
+                    display_name=str(payload.get("display_name") or ""),
+                    captcha_token=str(payload.get("captcha_token") or ""),
+                    captcha=self._captcha_config(),
+                )
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(session["session"], status=HTTPStatus.CREATED, headers=[self._session_cookie_header(session["token"])])
+            return
+        if path == "/api/auth/login":
+            if not self.server.config.password_auth_enabled:
+                self._send_json({"error": "password login is disabled"}, status=HTTPStatus.FORBIDDEN)
+                return
+            try:
+                session = self.server.operator_identity.login_user(
+                    email=str(payload.get("email") or ""),
+                    password=str(payload.get("password") or ""),
+                )
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            self._send_json(session["session"], headers=[self._session_cookie_header(session["token"])])
+            return
+        if path == "/api/auth/logout":
+            token = self._session_token()
+            if token:
+                self.server.operator_identity.delete_session(token)
+            self._send_json({"status": "logged_out"}, headers=[self._clear_session_cookie_header()])
+            return
+        if path == "/api/auth/team":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            try:
+                response = self.server.operator_identity.create_team(
+                    token,
+                    name=str(payload.get("name") or ""),
+                    display_name=str(payload.get("display_name") or ""),
+                    members=payload.get("members") if isinstance(payload.get("members"), list) else [],
+                )
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(response, status=HTTPStatus.CREATED)
+            return
+        if path == "/api/auth/switch-team":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            raw_team_id = payload.get("team_id")
+            team_id = str(raw_team_id) if raw_team_id else None
+            try:
+                self._send_json(self.server.operator_identity.set_active_team(token, team_id))
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        if path == "/api/operator/settings":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            team_id = str(payload.get("team_id")) if payload.get("team_id") else None
+            updates = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+            reason = str(payload.get("reason") or "").strip()
+            if not reason:
+                self._send_json({"error": "settings update reason is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                response = self.server.operator_identity.update_settings(token, team_id=team_id, updates=updates)
+                operator = self.server.operator_identity.operator_context_from_session(token) or {}
+                scope = f"team:{team_id}" if team_id else f"user:{operator.get('user_id') or 'unknown'}"
+                audit = write_settings_audit(
+                    self.server.config.operator_identity_path,
+                    operator_id=str(operator.get("operator_id") or "unknown"),
+                    reason=reason,
+                    scope=scope,
+                    updates=updates,
+                    git_commit=self.server.config.build_commit or "unknown",
+                )
+                response["audit"] = {
+                    "recorded": True,
+                    "state_slice": audit["record"]["state_slice"],
+                    "scope": audit["record"]["scope"],
+                    "fields": audit["record"]["fields"],
+                }
+                self._send_json(response)
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
     def _handle_otlp_metrics(self, otlp_payload: dict[str, Any]) -> None:
         """Accept an OTLP/HTTP JSON metrics payload and spawn a Mesh run.
 
@@ -919,7 +1148,111 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             status=HTTPStatus.ACCEPTED,
         )
 
+    def _captcha_config(self) -> CaptchaConfig:
+        return CaptchaConfig(
+            provider=self.server.config.captcha_provider,
+            site_key=self.server.config.captcha_site_key,
+            secret=self.server.config.captcha_secret_key,
+            dev_bypass_enabled=self.server.config.captcha_dev_bypass_enabled,
+        )
+
+    def _oauth_config(self, provider: str) -> OAuthProviderConfig:
+        if provider == "google":
+            return OAuthProviderConfig(
+                provider="google",
+                client_id=self.server.config.google_oauth_client_id,
+                client_secret=self.server.config.google_oauth_client_secret,
+                redirect_uri=self.server.config.google_oauth_redirect_url,
+            )
+        if provider == "github":
+            return OAuthProviderConfig(
+                provider="github",
+                client_id=self.server.config.github_oauth_client_id,
+                client_secret=self.server.config.github_oauth_client_secret,
+                redirect_uri=self.server.config.github_oauth_redirect_url,
+            )
+        raise ValueError("unsupported oauth provider")
+
+    def _session_token(self) -> str:
+        cookie_header = self.headers.get("Cookie", "")
+        cookie_name = self.server.config.session_cookie_name
+        for raw_cookie in cookie_header.split(";"):
+            name, _, value = raw_cookie.strip().partition("=")
+            if name == cookie_name:
+                return unquote(value)
+        bearer = self.headers.get("Authorization", "")
+        if bearer.startswith("Bearer "):
+            return bearer[len("Bearer "):].strip()
+        return ""
+
+    def _session_cookie_header(self, token: str) -> tuple[str, str]:
+        secure = "Secure; " if self.headers.get("X-Forwarded-Proto", "").lower() == "https" else ""
+        return (
+            "Set-Cookie",
+            f"{self.server.config.session_cookie_name}={token}; Path=/; HttpOnly; {secure}SameSite=Lax; Max-Age=1209600",
+        )
+
+    def _send_session_value_error(self, exc: ValueError) -> bool:
+        message = str(exc)
+        if message not in {"session required", "session expired"}:
+            return False
+        headers = [self._clear_session_cookie_header()] if message == "session expired" else []
+        self._send_json({"error": message}, status=HTTPStatus.UNAUTHORIZED, headers=headers)
+        return True
+
+    def _clear_session_cookie_header(self) -> tuple[str, str]:
+        return (
+            "Set-Cookie",
+            f"{self.server.config.session_cookie_name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+        )
+
+    def _mesh_dashboard_snapshot(self) -> dict[str, Any]:
+        coordinator = self.server.coordinator
+        return {
+            "health": {
+                "status": "ok",
+                "environment": self.server.config.environment,
+                "version": self.server.config.build_version,
+                "commit": self.server.config.build_commit,
+                "image_digest": self.server.config.build_image_digest or None,
+            },
+            "read_model": {
+                "source": "/api/operator/dashboard",
+                "authority": "read_only",
+                "degraded_reason": "Nested sections return status=unavailable with an error when a Mesh read-model call fails.",
+            },
+            "readiness": _safe_dashboard_call(coordinator.build_readiness),
+            "connectors": _safe_dashboard_call(coordinator.build_connector_certification),
+            "approvals": _safe_dashboard_call(coordinator.build_approval_queue),
+            "kill_switch": _safe_dashboard_call(coordinator.kill_switch_status),
+            "pilot_go_no_go": _safe_dashboard_call(coordinator.generate_pilot_go_no_go),
+            "trust_ladder": {"entries": _safe_dashboard_call(coordinator.trust_ladder_list, default=[])},
+            "watchers": _safe_dashboard_call(coordinator.watchers_status),
+            "graph": _safe_dashboard_call(coordinator.graph_status),
+            "runs": {"runs": _safe_dashboard_call(coordinator.list_run_summaries, default=[])},
+            "memory": {
+                "active": _safe_dashboard_call(coordinator.get_active_memory),
+                "graph": _safe_dashboard_call(coordinator.get_memory_graph),
+            },
+        }
+
+    def _redirect(self, location: str, headers: list[tuple[str, str]] | None = None) -> None:
+        self.send_response(HTTPStatus.FOUND)
+        self._add_security_headers()
+        self._add_cors_headers()
+        for name, value in headers or []:
+            self.send_header(name, value)
+        self.send_header("Location", location)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def _operator_context(self) -> dict[str, Any]:
+        if self.server.config.auth_mode == "app_session":
+            session_operator = self.server.operator_identity.operator_context_from_session(self._session_token())
+            if session_operator is not None:
+                if self.client_address:
+                    session_operator["source_ip"] = self.client_address[0]
+                return session_operator
         identity = (
             self.headers.get(self.server.config.operator_header_name)
             or self.headers.get("X-Forwarded-User")
@@ -943,7 +1276,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
 
     def _authorize(self, allowed_roles: set[str]) -> dict[str, Any]:
         operator = self._operator_context()
-        identity_required = self.server.config.operator_identity_required
+        identity_required = self.server.config.operator_identity_required or self.server.config.auth_mode == "app_session"
         if not identity_required:
             return operator
         if operator["operator_id"] == "anonymous":
@@ -1065,13 +1398,20 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode("utf-8"))
         self.wfile.flush()
 
-    def _send_json(self, payload: dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
+    def _send_json(
+        self,
+        payload: dict[str, Any],
+        status: HTTPStatus = HTTPStatus.OK,
+        headers: list[tuple[str, str]] | None = None,
+    ) -> None:
         raw = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
         try:
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self._add_security_headers()
             self._add_cors_headers()
+            for name, value in headers or []:
+                self.send_header(name, value)
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(raw)))
             self.end_headers()
@@ -1130,6 +1470,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     def _add_cors_headers(self) -> None:
         origin = self.headers.get("Origin", "")
         if origin:
+            allowed = set(self.server.config.auth_allowed_origins)
+            if allowed and origin not in allowed:
+                return
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -1137,6 +1480,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "Access-Control-Allow-Headers",
                 "Content-Type, Last-Event-ID, Authorization, X-Mesh-Operator, X-Mesh-Roles, X-Mesh-Role, X-Forwarded-User, X-Auth-Request-Email",
             )
+            self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Access-Control-Max-Age", "86400")
 
     def _read_request_body(self) -> bytes:

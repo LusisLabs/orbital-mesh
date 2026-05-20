@@ -18,8 +18,10 @@ from shared.mesh_runtime import (
 )
 from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
 from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
+from shared.mesh_runtime.delivery_context import DELIVERY_LANES, build_delivery_lane_packet
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
 from .deepagents_adapter import DeepAgentsAdapter
+from .langgraph_adapter import LangGraphAdapter
 from .latentmas_adapter import LatentMasAdapter
 
 
@@ -122,11 +124,13 @@ class AgentMeshService:
         state_store: MeshStateStore | None = None,
         latentmas_adapter: LatentMasAdapter | None = None,
         deepagents_adapter: DeepAgentsAdapter | None = None,
+        langgraph_adapter: LangGraphAdapter | None = None,
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store
         self.latentmas_adapter = latentmas_adapter or LatentMasAdapter(self.config)
         self.deepagents_adapter = deepagents_adapter or DeepAgentsAdapter(self.config)
+        self.langgraph_adapter = langgraph_adapter or LangGraphAdapter(self.config)
 
     def build_tasks(
         self,
@@ -267,8 +271,32 @@ class AgentMeshService:
                     recommended_action="human_review",
                     output={"timeout_seconds": self.config.agent_mesh_task_timeout_seconds},
                 )
-            attempts.append(attempt)
+            attempts.append(self._annotate_delivery_packet(attempt, task))
         return attempts
+
+    def _annotate_delivery_packet(self, attempt: AgentAttempt, task: AgentTask) -> AgentAttempt:
+        packets = task.memory_packet.get("delivery_packets") if isinstance(task.memory_packet, dict) else None
+        if not isinstance(packets, dict):
+            return attempt
+        lane = _delivery_lane_for_agent(attempt.agent)
+        packet = packets.get(lane)
+        if not isinstance(packet, dict):
+            return attempt
+        packet_id = str(packet.get("graph_id") or packet.get("metadata", {}).get("delivery_packet_id") or "")
+        output = dict(attempt.output)
+        output["delivery_packet_seen"] = {
+            "lane": lane,
+            "packet_id": packet_id,
+            "source_graph_id": packet.get("metadata", {}).get("source_graph_id") if isinstance(packet.get("metadata"), dict) else None,
+            "node_count": len(packet.get("nodes", [])) if isinstance(packet.get("nodes"), list) else 0,
+        }
+        workflow_record = output.get("workflow_record")
+        if isinstance(workflow_record, dict):
+            workflow_record = dict(workflow_record)
+            workflow_record["evidence_packet_id"] = packet_id
+            output["workflow_record"] = workflow_record
+        attempt.output = output
+        return attempt
 
     def _attempt_specs(
         self,
@@ -302,6 +330,24 @@ class AgentMeshService:
                         "agent": agent,
                         "adapter": "deepagents",
                         "builder": lambda agent=agent: self.deepagents_adapter.build_lane_attempt(
+                            agent=agent,
+                            task=task,
+                            trigger=trigger,
+                            decision=decision,
+                            evaluation=evaluation,
+                        ),
+                    }
+                )
+            return specs
+        if self.config.agent_fabric_mode == "langgraph":
+            for agent in routed_agents:
+                if agent == "latentmas":
+                    continue
+                specs.append(
+                    {
+                        "agent": agent,
+                        "adapter": "langgraph",
+                        "builder": lambda agent=agent: self.langgraph_adapter.build_lane_attempt(
                             agent=agent,
                             task=task,
                             trigger=trigger,
@@ -727,7 +773,37 @@ class AgentMeshService:
                 "limit": 8,
             }
         )
-        return dict(response.get("packet", {}))
+        packet = dict(response.get("packet", {}))
+        run_id = str(memory_scope.get("run_id") or "")
+        delivery_graph: dict[str, Any] | None = None
+        if run_id:
+            session = self.state_store.get_run_session(run_id)
+            artifacts = session.artifacts if session is not None and isinstance(session.artifacts, dict) else {}
+            raw_graph = artifacts.get("delivery_context_graph")
+            if isinstance(raw_graph, dict):
+                delivery_graph = raw_graph
+        if delivery_graph:
+            delivery_packets: dict[str, Any] = {}
+            for lane in DELIVERY_LANES:
+                try:
+                    delivery_packets[lane] = build_delivery_lane_packet(
+                        delivery_graph,
+                        lane=lane,
+                        packet_id=f"{delivery_graph.get('graph_id')}:{lane}",
+                        run_id=run_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 - packet routing must not block agent proposals
+                    delivery_packets[lane] = {
+                        "status": "unavailable",
+                        "lane": lane,
+                        "reason": str(exc),
+                    }
+            packet["delivery_context"] = {
+                "graph_id": delivery_graph.get("graph_id"),
+                "delivery_packets": delivery_packets,
+            }
+            packet["delivery_packets"] = delivery_packets
+        return packet
 
     def _memory_write_policy(self) -> dict[str, Any]:
         return {
@@ -750,6 +826,18 @@ def _proposal_observation(agent: str, service: str, content: str) -> dict[str, A
         "author": agent,
         "content": content,
     }
+
+
+def _delivery_lane_for_agent(agent: str) -> str:
+    if agent in {"codex"}:
+        return "patch"
+    if agent in {"claudecode"}:
+        return "review"
+    if agent in {"openclaw", "kubernetes", "temporal", "dagster", "prefect", "flyte", "airflow"}:
+        return "staging"
+    if agent in {"goose", "hermes", "n8n", "luigi", "oozie"}:
+        return "remediation"
+    return "review"
 
 
 def _model_binding_from_model_string(
