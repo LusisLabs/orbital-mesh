@@ -50,13 +50,13 @@ The deploy user is allowed to run only `/usr/local/bin/deploy-lusis-mesh-webapp`
 Check service status:
 
 ```bash
-ssh root@46.224.205.119 'systemctl status lusis-mesh-preview.service --no-pager'
+ssh root@<server-host> 'systemctl status lusis-mesh-preview.service --no-pager'
 ```
 
 Run a manual server deploy after uploading source:
 
 ```bash
-ssh root@46.224.205.119 'sudo /usr/local/bin/deploy-lusis-mesh-webapp --source /opt/lusis-mesh-webapp/incoming/source'
+ssh root@<server-host> 'sudo /usr/local/bin/deploy-lusis-mesh-webapp --source /opt/lusis-mesh-webapp/incoming/source'
 ```
 
 Verify public ingress:
