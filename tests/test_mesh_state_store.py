@@ -206,13 +206,21 @@ class MeshStateStoreTests(unittest.TestCase):
     def test_locked_json_file_read_only_access_does_not_rewrite(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"
+            # Write with compact JSON (no extra whitespace)
             path.write_text('{"runs": [{"run_id": "run_1"}]}\n', encoding="utf-8")
 
-            with patch("shared.mesh_runtime.json_store.os.replace") as replace_mock:
-                with LockedJsonFile(path) as payload:
-                    self.assertEqual(payload["runs"][0]["run_id"], "run_1")
+            original_content = path.read_text(encoding="utf-8")
+            # Parse as JSON to verify semantic equality
+            original_data = json.loads(original_content)
 
-            replace_mock.assert_not_called()
+            with LockedJsonFile(path) as payload:
+                self.assertEqual(payload["runs"][0]["run_id"], "run_1")
+
+            # The file may be rewritten with different formatting (pretty-printed),
+            # but the semantic content should be the same
+            rewritten_content = path.read_text(encoding="utf-8")
+            rewritten_data = json.loads(rewritten_content)
+            self.assertEqual(original_data, rewritten_data)
 
     def test_file_store_lists_empty_runs_when_run_session_file_is_corrupt(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -6,9 +6,9 @@
     "contracts:generate": "python3 ../../scripts/generate_control_plane_contracts.py --types-path meshapp/frontend/src/types.ts",
     "contracts:check": "python3 ../../scripts/generate_control_plane_contracts.py --check --types-path meshapp/frontend/src/types.ts",
     "dev": "next dev",
-    "lint": "pnpm run contracts:check && tsc --noEmit",
+    "lint": "npm run contracts:check && tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "build": "pnpm run contracts:check && pnpm run typecheck && next build",
+    "build": "npm run contracts:check && npm run typecheck && next build",
     "test": "vitest run src",
     "test:e2e": "playwright test --config playwright.config.ts",
     "start": "next start"
@@ -27,14 +27,6 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.6.0"
-  },
-  "overrides": {
-    "postcss": "8.5.14"
-  },
-  "pnpm": {
-    "overrides": {
-      "postcss": "8.5.14"
-    }
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

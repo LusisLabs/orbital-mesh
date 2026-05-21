@@ -157,7 +157,7 @@ class MigrationRehearsalTests(unittest.TestCase):
             )
 
         self.assertEqual(packet["schema_version"], "mesh.migration_rehearsal.v1")
-        self.assertEqual(packet["migration_version"], "005_helix_projection_outbox")
+        self.assertEqual(packet["migration_version"], "005_relationship_infra_node_key")
         self.assertEqual(verification["status"], "pass")
 
 
