@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AuthScreen, authCallbackErrorMessage } from "./ProductApp";
+import { AuthScreen, authCallbackErrorMessage, authFailureMessage } from "./ProductApp";
 import type { AuthConfig } from "./api";
 
 const authConfig: AuthConfig = {
@@ -17,6 +17,11 @@ const authConfig: AuthConfig = {
   oauth: {
     google: { configured: true },
     github: { configured: true },
+  },
+  invite: {
+    required: false,
+    configured: false,
+    allowlist_enabled: false,
   },
 };
 
@@ -59,7 +64,7 @@ describe("AuthScreen degraded API states", () => {
 });
 
 describe("AuthScreen provider proof states", () => {
-  it("disables unconfigured provider buttons and keeps the provider setup message visible", () => {
+  it("hides unconfigured provider buttons from the partner-facing screen", () => {
     const html = renderToStaticMarkup(
       <AuthScreen
         config={{
@@ -74,14 +79,20 @@ describe("AuthScreen provider proof states", () => {
       />,
     );
 
-    expect(openingButtonTag(html, "Continue with Google")).toContain("disabled");
-    expect(openingButtonTag(html, "Continue with GitHub")).toContain("disabled");
-    expect(html).toContain("OAuth buttons enable after provider environment variables are configured on the Mesh API server.");
+    expect(html).not.toContain("Continue with Google");
+    expect(html).not.toContain("Continue with GitHub");
+    expect(html).toContain("Use your invited email and password");
   });
 
   it("maps OAuth callback failure codes to clear operator-facing messages", () => {
     expect(authCallbackErrorMessage("missing_oauth_code")).toContain("did not include a provider code");
     expect(authCallbackErrorMessage("google_oauth_failed")).toContain("Google OAuth callback failed");
     expect(authCallbackErrorMessage("github_oauth_failed")).toContain("GitHub OAuth callback failed");
+  });
+
+  it("maps infra-shaped signup failures to invitation-safe copy", () => {
+    expect(authFailureMessage(new Error("captcha verification failed"))).toContain("verification challenge");
+    expect(authFailureMessage(new Error("email is not invite allowlisted"))).toContain("not invited");
+    expect(authFailureMessage(new Error("user already exists"))).toContain("Log in instead");
   });
 });

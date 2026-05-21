@@ -177,7 +177,7 @@ export const productApi = {
   me() {
     return request<SessionPayload>("/api/auth/me");
   },
-  signup(payload: { email: string; password: string; display_name?: string; captcha_token?: string }) {
+  signup(payload: { email: string; password: string; display_name?: string; captcha_token?: string; invite_code?: string; accepted_terms?: boolean }) {
     return request<SessionPayload>("/api/auth/signup", { method: "POST", body: JSON.stringify(payload) });
   },
   login(payload: { email: string; password: string }) {

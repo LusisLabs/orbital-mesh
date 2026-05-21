@@ -131,7 +131,7 @@ def operator_product_schema() -> dict[str, Any]:
             "auth_config": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["auth_mode", "signup_enabled", "password_auth_enabled", "captcha", "oauth"],
+                "required": ["auth_mode", "signup_enabled", "password_auth_enabled", "captcha", "oauth", "invite"],
                 "properties": {
                     "auth_mode": {"type": "string"},
                     "signup_enabled": {"type": "boolean"},
@@ -154,6 +154,16 @@ def operator_product_schema() -> dict[str, Any]:
                         "properties": {
                             "google": {"type": "object", "additionalProperties": False, "required": ["configured"], "properties": {"configured": {"type": "boolean"}}},
                             "github": {"type": "object", "additionalProperties": False, "required": ["configured"], "properties": {"configured": {"type": "boolean"}}},
+                        },
+                    },
+                    "invite": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["required", "configured", "allowlist_enabled"],
+                        "properties": {
+                            "required": {"type": "boolean"},
+                            "configured": {"type": "boolean"},
+                            "allowlist_enabled": {"type": "boolean"},
                         },
                     },
                 },
@@ -229,6 +239,11 @@ export interface AuthConfig {
   oauth: {
     google: { configured: boolean };
     github: { configured: boolean };
+  };
+  invite: {
+    required: boolean;
+    configured: boolean;
+    allowlist_enabled: boolean;
   };
 }
 

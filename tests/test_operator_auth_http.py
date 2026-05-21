@@ -59,6 +59,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "operator@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -105,6 +106,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "praxis@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -224,6 +226,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "dashboard@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -241,6 +244,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "recover@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -278,6 +282,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                         "email": f"expired-{index}@example.com",
                         "password": "correct-horse-42",
                         "captcha_token": "dev-captcha-ok",
+                        "accepted_terms": True,
                     },
                     include_cookie=True,
                 )
@@ -296,6 +301,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "owner@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -309,6 +315,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "outsider@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -337,6 +344,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                 "email": "settings@example.com",
                 "password": "correct-horse-42",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -477,6 +485,7 @@ class OperatorAuthHttpTests(unittest.TestCase):
                     "email": "provider-proof@example.com",
                     "password": "correct-horse-42",
                     "captcha_token": "provider-browser-token-redacted",
+                    "accepted_terms": True,
                 },
                 include_cookie=True,
             )

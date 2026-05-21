@@ -56,6 +56,7 @@ class OperatorProductContractTests(unittest.TestCase):
                 "password": "correct-horse-42",
                 "display_name": "Contract Operator",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )
@@ -102,6 +103,7 @@ class OperatorProductContractTests(unittest.TestCase):
                 "password": "correct-horse-42",
                 "display_name": "Section Contract Operator",
                 "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
             },
             include_cookie=True,
         )

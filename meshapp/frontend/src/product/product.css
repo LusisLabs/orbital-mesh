@@ -382,6 +382,16 @@
   font-size: 1.45rem;
 }
 
+.breadcrumb-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #89cdbb;
+  font-size: 0.76rem;
+  font-weight: 850;
+  margin-bottom: 3px;
+}
+
 .product-header p,
 .toolbar p,
 .setup-card p,
@@ -431,6 +441,120 @@
     radial-gradient(circle at 30% 20%, rgba(99, 118, 116, 0.24), transparent 45%),
     #080909;
   background-size: 66px 66px, 66px 66px, auto, auto;
+}
+
+.partner-home-hero {
+  min-height: 180px;
+  border: 1px solid #315f55;
+  border-radius: 6px;
+  background: #0b0f0e;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px;
+}
+
+.partner-home-hero.warn {
+  border-color: #6c5630;
+  background: #11100b;
+}
+
+.partner-home-hero span,
+.advanced-console-band span {
+  color: #89cdbb;
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.partner-home-hero.warn span {
+  color: #e0c27a;
+}
+
+.partner-home-hero h2 {
+  margin: 4px 0;
+  font-size: clamp(2rem, 4vw, 3.4rem);
+  line-height: 1;
+}
+
+.partner-home-hero p {
+  max-width: 680px;
+  margin: 0;
+  color: #c6c8c1;
+}
+
+.partner-home-hero button,
+.advanced-console-band button,
+.partner-card button,
+.admission-result button {
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #181a1a;
+  color: #f4f4f1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.partner-home-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 0.85fr 1fr 1fr;
+  gap: 12px;
+}
+
+.partner-card {
+  min-width: 0;
+  border: 1px solid #262828;
+  border-radius: 6px;
+  background: #121413;
+  overflow: hidden;
+}
+
+.partner-card.next {
+  padding-bottom: 14px;
+}
+
+.partner-card.next > strong,
+.partner-card.next > p,
+.partner-card.next > button {
+  margin-left: 14px;
+  margin-right: 14px;
+}
+
+.partner-card.next > strong {
+  display: block;
+  margin-top: 14px;
+  color: #f4f4f1;
+  font-size: 1.1rem;
+}
+
+.partner-card.next > p {
+  color: #aaa;
+  line-height: 1.45;
+}
+
+.advanced-console-band {
+  margin-top: 18px;
+  border: 1px solid #262828;
+  border-radius: 6px;
+  background: #101211;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.advanced-console-band strong {
+  display: block;
+  margin-top: 4px;
+  color: #f4f4f1;
 }
 
 .quickstart-card h2 {
@@ -913,6 +1037,77 @@
   cursor: not-allowed;
 }
 
+.praxis-stepper {
+  border: 1px solid #262828;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0d0f0f;
+}
+
+.praxis-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px;
+  border-bottom: 1px solid #262828;
+}
+
+.praxis-step.complete .step-index {
+  border-color: #315f55;
+  color: #aee5d5;
+}
+
+.step-index {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #454847;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #aaa;
+  font-weight: 850;
+}
+
+.praxis-step strong,
+.praxis-step small {
+  display: block;
+}
+
+.praxis-step small {
+  margin-top: 3px;
+  color: #aaa;
+  overflow-wrap: anywhere;
+}
+
+.praxis-step button,
+.praxis-step-secondary button {
+  min-height: 36px;
+  border: 1px solid #315f55;
+  border-radius: 6px;
+  background: #132c29;
+  color: #f4f4f1;
+  padding: 8px 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.praxis-step button:disabled,
+.praxis-step-secondary button:disabled {
+  border-color: #403d36;
+  background: #1a1a18;
+  color: #8f8f88;
+  cursor: not-allowed;
+}
+
+.praxis-step-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px;
+}
+
 .capability-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1072,6 +1267,36 @@
 .environment-card p {
   flex: 1;
   line-height: 1.55;
+}
+
+.connector-legend,
+.blocker-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.connector-legend {
+  margin: 10px 0 16px;
+}
+
+.connector-legend span,
+.blocker-badges span {
+  border: 1px solid #343636;
+  border-radius: 999px;
+  color: #d8d8d2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.blocker-badges span {
+  border-color: #704442;
+  color: #f0b5ac;
+  border-radius: 5px;
 }
 
 .tag-row {
@@ -1291,6 +1516,27 @@
   grid-column: span 2;
 }
 
+.launch-grid small {
+  color: #8f9592;
+  line-height: 1.35;
+}
+
+.audit-template-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.audit-template-row button {
+  border: 1px solid #303233;
+  border-radius: 6px;
+  background: #111313;
+  color: #d8d8d2;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
 .toggle-row {
   align-self: end;
   grid-template-columns: auto 1fr;
@@ -1447,6 +1693,21 @@
   color: #9fd2ca;
   border-top: 1px solid #262828;
   padding-top: 10px;
+}
+
+.setting-advanced {
+  border-top: 1px solid #262828;
+  padding-top: 10px;
+}
+
+.setting-advanced summary {
+  color: #d8d8d2;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.setting-advanced code {
+  border-top: 0;
 }
 
 .settings-save-row {
@@ -1623,6 +1884,12 @@
   line-height: 1.35;
 }
 
+.auth-provider-note.neutral {
+  border-color: #3b4643;
+  color: #c6c8c1;
+  background: rgba(49, 95, 85, 0.1);
+}
+
 .oauth-stack button,
 .auth-card label input,
 .setup-card label input {
@@ -1668,6 +1935,21 @@
   font-weight: 750;
 }
 
+.auth-card .consent-row {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  color: #c6c8c1;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.auth-card .consent-row input {
+  width: 16px;
+  height: 16px;
+  min-height: auto;
+  margin-top: 2px;
+}
+
 .auth-card input,
 .setup-card input {
   padding: 0 12px;
@@ -1704,6 +1986,12 @@
 .auth-error {
   border-color: #793d3d;
   color: #f4b4b4;
+}
+
+.auth-error.compact {
+  min-height: 0;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
 }
 
 .auth-card .primary-button,
@@ -1770,6 +2058,7 @@
   .capability-grid,
   .console-metrics,
   .console-panels,
+  .partner-home-grid,
   .launch-grid,
   .praxis-import-grid,
   .approval-list,
@@ -1850,6 +2139,8 @@
   .product-header,
   .toolbar,
   .quickstart-card,
+  .partner-home-hero,
+  .advanced-console-band,
   .console-heading {
     grid-template-columns: 1fr;
     flex-direction: column;
@@ -1858,6 +2149,7 @@
   .environment-grid,
   .capability-grid,
   .capability-grid.two,
+  .partner-home-grid,
   .stat-row,
   .console-metrics,
   .console-panels,
@@ -1869,6 +2161,13 @@
   }
   .launch-grid .launch-reason {
     grid-column: auto;
+  }
+  .praxis-step {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+  .praxis-step button,
+  .praxis-step > span {
+    grid-column: 1 / -1;
   }
   .console-metric,
   .console-panel,

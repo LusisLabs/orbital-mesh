@@ -38,6 +38,26 @@
           ],
           "type": "object"
         },
+        "invite": {
+          "additionalProperties": false,
+          "properties": {
+            "allowlist_enabled": {
+              "type": "boolean"
+            },
+            "configured": {
+              "type": "boolean"
+            },
+            "required": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "required",
+            "configured",
+            "allowlist_enabled"
+          ],
+          "type": "object"
+        },
         "oauth": {
           "additionalProperties": false,
           "properties": {
@@ -84,7 +104,8 @@
         "signup_enabled",
         "password_auth_enabled",
         "captcha",
-        "oauth"
+        "oauth",
+        "invite"
       ],
       "type": "object"
     },

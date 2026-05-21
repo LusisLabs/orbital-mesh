@@ -8,10 +8,12 @@ import {
   BookOpen,
   Boxes,
   Calendar,
+  CheckCircle2,
   ChevronDown,
   CircleDot,
   Cpu,
   Database,
+  FileCheck,
   Github,
   Globe,
   Home,
@@ -80,43 +82,23 @@ export type ViewKey =
   | "settings";
 
 const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: any }[] }[] = [
-  { label: "", items: [{ key: "home", label: "Home", icon: Home }] },
   {
-    label: "Control Console",
+    label: "Product",
     items: [
-      { key: "console", label: "Command", icon: Home },
-      { key: "console-runs", label: "Evidence Runs", icon: Activity },
-      { key: "console-approvals", label: "Approvals", icon: Lock },
-      { key: "console-launch", label: "Launch", icon: Play },
-      { key: "console-readiness", label: "Readiness", icon: Cpu },
-      { key: "console-evidence", label: "Evidence", icon: ShieldCheck },
-      { key: "console-hermes", label: "Hermes", icon: Sparkles },
-      { key: "console-agents", label: "Proposal Lanes", icon: Network },
-      { key: "console-connectors", label: "Connectors", icon: Boxes },
-      { key: "console-packets", label: "Pilot Packet", icon: BookOpen },
-      { key: "console-audit", label: "Audit", icon: Search },
-      { key: "console-signals", label: "Signals", icon: Zap },
-      { key: "console-simulator", label: "Simulator", icon: Layers },
-      { key: "console-trust", label: "Trust Ladder", icon: ShieldCheck },
-      { key: "console-roadmap", label: "Roadmap", icon: Calendar },
-    ],
-  },
-  {
-    label: "Lab",
-    items: [
+      { key: "home", label: "Home", icon: Home },
       { key: "praxis", label: "Praxis", icon: Sparkles },
-      { key: "environments", label: "Connector Status", icon: Boxes },
       { key: "evaluations", label: "Evaluations", icon: BarChart3 },
-      { key: "training", label: "Topology", icon: Network },
-      { key: "inference", label: "Memory Projection", icon: Database },
+      { key: "environments", label: "Connectors", icon: Boxes },
+      { key: "gpu", label: "Readiness", icon: Cpu },
+      { key: "instances", label: "Policy State", icon: Layers },
     ],
   },
   {
     label: "Runtime",
     items: [
-      { key: "gpu", label: "Readiness", icon: Cpu },
+      { key: "training", label: "Topology", icon: Network },
+      { key: "inference", label: "Memory Projection", icon: Database },
       { key: "clusters", label: "Kill Switch", icon: Calendar },
-      { key: "instances", label: "Policy State", icon: Layers },
     ],
   },
   {
@@ -127,11 +109,32 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "keys", label: "Keys & Secrets", icon: KeyRound },
     ],
   },
+  {
+    label: "Advanced Console",
+    items: [
+      { key: "console", label: "Command", icon: Home },
+      { key: "console-runs", label: "Evidence Runs", icon: Activity },
+      { key: "console-approvals", label: "Approvals", icon: Lock },
+      { key: "console-launch", label: "Launch", icon: Play },
+      { key: "console-readiness", label: "Control Plane", icon: Cpu },
+      { key: "console-evidence", label: "Evidence", icon: ShieldCheck },
+      { key: "console-connectors", label: "Connector Matrix", icon: Boxes },
+      { key: "console-packets", label: "Pilot Packet", icon: BookOpen },
+      { key: "console-hermes", label: "Hermes", icon: Sparkles },
+      { key: "console-agents", label: "Proposal Lanes", icon: Network },
+      { key: "console-signals", label: "Signals", icon: Zap },
+      { key: "console-simulator", label: "Simulator", icon: Layers },
+      { key: "console-trust", label: "Trust Ladder", icon: ShieldCheck },
+      { key: "console-audit", label: "Audit", icon: Search },
+      { key: "console-roadmap", label: "Roadmap", icon: Calendar },
+    ],
+  },
 ];
 
 type OperatorWorkflowKey = "launch" | "approval" | "evidence" | "readiness" | "connector" | "settings";
 type ConsoleTone = "good" | "warn" | "neutral";
 export type DashboardSurfaceState = "ready" | "empty" | "degraded" | "blocked" | "unauthorized" | "backend-unavailable";
+type AuthProviderKey = "google" | "github";
 export type ConsoleWorkflow = {
   productView: ViewKey;
   consoleView: AppView;
@@ -167,6 +170,12 @@ type DashboardTileModel = {
   apiSection: string;
   state: DashboardSurfaceState;
   stateReason: string;
+};
+type PartnerHomeModel = {
+  readiness: { label: "Go" | "Blocked" | "Demo-only"; detail: string; tone: ConsoleTone };
+  nextStep: { label: string; detail: string; view: ViewKey; action: string };
+  recentActivity: ControlRow[];
+  blockedEvidence: ControlRow[];
 };
 export type SettingsParityRow = {
   key: string;
@@ -272,15 +281,20 @@ export default function ProductApp() {
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
 
+  function soloOnboardingKey(userId: string): string {
+    return `mesh.product.solo.${userId}`;
+  }
+
   function acceptSession(payload: SessionPayload) {
     setSession(payload);
     setSessionState({ state: "ready", data: payload });
-    setOnboardingComplete(Boolean(payload.active_team || window.localStorage.getItem("mesh.product.solo") === "1"));
+    setOnboardingComplete(Boolean(payload.active_team || window.localStorage.getItem(soloOnboardingKey(payload.user.id)) === "1"));
   }
 
   function clearSession(state: LoadState<SessionPayload>) {
     setSession(null);
     setSessionState(state);
+    setOnboardingComplete(false);
     setDashboardState({ state: "empty", message: "Sign in to load the dashboard." });
   }
 
@@ -358,8 +372,10 @@ export default function ProductApp() {
     setLoggingOut(true);
     setLogoutError("");
     try {
+      if (session) window.localStorage.removeItem(soloOnboardingKey(session.user.id));
       await productApi.logout();
       setSession(null);
+      setOnboardingComplete(false);
       setSessionState({ state: "unauthorized", message: "Logged out" });
     } catch (err) {
       setLogoutError(err instanceof Error ? err.message : "Logout failed. Session was not cleared.");
@@ -381,7 +397,7 @@ export default function ProductApp() {
       <TeamSetupScreen
         session={session}
         onSolo={() => {
-          window.localStorage.setItem("mesh.product.solo", "1");
+          window.localStorage.setItem(soloOnboardingKey(session.user.id), "1");
           setOnboardingComplete(true);
         }}
         onTeam={(payload) => {
@@ -394,12 +410,17 @@ export default function ProductApp() {
 
   const dashboard = dashboardState.state === "ready" ? dashboardState.data : null;
   const consoleMode = isConsoleProductView(view);
+  const activePage = pageMetaForView(view);
+  const openView = (nextView: ViewKey) => {
+    setView(nextView);
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, left: 0 });
+  };
 
   return (
     <div className={`product-shell ${consoleMode ? "console-mode" : ""}`}>
-      <Sidebar session={session} activeView={view} onView={setView} onLogout={logout} loggingOut={loggingOut} />
+      <Sidebar session={session} activeView={view} onView={openView} onLogout={logout} loggingOut={loggingOut} />
       <main className="product-main">
-        <Header session={session} dashboard={dashboard} onSession={setSession} refreshSession={refreshSession} consoleMode={consoleMode} />
+        <Header session={session} dashboard={dashboard} refreshSession={refreshSession} consoleMode={consoleMode} activePage={activePage} />
         {logoutError ? (
           <div className="product-alert" role="alert">
             <AlertTriangle size={16} />
@@ -410,7 +431,7 @@ export default function ProductApp() {
           view={view}
           session={session}
           dashboardState={dashboardState}
-          setView={setView}
+          setView={openView}
           onDashboardRefresh={refreshDashboard}
           onLogout={logout}
           loggingOut={loggingOut}
@@ -458,19 +479,27 @@ export function AuthScreen({
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [captchaToken, setCaptchaToken] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const backendUnavailable = !config;
   const sessionIssueMessage = sessionLoadIssueMessage(sessionState);
   const authUnavailable = backendUnavailable || sessionState?.state === "backend-unavailable";
   const signupMode = mode === "signup";
+  const passwordMatches = !signupMode || password === passwordConfirm;
+  const signupEnabled = !signupMode || Boolean(config?.signup_enabled && config?.password_auth_enabled);
+  const inviteRequired = signupMode && Boolean(config?.invite?.required);
+  const inviteSatisfied = !inviteRequired || Boolean(inviteCode.trim());
   const captchaSatisfied =
     !signupMode ||
     Boolean(config?.captcha.dev_bypass_enabled) ||
     (Boolean(config?.captcha.configured) && Boolean(captchaToken));
-  const submitDisabled = busy || authUnavailable || !email.trim() || !password || !captchaSatisfied;
+  const submitDisabled = busy || authUnavailable || !email.trim() || !password || !passwordMatches || !signupEnabled || !captchaSatisfied || !inviteSatisfied || (signupMode && !acceptedTerms);
+  const enabledOauthProviders = (["google", "github"] as AuthProviderKey[]).filter((provider) => config?.oauth[provider].configured);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -493,23 +522,25 @@ export function AuthScreen({
           password,
           display_name: displayName,
           captcha_token: captchaToken || (config?.captcha.dev_bypass_enabled ? "dev-captcha-ok" : ""),
+          invite_code: inviteCode.trim() || undefined,
+          accepted_terms: acceptedTerms,
         })
         : await productApi.login({ email, password });
       onSession(payload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
+      setError(authFailureMessage(err));
     } finally {
       setBusy(false);
     }
   }
 
-  async function oauth(provider: "google" | "github") {
+  async function oauth(provider: AuthProviderKey) {
     if (!config || authUnavailable) {
       setError(backendUnavailable ? backendUnavailableMessage() : sessionIssueMessage || "Authentication is unavailable.");
       return;
     }
     if (!config.oauth[provider].configured) {
-      setError(`${provider} OAuth is not configured. Set the provider client ID, client secret, and redirect URL on the Mesh API server.`);
+      setError(`${providerLabel(provider)} sign-in is not available for this environment.`);
       return;
     }
     setError("");
@@ -517,7 +548,7 @@ export function AuthScreen({
       const payload = await productApi.oauthStart(provider);
       window.location.assign(payload.authorize_url);
     } catch (err) {
-      setError(err instanceof Error ? err.message : `${provider} login unavailable`);
+      setError(authFailureMessage(err));
     }
   }
 
@@ -537,17 +568,20 @@ export function AuthScreen({
             <span>{backendUnavailable ? backendUnavailableMessage() : sessionIssueMessage}</span>
           </div>
         ) : null}
-        <div className="oauth-stack">
-          <button type="button" onClick={() => oauth("google")} disabled={authUnavailable || !config?.oauth.google.configured}>
-            <Globe size={18} /> Continue with Google
-          </button>
-          <button type="button" onClick={() => oauth("github")} disabled={authUnavailable || !config?.oauth.github.configured}>
-            <Github size={18} /> Continue with GitHub
-          </button>
-        </div>
-        {config && (!config.oauth.google.configured || !config.oauth.github.configured) ? (
-          <p className="auth-provider-note">OAuth buttons enable after provider environment variables are configured on the Mesh API server.</p>
-        ) : null}
+        {enabledOauthProviders.length ? (
+          <div className="oauth-stack">
+            {enabledOauthProviders.map((provider) => {
+              const Icon = provider === "google" ? Globe : Github;
+              return (
+                <button key={provider} type="button" onClick={() => oauth(provider)} disabled={authUnavailable}>
+                  <Icon size={18} /> Continue with {providerLabel(provider)}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="auth-provider-note neutral">Use your invited email and password for this environment.</p>
+        )}
         <div className="divider"><span>OR</span></div>
         {mode === "signup" ? (
           <label>
@@ -563,6 +597,26 @@ export function AuthScreen({
           Password
           <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" autoComplete={mode === "login" ? "current-password" : "new-password"} />
         </label>
+        {mode === "signup" ? (
+          <>
+            <label>
+              Confirm password
+              <input value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} type="password" autoComplete="new-password" />
+            </label>
+            {inviteRequired ? (
+              <label>
+                Invite code
+                <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} placeholder="from your Mesh invite" autoComplete="one-time-code" />
+              </label>
+            ) : null}
+            <label className="consent-row">
+              <input type="checkbox" checked={acceptedTerms} onChange={(event) => setAcceptedTerms(event.target.checked)} />
+              <span>I agree to use only redacted sources and understand Mesh keeps policy, approvals, run state, evidence, and actuation authority.</span>
+            </label>
+            {!passwordMatches ? <div className="auth-error compact">Passwords must match.</div> : null}
+            {!signupEnabled ? <div className="auth-error compact">Signup is invite-only for this environment.</div> : null}
+          </>
+        ) : null}
         {mode === "signup" ? <CaptchaWidget config={config} onToken={setCaptchaToken} /> : null}
         {error ? <div className="auth-error">{error}</div> : null}
         <button className="primary-button" type="submit" disabled={submitDisabled}>
@@ -574,6 +628,9 @@ export function AuthScreen({
           onClick={() => {
             setMode(mode === "login" ? "signup" : "login");
             setCaptchaToken("");
+            setPasswordConfirm("");
+            setInviteCode("");
+            setAcceptedTerms(false);
             setError("");
           }}
         >
@@ -582,6 +639,22 @@ export function AuthScreen({
       </form>
     </div>
   );
+}
+
+function providerLabel(provider: AuthProviderKey): string {
+  return provider === "google" ? "Google" : "GitHub";
+}
+
+export function authFailureMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Authentication failed";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("captcha")) return "Complete the verification challenge, then try again.";
+  if (normalized.includes("invite") || normalized.includes("allowlist") || normalized.includes("not allowed")) return "This email is not invited for this Mesh environment.";
+  if (normalized.includes("user already exists")) return "An account already exists for this email. Log in instead.";
+  if (normalized.includes("invalid email or password")) return "Email or password is incorrect.";
+  if (normalized.includes("password signup is disabled")) return "Signup is invite-only for this environment.";
+  if (normalized.includes("oauth is not configured")) return "That sign-in provider is not available for this environment.";
+  return message;
 }
 
 export function authCallbackErrorMessage(code: string): string {
@@ -783,24 +856,48 @@ function Header({
   dashboard,
   refreshSession,
   consoleMode,
+  activePage,
 }: {
   session: SessionPayload;
   dashboard: DashboardPayload | null;
-  onSession: (session: SessionPayload | null) => void;
   refreshSession: () => Promise<SessionPayload>;
   consoleMode?: boolean;
+  activePage: { title: string; group: string; detail: string };
 }) {
+  const scope = dashboard?.scope.kind === "team" ? dashboard.scope.team?.display_name : "Solo dashboard";
   return (
     <header className="product-header">
       <div>
-        <h1>{consoleMode ? "Control Console" : dashboard?.scope.kind === "team" ? dashboard.scope.team?.display_name : "Home"}</h1>
-        <p>{consoleMode ? "Full migrated Mesh console workflows are available inside the production product shell." : dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
+        <div className="breadcrumb-row">
+          <span>{scope}</span>
+          <ArrowRight size={13} />
+          <span>{activePage.group}</span>
+        </div>
+        <h1>{activePage.title}</h1>
+        <p>{consoleMode ? activePage.detail : activePage.detail || dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
       </div>
       <div className="header-actions">
         <TeamSwitcher session={session} refreshSession={refreshSession} />
       </div>
     </header>
   );
+}
+
+function pageMetaForView(view: ViewKey): { title: string; group: string; detail: string } {
+  if (isConsoleProductView(view)) {
+    const workflow = consoleWorkflowForView(view);
+    return { title: workflow.label, group: "Advanced Console", detail: workflow.description };
+  }
+  const match = NAV_GROUPS.flatMap((group) => group.items.map((item) => ({ ...item, group: group.label || "Product" }))).find((item) => item.key === view);
+  const title = match?.label || humanize(view);
+  const details: Partial<Record<ViewKey, string>> = {
+    home: "Readiness, next action, recent activity, and blockers before the console.",
+    praxis: "Upload sources, certify generated tools, start dry-run, and export proof.",
+    evaluations: "Choose a scenario, launch through Mesh admission, and inspect proof.",
+    environments: "Filter connector status by domain, state, and blocker evidence.",
+    settings: "Simple defaults first; deployment and CLI parity stay in Advanced.",
+  };
+  return { title, group: match?.group || "Product", detail: details[view] || "Mesh-owned read model with product-safe controls." };
 }
 
 function TeamSwitcher({ session, refreshSession }: { session: SessionPayload; refreshSession: () => Promise<SessionPayload> }) {
@@ -879,22 +976,59 @@ function LoadStatePanel<T>({ state }: { state: LoadState<T> }) {
 function HomeView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
   const praxis = buildPraxisProductModel(dashboard);
   const capabilityCards = buildDashboardTiles(dashboard);
+  const partnerHome = buildPartnerHomeModel(dashboard);
 
   return (
     <div className="content-stack">
-      <section className="quickstart-card">
-        <Sparkles size={20} />
+      <section className={`partner-home-hero ${partnerHome.readiness.tone}`}>
         <div>
-          <h2>Quickstart</h2>
-          <p>Generate governed tools, check readiness, and keep approvals inside Mesh authority.</p>
+          <span>Readiness</span>
+          <h2>{partnerHome.readiness.label}</h2>
+          <p>{partnerHome.readiness.detail}</p>
         </div>
-        <button type="button" onClick={() => setView("praxis")}>Build tools <ArrowRight size={16} /></button>
+        <button type="button" onClick={() => setView(partnerHome.nextStep.view)}>
+          {partnerHome.nextStep.action} <ArrowRight size={16} />
+        </button>
+      </section>
+      <section className="partner-home-grid">
+        <article className="partner-card next">
+          <div className="panel-title"><CheckCircle2 size={15} /><span>Next step</span></div>
+          <strong>{partnerHome.nextStep.label}</strong>
+          <p>{partnerHome.nextStep.detail}</p>
+          <button type="button" onClick={() => setView(partnerHome.nextStep.view)}>{partnerHome.nextStep.action}</button>
+        </article>
+        <article className="partner-card">
+          <div className="panel-title"><Activity size={15} /><span>Recent activity</span></div>
+          {partnerHome.recentActivity.length ? partnerHome.recentActivity.map((item) => (
+            <button className="console-row" key={item.id} type="button" onClick={() => setView("evaluations")}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <small>{item.detail}</small>
+            </button>
+          )) : <EmptyInline text="No recent Mesh activity for this scope." />}
+        </article>
+        <article className="partner-card">
+          <div className="panel-title"><FileCheck size={15} /><span>Blocked evidence</span></div>
+          {partnerHome.blockedEvidence.length ? partnerHome.blockedEvidence.map((item) => (
+            <button className="console-row" key={item.id} type="button" onClick={() => setView("evaluations")}>
+              <span>{item.label}</span>
+              <strong>{item.value}</strong>
+              <small>{item.detail}</small>
+            </button>
+          )) : <EmptyInline text="No missing proof reported by Mesh." />}
+        </article>
       </section>
       <PraxisHomeModule model={praxis} setView={setView} />
-      <OperatorCommandCenter dashboard={dashboard} setView={setView} />
-      <SectionLabel label="Mesh capabilities" />
+      <section className="advanced-console-band">
+        <div>
+          <span>Advanced operator console</span>
+          <strong>Full Mesh console workflows are still available, but product tasks come first.</strong>
+        </div>
+        <button type="button" onClick={() => setView("console")}>Open Advanced Console</button>
+      </section>
+      <SectionLabel label="Product paths" />
       <div className="capability-grid">
-        {capabilityCards.map((card) => {
+        {capabilityCards.filter((card) => card.view !== "console").slice(0, 6).map((card) => {
           const Icon = card.icon;
           return (
             <button className="capability-card" key={card.title} type="button" onClick={() => setView(card.view)}>
@@ -909,6 +1043,54 @@ function HomeView({ dashboard, setView }: { dashboard: DashboardPayload; setView
       </div>
     </div>
   );
+}
+
+export function buildPartnerHomeModel(dashboard: DashboardPayload): PartnerHomeModel {
+  const mesh = dashboard.mesh || {};
+  const control = buildDashboardControlModel(dashboard);
+  const pilot = mesh.pilot_go_no_go || {};
+  const readiness = mesh.readiness || {};
+  const missing = Array.isArray(pilot.missing_evidence) ? pilot.missing_evidence : [];
+  const readinessStatus = String(readiness.status || pilot.final_release_decision || pilot.status || "").toLowerCase();
+  const demoOnly = readiness.profile === "local" || readinessStatus.includes("demo");
+  const blocked = missing.length > 0 || readiness.ready === false || readinessStatus.includes("blocked") || readinessStatus.includes("denied");
+  const readinessLabel = blocked ? "Blocked" : demoOnly ? "Demo-only" : "Go";
+  const praxis = buildPraxisProductModel(dashboard);
+  const nextStep = !dashboard.scope.team
+    ? { label: "Create a team", detail: "Team scope keeps partners, roles, and proof review separate from solo browser state.", view: "team" as ViewKey, action: "Set up team" }
+    : Number(praxis.sourcePackets) === 0
+      ? { label: "Import Praxis source", detail: "Upload redacted OpenAPI, SOP, Postman, or traffic references before tool generation.", view: "praxis" as ViewKey, action: "Import source" }
+      : !control.recentRuns.length
+        ? { label: "Launch sandbox run", detail: "Pick a scenario and let Mesh admit or block the run with audit context.", view: "evaluations" as ViewKey, action: "Launch run" }
+        : { label: "Review proof", detail: "Open the run proof views and inspect missing evidence before partner handoff.", view: "evaluations" as ViewKey, action: "Review proof" };
+  return {
+    readiness: {
+      label: readinessLabel,
+      detail: blocked
+        ? `${missing.length || readiness.blockers?.length || 1} blocker(s) must be resolved before invites.`
+        : demoOnly
+          ? "Local/demo evidence is useful for rehearsal, but live provider proof is still required before external invites."
+          : "Mesh reports no current invite-blocking readiness issue in this dashboard scope.",
+      tone: blocked ? "warn" : "good",
+    },
+    nextStep,
+    recentActivity: control.recentRuns.slice(0, 3),
+    blockedEvidence: missing.slice(0, 4).map((item: any, index: number) => ({
+      id: `missing-${index}`,
+      label: "Missing proof",
+      value: humanize(String(item)),
+      detail: plainEvidenceBlocker(String(item)),
+    })),
+  };
+}
+
+function plainEvidenceBlocker(value: string): string {
+  const lower = value.toLowerCase();
+  if (lower.includes("auth")) return "Complete live provider proof for signup, OAuth, and captcha before inviting partners.";
+  if (lower.includes("decision")) return "Mesh needs a signed decision record or completed run decision before this can be called ready.";
+  if (lower.includes("export")) return "Create or upload the proof/export packet Mesh expects for handoff.";
+  if (lower.includes("readiness")) return "Resolve readiness blockers in the Mesh control-plane snapshot.";
+  return "Open the proof view for the exact Mesh evidence record and remediation path.";
 }
 
 function PraxisHomeModule({ model, setView }: { model: PraxisProductModel; setView: (view: ViewKey) => void }) {
@@ -1132,14 +1314,20 @@ function PraxisView({
           <PraxisFileInput label="Traffic refs file" accept=".json,.har" file={sourceFiles.traffic_ref || null} onFile={(file) => setSourceFile("traffic_ref", file)} />
           <PraxisFileInput label="Akto evidence file" accept=".json" file={aktoFile} onFile={setAktoFile} />
         </div>
-        <div className="praxis-action-strip">
-          <button type="button" onClick={importAktoEvidence} disabled={busyAction === "akto" || !requestId}>Import Akto evidence</button>
-          <button type="button" onClick={buildCertification} disabled={busyAction === "certify" || !requestId}>Build certification binding</button>
-          <button type="button" onClick={startDryRun} disabled={busyAction === "start" || !requestId}>Start dry-run MCP endpoint</button>
-          <button type="button" onClick={callReadOnlyTool} disabled={busyAction === "call" || !requestId}>Call read-only MCP tool</button>
-          <button type="button" onClick={exportP10Proof} disabled={busyAction === "p10" || !requestId}>Export P10 proof</button>
-          <button type="button" onClick={revokeConnector} disabled={busyAction === "revoke" || !requestId}>Revoke generated connector</button>
-        </div>
+        <PraxisStepper
+          steps={[
+            { label: "Upload sources", detail: "Redacted source files selected", complete: Object.values(sourceFiles).some(Boolean), action: "Select files" },
+            { label: "Generate tools", detail: requestId || "Create candidate MCP contract", complete: Boolean(requestId), action: busyAction === "generate" ? "Generating" : "Generate", onAction: generateContract, disabled: busyAction === "generate" },
+            { label: "Import security evidence", detail: securityFindings.length ? `${securityFindings.length} finding(s) imported` : "Attach Akto result", complete: securityFindings.length > 0, action: busyAction === "akto" ? "Importing" : "Import", onAction: importAktoEvidence, disabled: busyAction === "akto" || !requestId },
+            { label: "Certify", detail: `${model.certifiedTools} read-only / ${model.deniedTools} denied`, complete: Number(model.certifiedTools) > 0 || Number(model.deniedTools) > 0, action: busyAction === "certify" ? "Certifying" : "Certify", onAction: buildCertification, disabled: busyAction === "certify" || !requestId },
+            { label: "Start dry run", detail: model.runtimeStatus, complete: model.runtimeStatus.includes("ready") || model.managedRuntime, action: busyAction === "start" ? "Starting" : "Start dry run", onAction: startDryRun, disabled: busyAction === "start" || !requestId },
+            { label: "Export proof", detail: model.proofStatus, complete: model.proofStatus === "complete", action: busyAction === "p10" ? "Exporting" : "Export", onAction: exportP10Proof, disabled: busyAction === "p10" || !requestId },
+          ]}
+          secondaryActions={[
+            { label: "Call read-only tool", onAction: callReadOnlyTool, disabled: busyAction === "call" || !requestId },
+            { label: "Revoke connector", onAction: revokeConnector, disabled: busyAction === "revoke" || !requestId },
+          ]}
+        />
         {message ? <div className={message.toLowerCase().includes("failed") || message.toLowerCase().includes("required") || message.toLowerCase().includes("upload") ? "auth-error" : "product-alert success"}>{message}</div> : null}
       </section>
       <section className="praxis-workbench" aria-label="Praxis generator workbench">
@@ -1196,6 +1384,34 @@ function PraxisView({
           )) : <EmptyInline text="No Akto findings in the dashboard read model." />}
         </PraxisLane>
       </section>
+    </div>
+  );
+}
+
+function PraxisStepper({
+  steps,
+  secondaryActions,
+}: {
+  steps: { label: string; detail: string; complete: boolean; action: string; onAction?: () => void; disabled?: boolean }[];
+  secondaryActions: { label: string; onAction: () => void; disabled?: boolean }[];
+}) {
+  return (
+    <div className="praxis-stepper" aria-label="Praxis workflow">
+      {steps.map((step, index) => (
+        <div className={step.complete ? "praxis-step complete" : "praxis-step"} key={step.label}>
+          <div className="step-index">{step.complete ? <CheckCircle2 size={16} /> : index + 1}</div>
+          <div>
+            <strong>{step.label}</strong>
+            <small>{step.detail}</small>
+          </div>
+          {step.onAction ? <button type="button" onClick={step.onAction} disabled={step.disabled}>{step.action}</button> : <span>{step.action}</span>}
+        </div>
+      ))}
+      <div className="praxis-step-secondary">
+        {secondaryActions.map((action) => (
+          <button key={action.label} type="button" onClick={action.onAction} disabled={action.disabled}>{action.label}</button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -1618,28 +1834,51 @@ export function settingsParityRows(dashboard: DashboardPayload): SettingsParityR
 function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
   const connectorPosture = operatorWorkflowPosture("connector");
   const connectors = dashboard.mesh.connectors?.connectors || dashboard.mesh.connectors?.connector_certification || {};
+  const [query, setQuery] = useState("");
   const cards = Object.entries(connectors).map(([id, value]: [string, any]) => ({
     id,
     owner: "Mesh",
-    stars: value.blockers?.length || 0,
+    blockers: Array.isArray(value.blockers) ? value.blockers : [],
+    state: String(value.state || value.status || "unknown"),
+    domain: String(value.domain || value.credential_boundary?.credential_source || "Deployment"),
     title: value.name || id,
     detail: value.detail || value.authority_posture || "Connector certification state",
     tags: [value.state || "unknown", value.credential_boundary?.credential_source || "config"],
     version: value.schema_version || "v1",
   }));
+  const loweredQuery = query.trim().toLowerCase();
+  const filteredCards = cards.filter((card) => {
+    if (!loweredQuery) return true;
+    return [card.id, card.title, card.detail, card.state, card.domain, ...card.tags].join(" ").toLowerCase().includes(loweredQuery);
+  });
+  const grouped = groupConnectorCards(filteredCards);
 
   return (
     <div className="content-stack">
       <Toolbar
-        title="Connector Status"
+        title="Connectors"
         detail={connectorPosture.reason}
         action="Review Dashboard"
         onAction={() => setView("home")}
       />
-      <SearchBar />
-      <CardRows sections={[{ title: "Connectors", count: cards.length, cards }]} />
+      <SearchBar value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
+      <div className="connector-legend">
+        {["ready", "staging-ready", "read-only", "config-only", "blocked", "stub", "disconnected"].map((state) => (
+          <span key={state}><CircleDot size={10} /> {humanize(state)}</span>
+        ))}
+      </div>
+      <CardRows sections={grouped} />
     </div>
   );
+}
+
+function groupConnectorCards(cards: Array<{ id: string; state: string; domain: string; [key: string]: any }>): { title: string; count: number; cards: any[] }[] {
+  const groups = new Map<string, any[]>();
+  for (const card of cards) {
+    const key = `${humanize(card.state)} / ${card.domain}`;
+    groups.set(key, [...(groups.get(key) || []), card]);
+  }
+  return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([title, groupCards]) => ({ title, count: groupCards.length, cards: groupCards }));
 }
 
 function EvaluationsView({
@@ -1779,6 +2018,19 @@ type ProofResult = {
   payloads: Record<string, any>;
 };
 
+const SCENARIO_PICKER = [
+  { key: "reth_peer_starvation", label: "Reth peer starvation", detail: "Exercise peer loss, degraded sync signal, evidence collection, and bounded remediation." },
+  { key: "packet_export", label: "Proof packet export", detail: "Validate evidence packaging and release proof export without production actuation." },
+  { key: "kubernetes_rollout_guard", label: "Kubernetes rollout guard", detail: "Check watcher evidence and approval gates before any live cluster action." },
+  { key: "custom", label: "Custom scenario", detail: "Use a custom scenario key when Mesh already knows the fixture or target." },
+];
+
+const AUDIT_REASON_TEMPLATES = [
+  "Pilot dry-run: verify readiness and proof continuity before partner invite.",
+  "Partner review: explain blockers without granting production authority.",
+  "Regression rehearsal: confirm Mesh admission, approval, and evidence paths.",
+];
+
 function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
   const runs = dashboard.mesh.runs?.runs || [];
   const [selectedRunId, setSelectedRunId] = useState(String(runs[0]?.run_id || ""));
@@ -1852,6 +2104,7 @@ function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
 
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
   const [scenarioKey, setScenarioKey] = useState("reth_peer_starvation");
+  const [customScenario, setCustomScenario] = useState("");
   const [evaluationMode, setEvaluationMode] = useState(dashboard.settings.default_evaluation_mode || "native");
   const [orchestrationMode, setOrchestrationMode] = useState(dashboard.settings.default_orchestration_mode || "native");
   const [steeringMode, setSteeringMode] = useState(dashboard.settings.default_steering_mode || "approval_gate");
@@ -1867,12 +2120,16 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
       setMessage("Audit reason is required before Mesh can admit a product-launched run.");
       return;
     }
+    if (scenarioKey === "custom" && !customScenario.trim()) {
+      setMessage("Custom scenario key is required before Mesh can admit the run.");
+      return;
+    }
     setSubmitting(true);
     setMessage("");
     setResult(null);
     try {
       const response = await productApi.createRun({
-        scenario_key: scenarioKey,
+        scenario_key: scenarioKey === "custom" ? customScenario.trim() : scenarioKey,
         audit_reason: cleanedReason,
         evaluation_mode: evaluationMode,
         orchestration_mode: orchestrationMode,
@@ -1893,6 +2150,7 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
 
   const admission = result ? runAdmission(result) : null;
   const blockers = admission?.blockers || [];
+  const selectedScenario = SCENARIO_PICKER.find((scenario) => scenario.key === scenarioKey) || SCENARIO_PICKER[0];
   return (
     <section className="launch-panel" aria-label="New Evaluation / Launch Run">
       <div className="launch-heading">
@@ -1908,8 +2166,17 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
       <div className="launch-grid">
         <label>
           Scenario
-          <input value={scenarioKey} onChange={(event) => setScenarioKey(event.target.value)} placeholder="reth_peer_starvation" />
+          <select value={scenarioKey} onChange={(event) => setScenarioKey(event.target.value)}>
+            {SCENARIO_PICKER.map((scenario) => <option key={scenario.key} value={scenario.key}>{scenario.label}</option>)}
+          </select>
+          <small>{selectedScenario.detail}</small>
         </label>
+        {scenarioKey === "custom" ? (
+          <label>
+            Custom key
+            <input value={customScenario} onChange={(event) => setCustomScenario(event.target.value)} placeholder="scenario_key" />
+          </label>
+        ) : null}
         <label>
           Evaluation
           <select value={evaluationMode} onChange={(event) => setEvaluationMode(event.target.value)}>
@@ -1932,6 +2199,9 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
           Audit reason
           <input value={auditReason} onChange={(event) => setAuditReason(event.target.value)} placeholder="why this evaluation is being launched" />
         </label>
+        <div className="audit-template-row">
+          {AUDIT_REASON_TEMPLATES.map((template) => <button key={template} type="button" onClick={() => setAuditReason(template)}>{template}</button>)}
+        </div>
         <label className="toggle-row">
           <input type="checkbox" checked={requireTargetLock} onChange={(event) => setRequireTargetLock(event.target.checked)} />
           Require target lock
@@ -1944,6 +2214,7 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
           <strong>{admission?.decision || result.status || result.stage}</strong>
           <small>{result.run_id}</small>
           {blockers.length ? <p>Blocked by: {blockers.join(", ")}</p> : <p>Queue depth: {admission?.queue?.current_depth ?? 0} / {admission?.queue?.max_size ?? "unknown"}</p>}
+          <button type="button" onClick={() => setAuditReason(`Follow-up on ${result.run_id}: review Mesh proof and admission outcome.`)}>Prepare follow-up reason</button>
         </div>
       ) : null}
     </section>
@@ -2110,8 +2381,11 @@ function SettingsView({
               {(row.values || []).map((value) => <option key={value} value={value}>{value}</option>)}
             </select>
             <p>{row.description}</p>
-            <code>{row.uiMutationPath}</code>
-            <code>{row.cliPath}</code>
+            <details className="setting-advanced">
+              <summary>Advanced</summary>
+              <code>{row.uiMutationPath}</code>
+              <code>{row.cliPath}</code>
+            </details>
           </div>
         ) : (
           <div className="setting-card readonly" key={row.key}>
@@ -2296,8 +2570,21 @@ function Toolbar({
   );
 }
 
-function SearchBar({ placeholder = "Search by name, author, description, tags..." }: { placeholder?: string }) {
-  return <label className="search-bar"><Search size={16} /><input placeholder={placeholder} /></label>;
+function SearchBar({
+  placeholder = "Search by name, author, description, tags...",
+  value,
+  onChange,
+}: {
+  placeholder?: string;
+  value?: string;
+  onChange?: (value: string) => void;
+}) {
+  return (
+    <label className="search-bar">
+      <Search size={16} />
+      <input placeholder={placeholder} value={value} onChange={(event) => onChange?.(event.target.value)} />
+    </label>
+  );
 }
 
 function SectionLabel({ label }: { label: string }) {
@@ -2313,9 +2600,14 @@ function CardRows({ sections }: { sections: { title: string; count: number; card
           <div className="environment-grid">
             {section.cards.map((card) => (
               <article className="environment-card" key={card.id}>
-                <div><span>{card.owner}</span><span>{card.stars} <Sparkles size={12} /></span></div>
+                <div><span>{card.owner}</span><span>{card.state || card.tags?.[0] || "unknown"}</span></div>
                 <h4>{card.title}</h4>
                 <p>{card.detail}</p>
+                {card.blockers?.length ? (
+                  <div className="blocker-badges">
+                    {card.blockers.map((blocker: string) => <span key={blocker}><AlertTriangle size={11} /> {humanize(blocker)}</span>)}
+                  </div>
+                ) : null}
                 <div className="tag-row">{card.tags.map((tag: string) => <span key={tag}>{tag}</span>)}</div>
                 <small>{card.version}</small>
               </article>

@@ -11,7 +11,9 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
   await page.getByLabel("Display name").fill("E2E Operator");
   await page.getByLabel("Email address").fill(`operator-${Date.now()}@example.com`);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await expect(page.getByText("Local captcha bypass is active for development only.")).toBeVisible();
   await page.getByRole("button", { name: "Sign up" }).click();
 
@@ -23,12 +25,11 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await page.getByRole("button", { name: "Create team" }).click();
   await dashboardResponse;
 
-  await expect(page.getByText("Dashboard identity scopes the product read model.")).toBeVisible();
-  await expect(page.getByText("Mesh remains the authority for policy, approvals, run state, readiness, evidence, and actuation.")).toBeVisible();
-  await expect(page.getByRole("navigation").getByRole("button", { name: "Connector Status", exact: true })).toBeVisible();
+  await expect(page.locator(".partner-home-hero").getByText("Readiness", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Next step/)).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("button", { name: "Connectors", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Evaluations" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Runtime readiness ready/ })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Orchestration topology ready/ })).toBeVisible();
 });
 
 test("product dashboard opens migrated console workflows in place", async ({ page }) => {
@@ -36,19 +37,21 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Console E2E Operator");
   await page.getByLabel("Email address").fill(`console-${Date.now()}@example.com`);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
   await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes" }).click();
-  await expect(page.getByRole("heading", { name: "Control Console" })).toBeVisible();
-  await expect(page.getByText("Hermes chat, explanation, advisory context")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Hermes" })).toBeVisible();
+  await expect(page.locator(".console-workspace-toolbar").getByText("Hermes chat, explanation, advisory context")).toBeVisible();
   await expect(page.locator(".console-workspace .mesh-session-rail")).toBeHidden();
   await expect(page.getByText("Hermes Status")).toBeVisible();
 
   await page.locator(".product-sidebar nav").getByRole("button", { name: "Evidence Runs" }).click();
-  await expect(page.getByText("Run timeline, delivery context, evidence graph")).toBeVisible();
+  await expect(page.locator(".console-workspace-toolbar").getByText("Run timeline, delivery context, evidence graph")).toBeVisible();
   await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
   await expect(page.getByRole("button", { name: "Delivery" })).toBeVisible();
 });
@@ -58,13 +61,15 @@ test("product Praxis import generates, dry-runs, audits, exports P10 proof, and 
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Praxis E2E Operator");
   await page.getByLabel("Email address").fill(`praxis-${Date.now()}@example.com`);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
 
   await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
   await page.getByLabel("Team name").fill("Praxis E2E Operators");
   await page.getByRole("button", { name: "Create team" }).click();
-  await expect(page.getByRole("heading", { name: "Praxis E2E Operators" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
   await page.getByRole("navigation").getByRole("button", { name: "Praxis" }).click();
   await expect(page.getByRole("heading", { name: "Praxis MCP Generator" })).toBeVisible();
@@ -79,23 +84,23 @@ test("product Praxis import generates, dry-runs, audits, exports P10 proof, and 
   await expect(page.getByText(/Generated Praxis request/)).toBeVisible();
   await expect(page.getByText(/candidate .* blocker\(s\)/).first()).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Import Akto evidence" }).click();
+  await sourceImport.getByRole("button", { name: "Import" }).click();
   await expect(page.getByText(/Imported Akto evidence/)).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Build certification binding" }).click();
+  await sourceImport.getByRole("button", { name: "Certify" }).click();
   await expect(page.getByText(/Built certification binding/)).toBeVisible();
-  await expect(page.getByRole("button", { name: /Start dry-run MCP endpoint ready/ })).toBeVisible();
+  await expect(sourceImport.getByRole("button", { name: "Start dry run", exact: true })).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Start dry-run MCP endpoint", exact: true }).click();
+  await sourceImport.getByRole("button", { name: "Start dry run", exact: true }).click();
   await expect(page.getByText(/Started dry-run MCP endpoint/)).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Call read-only MCP tool" }).click();
+  await sourceImport.getByRole("button", { name: "Call read-only tool" }).click();
   await expect(page.getByText(/MCP tool call audited/)).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Revoke generated connector", exact: true }).click();
+  await sourceImport.getByRole("button", { name: "Revoke connector", exact: true }).click();
   await expect(page.getByText(/Revoked generated connector/)).toBeVisible();
 
-  await sourceImport.getByRole("button", { name: "Export P10 proof" }).click();
+  await sourceImport.getByRole("button", { name: "Export" }).click();
   await expect(page.getByText(/Exported P10 proof packet .* complete/)).toBeVisible();
 });
 
@@ -105,7 +110,9 @@ test("first-run signup can continue solo from a clean browser session", async ({
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Solo E2E Operator");
   await page.getByLabel("Email address").fill(email);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await expect(page.getByText("Local captcha bypass is active for development only.")).toBeVisible();
   await page.getByRole("button", { name: "Sign up" }).click();
 
@@ -118,7 +125,7 @@ test("first-run signup can continue solo from a clean browser session", async ({
 
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
-  await expect(page.getByRole("button", { name: /Settings parity ready/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Open Advanced Console" })).toBeVisible();
 });
 
 test("logout returns a clean browser session to sign-in", async ({ page }) => {
@@ -126,7 +133,9 @@ test("logout returns a clean browser session to sign-in", async ({ page }) => {
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Logout E2E Operator");
   await page.getByLabel("Email address").fill(`logout-${Date.now()}@example.com`);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
@@ -144,7 +153,9 @@ test("expired session clears cookie and recovers through login", async ({ page }
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Expired E2E Operator");
   await page.getByLabel("Email address").fill(email);
-  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();

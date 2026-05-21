@@ -17,6 +17,11 @@ export interface AuthConfig {
     google: { configured: boolean };
     github: { configured: boolean };
   };
+  invite: {
+    required: boolean;
+    configured: boolean;
+    allowlist_enabled: boolean;
+  };
 }
 
 export interface UserProfile {

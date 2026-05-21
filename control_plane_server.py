@@ -917,6 +917,8 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                         captcha=self._captcha_config(),
                         google=self._oauth_config("google"),
                         github=self._oauth_config("github"),
+                        invite_allowlist=self.server.config.auth_invite_allowlist,
+                        invite_codes=self.server.config.auth_invite_codes,
                     ),
                 }
             )
@@ -954,7 +956,11 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             try:
                 self.server.operator_identity.consume_oauth_state(provider, state)
                 profile = exchange_oauth_profile(self._oauth_config(provider), code)
-                session = self.server.operator_identity.upsert_oauth_user(provider=provider, **profile)
+                session = self.server.operator_identity.upsert_oauth_user(
+                    provider=provider,
+                    invite_allowlist=self.server.config.auth_invite_allowlist,
+                    **profile,
+                )
             except Exception as exc:
                 _LOG.warning("%s oauth callback failed: %s", provider, exc)
                 self._redirect(self._auth_callback_redirect({"auth_error": f"{provider}_oauth_failed"}))
@@ -1031,6 +1037,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     display_name=str(payload.get("display_name") or ""),
                     captcha_token=str(payload.get("captcha_token") or ""),
                     captcha=self._captcha_config(),
+                    invite_code=str(payload.get("invite_code") or ""),
+                    invite_allowlist=self.server.config.auth_invite_allowlist,
+                    invite_codes=self.server.config.auth_invite_codes,
+                    accepted_terms=payload.get("accepted_terms") is True,
                 )
             except ValueError as exc:
                 if self._send_session_value_error(exc):

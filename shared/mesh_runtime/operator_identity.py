@@ -108,6 +108,8 @@ class OperatorIdentityStore:
         captcha: CaptchaConfig,
         google: OAuthProviderConfig,
         github: OAuthProviderConfig,
+        invite_allowlist: tuple[str, ...] = (),
+        invite_codes: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         return {
             "captcha": {
@@ -120,6 +122,11 @@ class OperatorIdentityStore:
                 "google": {"configured": google.configured},
                 "github": {"configured": github.configured},
             },
+            "invite": {
+                "required": bool(invite_codes),
+                "configured": bool(invite_allowlist or invite_codes),
+                "allowlist_enabled": bool(invite_allowlist),
+            },
         }
 
     def create_user(
@@ -130,11 +137,18 @@ class OperatorIdentityStore:
         display_name: str = "",
         captcha_token: str = "",
         captcha: CaptchaConfig | None = None,
+        invite_code: str = "",
+        invite_allowlist: tuple[str, ...] = (),
+        invite_codes: tuple[str, ...] = (),
+        accepted_terms: bool = False,
         now: float | None = None,
     ) -> dict[str, Any]:
         if captcha is not None:
             self.verify_captcha(captcha_token, captcha)
         normalized_email = self._validate_email(email)
+        self._verify_invite_gate(normalized_email, invite_code=invite_code, invite_allowlist=invite_allowlist, invite_codes=invite_codes)
+        if not accepted_terms:
+            raise ValueError("terms consent is required")
         self._validate_password(password)
         now_value = now or time.time()
         data = self._read()
@@ -160,6 +174,7 @@ class OperatorIdentityStore:
                 "event_type": "password_signup",
                 "auth_method": "password",
                 "captcha": self._captcha_event(captcha),
+                "invite": self._invite_event(normalized_email, invite_allowlist=invite_allowlist, invite_codes=invite_codes),
             },
         )
 
@@ -405,6 +420,7 @@ class OperatorIdentityStore:
         provider_user_id: str,
         email: str,
         display_name: str = "",
+        invite_allowlist: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         normalized_email = self._validate_email(email)
         data = self._read()
@@ -412,6 +428,7 @@ class OperatorIdentityStore:
         user_id = data["oauth_index"].get(oauth_key) or data["email_index"].get(normalized_email)
         now_value = time.time()
         if not user_id:
+            self._verify_invite_gate(normalized_email, invite_code="", invite_allowlist=invite_allowlist, invite_codes=())
             user_id = self._new_id("usr")
             data["users"][user_id] = {
                 "id": user_id,
@@ -432,6 +449,7 @@ class OperatorIdentityStore:
                 "event_type": "oauth_session_established",
                 "auth_method": "oauth",
                 "provider": provider,
+                "invite": self._invite_event(normalized_email, invite_allowlist=invite_allowlist, invite_codes=()),
             },
         )
 
@@ -510,6 +528,33 @@ class OperatorIdentityStore:
             "dev_bypass": bool(captcha.dev_bypass_enabled and not configured),
         }
 
+    def _verify_invite_gate(
+        self,
+        email: str,
+        *,
+        invite_code: str,
+        invite_allowlist: tuple[str, ...],
+        invite_codes: tuple[str, ...],
+    ) -> None:
+        if invite_allowlist and not _email_allowed(email, invite_allowlist):
+            raise ValueError("email is not invite allowlisted")
+        if invite_codes and invite_code.strip() not in invite_codes:
+            raise ValueError("valid invite code is required")
+
+    def _invite_event(
+        self,
+        email: str,
+        *,
+        invite_allowlist: tuple[str, ...],
+        invite_codes: tuple[str, ...],
+    ) -> dict[str, Any]:
+        return {
+            "configured": bool(invite_allowlist or invite_codes),
+            "allowlist_enabled": bool(invite_allowlist),
+            "code_required": bool(invite_codes),
+            "email_hash": _token_hash(email),
+        }
+
     def _append_auth_event(
         self,
         data: dict[str, Any],
@@ -536,6 +581,14 @@ class OperatorIdentityStore:
                 "configured": captcha.get("configured") is True,
                 "verified": captcha.get("verified") is True,
                 "dev_bypass": captcha.get("dev_bypass") is True,
+            }
+        invite = event.get("invite")
+        if isinstance(invite, dict):
+            record["invite"] = {
+                "configured": invite.get("configured") is True,
+                "allowlist_enabled": invite.get("allowlist_enabled") is True,
+                "code_required": invite.get("code_required") is True,
+                "email_hash": str(invite.get("email_hash") or ""),
             }
         data["auth_events"].append(record)
         data["auth_events"] = data["auth_events"][-AUTH_EVENT_LIMIT:]
@@ -573,6 +626,22 @@ def verify_captcha_token(token: str, captcha: CaptchaConfig) -> None:
         result = json.loads(response.read().decode("utf-8"))
     if not result.get("success"):
         raise ValueError("captcha verification failed")
+
+
+def _email_allowed(email: str, allowlist: tuple[str, ...]) -> bool:
+    normalized = email.strip().lower()
+    domain = normalized.split("@", 1)[1] if "@" in normalized else ""
+    for raw_entry in allowlist:
+        entry = raw_entry.strip().lower()
+        if not entry:
+            continue
+        if entry == normalized:
+            return True
+        if entry.startswith("@") and domain == entry[1:]:
+            return True
+        if "@" not in entry and domain == entry:
+            return True
+    return False
 
 
 def oauth_authorize_url(config: OAuthProviderConfig, state: str) -> str:

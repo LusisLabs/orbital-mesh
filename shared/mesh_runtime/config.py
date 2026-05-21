@@ -178,6 +178,8 @@ class RuntimeConfig:
     auth_product_redirect_url: str = ""
     signup_enabled: bool = True
     password_auth_enabled: bool = True
+    auth_invite_allowlist: tuple[str, ...] = ()
+    auth_invite_codes: tuple[str, ...] = ()
     captcha_provider: str = "disabled"
     captcha_site_key: str = ""
     captcha_secret_key: str = ""
@@ -690,6 +692,8 @@ class RuntimeConfig:
             auth_product_redirect_url=os.getenv("MESH_AUTH_PRODUCT_REDIRECT_URL", ""),
             signup_enabled=_env_bool("MESH_SIGNUP_ENABLED", default=True),
             password_auth_enabled=_env_bool("MESH_PASSWORD_AUTH_ENABLED", default=True),
+            auth_invite_allowlist=_csv_env("MESH_AUTH_INVITE_ALLOWLIST"),
+            auth_invite_codes=_csv_env("MESH_AUTH_INVITE_CODES"),
             captcha_provider=os.getenv("MESH_CAPTCHA_PROVIDER", "disabled").lower(),
             captcha_site_key=os.getenv("MESH_CAPTCHA_SITE_KEY", ""),
             captcha_secret_key=os.getenv("MESH_CAPTCHA_SECRET_KEY", ""),

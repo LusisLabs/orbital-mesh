@@ -28,6 +28,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 display_name="Ops Lead",
                 captcha_token="dev-captcha-ok",
                 captcha=captcha,
+                accepted_terms=True,
             )
             token = session["token"]
             self.assertEqual(session["session"]["user"]["email"], "ops@example.com")
@@ -108,6 +109,47 @@ class OperatorIdentityStoreTests(unittest.TestCase):
             )
             self.assertTrue(configured["captcha"]["configured"])
 
+    def test_invite_allowlist_and_code_gate_signup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = OperatorIdentityStore(Path(temp_dir) / "operator-identity.json")
+            captcha = CaptchaConfig(provider="disabled", dev_bypass_enabled=True)
+
+            with self.assertRaisesRegex(ValueError, "invite allowlisted"):
+                store.create_user(
+                    email="outsider@example.net",
+                    password="correct-horse-42",
+                    captcha_token="dev-captcha-ok",
+                    captcha=captcha,
+                    accepted_terms=True,
+                    invite_allowlist=("@example.com",),
+                    invite_codes=("pilot-redacted",),
+                    invite_code="pilot-redacted",
+                )
+
+            with self.assertRaisesRegex(ValueError, "invite code"):
+                store.create_user(
+                    email="operator@example.com",
+                    password="correct-horse-42",
+                    captcha_token="dev-captcha-ok",
+                    captcha=captcha,
+                    accepted_terms=True,
+                    invite_allowlist=("@example.com",),
+                    invite_codes=("pilot-redacted",),
+                    invite_code="wrong-code",
+                )
+
+            session = store.create_user(
+                email="operator@example.com",
+                password="correct-horse-42",
+                captcha_token="dev-captcha-ok",
+                captcha=captcha,
+                accepted_terms=True,
+                invite_allowlist=("@example.com",),
+                invite_codes=("pilot-redacted",),
+                invite_code="pilot-redacted",
+            )
+            self.assertEqual(session["session"]["user"]["email"], "operator@example.com")
+
     def test_team_dashboard_access_denied_for_non_member(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = OperatorIdentityStore(Path(temp_dir) / "operator-identity.json")
@@ -117,6 +159,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 password="correct-horse-42",
                 captcha_token="dev-captcha-ok",
                 captcha=captcha,
+                accepted_terms=True,
             )
             owner_token = owner["token"]
             team_session = store.create_team(
@@ -132,6 +175,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 password="correct-horse-42",
                 captcha_token="dev-captcha-ok",
                 captcha=captcha,
+                accepted_terms=True,
             )
             with self.assertRaises(PermissionError):
                 store.dashboard(outsider["token"], team_id=team_id, mesh={})
@@ -147,6 +191,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 password="correct-horse-42",
                 captcha_token="dev-captcha-ok",
                 captcha=captcha,
+                accepted_terms=True,
             )
             team = store.create_team(
                 owner["token"],
@@ -172,6 +217,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                     password="correct-horse-42",
                     captcha_token="dev-captcha-ok",
                     captcha=captcha,
+                    accepted_terms=True,
                 )
                 dashboard = store.dashboard(member["token"], team_id=team_id, mesh={})
                 self.assertEqual(dashboard["scope"]["team"]["role"], role)
@@ -186,6 +232,7 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 password="correct-horse-42",
                 captcha_token="dev-captcha-ok",
                 captcha=CaptchaConfig(provider="disabled", dev_bypass_enabled=True),
+                accepted_terms=True,
                 now=now,
             )
 

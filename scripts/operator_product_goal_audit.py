@@ -111,7 +111,7 @@ P4_CLI_MARKERS = [
 P5_PRODUCT_MARKERS = [
     "runtimeProductPage",
     "PraxisView",
-    "Connector Status",
+    "Connectors",
     "Topology",
     "Memory Projection",
     "Kill Switch",

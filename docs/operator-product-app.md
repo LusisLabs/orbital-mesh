@@ -36,6 +36,16 @@ MESH_SIGNUP_ENABLED=1
 MESH_PASSWORD_AUTH_ENABLED=1
 ```
 
+Partner-facing signup can be constrained with invite state before live external use:
+
+```bash
+# Exact emails, bare domains, or @domain entries are accepted.
+MESH_AUTH_INVITE_ALLOWLIST=alice@example.com,@partner.example
+MESH_AUTH_INVITE_CODES=pilot-2026-redacted
+```
+
+When configured, `/api/auth/signup` requires a matching allowlisted email and, when `MESH_AUTH_INVITE_CODES` is non-empty, an invite code. The product UI hides unconfigured OAuth providers, asks for password confirmation, requires data-handling consent, and maps provider/captcha/invite failures to partner-safe messages. Runtime auth events record only redacted invite/provider proof metadata under `auth-provider-proof.v1`; raw invite codes, OAuth secrets, captcha responses, cookies, and passwords are not persisted in proof artifacts.
+
 For non-local app-session signup, configure one captcha provider:
 
 ```bash
@@ -244,7 +254,7 @@ Product-native workflow posture:
 | Approval | Native steering through Mesh authority | `/api/operator/dashboard` `mesh.approvals`, plus `/api/runs/{run_id}/steer` | Product approval queue renders allowed commands and requires a reason before submitting to Mesh. |
 | Evidence | Read-only proof drill-in | `/api/runs/{run_id}/events`, `/scenario-analysis`, `/evidence-graph`, `/merkle`, `/timeline-proof`, `/export` | Product proof views inspect evidence, RCA trace, Merkle, timeline, and export packages without editing Mesh records. |
 | Readiness | Product-native read page | `/api/readiness` through `/api/operator/dashboard` | Readiness page shows blockers and degraded reasons from real Mesh read models. |
-| Connectors | Product-native read page | `/api/connectors/certification` through `/api/operator/dashboard` | Connector Status page shows certification state and credential/authority posture. |
+| Connectors | Product-native read page | `/api/connectors/certification` through `/api/operator/dashboard` | Connectors page filters certification state, domain, credential/authority posture, and blocker badges. |
 | Topology | Product-native read page | `/api/operator/dashboard` `mesh.readiness.orchestration_topology` and `mesh.graph` | Topology page prefers orchestration topology and falls back to graph status. |
 | Memory projection | Product-native read page | `/api/operator/dashboard` `mesh.memory.active` and `mesh.memory.graph` | Memory page shows active memory and projection graph as Mesh-owned read models. |
 | Kill switch | Product-native read page | `/api/operator/dashboard` `mesh.kill_switch` | Kill switch page shows emergency control state; admin mutation stays behind Mesh-owned `/api/kill-switch`. |
