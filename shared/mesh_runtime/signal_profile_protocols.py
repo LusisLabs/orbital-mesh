@@ -33,7 +33,6 @@ from .contracts import (
     ExecutionRecord,
     FeedbackRecord,
     InvestigationPlan,
-    InvestigationReport,
     RcaReport,
     ScenarioAnalysis,
     Trigger,

@@ -48,8 +48,8 @@ import logging
 import shlex
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterable
+from datetime import datetime, timezone
+from typing import Any, Callable
 
 from services.evidence.service import EvidencePack, ProbeResult
 from shared.mesh_runtime import RuntimeConfig, Trigger
@@ -57,7 +57,6 @@ from shared.mesh_runtime.otel import PrometheusClient
 
 from ._evidence_strategies import (
     StructuredSignalEvidenceStrategy,
-    _now_iso,
     _read_dotted,
 )
 

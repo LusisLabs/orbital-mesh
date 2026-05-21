@@ -21,7 +21,7 @@ from uuid import uuid4
 from services.runtime import MeshRuntimeEngine, _auto_wire_investigation_harness, resolve_signal_profile
 from services.evidence import EvidencePack, EvidenceService
 from services.evidence.runners import build_configured_probe_runner
-from services.investigation import InvestigationService, RethInvestigationPlanner, build_rca_report
+from services.investigation import InvestigationService, RethInvestigationPlanner
 from services.observer.redaction import redact_for_observer
 from mesh_brain.control_plane import (
     backend_matrix_to_run_record,
