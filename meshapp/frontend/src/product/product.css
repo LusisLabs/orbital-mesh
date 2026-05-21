@@ -109,20 +109,27 @@
 
 .console-workspace {
   min-width: 0;
-  padding: 14px;
+  padding: 34px 0 72px;
+  width: min(1024px, calc(100vw - 312px));
+  margin: 0 auto;
 }
 
 .console-workspace-toolbar {
-  min-height: 58px;
-  margin-bottom: 10px;
+  min-height: 96px;
+  margin-bottom: 22px;
   border: 1px solid #262828;
   border-radius: 6px;
-  background: #101211;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    radial-gradient(circle at 20% 12%, rgba(137, 205, 187, 0.12), transparent 38%),
+    #0d0f0f;
+  background-size: 72px 72px, 72px 72px, auto, auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 10px 12px;
+  padding: 18px;
 }
 
 .console-workspace-toolbar div:first-child {
@@ -133,14 +140,15 @@
 
 .console-workspace-toolbar span {
   color: #89cdbb;
-  font-size: 0.72rem;
+  font-size: 0.76rem;
   font-weight: 850;
+  letter-spacing: 0;
   text-transform: uppercase;
 }
 
 .console-workspace-toolbar strong {
   color: #f4f4f1;
-  font-size: 0.86rem;
+  font-size: 1.02rem;
   line-height: 1.35;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -154,7 +162,7 @@
 }
 
 .console-workspace-actions button {
-  min-height: 34px;
+  min-height: 42px;
   border: 1px solid #333;
   border-radius: 6px;
   background: #181a1a;
@@ -172,12 +180,44 @@
   min-height: calc(100dvh - 174px);
   border: 1px solid #262828;
   border-radius: 6px;
+  background: #050606;
   overflow: hidden;
+}
+
+.console-workspace .mesh-agent-console {
+  --mesh-bg: #050606;
+  --mesh-side: #070808;
+  --mesh-panel: #101211;
+  --mesh-editor: #0d0f0f;
+  --mesh-editor-2: #151716;
+  --mesh-line: #272727;
+  --mesh-line-soft: #262828;
+  --mesh-glass-top: #262828;
+  --mesh-glass-right: #262828;
+  --mesh-glass-bottom: #262828;
+  --mesh-glass-left: #262828;
+  --mesh-text: #f4f4f1;
+  --mesh-text-soft: #d5d5cf;
+  --mesh-muted: #aaa;
+  --mesh-blue: #89cdbb;
+  --mesh-green: #89cdbb;
+  --mesh-yellow: #e0c27a;
+  --mesh-red: #f1b8b8;
+  --mesh-selection: #2c2c2c;
+  --mesh-focus: rgba(137, 205, 187, 0.22);
+  --mesh-radius: 6px;
+  --mesh-radius-sm: 6px;
+  --mesh-shadow: none;
+  color: #f4f4f1;
+  font-family: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  background: #050606;
 }
 
 .console-workspace .mesh-agent-console,
 .console-workspace .mesh-agent-console.drawer-open {
   grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  padding: 0;
 }
 
 .console-workspace .mesh-agent-console .mesh-session-rail {
@@ -187,15 +227,137 @@
 .console-workspace .mesh-agent-console .mesh-console-topbar {
   grid-template-columns: minmax(0, 1fr);
   position: relative;
+  padding: 18px;
+  border-bottom-color: #262828;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    #0d0f0f;
+  background-size: 72px 72px, 72px 72px, auto;
 }
 
 .console-workspace .mesh-agent-console .mesh-topbar-metrics {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .console-workspace .mesh-agent-console .mesh-topbar-actions {
   justify-content: flex-start;
   flex-wrap: wrap;
+}
+
+.console-workspace .mesh-agent-console .mesh-console-main {
+  min-height: auto;
+  border: 0;
+  border-radius: 0;
+  background: #050606;
+  box-shadow: none;
+}
+
+.console-workspace .mesh-agent-console .mesh-page {
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+    #050606;
+  background-size: 72px 72px, 72px 72px, auto;
+}
+
+.console-workspace .mesh-agent-console .mesh-card,
+.console-workspace .mesh-agent-console .context-panel,
+.console-workspace .mesh-agent-console .context-insight-card,
+.console-workspace .mesh-agent-console .context-stat-card,
+.console-workspace .mesh-agent-console .mesh-chat-message,
+.console-workspace .mesh-agent-console .agent-attempt-card,
+.console-workspace .mesh-agent-console .mesh-metric-card,
+.console-workspace .mesh-agent-console .mesh-list-row,
+.console-workspace .mesh-agent-console .mesh-connector-card,
+.console-workspace .mesh-agent-console .mesh-integration-row,
+.console-workspace .mesh-agent-console .header-metric,
+.console-workspace .mesh-agent-console .timeline-summary,
+.console-workspace .mesh-agent-console pre {
+  border-color: #262828;
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    #101211;
+  background-size: 72px 72px, 72px 72px, auto;
+  box-shadow: none;
+}
+
+.console-workspace .mesh-agent-console .mesh-card h3,
+.console-workspace .mesh-agent-console .mesh-console-topbar h2,
+.console-workspace .mesh-agent-console .context-panel h4 {
+  color: #f4f4f1;
+  font-weight: 800;
+}
+
+.console-workspace .mesh-agent-console .mesh-kicker,
+.console-workspace .mesh-agent-console .eyebrow,
+.console-workspace .mesh-agent-console .mesh-card label,
+.console-workspace .mesh-agent-console .mesh-metric-card span,
+.console-workspace .mesh-agent-console .mesh-proof-card span,
+.console-workspace .mesh-agent-console .context-stat-card span,
+.console-workspace .mesh-agent-console .tier-eyebrow {
+  color: #89cdbb;
+  letter-spacing: 0;
+}
+
+.console-workspace .mesh-agent-console .mesh-muted,
+.console-workspace .mesh-agent-console .mesh-card p,
+.console-workspace .mesh-agent-console .mesh-brand-subtitle,
+.console-workspace .mesh-agent-console .mesh-task-title span,
+.console-workspace .mesh-agent-console .header-metric-subline,
+.console-workspace .mesh-agent-console .connection-dot,
+.console-workspace .mesh-agent-console .mesh-metric-card small,
+.console-workspace .mesh-agent-console .mesh-list-row small,
+.console-workspace .mesh-agent-console .mesh-integration-row small,
+.console-workspace .mesh-agent-console .mesh-integration-row span,
+.console-workspace .mesh-agent-console .mesh-connector-card p,
+.console-workspace .mesh-agent-console .inspector-muted {
+  color: #aaa;
+}
+
+.console-workspace .mesh-agent-console .action-button.primary,
+.console-workspace .mesh-agent-console .tab.active {
+  border-color: #6b34d6;
+  background: #5c23c6;
+  color: #fff;
+}
+
+.console-workspace .mesh-agent-console .action-button.primary:hover,
+.console-workspace .mesh-agent-console .tab.active:hover {
+  background: #6a2ed8;
+}
+
+.console-workspace .mesh-agent-console .action-button,
+.console-workspace .mesh-agent-console input,
+.console-workspace .mesh-agent-console select,
+.console-workspace .mesh-agent-console textarea,
+.console-workspace .mesh-agent-console .tab,
+.console-workspace .mesh-agent-console .icon-btn {
+  border-color: #333;
+  border-radius: 6px;
+  background: #181a1a;
+  color: #f4f4f1;
+}
+
+.console-workspace .mesh-agent-console .action-button:hover,
+.console-workspace .mesh-agent-console .tab:hover,
+.console-workspace .mesh-agent-console .icon-btn:hover {
+  background: #202323;
+}
+
+.console-workspace .mesh-agent-console .mesh-status-pill.ready,
+.console-workspace .mesh-agent-console .status-chip.good {
+  border-color: #315f55;
+  color: #aee5d5;
+  background: rgba(49, 95, 85, 0.16);
+}
+
+.console-workspace .mesh-agent-console .mesh-link-button,
+.console-workspace .mesh-agent-console .header-metric-icon {
+  color: #89cdbb;
 }
 
 .product-header {
