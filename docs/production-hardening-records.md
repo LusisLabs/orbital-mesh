@@ -448,6 +448,8 @@ Staging readiness now reports `data_classification_policy_reviewed`. The default
 
 `config/agentic-operator-source.provenance.json` is the machine-readable source-input record for `agentic-operator-core-main/`. `python3 scripts/verify_agentic_operator_source_provenance.py --json` verifies `mesh.agentic_operator_source_provenance.v1` for Apache-2.0 license presence, source snapshot hash, required source surfaces, no active runtime posture, no wholesale-copy permission, no comparative-claim permission, authority-gate adaptation requirements, forbidden credential classes, and empty imported paths before a fork gate.
 
+`config/trigger-web-source.provenance.json` is the machine-readable source-input record for `/Users/shaan.s.patel/Desktop/lusistrigger.dev`. `python3 scripts/verify_trigger_web_source_provenance.py --json` verifies `mesh.trigger_web_source_provenance.v1` for Apache-2.0 license presence, recorded LusisLabs fork and triggerdotdev upstream remotes, required webapp source surfaces, no active runtime posture, no wholesale-copy permission, no comparative-claim permission, Mesh authority-gate adaptation requirements, forbidden Trigger backend import classes, allowed imported-path targets, and empty imported paths before Mesh adaptation.
+
 Staging readiness now reports `agentic_operator_source_provenance_recorded`. The current imported tree has no nested `.git`, so the upstream source commit is not directly inspectable in this workspace. The provenance record marks that status explicitly as `unavailable_import_snapshot` and binds the source input to `source_snapshot_sha256`; actual CRD, controller, Helm, Argo, MCP, LiteLLM, or CLI forks remain blocked until adapted contracts and focused tests exist.
 
 ## Evaluation Kit Packet
