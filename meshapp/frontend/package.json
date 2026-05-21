@@ -31,6 +31,11 @@
   "overrides": {
     "postcss": "8.5.14"
   },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.14"
+    }
+  },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
     "@types/node": "^25.6.2",

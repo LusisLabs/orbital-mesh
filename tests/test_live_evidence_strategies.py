@@ -25,7 +25,7 @@ import unittest
 from typing import Any
 from unittest.mock import MagicMock
 
-from services.evidence.service import EvidencePack, ProbeResult
+from services.evidence.service import EvidencePack
 from services.signal_profiles._live_evidence import (
     KubernetesLiveEvidenceStrategy,
     OtelLiveEvidenceStrategy,

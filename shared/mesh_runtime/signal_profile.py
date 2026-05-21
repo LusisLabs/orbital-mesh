@@ -25,7 +25,7 @@ at the moment a signal arrives.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass
 from typing import Iterable
 
 from .signal_profile_protocols import (
