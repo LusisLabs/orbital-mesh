@@ -1,6 +1,9 @@
 packages:
-  - web
-  - meshapp/frontend
+packages:
+  - "apps/*"
+  - "internal-packages/*"
+  - "meshapp/frontend"
+  - "web"
 
 minimumReleaseAge: 1440
 

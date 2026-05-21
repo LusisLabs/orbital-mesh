@@ -20,6 +20,7 @@ DEFAULT_FAILURE_MODE_LIBRARY_PATH = _REPO_ROOT / "config" / "failure-mode.librar
 DEFAULT_THREAT_MODEL_REGISTER_PATH = _REPO_ROOT / "config" / "threat-model.register.json"
 DEFAULT_DATA_CLASSIFICATION_POLICY_PATH = _REPO_ROOT / "config" / "data-classification.policy.json"
 DEFAULT_AGENTIC_OPERATOR_SOURCE_PROVENANCE_PATH = _REPO_ROOT / "config" / "agentic-operator-source.provenance.json"
+DEFAULT_TRIGGER_WEB_SOURCE_PROVENANCE_PATH = _REPO_ROOT / "config" / "trigger-web-source.provenance.json"
 DEFAULT_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH = _REPO_ROOT / "config" / "deployment-compatibility.registry.json"
 DEFAULT_PROCUREMENT_SECURITY_PACKAGE_PATH = _REPO_ROOT / "config" / "procurement-security.package.json"
 DEFAULT_PUBLIC_PROOF_PACKAGE_PATH = _REPO_ROOT / "config" / "public-proof.package.json"

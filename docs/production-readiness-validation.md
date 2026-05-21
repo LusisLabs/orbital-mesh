@@ -147,7 +147,7 @@ service container and succeeded.
 - Commit fixtures under `fixtures/` only when deterministic and required by
   tests or docs.
 - Commit generated web contracts only when backend schema changes require
-  them, and run `npm --prefix web run contracts:check` through the web lint or
+  them, and run `pnpm --dir web run contracts:check` through the web lint or
   build gate before PR.
 
 ## Release Blockers To Track
