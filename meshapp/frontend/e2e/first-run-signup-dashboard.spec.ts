@@ -23,13 +23,79 @@ test("first-run signup creates a team and reaches the product dashboard", async 
     response.url().includes("/api/operator/dashboard") && response.status() === 200,
   );
   await page.getByRole("button", { name: "Create team" }).click();
-  await dashboardResponse;
+  const dashboard = await dashboardResponse;
+  const dashboardPayload = await dashboard.json();
+  expect(dashboardPayload.authority_boundary).toContain("Dashboard identity scopes the product read model.");
 
   await expect(page.locator(".partner-home-hero").getByText("Readiness", { exact: true })).toBeVisible();
   await expect(page.getByText(/Next step/)).toBeVisible();
   await expect(page.getByRole("navigation").getByRole("button", { name: "Connectors", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Evaluations" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Runtime readiness ready/ })).toBeVisible();
+});
+
+test("team settings, member invites, provider posture, connector filters, and launch defaults work end to end", async ({ page }) => {
+  const stamp = Date.now();
+  const email = `integrated-${stamp}@example.com`;
+  const teamName = `Integrated Product Operators ${stamp}`;
+  const memberEmail = `member-${stamp}@example.com`;
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Integrated E2E Operator");
+  await page.getByLabel("Email address").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+
+  await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
+  await page.getByLabel("Team name").fill(teamName);
+  await page.getByRole("button", { name: "Create team" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Team Settings" }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Team Settings" })).toBeVisible();
+  await page.getByLabel("Display name").fill("Integrated Product Display");
+  await page.getByRole("button", { name: "Save team profile" }).click();
+  await expect(page.getByText(/Saved team profile/)).toBeVisible();
+  await page.getByLabel("Display name").fill("");
+  await page.getByRole("button", { name: "Save team profile" }).click();
+  await expect(page.locator(".sidebar-footer").getByText(teamName)).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".setting-card", { hasText: "Default Run Scenario" }).locator("select").selectOption("search_latency_regression");
+  await page.locator(".setting-card", { hasText: "Default Target Lock" }).locator("select").selectOption("required");
+  await page.getByLabel("Audit reason").fill("e2e settings launch default proof");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByText(/Saved default_evaluation_mode/)).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Evaluations" }).click();
+  const launchRegion = page.getByRole("region", { name: "New Evaluation / Launch Run" });
+  await expect(launchRegion.locator("select").first()).toHaveValue("search_latency_regression");
+  await expect(launchRegion.getByLabel("Require target lock")).toBeChecked();
+  await launchRegion.getByLabel("Audit reason").fill("e2e launch uses saved defaults");
+  await launchRegion.getByRole("button", { name: "Launch run" }).click();
+  await expect(launchRegion.getByText("Mesh admitted this run.")).toBeVisible();
+  await expect(launchRegion.getByText("mesh.run_admission.v1")).toBeVisible();
+  await expect(page.locator(".data-table").getByText("search_latency_regression")).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Members" }).click();
+  await page.getByLabel("Emails").fill(memberEmail);
+  await page.locator(".member-config-grid select").selectOption("approver");
+  await page.getByRole("button", { name: "Save members" }).click();
+  await expect(page.getByText(memberEmail)).toBeVisible();
+  await expect(page.locator(".data-table.compact")).toContainText("approver");
+
+  await page.getByRole("navigation").getByRole("button", { name: "Keys & Secrets" }).click();
+  await expect(page.locator("code", { hasText: "MESH_GOOGLE_OAUTH_CLIENT_ID" })).toBeVisible();
+  await expect(page.locator("code", { hasText: "MESH_CAPTCHA_SECRET_KEY" })).toBeVisible();
+  await expect(page.locator("code", { hasText: "MESH_AUTH_INVITE_ALLOWLIST" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Connectors", exact: true }).click();
+  await page.getByPlaceholder("Filter connectors by name, status, domain, blocker...").fill("codex");
+  await expect(page.locator(".environment-card h4", { hasText: "codex" })).toBeVisible();
+  await expect(page.locator(".environment-card h4", { hasText: "hermes" })).toHaveCount(0);
 });
 
 test("product dashboard opens migrated console workflows in place", async ({ page }) => {
@@ -41,11 +107,12 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
   await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes" }).click();
-  await expect(page.getByRole("heading", { name: "Hermes" })).toBeVisible();
+  await expect(page.locator(".product-header h1", { hasText: "Hermes" })).toBeVisible();
   await expect(page.locator(".console-workspace-toolbar").getByText("Hermes chat, explanation, advisory context")).toBeVisible();
   await expect(page.locator(".console-workspace .mesh-session-rail")).toBeHidden();
   await expect(page.getByText("Hermes Status")).toBeVisible();
@@ -126,6 +193,16 @@ test("first-run signup can continue solo from a clean browser session", async ({
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(page.getByText(email)).toBeVisible();
   await expect(page.getByRole("button", { name: "Open Advanced Console" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Team Settings" }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Team Settings" })).toBeVisible();
+  await page.getByLabel("Team name").fill("Solo Upgrade Operators");
+  await page.getByRole("button", { name: "Create team", exact: true }).click();
+  await expect(page.locator(".sidebar-footer").getByText("Solo Upgrade Operators")).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Settings" })).toBeVisible();
+  await expect(page.getByText("Default Evaluation Mode")).toBeVisible();
 });
 
 test("logout returns a clean browser session to sign-in", async ({ page }) => {

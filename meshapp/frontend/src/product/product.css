@@ -107,6 +107,40 @@
   grid-template-columns: 252px minmax(0, 1fr);
 }
 
+.product-shell.sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.product-shell.sidebar-collapsed .brand-row {
+  justify-content: center;
+  padding: 16px 10px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.product-shell.sidebar-collapsed .mesh-logo strong,
+.product-shell.sidebar-collapsed .nav-group p,
+.product-shell.sidebar-collapsed .nav-label,
+.product-shell.sidebar-collapsed .sidebar-footer div {
+  display: none;
+}
+
+.product-shell.sidebar-collapsed .nav-group button {
+  justify-content: center;
+  padding: 8px;
+}
+
+.product-shell.sidebar-collapsed .sidebar-footer {
+  justify-content: center;
+  padding: 12px 8px;
+}
+
+.product-shell.sidebar-collapsed .console-workspace,
+.product-shell.sidebar-collapsed .content-stack,
+.product-shell.sidebar-collapsed .settings-layout {
+  width: min(1180px, calc(100vw - 136px));
+}
+
 .console-workspace {
   min-width: 0;
   padding: 34px 0 72px;
@@ -1130,7 +1164,10 @@
 .approval-card,
 .proof-panel,
 .profile-panel,
-.settings-panel {
+.settings-panel,
+.member-config-panel,
+.config-posture-card,
+.keys-env-panel {
   border: 1px solid #262828;
   border-radius: 6px;
   background: #171817;
@@ -1245,6 +1282,20 @@
   color: #aee5d5;
 }
 
+.product-alert.warn {
+  border-color: #6f5b2d;
+  background: rgba(120, 91, 36, 0.18);
+  color: #f2d492;
+}
+
+.launch-panel .product-alert,
+.settings-panel .product-alert,
+.member-config-panel .product-alert,
+.proof-panel .product-alert {
+  width: 100%;
+  margin: 0;
+}
+
 .environment-card {
   min-height: 218px;
   padding: 24px;
@@ -1278,6 +1329,33 @@
 
 .connector-legend {
   margin: 10px 0 16px;
+}
+
+.filter-row,
+.member-config-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.filter-row label,
+.member-config-grid label {
+  display: grid;
+  gap: 7px;
+  color: #aaa;
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+.filter-row select,
+.member-config-grid select,
+.member-config-grid input {
+  width: 100%;
+  border: 1px solid #303233;
+  border-radius: 5px;
+  background: #111313;
+  color: #f2f1e8;
+  padding: 9px 10px;
 }
 
 .connector-legend span,
@@ -1381,10 +1459,12 @@
 }
 
 .settings-layout {
+  width: min(1180px, calc(100vw - 312px));
+  margin: 0 auto;
   display: grid;
   grid-template-columns: minmax(360px, 730px) minmax(320px, 1fr);
   gap: 24px;
-  padding: 28px 58px 72px;
+  padding: 28px 0 72px;
 }
 
 .profile-panel,
@@ -1428,6 +1508,65 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.member-config-panel {
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.member-config-panel h3,
+.keys-env-panel h3 {
+  margin: 0 0 5px;
+}
+
+.member-config-panel p {
+  margin: 0;
+  color: #aaa;
+  line-height: 1.45;
+}
+
+.member-config-grid {
+  grid-template-columns: minmax(260px, 1fr) 160px auto;
+  align-items: end;
+}
+
+.create-team-panel {
+  border: 1px solid #262828;
+  border-radius: 6px;
+  background: #101211;
+  margin: 20px 0;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.create-team-panel h3 {
+  margin: 0;
+}
+
+.create-team-panel label {
+  display: grid;
+  gap: 8px;
+  color: #aaa;
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.create-team-panel input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #303233;
+  border-radius: 5px;
+  background: #111313;
+  color: #f2f1e8;
+  padding: 9px 10px;
+}
+
+.product-alert.inline {
+  width: auto;
+  margin: 0;
 }
 
 .setting-grid {
@@ -1670,6 +1809,7 @@
 .setting-card span {
   color: #aaa;
   font-size: 0.8rem;
+  text-transform: capitalize;
 }
 
 .setting-card strong {
@@ -1732,12 +1872,88 @@
   gap: 8px;
 }
 
+.read-model-card p {
+  margin: 0;
+  color: #b9bbb7;
+  line-height: 1.45;
+}
+
+.read-model-card details {
+  border-top: 1px solid #262828;
+  padding-top: 8px;
+}
+
+.read-model-card summary {
+  color: #d8d8d2;
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .read-model-card pre {
   max-height: 220px;
   overflow: auto;
   background: #0b0c0c;
   color: #b7c7c4;
   border: 1px solid #252525;
+}
+
+.keys-posture-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.config-posture-card {
+  min-height: 170px;
+  padding: 16px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.config-posture-card.ready {
+  border-color: #315f55;
+}
+
+.config-posture-card.blocked {
+  border-color: #704442;
+}
+
+.config-posture-card span {
+  color: #aaa;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.config-posture-card strong {
+  color: #f2f1e8;
+  font-size: 1.1rem;
+}
+
+.config-posture-card p {
+  margin: 0;
+  color: #aaa;
+  line-height: 1.45;
+}
+
+.keys-env-panel {
+  padding: 18px;
+}
+
+.env-var-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.env-var-grid code {
+  border: 1px solid #303233;
+  border-radius: 5px;
+  background: #101211;
+  color: #9fd2ca;
+  padding: 9px;
+  white-space: normal;
 }
 
 .auth-scene,
@@ -2063,6 +2279,8 @@
   .praxis-import-grid,
   .approval-list,
   .proof-grid,
+  .keys-posture-grid,
+  .env-var-grid,
   .praxis-home,
   .praxis-workbench,
   .praxis-lanes {
@@ -2073,8 +2291,9 @@
     border-right: 0;
   }
   .settings-layout {
+    width: min(100% - 32px, 960px);
     grid-template-columns: 1fr;
-    padding: 20px;
+    padding: 20px 0 72px;
   }
 }
 
@@ -2156,8 +2375,15 @@
   .launch-grid,
   .praxis-import-grid,
   .approval-list,
-  .proof-grid {
+  .proof-grid,
+  .filter-row,
+  .member-config-grid,
+  .keys-posture-grid,
+  .env-var-grid {
     grid-template-columns: 1fr;
+  }
+  .product-shell.sidebar-collapsed .nav-label {
+    display: inline;
   }
   .launch-grid .launch-reason {
     grid-column: auto;

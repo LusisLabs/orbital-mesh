@@ -74,6 +74,36 @@ class OperatorAuthHttpTests(unittest.TestCase):
             include_cookie=True,
         )
         self.assertEqual(team_payload["active_team"]["name"], "Mesh Operators")
+        team_id = team_payload["active_team"]["id"]
+
+        updated_team, _ = self._request(
+            "POST",
+            "/api/auth/team/update",
+            {"team_id": team_id, "name": "Mesh Operators Pilot", "display_name": "Pilot Operators"},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(updated_team["active_team"]["name"], "Mesh Operators Pilot")
+        self.assertEqual(updated_team["active_team"]["display_name"], "Pilot Operators")
+
+        cleared_team_display, _ = self._request(
+            "POST",
+            "/api/auth/team/update",
+            {"team_id": team_id, "name": "Mesh Operators Pilot", "display_name": ""},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(cleared_team_display["active_team"]["display_name"], "Mesh Operators Pilot")
+
+        updated_members, _ = self._request(
+            "POST",
+            "/api/auth/team/members",
+            {"team_id": team_id, "members": [{"email": "approver@example.com", "role": "approver"}]},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        approver = next(member for member in updated_members["active_team"]["members"] if member["email"] == "approver@example.com")
+        self.assertEqual(approver["role"], "approver")
 
         dashboard, _ = self._request("GET", "/api/operator/dashboard", cookie=cookie, include_cookie=True)
         self.assertEqual(dashboard["scope"]["kind"], "team")
@@ -326,6 +356,19 @@ class OperatorAuthHttpTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as switch_error:
             self._request("POST", "/api/auth/switch-team", {"team_id": team_id}, cookie=outsider_cookie)
         self.assertEqual(switch_error.exception.code, HTTPStatus.FORBIDDEN)
+
+        with self.assertRaises(HTTPError) as team_update_error:
+            self._request("POST", "/api/auth/team/update", {"team_id": team_id, "name": "Blocked"}, cookie=outsider_cookie)
+        self.assertEqual(team_update_error.exception.code, HTTPStatus.FORBIDDEN)
+
+        with self.assertRaises(HTTPError) as member_update_error:
+            self._request(
+                "POST",
+                "/api/auth/team/members",
+                {"team_id": team_id, "members": [{"email": "blocked@example.com", "role": "viewer"}]},
+                cookie=outsider_cookie,
+            )
+        self.assertEqual(member_update_error.exception.code, HTTPStatus.FORBIDDEN)
 
         with self.assertRaises(HTTPError) as settings_error:
             self._request(

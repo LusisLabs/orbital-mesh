@@ -221,6 +221,11 @@ REQUIRED_PRODUCT_E2E_MARKERS = [
     "Local captcha bypass is active for development only.",
     "/api/operator/dashboard",
     "Dashboard identity scopes the product read model.",
+    "team settings, member invites, provider posture, connector filters, and launch defaults work end to end",
+    "Save settings",
+    "Save members",
+    "Mesh admitted this run.",
+    "MESH_CAPTCHA_SECRET_KEY",
 ]
 
 REQUIRED_PRODUCT_TYPE_MARKERS = [

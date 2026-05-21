@@ -1088,6 +1088,51 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(response, status=HTTPStatus.CREATED)
             return
+        if path == "/api/auth/team/update":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            try:
+                response = self.server.operator_identity.update_team(
+                    token,
+                    team_id=str(payload.get("team_id")) if payload.get("team_id") else None,
+                    name=str(payload.get("name") or ""),
+                    display_name=(
+                        "" if payload.get("display_name") is None else str(payload.get("display_name"))
+                    ) if "display_name" in payload else None,
+                )
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(response)
+            return
+        if path == "/api/auth/team/members":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            try:
+                response = self.server.operator_identity.upsert_team_members(
+                    token,
+                    team_id=str(payload.get("team_id")) if payload.get("team_id") else None,
+                    members=payload.get("members") if isinstance(payload.get("members"), list) else [],
+                )
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(response)
+            return
         if path == "/api/auth/switch-team":
             token = self._session_token()
             if not token:

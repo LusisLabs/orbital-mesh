@@ -192,6 +192,12 @@ export const productApi = {
   createTeam(payload: { name: string; display_name?: string; members?: { email: string; role: string }[] }) {
     return request<SessionPayload>("/api/auth/team", { method: "POST", body: JSON.stringify(payload) });
   },
+  updateTeam(payload: { team_id?: string | null; name: string; display_name?: string }) {
+    return request<SessionPayload>("/api/auth/team/update", { method: "POST", body: JSON.stringify(payload) });
+  },
+  upsertTeamMembers(payload: { team_id?: string | null; members: { email: string; role: string }[] }) {
+    return request<SessionPayload>("/api/auth/team/members", { method: "POST", body: JSON.stringify(payload) });
+  },
   switchTeam(teamId: string | null) {
     return request<SessionPayload>("/api/auth/switch-team", { method: "POST", body: JSON.stringify({ team_id: teamId }) });
   },

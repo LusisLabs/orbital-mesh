@@ -112,14 +112,14 @@ P2 provider proof posture:
 
 ## Teams
 
-New users can continue solo or create a team. Teams hold display metadata, members, and roles:
+New users can continue solo or create a team. The product team settings page now mutates the `team-tenancy` state slice through `/api/auth/team/update`, and the members page can invite or update members through `/api/auth/team/members`. Teams hold display metadata, members, and roles:
 
 - `owner` and `admin` map to Mesh `admin`.
 - `approver` maps to `approver`, `launcher`, and `viewer`.
 - `launcher` maps to `launcher` and `viewer`.
 - `viewer` maps to `viewer`.
 
-Team state scopes the product dashboard and settings. It does not rewrite historical Mesh runs or add tenant predicates to Mesh runtime persistence.
+Team state scopes the product dashboard and settings. Owner/admin members can update team profile metadata and invited member role mappings; viewers cannot. It does not rewrite historical Mesh runs or add tenant predicates to Mesh runtime persistence.
 
 ## CLI Settings
 
@@ -141,6 +141,8 @@ python scripts/operator_config.py set \
   --reason "set team default" \
   default_orchestration_mode=hermes
 ```
+
+The same settings slice also controls product launch defaults such as `default_run_scenario` and `default_target_lock`; the Evaluations page reads those values when preparing a new Mesh-admitted run. `default_run_scenario` is limited to signal fixtures that the backend can admit today: `reth_peer_starvation`, `reth_sync_stalled_disk_pressure`, `kubernetes_crashloop_patch`, and `search_latency_regression`.
 
 Validate:
 
@@ -229,7 +231,7 @@ State slices: `Mesh runtime config`, `API route`, `UI shell`, `dashboard read mo
 | Signup, login, logout, session recovery | `/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/me` | Mutates `auth-identity` only | App session scopes dashboard/operator context; Mesh runtime stores remain authoritative. |
 | OAuth start and callback | `/api/auth/oauth/{provider}/start`, `/api/auth/oauth/{provider}/callback` | Mutates OAuth state and session only | Missing provider config fails closed; provider callback errors redirect with explicit auth error. |
 | Captcha | `/api/auth/config`, `/api/auth/signup` | Verification gate before local identity creation | Local bypass is development-only; non-local signup needs provider, site key, and secret. |
-| Team create and switch | `/api/auth/team`, `/api/auth/switch-team` | Mutates `team-tenancy` only | Team scope gates dashboard read model and operator roles; it does not rewrite historical Mesh records. |
+| Team create, update, member invite, and switch | `/api/auth/team`, `/api/auth/team/update`, `/api/auth/team/members`, `/api/auth/switch-team` | Mutates `team-tenancy` only | Team scope gates dashboard read model and operator roles; it does not rewrite historical Mesh records. |
 | Dashboard cards | `/api/operator/dashboard` | Read-only aggregation | Mesh remains owner of readiness, approvals, evidence, run state, connectors, memory, and pilot packets. |
 | Praxis MCP generator | `/api/operator/dashboard` `mesh.praxis` and `/api/operator/praxis/*` | Product-native workflow over `praxis.managed-dry-run-runtime.v1` | Home dashboard exposes source intake, generated tools, Akto evidence, certification, dry-run MCP readiness, revocation posture, and blocked managed-runtime deployment without granting authority. |
 | Run launch | `/api/runs` | Product-native form, Mesh-authorized mutation | The product launch form requires an audit reason and posts to Mesh-owned `/api/runs`; role checks, ownership boundary, policy, and `mesh.run_admission.v1` still decide. |
@@ -237,6 +239,7 @@ State slices: `Mesh runtime config`, `API route`, `UI shell`, `dashboard read mo
 | Evidence, RCA, Merkle, timeline proof, export | `/api/runs/{run_id}/events`, `/scenario-analysis`, `/evidence-graph`, `/merkle`, `/timeline-proof`, `/export` | Read-only proof drill-in | Product UI can load proof packets and export packages; it cannot rewrite evidence or promote evidence into authority. |
 | Readiness, connectors, topology, memory, kill switch, policy state | `/api/operator/dashboard` section read models | Navigable read-only product pages | Each runtime page binds to real Mesh read models and avoids legacy tab shortcuts; kill-switch mutation remains Mesh admin-only. |
 | Settings | `/api/operator/settings` and `scripts/operator_config.py` | Mutates validated `mesh-settings-control` settings | UI and CLI share schema and persisted store; runtime-critical deployment config stays read-only. |
+| Keys and provider posture | `/api/auth/config`, `/api/operator/dashboard` | Read-only deployment posture | Product UI names configured/unconfigured provider state and required env variable ownership without exposing raw secrets. |
 
 Dashboard read-model contract:
 
@@ -259,6 +262,7 @@ Product-native workflow posture:
 | Memory projection | Product-native read page | `/api/operator/dashboard` `mesh.memory.active` and `mesh.memory.graph` | Memory page shows active memory and projection graph as Mesh-owned read models. |
 | Kill switch | Product-native read page | `/api/operator/dashboard` `mesh.kill_switch` | Kill switch page shows emergency control state; admin mutation stays behind Mesh-owned `/api/kill-switch`. |
 | Settings | Native scoped mutation | `/api/operator/settings` and `scripts/operator_config.py` | UI and CLI share the validated settings slice; runtime-critical deployment config remains read-only. |
+| Team tenancy | Native scoped mutation | `/api/auth/team/update`, `/api/auth/team/members`, `/api/auth/switch-team` | Product UI can update team display metadata and member roles; only owner/admin role mappings can mutate team state. |
 
 Praxis product posture:
 
@@ -298,7 +302,7 @@ P8 deployment fail-closed checks:
 
 State slices: `tests-and-validation`, `contracts-and-schemas`
 
-`pnpm run test:product:e2e` starts an isolated app-session Mesh API and the Next product shell, then drives clean-browser paths for first-run signup, solo dashboard, team dashboard, logout, expired-session cookie clearing, login recovery, and `/api/operator/dashboard`. The active Playwright artifacts are `scripts/operator_product_e2e.py`, `meshapp/frontend/playwright.config.ts`, and `meshapp/frontend/e2e/first-run-signup-dashboard.spec.ts`.
+`pnpm run test:product:e2e` starts an isolated app-session Mesh API and the Next product shell, then drives clean-browser paths for first-run signup, solo dashboard, team dashboard, team profile update, member invite, provider posture, connector filtering, settings-backed launch defaults, run admission, logout, expired-session cookie clearing, login recovery, and `/api/operator/dashboard`. The active Playwright artifacts are `scripts/operator_product_e2e.py`, `meshapp/frontend/playwright.config.ts`, and `meshapp/frontend/e2e/first-run-signup-dashboard.spec.ts`.
 
 `python3 scripts/operator_auth_provider_smoke.py` reads ignored `.env.local` files, verifies they are ignored/untracked, checks OAuth local callback shape, checks optional `MESH_AUTH_PRODUCT_REDIRECT_URL` trust, checks hCaptcha env readiness, scans tracked files for the exact local secret values, and writes a redacted readiness artifact to `.mesh-runtime-state/operator-auth-proof/latest.json`. It does not print or persist raw OAuth or captcha values. Its expected status before real external login/challenge completion is `blocked_provider_console_unverified`.
 
@@ -418,7 +422,7 @@ Validation transcript from this buildout:
 | `pnpm run test:auth-provider:live` | Blocked as expected until `.mesh-runtime-state/operator-auth-proof/live-provider-proof.json` records clean-browser Google, GitHub, and hCaptcha completion. |
 | `pnpm run lint:fast` | Passed contracts, operator verifier, Praxis verifier, and Python compile checks. |
 | `pnpm run test:focused` | Passed 207 Python tests and 35 frontend tests. |
-| `pnpm run test:product:e2e` | Passed 5 Playwright tests covering first-run team dashboard, Praxis P10 proof flow, solo dashboard, logout cookie clearing, and expired-session recovery. |
+| `pnpm run test:product:e2e` | Passed 7 Playwright tests covering first-run team dashboard, settings-backed launch defaults, member invite, provider posture, connector filtering, console workflow handoff, Praxis P10 proof flow, solo dashboard, logout cookie clearing, and expired-session recovery. |
 | `pnpm run verify:contracts` | Passed control-plane contract checks, Praxis verifier, and operator product verifier. |
 | `pnpm run verify:full` | Passed contracts, focused tests, Praxis proof packet verifier, web lint, and meshapp frontend lint. |
 | `pnpm run lint` | Passed the heavy root gate. |

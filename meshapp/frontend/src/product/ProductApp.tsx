@@ -28,6 +28,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
   Users,
   Zap,
@@ -107,6 +108,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "team", label: "Team Settings", icon: Settings },
       { key: "members", label: "Members", icon: Users },
       { key: "keys", label: "Keys & Secrets", icon: KeyRound },
+      { key: "settings", label: "Settings", icon: SlidersHorizontal },
     ],
   },
   {
@@ -133,6 +135,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
 
 type OperatorWorkflowKey = "launch" | "approval" | "evidence" | "readiness" | "connector" | "settings";
 type ConsoleTone = "good" | "warn" | "neutral";
+type MemberRole = "viewer" | "launcher" | "approver" | "admin";
 export type DashboardSurfaceState = "ready" | "empty" | "degraded" | "blocked" | "unauthorized" | "backend-unavailable";
 type AuthProviderKey = "google" | "github";
 export type ConsoleWorkflow = {
@@ -280,6 +283,7 @@ export default function ProductApp() {
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   function soloOnboardingKey(userId: string): string {
     return `mesh.product.solo.${userId}`;
@@ -342,7 +346,7 @@ export default function ProductApp() {
   useEffect(() => {
     if (!session || (!session.active_team && !onboardingComplete)) return;
     let mounted = true;
-    setDashboardState({ state: "loading" });
+    setDashboardState((current) => (current.state === "ready" ? current : { state: "loading" }));
     productApi.dashboard(session.active_team?.id ?? null)
       .then((payload) => {
         if (!mounted) return;
@@ -377,6 +381,7 @@ export default function ProductApp() {
       setSession(null);
       setOnboardingComplete(false);
       setSessionState({ state: "unauthorized", message: "Logged out" });
+      setDashboardState({ state: "empty", message: "Sign in to load the dashboard." });
     } catch (err) {
       setLogoutError(err instanceof Error ? err.message : "Logout failed. Session was not cleared.");
     } finally {
@@ -417,8 +422,16 @@ export default function ProductApp() {
   };
 
   return (
-    <div className={`product-shell ${consoleMode ? "console-mode" : ""}`}>
-      <Sidebar session={session} activeView={view} onView={openView} onLogout={logout} loggingOut={loggingOut} />
+    <div className={`product-shell ${consoleMode ? "console-mode" : ""} ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+      <Sidebar
+        session={session}
+        activeView={view}
+        onView={openView}
+        onLogout={logout}
+        loggingOut={loggingOut}
+        collapsed={sidebarCollapsed}
+        onCollapsedChange={setSidebarCollapsed}
+      />
       <main className="product-main">
         <Header session={session} dashboard={dashboard} refreshSession={refreshSession} consoleMode={consoleMode} activePage={activePage} />
         {logoutError ? (
@@ -429,10 +442,12 @@ export default function ProductApp() {
         ) : null}
         <ContentRouter
           view={view}
+          authConfig={authConfig}
           session={session}
           dashboardState={dashboardState}
           setView={openView}
           onDashboardRefresh={refreshDashboard}
+          onSession={acceptSession}
           onLogout={logout}
           loggingOut={loggingOut}
         />
@@ -654,6 +669,7 @@ export function authFailureMessage(error: unknown): string {
   if (normalized.includes("invalid email or password")) return "Email or password is incorrect.";
   if (normalized.includes("password signup is disabled")) return "Signup is invite-only for this environment.";
   if (normalized.includes("oauth is not configured")) return "That sign-in provider is not available for this environment.";
+  if (normalized.includes("terms consent")) return "Accept the data-handling and authority boundary terms before creating an account.";
   return message;
 }
 
@@ -765,15 +781,24 @@ function TeamSetupScreen({
   const [name, setName] = useState("");
   const [invite, setInvite] = useState("");
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
 
   async function createTeam() {
+    const teamName = name.trim();
+    if (!teamName) {
+      setError("Team name is required.");
+      return;
+    }
+    setCreating(true);
     setError("");
     try {
       const members = invite.split(",").map((email) => email.trim()).filter(Boolean).map((email) => ({ email, role: "viewer" }));
-      const payload = await productApi.createTeam({ name, members });
+      const payload = await productApi.createTeam({ name: teamName, members });
       onTeam(payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Team creation failed");
+    } finally {
+      setCreating(false);
     }
   }
 
@@ -792,7 +817,7 @@ function TeamSetupScreen({
           <input value={invite} onChange={(event) => setInvite(event.target.value)} placeholder="colleague@company.com, sre@company.com" />
         </label>
         {error ? <div className="auth-error">{error}</div> : null}
-        <button className="primary-button" type="button" onClick={createTeam}>Create team</button>
+        <button className="primary-button" type="button" onClick={createTeam} disabled={creating}>{creating ? "Creating" : "Create team"}</button>
         <button className="link-button" type="button" onClick={onSolo}>Continue solo</button>
       </section>
     </div>
@@ -805,12 +830,16 @@ function Sidebar({
   onView,
   onLogout,
   loggingOut,
+  collapsed,
+  onCollapsedChange,
 }: {
   session: SessionPayload;
   activeView: ViewKey;
   onView: (view: ViewKey) => void;
   onLogout: () => void;
   loggingOut: boolean;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
 }) {
   function openDocs() {
     window.open("https://github.com/LusisLabs/orbital-mesh/tree/master/docs", "_blank", "noopener,noreferrer");
@@ -818,7 +847,17 @@ function Sidebar({
 
   return (
     <aside className="product-sidebar">
-      <div className="brand-row"><BrandLogo /><button type="button" aria-label="Collapse"><ChevronDown size={14} /></button></div>
+      <div className="brand-row">
+        <BrandLogo />
+        <button
+          type="button"
+          aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+          title={collapsed ? "Expand navigation" : "Collapse navigation"}
+          onClick={() => onCollapsedChange(!collapsed)}
+        >
+          <ChevronDown size={14} />
+        </button>
+      </div>
       <nav>
         {NAV_GROUPS.map((group) => (
           <div className="nav-group" key={group.label || "home"}>
@@ -826,8 +865,8 @@ function Sidebar({
             {group.items.map((item) => {
               const Icon = item.icon;
               return (
-                <button key={item.key} className={activeView === item.key ? "active" : ""} type="button" onClick={() => onView(item.key)}>
-                  <Icon size={16} /> {item.label}
+                <button key={item.key} className={activeView === item.key ? "active" : ""} type="button" onClick={() => onView(item.key)} title={item.label} aria-label={item.label}>
+                  <Icon size={16} /> <span className="nav-label">{item.label}</span>
                 </button>
               );
             })}
@@ -835,9 +874,9 @@ function Sidebar({
         ))}
         <div className="nav-group">
           <p>Support</p>
-          <button type="button" onClick={() => onView("evaluations")}><Mail size={16} /> Run Review</button>
-          <button type="button" onClick={openDocs}><BookOpen size={16} /> Documentation</button>
-          <button type="button" onClick={() => onView("settings")}><Database size={16} /> Config</button>
+          <button type="button" onClick={() => onView("evaluations")} title="Run Review" aria-label="Run Review"><Mail size={16} /> <span className="nav-label">Run Review</span></button>
+          <button type="button" onClick={openDocs} title="Documentation" aria-label="Documentation"><BookOpen size={16} /> <span className="nav-label">Documentation</span></button>
+          <button type="button" onClick={() => onView("settings")} title="Config" aria-label="Config"><Database size={16} /> <span className="nav-label">Config</span></button>
         </div>
       </nav>
       <div className="sidebar-footer">
@@ -895,7 +934,10 @@ function pageMetaForView(view: ViewKey): { title: string; group: string; detail:
     praxis: "Upload sources, certify generated tools, start dry-run, and export proof.",
     evaluations: "Choose a scenario, launch through Mesh admission, and inspect proof.",
     environments: "Filter connector status by domain, state, and blocker evidence.",
-    settings: "Simple defaults first; deployment and CLI parity stay in Advanced.",
+    settings: "Choose safe defaults for new runs; deployment and CLI parity stay in Advanced.",
+    team: "Create or review the active team scope for partner-safe access.",
+    members: "Review team roles that map into Mesh operator permissions.",
+    keys: "Review deployment-owned auth and secret posture without exposing raw values.",
   };
   return { title, group: match?.group || "Product", detail: details[view] || "Mesh-owned read model with product-safe controls." };
 }
@@ -916,18 +958,22 @@ function TeamSwitcher({ session, refreshSession }: { session: SessionPayload; re
 
 function ContentRouter({
   view,
+  authConfig,
   session,
   dashboardState,
   setView,
   onDashboardRefresh,
+  onSession,
   onLogout,
   loggingOut,
 }: {
   view: ViewKey;
+  authConfig: AuthConfig | null;
   session: SessionPayload;
   dashboardState: LoadState<DashboardPayload>;
   setView: (view: ViewKey) => void;
   onDashboardRefresh: () => Promise<void>;
+  onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
 }) {
@@ -942,9 +988,10 @@ function ContentRouter({
   if (view === "praxis") return <PraxisView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
-  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onLogout={onLogout} loggingOut={loggingOut} />;
-  if (view === "members") return <MembersView session={session} setView={setView} />;
-  if (view === "settings") return <SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} />;
+  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
+  if (view === "members") return <MembersView session={session} setView={setView} onSession={onSession} onDashboardRefresh={onDashboardRefresh} />;
+  if (view === "keys") return <KeysView authConfig={authConfig} dashboard={dashboard} setView={setView} />;
+  if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} /></div>;
   return <CapabilityView view={view} dashboard={dashboard} setView={setView} />;
 }
 
@@ -1786,7 +1833,7 @@ export function settingsParityRows(dashboard: DashboardPayload): SettingsParityR
   const operatorId = dashboard.session.user.email || dashboard.session.user.id;
   const mutableRows = Object.entries(dashboard.settings_schema).map(([key, schema]) => ({
     key,
-    label: key,
+    label: titleize(key),
     value: dashboard.settings[key] ?? schema.default,
     description: schema.description,
     mutable: true,
@@ -1835,6 +1882,8 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
   const connectorPosture = operatorWorkflowPosture("connector");
   const connectors = dashboard.mesh.connectors?.connectors || dashboard.mesh.connectors?.connector_certification || {};
   const [query, setQuery] = useState("");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [domainFilter, setDomainFilter] = useState("all");
   const cards = Object.entries(connectors).map(([id, value]: [string, any]) => ({
     id,
     owner: "Mesh",
@@ -1846,10 +1895,14 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
     tags: [value.state || "unknown", value.credential_boundary?.credential_source || "config"],
     version: value.schema_version || "v1",
   }));
+  const stateOptions = ["all", ...Array.from(new Set(cards.map((card) => card.state))).sort()];
+  const domainOptions = ["all", ...Array.from(new Set(cards.map((card) => card.domain))).sort()];
   const loweredQuery = query.trim().toLowerCase();
   const filteredCards = cards.filter((card) => {
-    if (!loweredQuery) return true;
-    return [card.id, card.title, card.detail, card.state, card.domain, ...card.tags].join(" ").toLowerCase().includes(loweredQuery);
+    const matchesQuery = !loweredQuery || [card.id, card.title, card.detail, card.state, card.domain, ...card.tags].join(" ").toLowerCase().includes(loweredQuery);
+    const matchesState = stateFilter === "all" || card.state === stateFilter;
+    const matchesDomain = domainFilter === "all" || card.domain === domainFilter;
+    return matchesQuery && matchesState && matchesDomain;
   });
   const grouped = groupConnectorCards(filteredCards);
 
@@ -1862,12 +1915,26 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
         onAction={() => setView("home")}
       />
       <SearchBar value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
+      <div className="filter-row">
+        <label>
+          State
+          <select value={stateFilter} onChange={(event) => setStateFilter(event.target.value)}>
+            {stateOptions.map((state) => <option key={state} value={state}>{humanize(state)}</option>)}
+          </select>
+        </label>
+        <label>
+          Domain
+          <select value={domainFilter} onChange={(event) => setDomainFilter(event.target.value)}>
+            {domainOptions.map((domain) => <option key={domain} value={domain}>{humanize(domain)}</option>)}
+          </select>
+        </label>
+      </div>
       <div className="connector-legend">
         {["ready", "staging-ready", "read-only", "config-only", "blocked", "stub", "disconnected"].map((state) => (
           <span key={state}><CircleDot size={10} /> {humanize(state)}</span>
         ))}
       </div>
-      <CardRows sections={grouped} />
+      {filteredCards.length ? <CardRows sections={grouped} /> : <EmptyInline text="No connectors match the current filters." />}
     </div>
   );
 }
@@ -1892,9 +1959,23 @@ function EvaluationsView({
 }) {
   const launchPosture = operatorWorkflowPosture("launch");
   const runs = dashboard.mesh.runs?.runs || [];
+  const [query, setQuery] = useState("");
   const active = runs.filter((run: any) => !["completed", "failed", "cancelled"].includes(run.status)).length;
   const failed = runs.filter((run: any) => run.status === "failed").length;
   const traceSteps = evidenceTraceSteps(dashboard);
+  const loweredQuery = query.trim().toLowerCase();
+  const filteredRuns = runs.filter((run: any) => {
+    if (!loweredQuery) return true;
+    return [
+      run.run_id,
+      run.id,
+      run.scenario_key,
+      run.status,
+      run.stage,
+      run.created_at,
+      run.operator_id,
+    ].map((value) => String(value || "")).join(" ").toLowerCase().includes(loweredQuery);
+  });
   return (
     <div className="content-stack">
       <Toolbar
@@ -1912,15 +1993,17 @@ function EvaluationsView({
       </div>
       <TraceRail steps={traceSteps} />
       <ProofDrilldownPanel dashboard={dashboard} />
-      <SearchBar placeholder="Search by run, scenario, model..." />
+      <SearchBar value={query} onChange={setQuery} placeholder="Search by run, scenario, status, operator..." />
       <div className="data-table">
         <div className="table-head"><span>Name</span><span>Scenario</span><span>Status</span><span>Created</span><span>Created by</span></div>
-        {runs.length ? runs.map((run: any) => (
+        {filteredRuns.length ? filteredRuns.map((run: any) => (
           <div className="table-row" key={run.run_id}>
             <span>{run.run_id}</span><span>{run.scenario_key || "custom"}</span><span>{run.status}</span><span>{run.created_at}</span><span>{run.operator_id || "Mesh"}</span>
           </div>
-        )) : (
-          <div className="empty-eval"><BarChart3 size={24} /><strong>Run your first evaluation</strong><p>Use the Mesh CLI or product-native run form once exposed. Mesh owns admission and policy.</p></div>
+        )) : runs.length ? (
+          <div className="empty-eval"><Search size={24} /><strong>No matching evaluations</strong><p>Adjust the search terms to inspect run state returned by Mesh.</p></div>
+        ) : (
+          <div className="empty-eval"><BarChart3 size={24} /><strong>Run your first evaluation</strong><p>Use the launch form above. Mesh owns admission and policy.</p></div>
         )}
       </div>
     </div>
@@ -2020,9 +2103,9 @@ type ProofResult = {
 
 const SCENARIO_PICKER = [
   { key: "reth_peer_starvation", label: "Reth peer starvation", detail: "Exercise peer loss, degraded sync signal, evidence collection, and bounded remediation." },
-  { key: "packet_export", label: "Proof packet export", detail: "Validate evidence packaging and release proof export without production actuation." },
-  { key: "kubernetes_rollout_guard", label: "Kubernetes rollout guard", detail: "Check watcher evidence and approval gates before any live cluster action." },
-  { key: "custom", label: "Custom scenario", detail: "Use a custom scenario key when Mesh already knows the fixture or target." },
+  { key: "reth_sync_stalled_disk_pressure", label: "Reth disk pressure stall", detail: "Rehearse stalled sync diagnosis against disk-pressure evidence and safe remediation gates." },
+  { key: "kubernetes_crashloop_patch", label: "Kubernetes crashloop patch", detail: "Check workload evidence, ownership, approval, and patch safety before cluster-facing action." },
+  { key: "search_latency_regression", label: "Search latency regression", detail: "Validate service-latency triage, RCA evidence, and advisory remediation boundaries." },
 ];
 
 const AUDIT_REASON_TEMPLATES = [
@@ -2103,13 +2186,14 @@ function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
 }
 
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
-  const [scenarioKey, setScenarioKey] = useState("reth_peer_starvation");
-  const [customScenario, setCustomScenario] = useState("");
+  const configuredDefaultScenario = dashboard.settings.default_run_scenario || "reth_peer_starvation";
+  const defaultScenarioKnown = SCENARIO_PICKER.some((scenario) => scenario.key === configuredDefaultScenario);
+  const [scenarioKey, setScenarioKey] = useState(defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation");
   const [evaluationMode, setEvaluationMode] = useState(dashboard.settings.default_evaluation_mode || "native");
   const [orchestrationMode, setOrchestrationMode] = useState(dashboard.settings.default_orchestration_mode || "native");
   const [steeringMode, setSteeringMode] = useState(dashboard.settings.default_steering_mode || "approval_gate");
   const [auditReason, setAuditReason] = useState("");
-  const [requireTargetLock, setRequireTargetLock] = useState(false);
+  const [requireTargetLock, setRequireTargetLock] = useState(dashboard.settings.default_target_lock === "required");
   const [result, setResult] = useState<RunLaunchResponse | null>(null);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -2120,16 +2204,12 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
       setMessage("Audit reason is required before Mesh can admit a product-launched run.");
       return;
     }
-    if (scenarioKey === "custom" && !customScenario.trim()) {
-      setMessage("Custom scenario key is required before Mesh can admit the run.");
-      return;
-    }
     setSubmitting(true);
     setMessage("");
     setResult(null);
     try {
       const response = await productApi.createRun({
-        scenario_key: scenarioKey === "custom" ? customScenario.trim() : scenarioKey,
+        scenario_key: scenarioKey,
         audit_reason: cleanedReason,
         evaluation_mode: evaluationMode,
         orchestration_mode: orchestrationMode,
@@ -2151,6 +2231,11 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
   const admission = result ? runAdmission(result) : null;
   const blockers = admission?.blockers || [];
   const selectedScenario = SCENARIO_PICKER.find((scenario) => scenario.key === scenarioKey) || SCENARIO_PICKER[0];
+  const messageClass = message.startsWith("Mesh admitted")
+    ? "product-alert success"
+    : message.startsWith("Mesh blocked")
+      ? "product-alert warn"
+      : "auth-error";
   return (
     <section className="launch-panel" aria-label="New Evaluation / Launch Run">
       <div className="launch-heading">
@@ -2171,12 +2256,6 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
           </select>
           <small>{selectedScenario.detail}</small>
         </label>
-        {scenarioKey === "custom" ? (
-          <label>
-            Custom key
-            <input value={customScenario} onChange={(event) => setCustomScenario(event.target.value)} placeholder="scenario_key" />
-          </label>
-        ) : null}
         <label>
           Evaluation
           <select value={evaluationMode} onChange={(event) => setEvaluationMode(event.target.value)}>
@@ -2207,7 +2286,7 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
           Require target lock
         </label>
       </div>
-      {message ? <div className={message.startsWith("Mesh admitted") ? "product-alert success" : "auth-error"}>{message}</div> : null}
+      {message ? <div className={messageClass}>{message}</div> : null}
       {result ? (
         <div className={`admission-result ${admission?.decision === "blocked" ? "blocked" : "ready"}`}>
           <span>{admission?.schema_version || "mesh.run_admission.v1"}</span>
@@ -2273,37 +2352,116 @@ function TeamSettingsView({
   session,
   dashboard,
   onDashboardRefresh,
+  onSession,
   onLogout,
   loggingOut,
 }: {
   session: SessionPayload;
   dashboard: DashboardPayload;
   onDashboardRefresh: () => Promise<void>;
+  onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
 }) {
   const team = session.active_team;
+  const [teamName, setTeamName] = useState("");
+  const [inviteEmails, setInviteEmails] = useState("");
+  const [profileName, setProfileName] = useState(team?.name || "");
+  const [profileDisplayName, setProfileDisplayName] = useState(team?.display_name || "");
+  const [teamMessage, setTeamMessage] = useState("");
+  const [creatingTeam, setCreatingTeam] = useState(false);
+  const [savingTeam, setSavingTeam] = useState(false);
+
+  useEffect(() => {
+    setProfileName(team?.name || "");
+    setProfileDisplayName(team?.display_name || "");
+  }, [team?.id, team?.name, team?.display_name]);
+
+  async function createTeamFromSettings() {
+    const name = teamName.trim();
+    if (!name) {
+      setTeamMessage("Team name is required.");
+      return;
+    }
+    setCreatingTeam(true);
+    setTeamMessage("");
+    try {
+      const members = inviteEmails.split(",").map((email) => email.trim()).filter(Boolean).map((email) => ({ email, role: "viewer" }));
+      const payload = await productApi.createTeam({ name, members });
+      onSession(payload);
+      await onDashboardRefresh();
+      setTeamName("");
+      setInviteEmails("");
+      setTeamMessage(`Created team ${payload.active_team?.name || name}.`);
+    } catch (err) {
+      setTeamMessage(err instanceof Error ? err.message : "Team creation failed.");
+    } finally {
+      setCreatingTeam(false);
+    }
+  }
+
+  async function saveTeamProfile() {
+    if (!team) return;
+    const name = profileName.trim();
+    if (!name) {
+      setTeamMessage("Team name is required.");
+      return;
+    }
+    setSavingTeam(true);
+    setTeamMessage("");
+    try {
+      const payload = await productApi.updateTeam({ team_id: team.id, name, display_name: profileDisplayName.trim() });
+      onSession(payload);
+      await onDashboardRefresh();
+      setTeamMessage(`Saved team profile for ${payload.active_team?.name || name}.`);
+    } catch (err) {
+      setTeamMessage(err instanceof Error ? err.message : "Team profile update failed.");
+    } finally {
+      setSavingTeam(false);
+    }
+  }
+
   return (
     <div className="settings-layout">
       <section className="profile-panel">
         <h2>Team Settings</h2>
-        <p>Manage product profile and preferences for the active dashboard scope.</p>
+        <p>{team ? "Review team profile and preferences for the active dashboard scope." : "Create a team when you are ready to invite partners or separate this browser from solo mode."}</p>
         <div className="avatar-disc">{team?.name?.[0] || session.user.display_name[0]}</div>
         <FormRead label="ID" value={team?.id || session.user.id} />
         <FormRead label="Email" value={session.user.email} />
-        <FormRead label="Team Name" value={team?.name || "Solo mode"} />
-        <FormRead label="Team Username" value={team?.slug || "solo"} />
-        <FormRead label="Bio" value="Mesh operator dashboard. Runtime authority remains with Mesh." large />
+        {team ? (
+          <div className="create-team-panel">
+            <h3>Team profile</h3>
+            <label>
+              Team name
+              <input value={profileName} onChange={(event) => setProfileName(event.target.value)} />
+            </label>
+            <label>
+              Display name
+              <input value={profileDisplayName} onChange={(event) => setProfileDisplayName(event.target.value)} />
+            </label>
+            <FormRead label="Slug" value={team.slug} />
+            <FormRead label="Your role" value={team.role} />
+            <button className="primary-button" type="button" onClick={saveTeamProfile} disabled={savingTeam}>{savingTeam ? "Saving" : "Save team profile"}</button>
+          </div>
+        ) : (
+          <div className="create-team-panel">
+            <h3>Create team</h3>
+            <label>
+              Team name
+              <input value={teamName} onChange={(event) => setTeamName(event.target.value)} placeholder={`${session.user.display_name || "Operator"}'s team`} />
+            </label>
+            <label>
+              Invite members
+              <input value={inviteEmails} onChange={(event) => setInviteEmails(event.target.value)} placeholder="colleague@company.com, sre@company.com" />
+            </label>
+            <button className="primary-button" type="button" onClick={createTeamFromSettings} disabled={creatingTeam}>{creatingTeam ? "Creating" : "Create team"}</button>
+          </div>
+        )}
+        <FormRead label="Authority boundary" value="Mesh operator dashboard. Runtime authority remains with Mesh." large />
+        {teamMessage ? <div className={teamMessage.startsWith("Created") || teamMessage.startsWith("Saved") ? "product-alert success inline" : "auth-error compact"}>{teamMessage}</div> : null}
         <div className="button-row">
           <button type="button" onClick={onLogout} disabled={loggingOut}>{loggingOut ? "Logging out" : "Log out"}</button>
-          <button
-            className="primary-button"
-            type="button"
-            disabled
-            title="Read-only: team profile mutation API is not exposed by Mesh yet."
-          >
-            Save
-          </button>
         </div>
       </section>
       <SettingsView dashboard={dashboard} compact onDashboardRefresh={onDashboardRefresh} />
@@ -2311,16 +2469,194 @@ function TeamSettingsView({
   );
 }
 
-function MembersView({ session, setView }: { session: SessionPayload; setView: (view: ViewKey) => void }) {
-  const members = session.active_team?.members || [{ email: session.user.email, role: "owner", status: "active" }];
+const MEMBER_ROLES: MemberRole[] = ["viewer", "launcher", "approver", "admin"];
+
+function MembersView({
+  session,
+  setView,
+  onSession,
+  onDashboardRefresh,
+}: {
+  session: SessionPayload;
+  setView: (view: ViewKey) => void;
+  onSession: (session: SessionPayload) => void;
+  onDashboardRefresh: () => Promise<void>;
+}) {
+  const team = session.active_team;
+  const members = team?.members || [{ email: session.user.email, role: "owner", status: "active" }];
+  const [inviteEmails, setInviteEmails] = useState("");
+  const [inviteRole, setInviteRole] = useState<MemberRole>("viewer");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function saveMembers() {
+    if (!team) {
+      setMessage("Create a team before inviting members.");
+      return;
+    }
+    const emails = inviteEmails.split(",").map((email) => email.trim()).filter(Boolean);
+    if (!emails.length) {
+      setMessage("At least one member email is required.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    try {
+      const payload = await productApi.upsertTeamMembers({
+        team_id: team.id,
+        members: emails.map((email) => ({ email, role: inviteRole })),
+      });
+      onSession(payload);
+      await onDashboardRefresh();
+      setInviteEmails("");
+      setMessage(`Saved ${emails.length} member update(s) for ${payload.active_team?.name || team.name}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Member update failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="content-stack">
       <Toolbar title="Members" detail="Team roles map into Mesh operator roles for protected actions." action="Manage Team" onAction={() => setView("team")} />
+      <section className="member-config-panel">
+        <div>
+          <h3>{team ? "Invite or update members" : "Team required"}</h3>
+          <p>{team ? "Add comma-separated emails, choose the Mesh role mapping, and save through the team-tenancy state slice." : "Solo mode has only the current operator. Create a team before inviting partners."}</p>
+        </div>
+        {team ? (
+          <div className="member-config-grid">
+            <label>
+              Emails
+              <input value={inviteEmails} onChange={(event) => setInviteEmails(event.target.value)} placeholder="viewer@company.com, approver@company.com" />
+            </label>
+            <label>
+              Role
+              <select value={inviteRole} onChange={(event) => setInviteRole(event.target.value as MemberRole)}>
+                {MEMBER_ROLES.map((role) => <option key={role} value={role}>{humanize(role)}</option>)}
+              </select>
+            </label>
+            <button className="primary-button" type="button" onClick={saveMembers} disabled={saving}>{saving ? "Saving" : "Save members"}</button>
+          </div>
+        ) : null}
+        {message ? <div className={message.startsWith("Saved") ? "product-alert success inline" : "auth-error compact"}>{message}</div> : null}
+      </section>
       <div className="data-table compact">
         <div className="table-head"><span>Email</span><span>Role</span><span>Status</span></div>
         {members.map((member) => <div className="table-row" key={member.email}><span>{member.email}</span><span>{member.role}</span><span>{member.status}</span></div>)}
       </div>
     </div>
+  );
+}
+
+function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig | null; dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+  const readiness = dashboard.mesh.readiness || {};
+  const rows = authConfig ? [
+    {
+      title: "Auth mode",
+      value: authConfig.auth_mode,
+      state: authConfig.auth_mode === "app_session" ? "ready" : "read-only",
+      detail: "Configured by MESH_AUTH_MODE. Product app sessions scope dashboard access; proxy-header ingress remains deployment-owned.",
+    },
+    {
+      title: "Password signup",
+      value: authConfig.signup_enabled && authConfig.password_auth_enabled ? "enabled" : "disabled",
+      state: authConfig.signup_enabled && authConfig.password_auth_enabled ? "ready" : "blocked",
+      detail: "Controlled by MESH_SIGNUP_ENABLED and MESH_PASSWORD_AUTH_ENABLED.",
+    },
+    {
+      title: "Invite gate",
+      value: authConfig.invite.configured ? (authConfig.invite.required ? "code required" : "allowlist") : "open local mode",
+      state: authConfig.invite.configured ? "ready" : "config-only",
+      detail: "Controlled by MESH_AUTH_INVITE_ALLOWLIST and MESH_AUTH_INVITE_CODES; raw invite codes stay outside product state.",
+    },
+    {
+      title: "Captcha",
+      value: authConfig.captcha.dev_bypass_enabled ? "dev bypass" : authConfig.captcha.configured ? authConfig.captcha.provider : "not configured",
+      state: authConfig.captcha.configured || authConfig.captcha.dev_bypass_enabled ? "ready" : "blocked",
+      detail: "Controlled by MESH_CAPTCHA_PROVIDER, MESH_CAPTCHA_SITE_KEY, and MESH_CAPTCHA_SECRET_KEY. Browser tokens are never stored.",
+    },
+    {
+      title: "Google OAuth",
+      value: authConfig.oauth.google.configured ? "configured" : "not configured",
+      state: authConfig.oauth.google.configured ? "ready" : "blocked",
+      detail: "Requires client id, client secret, and redirect URL. The product shell only starts the provider flow.",
+    },
+    {
+      title: "GitHub OAuth",
+      value: authConfig.oauth.github.configured ? "configured" : "not configured",
+      state: authConfig.oauth.github.configured ? "ready" : "blocked",
+      detail: "Requires client id, client secret, and redirect URL. Tokens never enter the dashboard read model.",
+    },
+  ] : [
+    {
+      title: "Auth config",
+      value: "unavailable",
+      state: "blocked",
+      detail: backendUnavailableMessage(),
+    },
+  ];
+  const deploymentRows = [
+    {
+      title: "State backend",
+      value: String(readiness.state_backend || "RuntimeConfig-owned"),
+      state: readiness.state_backend ? "ready" : "read-only",
+      detail: "Runtime persistence is deployment config, not a product-secret setting.",
+    },
+    {
+      title: "Build commit",
+      value: String(dashboard.mesh.health?.commit || "unknown"),
+      state: dashboard.mesh.health?.commit ? "ready" : "read-only",
+      detail: "Build provenance changes only when a new artifact is deployed.",
+    },
+    {
+      title: "Settings scope",
+      value: dashboard.scope.kind === "team" ? `team:${dashboard.scope.team?.id}` : `user:${dashboard.session.user.id}`,
+      state: "ready",
+      detail: "Defaults on the Settings page mutate mesh-settings-control with an audit reason.",
+    },
+  ];
+
+  return (
+    <div className="content-stack">
+      <Toolbar
+        title="Keys & Secrets"
+        detail="Provider secrets are deployment-owned. This page shows configuration posture and exact ownership without exposing raw values."
+        action="Open Settings"
+        onAction={() => setView("settings")}
+      />
+      <section className="keys-posture-grid">
+        {[...rows, ...deploymentRows].map((row) => <ConfigPostureCard key={row.title} {...row} />)}
+      </section>
+      <section className="keys-env-panel">
+        <h3>Deployment-owned variables</h3>
+        <div className="env-var-grid">
+          <code>MESH_GOOGLE_OAUTH_CLIENT_ID</code>
+          <code>MESH_GOOGLE_OAUTH_CLIENT_SECRET</code>
+          <code>MESH_GOOGLE_OAUTH_REDIRECT_URL</code>
+          <code>MESH_GITHUB_OAUTH_CLIENT_ID</code>
+          <code>MESH_GITHUB_OAUTH_CLIENT_SECRET</code>
+          <code>MESH_GITHUB_OAUTH_REDIRECT_URL</code>
+          <code>MESH_CAPTCHA_PROVIDER</code>
+          <code>MESH_CAPTCHA_SITE_KEY</code>
+          <code>MESH_CAPTCHA_SECRET_KEY</code>
+          <code>MESH_AUTH_INVITE_ALLOWLIST</code>
+          <code>MESH_AUTH_INVITE_CODES</code>
+          <code>MESH_AUTH_PRODUCT_REDIRECT_URL</code>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ConfigPostureCard({ title, value, detail, state }: { title: string; value: string; detail: string; state: string }) {
+  return (
+    <article className={`config-posture-card ${state}`}>
+      <span>{title}</span>
+      <strong>{humanize(value)}</strong>
+      <p>{detail}</p>
+    </article>
   );
 }
 
@@ -2371,8 +2707,8 @@ function SettingsView({
 
   return (
     <section className={compact ? "settings-panel compact" : "settings-panel"}>
-      <h2>Configuration</h2>
-      <p>{settingsPosture.reason} Mesh runtime-critical values are read-only here.</p>
+      <h2>Settings</h2>
+      <p>{settingsPosture.reason} Mesh runtime-critical values are read-only and deployment-owned.</p>
       <div className="setting-grid">
         {parityRows.map((row) => row.mutable ? (
           <div className="setting-card" key={row.key}>
@@ -2521,15 +2857,35 @@ export function workflowForView(view: ViewKey): OperatorWorkflowKey {
 
 function ReadModelCard({ title, payload }: { title: string; payload: any }) {
   const displayPayload = readModelCardPayload(title, payload);
-  const status = displayPayload.status || displayPayload.state || "read-only";
+  const display = readModelDisplay(displayPayload);
   return (
-    <section className="read-model-card">
+    <section className={`read-model-card ${display.state}`}>
       <CircleDot size={15} />
       <strong>{title}</strong>
-      <span>{status}</span>
-      <pre>{JSON.stringify(displayPayload, null, 2).slice(0, 480)}</pre>
+      <span>{humanize(display.status)}</span>
+      <p>{display.summary}</p>
+      <details>
+        <summary>Payload</summary>
+        <pre>{JSON.stringify(displayPayload, null, 2).slice(0, 720)}</pre>
+      </details>
     </section>
   );
+}
+
+function readModelDisplay(payload: any): { status: string; summary: string; state: DashboardSurfaceState | "read-only" } {
+  const status = String(payload?.status || payload?.state || payload?.decision || "read-only");
+  const sectionState = dashboardSectionState(payload).state;
+  if (payload?.error) return { status, summary: String(payload.error), state: "degraded" };
+  if (payload?.reason) return { status, summary: String(payload.reason), state: sectionState };
+  if (payload?.detail) return { status, summary: String(payload.detail), state: sectionState };
+  if (payload?.degraded_reason) return { status, summary: String(payload.degraded_reason), state: sectionState };
+  if (Array.isArray(payload?.blockers) && payload.blockers.length) return { status, summary: `${payload.blockers.length} blocker(s): ${payload.blockers.slice(0, 3).join(", ")}`, state: "blocked" };
+  const keys = payload && typeof payload === "object" ? Object.keys(payload) : [];
+  return {
+    status,
+    summary: keys.length ? `Mesh returned ${keys.length} field(s) for this read model.` : "No payload is available for this read model yet.",
+    state: sectionState,
+  };
 }
 
 export function readModelSummary(payload: any, emptyReason: string): string {
@@ -2549,6 +2905,10 @@ export function readModelCardPayload(title: string, payload: any): any {
 
 function humanize(value: string): string {
   return value.replaceAll("_", " ").replaceAll("-", " ");
+}
+
+function titleize(value: string): string {
+  return humanize(value).replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function Toolbar({
@@ -2582,7 +2942,7 @@ function SearchBar({
   return (
     <label className="search-bar">
       <Search size={16} />
-      <input placeholder={placeholder} value={value} onChange={(event) => onChange?.(event.target.value)} />
+      <input placeholder={placeholder} value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
     </label>
   );
 }

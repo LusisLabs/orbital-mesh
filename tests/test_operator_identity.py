@@ -45,6 +45,32 @@ class OperatorIdentityStoreTests(unittest.TestCase):
             self.assertEqual(active_team["name"], "Mesh Operators")
             self.assertEqual(active_team["members"][1]["status"], "invited")
 
+            updated_team_session = store.update_team(
+                token,
+                team_id=active_team["id"],
+                name="Mesh Ops",
+                display_name="Mesh Ops Display",
+            )
+            self.assertEqual(updated_team_session["active_team"]["name"], "Mesh Ops")
+            self.assertEqual(updated_team_session["active_team"]["display_name"], "Mesh Ops Display")
+
+            cleared_display_session = store.update_team(
+                token,
+                team_id=active_team["id"],
+                name="Mesh Ops Renamed",
+                display_name="",
+            )
+            self.assertEqual(cleared_display_session["active_team"]["name"], "Mesh Ops Renamed")
+            self.assertEqual(cleared_display_session["active_team"]["display_name"], "Mesh Ops Renamed")
+
+            member_session = store.upsert_team_members(
+                token,
+                team_id=active_team["id"],
+                members=[{"email": "approver@example.com", "role": "approver"}],
+            )
+            approver = next(member for member in member_session["active_team"]["members"] if member["email"] == "approver@example.com")
+            self.assertEqual(approver["role"], "approver")
+
             settings = store.update_settings(
                 token,
                 team_id=active_team["id"],
@@ -181,6 +207,40 @@ class OperatorIdentityStoreTests(unittest.TestCase):
                 store.dashboard(outsider["token"], team_id=team_id, mesh={})
             with self.assertRaises(PermissionError):
                 store.set_active_team(outsider["token"], team_id)
+
+    def test_team_profile_and_member_updates_require_admin_role(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = OperatorIdentityStore(Path(temp_dir) / "operator-identity.json")
+            captcha = CaptchaConfig(provider="disabled", dev_bypass_enabled=True)
+            owner = store.create_user(
+                email="owner@example.com",
+                password="correct-horse-42",
+                captcha_token="dev-captcha-ok",
+                captcha=captcha,
+                accepted_terms=True,
+            )
+            team = store.create_team(
+                owner["token"],
+                name="Admin Only Operators",
+                members=[{"email": "viewer@example.com", "role": "viewer"}],
+            )
+            team_id = team["active_team"]["id"]
+            viewer = store.create_user(
+                email="viewer@example.com",
+                password="correct-horse-42",
+                captcha_token="dev-captcha-ok",
+                captcha=captcha,
+                accepted_terms=True,
+            )
+
+            with self.assertRaises(PermissionError):
+                store.update_team(viewer["token"], team_id=team_id, name="Viewer Rename")
+            with self.assertRaises(PermissionError):
+                store.upsert_team_members(
+                    viewer["token"],
+                    team_id=team_id,
+                    members=[{"email": "new-viewer@example.com", "role": "viewer"}],
+                )
 
     def test_team_member_roles_map_to_mesh_permissions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

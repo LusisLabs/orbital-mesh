@@ -72,6 +72,22 @@ class OperatorProductContractTests(unittest.TestCase):
         validate_payload("operator-product.schema.json", {"session_payload": team_session})
         team_id = team_session["active_team"]["id"]
 
+        team_session = self._request(
+            "POST",
+            "/api/auth/team/update",
+            {"team_id": team_id, "name": "Contract Operators Pilot", "display_name": "Contract Pilot"},
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"session_payload": team_session})
+
+        team_session = self._request(
+            "POST",
+            "/api/auth/team/members",
+            {"team_id": team_id, "members": [{"email": "approver@example.com", "role": "approver"}]},
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"session_payload": team_session})
+
         dashboard = self._request("GET", f"/api/operator/dashboard?team_id={team_id}", cookie=cookie)
         validate_payload("operator-product.schema.json", {"dashboard_payload": dashboard})
         self.assertIn("Mesh remains the authority", dashboard["authority_boundary"])
@@ -80,6 +96,9 @@ class OperatorProductContractTests(unittest.TestCase):
         self.assertEqual(dashboard["mesh"]["praxis"]["status"], "no_runs")
         self.assertTrue(dashboard["mesh"]["praxis"]["pilot_runtime"]["dry_run_only"])
         self.assertFalse(dashboard["mesh"]["praxis"]["pilot_runtime"]["managed_runtime_deployed"])
+        for scenario_key in dashboard["settings_schema"]["default_run_scenario"]["values"]:
+            fixture_path = Path("fixtures/signals") / f"{scenario_key}.json"
+            self.assertTrue(fixture_path.exists(), f"{scenario_key} must map to a runnable signal fixture")
 
         settings = self._request(
             "POST",

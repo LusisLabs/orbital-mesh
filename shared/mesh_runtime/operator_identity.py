@@ -39,6 +39,21 @@ SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
         "default": "approval_gate",
         "description": "Default steering posture for new operator-created runs.",
     },
+    "default_run_scenario": {
+        "values": [
+            "reth_peer_starvation",
+            "reth_sync_stalled_disk_pressure",
+            "kubernetes_crashloop_patch",
+            "search_latency_regression",
+        ],
+        "default": "reth_peer_starvation",
+        "description": "Default scenario selected by the product launch form.",
+    },
+    "default_target_lock": {
+        "values": ["optional", "required"],
+        "default": "optional",
+        "description": "Default target-lock requirement for product-launched runs.",
+    },
 }
 
 
@@ -307,6 +322,69 @@ class OperatorIdentityStore:
         self._write(data)
         return self.session_payload(token, now=now_value)
 
+    def update_team(
+        self,
+        token: str,
+        *,
+        team_id: str | None,
+        name: str = "",
+        display_name: str | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        now_value = now or time.time()
+        data = self._read()
+        session = self._valid_session(data, token, now=now_value)
+        user_id = session["user_id"]
+        resolved_team_id = team_id or data["active_team_by_user"].get(user_id)
+        if not resolved_team_id:
+            raise ValueError("team is required")
+        self._require_team_admin(data, user_id, resolved_team_id)
+        team = data["teams"][resolved_team_id]
+        previous_name = str(team.get("name") or "")
+        if name.strip():
+            team_name = _clean_team_name(name)
+            slug = _slug(team_name)
+            if not TEAM_SLUG_RE.match(slug):
+                raise ValueError("team name must produce a valid slug")
+            existing_team_id = data["team_slug_index"].get(slug)
+            if existing_team_id and existing_team_id != resolved_team_id:
+                raise ValueError("team slug already exists")
+            if slug != team.get("slug"):
+                data["team_slug_index"].pop(str(team.get("slug") or ""), None)
+                data["team_slug_index"][slug] = resolved_team_id
+            team["name"] = team_name
+            team["slug"] = slug
+        if display_name is not None:
+            team["display_name"] = _clean_display_name(display_name) or team["name"]
+        elif name.strip() and (not team.get("display_name") or team.get("display_name") == previous_name):
+            team["display_name"] = team["name"]
+        team["updated_at"] = _iso(now_value)
+        self._write(data)
+        return self.session_payload(token, now=now_value)
+
+    def upsert_team_members(
+        self,
+        token: str,
+        *,
+        team_id: str | None,
+        members: list[dict[str, Any]],
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        now_value = now or time.time()
+        data = self._read()
+        session = self._valid_session(data, token, now=now_value)
+        user_id = session["user_id"]
+        resolved_team_id = team_id or data["active_team_by_user"].get(user_id)
+        if not resolved_team_id:
+            raise ValueError("team is required")
+        self._require_team_admin(data, user_id, resolved_team_id)
+        if not members:
+            raise ValueError("at least one member is required")
+        for member in members:
+            self._upsert_team_member(data, resolved_team_id, member, now=now_value)
+        self._write(data)
+        return self.session_payload(token, now=now_value)
+
     def set_active_team(self, token: str, team_id: str | None) -> dict[str, Any]:
         data = self._read()
         session = self._valid_session(data, token)
@@ -497,6 +575,38 @@ class OperatorIdentityStore:
         members = data["memberships"].get(team_id) or {}
         user = data["users"].get(user_id) or {}
         return members.get(user_id) or members.get(user.get("email"))
+
+    def _require_team_admin(self, data: dict[str, Any], user_id: str, team_id: str) -> dict[str, Any]:
+        if team_id not in data["teams"]:
+            raise ValueError("team not found")
+        membership = self._membership_for_user(data, user_id, team_id)
+        if not membership:
+            raise PermissionError("team access denied")
+        roles = set(membership.get("roles") or [])
+        role = str(membership.get("role") or "")
+        if role not in {"owner", "admin"} and "admin" not in roles:
+            raise PermissionError("team admin role required")
+        return membership
+
+    def _upsert_team_member(self, data: dict[str, Any], team_id: str, member: dict[str, Any], *, now: float) -> None:
+        normalized_email = self._validate_email(str(member.get("email") or ""))
+        role = _normalize_member_role(str(member.get("role") or "viewer"))
+        members = data["memberships"].setdefault(team_id, {})
+        user_id = data["email_index"].get(normalized_email)
+        member_key = user_id or normalized_email
+        existing = members.get(member_key) or members.get(normalized_email) or {}
+        if existing.get("role") == "owner":
+            return
+        if user_id and normalized_email in members and normalized_email != member_key:
+            members.pop(normalized_email, None)
+        members[member_key] = {
+            "user_id": user_id,
+            "email": normalized_email,
+            "role": role,
+            "roles": _roles_for_member(role),
+            "status": str(existing.get("status") or "invited"),
+            "created_at": str(existing.get("created_at") or _iso(now)),
+        }
 
     def _settings_bucket(self, data: dict[str, Any], *, user_id: str, team_id: str | None) -> dict[str, Any]:
         key = f"team:{team_id}" if team_id else f"user:{user_id}"
