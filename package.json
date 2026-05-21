@@ -1,6 +1,7 @@
 {
   "name": "orbital-mesh",
   "private": true,
+  "packageManager": "pnpm@10.24.0",
   "scripts": {
     "lint": "pnpm run verify:full",
     "lint:fast": "pnpm run verify:contracts && uv run --with-editable . python -m py_compile control_plane_server.py services/runtime.py services/control_plane.py shared/mesh_runtime/config.py shared/mesh_runtime/control_plane_models.py shared/mesh_runtime/postgres_state.py shared/mesh_runtime/praxis.py shared/mesh_runtime/operator_identity.py shared/mesh_runtime/operator_product_contracts.py scripts/operator_config.py scripts/generate_operator_product_contracts.py scripts/operator_auth_live_provider_capture.py scripts/operator_auth_provider_smoke.py scripts/operator_product_e2e.py scripts/operator_product_goal_audit.py scripts/verify_operator_product_buildout.py",
