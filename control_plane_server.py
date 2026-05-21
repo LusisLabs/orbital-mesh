@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -66,6 +69,85 @@ def _safe_dashboard_call(fn, default: Any | None = None) -> Any:
         return fn()
     except Exception as exc:  # pragma: no cover - dashboard must degrade instead of masking auth.
         return default if default is not None else {"status": "unavailable", "error": str(exc)}
+
+
+def _json_web_token_segment(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
+
+
+def _livekit_access_token(
+    *,
+    api_key: str,
+    api_secret: str,
+    room: str,
+    identity: str,
+    name: str,
+    ttl_seconds: int,
+    can_publish: bool = True,
+    can_publish_data: bool = True,
+) -> str:
+    now = int(time.time())
+    header = _json_web_token_segment({"alg": "HS256", "typ": "JWT"})
+    body = _json_web_token_segment(
+        {
+            "exp": now + ttl_seconds,
+            "iss": api_key,
+            "nbf": now - 5,
+            "name": name,
+            "sub": identity,
+            "video": {
+                "canPublish": can_publish,
+                "canPublishData": can_publish_data,
+                "canPublishSources": ["microphone"] if can_publish else [],
+                "canSubscribe": True,
+                "room": room,
+                "roomJoin": True,
+            },
+        }
+    )
+    signing_input = f"{header}.{body}".encode("ascii")
+    signature = hmac.new(api_secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+    return f"{header}.{body}.{base64.urlsafe_b64encode(signature).decode('ascii').rstrip('=')}"
+
+
+def _identifier_segment(value: str) -> str:
+    cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value)
+    return "-".join(part for part in cleaned.split("-") if part)[:80] or "operator"
+
+
+def _agent_flow_bound_preview_payload(*, preview: dict[str, Any], context: dict[str, Any]) -> bytes:
+    operator = context.get("operator") if isinstance(context.get("operator"), dict) else {}
+    scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+    payload = {
+        "action": preview.get("action"),
+        "confirmation_required": preview.get("confirmation_required"),
+        "endpoint": preview.get("endpoint"),
+        "issued_at": preview.get("issued_at"),
+        "issued_operator_id": preview.get("issued_operator_id"),
+        "issued_scope": preview.get("issued_scope"),
+        "operator_id": operator.get("operator_id") or "unknown",
+        "preview_id": preview.get("preview_id"),
+        "proposed_resource": preview.get("proposed_resource"),
+        "scope_id": scope.get("scope_id") or scope.get("id") or "solo",
+        "side_effects_executed": preview.get("side_effects_executed"),
+        "state_slice": preview.get("state_slice"),
+        "target": preview.get("target"),
+        "would_touch_state_slice": preview.get("would_touch_state_slice"),
+    }
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+
+def _agent_flow_preview_signature(*, preview: dict[str, Any], context: dict[str, Any]) -> str:
+    session_token = str(context.get("session_token") or "")
+    if not session_token:
+        return ""
+    digest = hmac.new(
+        session_token.encode("utf-8"),
+        _agent_flow_bound_preview_payload(preview=preview, context=context),
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -1024,6 +1106,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def _handle_operator_post(self, path: str, payload: dict[str, Any]) -> None:
+        if path.startswith("/api/operator/agent-flow/"):
+            self._handle_operator_agent_flow_post(path, payload)
+            return
         if path.startswith("/api/operator/praxis/"):
             self._handle_operator_praxis_post(path, payload)
             return
@@ -1226,6 +1311,410 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
+    def _handle_operator_agent_flow_post(self, path: str, payload: dict[str, Any]) -> None:
+        context = self._operator_product_context(payload)
+        if context is None:
+            return
+        dashboard = context["dashboard"]
+        if path == "/api/operator/agent-flow/chat":
+            dashboard["mesh"] = self._mesh_dashboard_snapshot(praxis_scope=context["scope"])
+            message = str(payload.get("message") or "").strip()
+            if not message and not payload.get("attachments"):
+                self._send_json({"error": "message is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(self._agent_flow_chat_response(message=message, context=context, dashboard=dashboard))
+            return
+        if path == "/api/operator/agent-flow/livekit-session":
+            self._send_json(self._agent_flow_livekit_session(context=context, payload=payload))
+            return
+        if path == "/api/operator/agent-flow/confirm-preview":
+            preview = payload.get("preview") if isinstance(payload.get("preview"), dict) else {}
+            preview_id = str(payload.get("preview_id") or preview.get("preview_id") or "").strip()
+            reason = str(payload.get("reason") or "").strip()
+            if not preview_id:
+                self._send_json({"error": "preview_id is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            if not reason:
+                self._send_json({"error": "confirmation reason is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                validated_preview = self._validated_agent_flow_preview(preview=preview, preview_id=preview_id, context=context)
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(self._agent_flow_confirmation(preview=validated_preview, preview_id=preview_id, reason=reason, context=context))
+            return
+        self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _agent_flow_chat_response(self, *, message: str, context: dict[str, Any], dashboard: dict[str, Any]) -> dict[str, Any]:
+        mesh = dashboard.get("mesh") if isinstance(dashboard.get("mesh"), dict) else {}
+        runs = mesh.get("runs", {}).get("runs") if isinstance(mesh.get("runs"), dict) else []
+        approvals = mesh.get("approvals", {}).get("items") if isinstance(mesh.get("approvals"), dict) else []
+        runs_list = runs if isinstance(runs, list) else []
+        approvals_list = approvals if isinstance(approvals, list) else []
+        readiness = mesh.get("readiness") if isinstance(mesh.get("readiness"), dict) else {}
+        readiness_status = str(readiness.get("status") or "unknown")
+        evidence = self._agent_flow_evidence(mesh)
+        preview = self._signed_agent_flow_preview(
+            self._agent_flow_mutation_preview(message=message, context=context, dashboard=dashboard),
+            context=context,
+        )
+        state_slices = [
+            "mesh.agent_flow.chat_response.v1",
+            "mesh.operator-dashboard.read-model.v1",
+            "mesh.runs.runs",
+            "mesh.approvals.approval_queue",
+            "mesh.agent_flow.mutation_preview.v1",
+        ]
+        answer = (
+            f"State slices: {', '.join(state_slices)}. "
+            f"Readiness is {readiness_status}; Mesh reports {len(runs_list)} run(s), "
+            f"{len(approvals_list)} approval item(s), and {len(evidence)} evidence signal(s). "
+            "I prepared a draft preview only. side_effects_executed=false until a Mesh-owned route receives explicit operator confirmation."
+        )
+        return {
+            "schema_version": "mesh.agent_flow.chat_response.v1",
+            "state_slice": "mesh.agent_flow.chat_response.v1",
+            "agent": {
+                "id": "harper-696",
+                "name": self.server.config.livekit_agent_name or "Harper-696",
+                "source": "Harper-696/src/agent.py",
+                "authority": "operator_assistant",
+            },
+            "answer": answer,
+            "state_slices": state_slices,
+            "evidence": evidence,
+            "lifecycle": {
+                "state_slice": "mesh.agent_flow.lifecycle.v1",
+                "tasks": self._agent_flow_lifecycle_tasks(mesh=mesh, preview=preview),
+            },
+            "mutation_preview": preview,
+            "authority_boundary": dashboard.get("authority_boundary"),
+            "created_at": _timestamp(),
+        }
+
+    def _agent_flow_livekit_session(self, *, context: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        config = self.server.config
+        dashboard = context.get("dashboard") if isinstance(context.get("dashboard"), dict) else {}
+        dashboard_scope = dashboard.get("scope") if isinstance(dashboard.get("scope"), dict) else {}
+        dashboard_team = dashboard_scope.get("team") if isinstance(dashboard_scope.get("team"), dict) else None
+        operator = context.get("operator") if isinstance(context.get("operator"), dict) else {}
+        scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+        scope_id = str(scope.get("scope_id") or scope.get("id") or "solo")
+        if scope.get("kind") == "team" and dashboard_team:
+            roles = set(dashboard_team.get("roles") if isinstance(dashboard_team.get("roles"), list) else [])
+        else:
+            roles = set(operator.get("roles") if isinstance(operator.get("roles"), list) else [])
+        can_publish = bool(roles & {"launcher", "approver", "admin"})
+        room_prefix = f"harper-696-{_identifier_segment(scope_id)}"
+        room_suffix = _identifier_segment(str(payload.get("room") or ""))
+        room = f"{room_prefix}-{room_suffix}" if room_suffix and room_suffix != "operator" else room_prefix
+        identity_root = _identifier_segment(str(operator.get("operator_id") or operator.get("user_id") or scope_id))
+        identity_nonce = hashlib.sha256(f"{time.time_ns()}:{identity_root}:{scope_id}".encode("utf-8")).hexdigest()[:10]
+        identity = f"operator-{identity_root}-{identity_nonce}"
+        configured = bool(config.livekit_url and config.livekit_api_key and config.livekit_api_secret)
+        response: dict[str, Any] = {
+            "schema_version": "mesh.agent_flow.livekit_session.v1",
+            "state_slice": "mesh.agent_flow.livekit_session.v1",
+            "agent": {
+                "id": "harper-696",
+                "name": config.livekit_agent_name or "Harper-696",
+                "source": "Harper-696/src/agent.py",
+            },
+            "status": "ready" if configured and can_publish else "permission_required" if configured else "unconfigured",
+            "livekit_url": config.livekit_url if configured else "",
+            "room": room,
+            "participant_identity": identity,
+            "token": "",
+            "token_expires_at": None,
+            "required_env": ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET"],
+            "side_effects_executed": False,
+        }
+        if configured and can_publish:
+            ttl = int(config.livekit_token_ttl_seconds)
+            response["token"] = _livekit_access_token(
+                api_key=config.livekit_api_key,
+                api_secret=config.livekit_api_secret,
+                room=room,
+                identity=identity,
+                name=str(operator.get("operator_id") or identity),
+                ttl_seconds=ttl,
+                can_publish=True,
+                can_publish_data=False,
+            )
+            response["token_expires_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + ttl))
+        return response
+
+    def _agent_flow_confirmation(
+        self,
+        *,
+        preview: dict[str, Any],
+        preview_id: str,
+        reason: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        operator = context.get("operator") if isinstance(context.get("operator"), dict) else {}
+        return {
+            "schema_version": "mesh.agent_flow.confirmation.v1",
+            "state_slice": "mesh.agent_flow.mutation_preview.v1",
+            "preview_id": preview_id,
+            "status": "confirmation_recorded",
+            "confirmed_by": operator.get("operator_id") or "unknown",
+            "reason": reason,
+            "proposed_resource": preview.get("proposed_resource") or "RunSession",
+            "would_touch_state_slice": preview.get("would_touch_state_slice") or "mesh.run_admission.v1",
+            "routed_to": preview.get("endpoint") or "/api/runs",
+            "side_effects_executed": False,
+            "next_step": "Use the named Mesh-owned endpoint to execute after final operator review.",
+            "created_at": _timestamp(),
+        }
+
+    def _validated_agent_flow_preview(self, *, preview: dict[str, Any], preview_id: str, context: dict[str, Any]) -> dict[str, Any]:
+        if preview.get("schema_version") != "mesh.agent_flow.mutation_preview.v1":
+            raise ValueError("unsupported preview schema_version")
+        if preview.get("state_slice") != "mesh.agent_flow.mutation_preview.v1":
+            raise ValueError("unsupported preview state_slice")
+        if preview.get("preview_id") != preview_id:
+            raise ValueError("preview_id mismatch")
+        if preview.get("confirmation_required") is not True:
+            raise ValueError("preview must require confirmation")
+        if preview.get("side_effects_executed") is not False:
+            raise ValueError("preview must not have executed side effects")
+        if preview.get("status") != "draft_requires_confirmation":
+            raise ValueError("preview must be a draft requiring confirmation")
+        operator = context.get("operator") if isinstance(context.get("operator"), dict) else {}
+        scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+        expected_scope = str(scope.get("scope_id") or scope.get("id") or "solo")
+        expected_operator = str(operator.get("operator_id") or "unknown")
+        if preview.get("issued_scope") != expected_scope:
+            raise ValueError("preview scope mismatch")
+        if preview.get("issued_operator_id") != expected_operator:
+            raise ValueError("preview operator mismatch")
+        proof = preview.get("proof") if isinstance(preview.get("proof"), dict) else {}
+        if proof.get("algorithm") != "HMAC-SHA256":
+            raise ValueError("unsupported preview proof")
+        if proof.get("bound_state_slice") != "mesh.agent_flow.mutation_preview.v1":
+            raise ValueError("preview proof state slice mismatch")
+        expected_signature = _agent_flow_preview_signature(preview=preview, context=context)
+        if not expected_signature or not hmac.compare_digest(str(proof.get("signature") or ""), expected_signature):
+            raise ValueError("preview signature mismatch")
+        resource = str(preview.get("proposed_resource") or "")
+        endpoint = str(preview.get("endpoint") or "")
+        state_slice = str(preview.get("would_touch_state_slice") or "")
+        if resource == "RunSession" and endpoint == "/api/runs" and state_slice == "mesh.run_admission.v1":
+            return preview
+        if (
+            resource == "SteeringCommand"
+            and endpoint.startswith("/api/runs/")
+            and endpoint.endswith("/steer")
+            and state_slice == "mesh.run_steering.v1"
+        ):
+            return preview
+        raise ValueError("preview route is not an allowed Agent Flow draft")
+
+    def _signed_agent_flow_preview(self, preview: dict[str, Any], *, context: dict[str, Any]) -> dict[str, Any]:
+        operator = context.get("operator") if isinstance(context.get("operator"), dict) else {}
+        scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+        signed_preview = {
+            **preview,
+            "issued_scope": str(scope.get("scope_id") or scope.get("id") or "solo"),
+            "issued_operator_id": str(operator.get("operator_id") or "unknown"),
+            "issued_at": _timestamp(),
+        }
+        signed_preview["proof"] = {
+            "algorithm": "HMAC-SHA256",
+            "bound_state_slice": "mesh.agent_flow.mutation_preview.v1",
+            "signature": _agent_flow_preview_signature(preview=signed_preview, context=context),
+        }
+        return signed_preview
+
+    def _agent_flow_mutation_preview(self, *, message: str, context: dict[str, Any], dashboard: dict[str, Any]) -> dict[str, Any]:
+        mesh = dashboard.get("mesh") if isinstance(dashboard.get("mesh"), dict) else {}
+        runs = mesh.get("runs", {}).get("runs") if isinstance(mesh.get("runs"), dict) else []
+        runs_list = runs if isinstance(runs, list) else []
+        lower = message.lower()
+        wants_steering = any(keyword in lower for keyword in ("approve", "resume", "cancel", "override", "steer"))
+        active_run = next((run for run in runs_list if isinstance(run, dict) and run.get("run_id")), None)
+        scope = context.get("scope") if isinstance(context.get("scope"), dict) else {}
+        scope_id = str(scope.get("scope_id") or scope.get("id") or "solo")
+        preview_basis = f"{scope_id}:{message[:80]}:{active_run.get('run_id') if isinstance(active_run, dict) else 'new-run'}"
+        preview_id = hashlib.sha256(preview_basis.encode("utf-8")).hexdigest()[:16]
+        if wants_steering and active_run:
+            command = "approve" if "approve" in lower else "resume" if "resume" in lower else "cancel" if "cancel" in lower else "explain_blockers"
+            return {
+                "schema_version": "mesh.agent_flow.mutation_preview.v1",
+                "state_slice": "mesh.agent_flow.mutation_preview.v1",
+                "preview_id": f"agent-flow-{preview_id}",
+                "status": "draft_requires_confirmation",
+                "proposed_resource": "SteeringCommand",
+                "action": command,
+                "target": {"run_id": active_run.get("run_id")},
+                "endpoint": f"/api/runs/{active_run.get('run_id')}/steer",
+                "would_touch_state_slice": "mesh.run_steering.v1",
+                "confirmation_required": True,
+                "side_effects_executed": False,
+            }
+        scenario = str(dashboard.get("settings", {}).get("default_run_scenario") or "reth_peer_starvation")
+        return {
+            "schema_version": "mesh.agent_flow.mutation_preview.v1",
+            "state_slice": "mesh.agent_flow.mutation_preview.v1",
+            "preview_id": f"agent-flow-{preview_id}",
+            "status": "draft_requires_confirmation",
+            "proposed_resource": "RunSession",
+            "action": "launch_draft",
+            "target": {"scenario_key": scenario},
+            "endpoint": "/api/runs",
+            "would_touch_state_slice": "mesh.run_admission.v1",
+            "confirmation_required": True,
+            "side_effects_executed": False,
+        }
+
+    def _agent_flow_evidence(self, mesh: dict[str, Any]) -> list[dict[str, Any]]:
+        evidence: list[dict[str, Any]] = []
+        pilot = mesh.get("pilot_go_no_go") if isinstance(mesh.get("pilot_go_no_go"), dict) else {}
+        missing = pilot.get("missing_evidence") if isinstance(pilot.get("missing_evidence"), list) else []
+        for index, item in enumerate(missing[:4]):
+            label = item.get("label") if isinstance(item, dict) else item
+            evidence.append(
+                {
+                    "id": f"missing-proof-{index + 1}",
+                    "kind": "missing_evidence",
+                    "state_slice": "mesh.pilot_go_no_go.missing_evidence",
+                    "summary": str(label or "Missing proof"),
+                }
+            )
+        runs = mesh.get("runs", {}).get("runs") if isinstance(mesh.get("runs"), dict) else []
+        for run in (runs if isinstance(runs, list) else [])[:2]:
+            if not isinstance(run, dict):
+                continue
+            evidence.append(
+                {
+                    "id": str(run.get("run_id") or "run"),
+                    "kind": "run",
+                    "state_slice": "mesh.runs.runs",
+                    "summary": f"{run.get('scenario_key') or 'run'} is {run.get('status') or 'unknown'}",
+                }
+            )
+        return evidence
+
+    def _agent_flow_lifecycle_tasks(self, *, mesh: dict[str, Any], preview: dict[str, Any]) -> list[dict[str, Any]]:
+        livekit_ready = bool(self.server.config.livekit_url and self.server.config.livekit_api_key and self.server.config.livekit_api_secret)
+        runs = mesh.get("runs", {}).get("runs") if isinstance(mesh.get("runs"), dict) else []
+        approvals = mesh.get("approvals", {}).get("items") if isinstance(mesh.get("approvals"), dict) else []
+        evidence = self._agent_flow_evidence(mesh)
+        readiness = mesh.get("readiness") if isinstance(mesh.get("readiness"), dict) else {}
+        read_status = "completed" if readiness.get("status") and readiness.get("status") != "unavailable" else "need-help"
+        return [
+            {
+                "id": "1",
+                "title": "Harper-696 voice session boundary",
+                "description": "Mint or explain the LiveKit browser room for the Harper operator assistant.",
+                "status": "completed" if livekit_ready else "need-help",
+                "priority": "high",
+                "level": 0,
+                "dependencies": [],
+                "subtasks": [
+                    {
+                        "id": "1.1",
+                        "title": "Bind assistant identity",
+                        "description": "Agent name is Harper-696 and authority remains operator assistance.",
+                        "status": "completed",
+                        "priority": "high",
+                        "tools": ["mesh.agent_flow.livekit_session.v1", "Harper-696/src/agent.py"],
+                    },
+                    {
+                        "id": "1.2",
+                        "title": "Mint browser token",
+                        "description": "Requires LiveKit URL, API key, and API secret; secrets never enter the response.",
+                        "status": "completed" if livekit_ready else "need-help",
+                        "priority": "high",
+                        "tools": ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET"],
+                    },
+                ],
+            },
+            {
+                "id": "2",
+                "title": "Intent to Mesh read model",
+                "description": "Convert the prompt into read-only Mesh inspection before any action.",
+                "status": read_status,
+                "priority": "high",
+                "level": 0,
+                "dependencies": ["1"],
+                "subtasks": [
+                    {
+                        "id": "2.1",
+                        "title": "Load dashboard context",
+                        "description": "Readiness, approvals, proof gaps, and run summaries come from /api/operator/dashboard.",
+                        "status": read_status,
+                        "priority": "high",
+                        "tools": ["mesh.operator-dashboard.read-model.v1", "/api/operator/dashboard"],
+                    },
+                    {
+                        "id": "2.2",
+                        "title": "Inspect run and approval counts",
+                        "description": f"Mesh returned {len(runs if isinstance(runs, list) else [])} run(s) and {len(approvals if isinstance(approvals, list) else [])} approval item(s).",
+                        "status": "completed",
+                        "priority": "medium",
+                        "tools": ["mesh.runs.runs", "mesh.approvals.approval_queue"],
+                    },
+                ],
+            },
+            {
+                "id": "3",
+                "title": "Mutation preview and confirmation",
+                "description": "Draft the action and state slice before any mutating Mesh route can be used.",
+                "status": "in-progress",
+                "priority": "high",
+                "level": 0,
+                "dependencies": ["2"],
+                "subtasks": [
+                    {
+                        "id": "3.1",
+                        "title": "Build state-slice declaration",
+                        "description": f"Preview targets {preview.get('would_touch_state_slice') or 'mesh.run_admission.v1'}.",
+                        "status": "completed",
+                        "priority": "high",
+                        "tools": ["mesh.agent_flow.mutation_preview.v1", str(preview.get("proposed_resource") or "RunSession")],
+                    },
+                    {
+                        "id": "3.2",
+                        "title": "Require explicit confirmation",
+                        "description": "The preview is draft-only; side effects remain false until Mesh receives an approved route call.",
+                        "status": "in-progress",
+                        "priority": "high",
+                        "tools": ["operator confirmation", "Mesh-owned endpoint"],
+                    },
+                ],
+            },
+            {
+                "id": "4",
+                "title": "Evidence and lifecycle canvas",
+                "description": "Expose evidence signals and unresolved proof gaps as lifecycle detail.",
+                "status": "need-help" if evidence else "completed",
+                "priority": "medium",
+                "level": 1,
+                "dependencies": ["2", "3"],
+                "subtasks": [
+                    {
+                        "id": "4.1",
+                        "title": "Surface proof gaps",
+                        "description": f"{len(evidence)} evidence signal(s) are attached to this response.",
+                        "status": "need-help" if evidence else "completed",
+                        "priority": "high",
+                        "tools": ["mesh.pilot_go_no_go.missing_evidence", "mesh.runs.runs"],
+                    },
+                    {
+                        "id": "4.2",
+                        "title": "Preserve read-only fallback",
+                        "description": "Agent Flow remains inspectable even when live voice or actuation is unavailable.",
+                        "status": "completed",
+                        "priority": "medium",
+                        "tools": ["mesh.agent_flow.chat_response.v1"],
+                    },
+                ],
+            },
+        ]
+
     def _handle_operator_praxis_post(self, path: str, payload: dict[str, Any]) -> None:
         context = self._operator_product_context(payload)
         if context is None:
@@ -1333,7 +1822,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             scope = self._praxis_scope_from_dashboard(dashboard)
             if scope["kind"] == "team":
                 operator["team_id"] = scope["id"]
-            return {"dashboard": dashboard, "operator": operator, "scope": scope}
+            return {"dashboard": dashboard, "operator": operator, "scope": scope, "session_token": token}
         except PermissionError as exc:
             self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
         except ValueError as exc:
@@ -1491,6 +1980,22 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "source": "/api/operator/dashboard",
                 "authority": "read_only",
                 "degraded_reason": "Nested sections return status=unavailable with an error when a Mesh read-model call fails.",
+            },
+            "agent_flow": {
+                "schema_version": "mesh.agent_flow.dashboard.v1",
+                "state_slice": "mesh.agent_flow.dashboard.v1",
+                "status": "ready",
+                "agent": self.server.config.livekit_agent_name or "Harper-696",
+                "source": "Harper-696/src/agent.py",
+                "chat_endpoint": "/api/operator/agent-flow/chat",
+                "livekit_endpoint": "/api/operator/agent-flow/livekit-session",
+                "confirmation_endpoint": "/api/operator/agent-flow/confirm-preview",
+                "livekit_configured": bool(
+                    self.server.config.livekit_url
+                    and self.server.config.livekit_api_key
+                    and self.server.config.livekit_api_secret
+                ),
+                "authority": "draft_only; Mesh-owned endpoints retain mutation authority",
             },
             "readiness": _safe_dashboard_call(coordinator.build_readiness),
             "connectors": _safe_dashboard_call(coordinator.build_connector_certification),

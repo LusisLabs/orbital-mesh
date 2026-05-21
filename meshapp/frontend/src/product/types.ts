@@ -47,6 +47,106 @@ export interface SessionPayload {
   settings: Record<string, string>;
 }
 
+export interface AgentFlowLifecycleTask {
+  id: string;
+  title: string;
+  description: string;
+  status: "completed" | "in-progress" | "pending" | "need-help" | "failed";
+  priority: "high" | "medium" | "low";
+  level: number;
+  dependencies: string[];
+  subtasks: Array<{
+    id: string;
+    title: string;
+    description: string;
+    status: "completed" | "in-progress" | "pending" | "need-help" | "failed";
+    priority: "high" | "medium" | "low";
+    tools?: string[];
+  }>;
+}
+
+export interface AgentFlowMutationPreview {
+  schema_version: string;
+  state_slice: string;
+  preview_id: string;
+  status: string;
+  proposed_resource: string;
+  action: string;
+  target: Record<string, any>;
+  endpoint: string;
+  would_touch_state_slice: string;
+  confirmation_required: boolean;
+  side_effects_executed: boolean;
+  issued_scope: string;
+  issued_operator_id: string;
+  issued_at: string;
+  proof: {
+    algorithm: string;
+    bound_state_slice: string;
+    signature: string;
+  };
+}
+
+export interface AgentFlowChatResponse {
+  schema_version: string;
+  state_slice: string;
+  agent: { id: string; name: string; source: string; authority?: string };
+  answer: string;
+  state_slices: string[];
+  evidence: Array<{ id: string; kind: string; state_slice: string; summary: string }>;
+  lifecycle: { state_slice: string; tasks: AgentFlowLifecycleTask[] };
+  mutation_preview: AgentFlowMutationPreview;
+  authority_boundary: string;
+  created_at: string;
+}
+
+export interface AgentFlowLiveKitSessionResponse {
+  schema_version: string;
+  state_slice: string;
+  agent: { id: string; name: string; source: string; authority?: string };
+  status: string;
+  livekit_url: string;
+  room: string;
+  participant_identity: string;
+  token: string;
+  token_expires_at: string | null;
+  required_env: string[];
+  side_effects_executed: boolean;
+}
+
+export interface AgentFlowConfirmationResponse {
+  schema_version: string;
+  state_slice: string;
+  preview_id: string;
+  status: string;
+  confirmed_by: string;
+  reason: string;
+  proposed_resource: string;
+  would_touch_state_slice: string;
+  routed_to: string;
+  side_effects_executed: boolean;
+  next_step: string;
+  created_at: string;
+}
+
+export interface AgentFlowDashboard {
+  schema_version: string;
+  state_slice: string;
+  status: string;
+  agent: string;
+  source: string;
+  chat_endpoint: string;
+  livekit_endpoint: string;
+  confirmation_endpoint: string;
+  livekit_configured: boolean;
+  authority: string;
+}
+
+export interface DashboardMesh {
+  agent_flow: AgentFlowDashboard;
+  [key: string]: any;
+}
+
 export interface DashboardPayload {
   scope: { kind: "solo" | "team"; team: TeamProfile | null };
   session: SessionPayload;
@@ -61,7 +161,7 @@ export interface DashboardPayload {
     operator_preferences: Record<string, string | boolean | string[]>;
     operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
   };
-  mesh: Record<string, any>;
+  mesh: DashboardMesh;
   authority_boundary: string;
 }
 

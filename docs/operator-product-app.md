@@ -5,6 +5,10 @@ State slices:
 - `auth-identity`: users, password credentials, OAuth account links, sessions.
 - `team-tenancy`: team profile, active team, membership, role mapping.
 - `mesh-dashboard-read-model`: product dashboard aggregation over Mesh-owned APIs.
+- `mesh.agent_flow.dashboard.v1`: Agent Flow endpoint/readiness posture in the product dashboard read model.
+- `mesh.agent_flow.chat_response.v1`: Harper-696 chat response envelope over read-only dashboard state.
+- `mesh.agent_flow.livekit_session.v1`: short-lived LiveKit browser session bootstrap for Harper-696 voice.
+- `mesh.agent_flow.mutation_preview.v1`: draft-only mutation preview and confirmation record.
 - `mesh-settings-control`: validated UI/CLI settings stored in operator identity state.
 - `mesh.operator-preferences.v1`: scoped operator setup preferences for agent fabric, preferred agents, model defaults, approval posture, pause points, target defaults, and run templates.
 - `meshapp.run-preflight.v1`: product launch preflight read model over operator identity, preferences, topology, connector scopes, readiness, and target lock posture.
@@ -83,6 +87,32 @@ Local browser session cookies require the frontend and API to use the same loopb
 If `/api/auth/config` succeeds but `/api/auth/me` fails with a backend-unavailable error, the product login screen keeps the degraded session-probe message visible and disables auth actions instead of rendering a normal login form over a broken API. A plain unauthenticated `/api/auth/me` response remains the normal login path.
 
 Logout only clears the product UI after `/api/auth/logout` succeeds. If the API is unavailable during logout, the current session stays visible and the product shell shows an error instead of pretending the cookie was cleared.
+
+## Agent Flow And Harper-696
+
+The Agent Flow product page uses three operator-session endpoints:
+
+```text
+POST /api/operator/agent-flow/livekit-session
+POST /api/operator/agent-flow/chat
+POST /api/operator/agent-flow/confirm-preview
+```
+
+All three routes use the same app-session/team scope as `/api/operator/dashboard`. Chat responses are grounded in the dashboard read model and return explicit state slices, evidence references, lifecycle tasks, and a `mesh.agent_flow.mutation_preview.v1` draft. The confirmation route records that an operator reviewed a draft, but it does not execute `/api/runs` or `/api/runs/{run_id}/steer`; Mesh-owned routes remain the only mutation authority.
+
+Live Harper-696 voice uses LiveKit when these variables are present:
+
+```bash
+MESH_LIVEKIT_URL=wss://livekit.example.com
+MESH_LIVEKIT_API_KEY=...
+MESH_LIVEKIT_API_SECRET=...
+MESH_LIVEKIT_TOKEN_TTL_SECONDS=600
+MESH_LIVEKIT_AGENT_NAME=Harper-696
+```
+
+The API secret remains server-side. `/api/operator/agent-flow/livekit-session` returns a short-lived browser join token, scoped room, per-session participant identity, and configuration status. Voice publishing uses the requested team scope roles, requires a launcher, approver, or admin role, and grants microphone-only track publishing with data publishing disabled; viewer-only team sessions receive `status=permission_required` and no publish token. When LiveKit is unconfigured, Agent Flow stays usable as a draft-first text workspace and returns `status=unconfigured` instead of failing the page.
+
+Room names are scoped by the dashboard operator scope (`harper-696-<scope>` plus an optional sanitized suffix) so a caller cannot mint a browser token for an arbitrary LiveKit room. The browser refreshes near-expired voice tokens before connecting, publishes the local microphone only after a fresh session is minted, and attaches remote audio tracks for the Harper room. Preview confirmation validates the preview schema, id, draft status, endpoint, resource type, target Mesh state slice, proof state slice, issued scope, issued operator, and session-bound HMAC proof before recording confirmation.
 
 ## OAuth Providers
 

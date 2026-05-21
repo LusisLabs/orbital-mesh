@@ -124,6 +124,50 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await expect(page.getByRole("button", { name: "Delivery" })).toBeVisible();
 });
 
+test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Agent Flow E2E Operator");
+  await page.getByLabel("Email address").fill(`agent-flow-${Date.now()}@example.com`);
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  const livekitResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/operator/agent-flow/livekit-session") && response.status() === 200,
+  );
+  await page.getByRole("navigation").getByRole("button", { name: "Agent Flow" }).click();
+  await livekitResponse;
+  await expect(page.getByRole("heading", { name: "Agent Flow", exact: true })).toBeVisible();
+  await expect(page.getByText("Draft-first composer")).toBeVisible();
+
+  const chatResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/operator/agent-flow/chat") && response.status() === 200,
+  );
+  await page.getByPlaceholder("Ask Harper to inspect blockers, evidence, approvals, or lifecycle state...").fill("Inspect blockers and draft a launch");
+  await page.keyboard.press("Enter");
+  await chatResponse;
+
+  await expect(page.locator(".agent-flow-response-meta code", { hasText: "mesh.agent_flow.chat_response.v1" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Agent Flow mutation preview" })).toContainText("side_effects_executed=false");
+  await expect(page.getByRole("region", { name: "Agent Flow mutation preview" })).toContainText("mesh.run_admission.v1");
+  await expect(page.getByRole("region", { name: "Agent Flow mutation preview" }).getByText("Mutation preview", { exact: true })).toBeVisible();
+
+  await expect(page.getByRole("button", { name: "Confirm draft" })).toBeDisabled();
+  await page.getByLabel("Confirmation reason").fill("e2e confirms draft only");
+  const confirmResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/operator/agent-flow/confirm-preview") && response.status() === 200,
+  );
+  await page.getByRole("button", { name: "Confirm draft" }).click();
+  await confirmResponse;
+  await expect(page.locator(".agent-flow-confirmation").getByText("confirmation recorded")).toBeVisible();
+  await expect(page.locator(".agent-flow-confirmation").getByText("side_effects_executed=false")).toBeVisible();
+});
+
 test("product Praxis import generates, dry-runs, audits, exports P10 proof, and revokes", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();

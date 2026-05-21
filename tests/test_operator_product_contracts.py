@@ -157,6 +157,7 @@ class OperatorProductContractTests(unittest.TestCase):
         required_mesh_sections = {
             "health",
             "read_model",
+            "agent_flow",
             "readiness",
             "connectors",
             "approvals",
@@ -173,6 +174,9 @@ class OperatorProductContractTests(unittest.TestCase):
         self.assertEqual(dashboard["mesh"]["read_model"]["source"], "/api/operator/dashboard")
         self.assertEqual(dashboard["mesh"]["read_model"]["authority"], "read_only")
         self.assertIn("degraded_reason", dashboard["mesh"]["read_model"])
+        self.assertEqual(dashboard["mesh"]["agent_flow"]["state_slice"], "mesh.agent_flow.dashboard.v1")
+        self.assertEqual(dashboard["mesh"]["agent_flow"]["chat_endpoint"], "/api/operator/agent-flow/chat")
+        self.assertFalse(dashboard["mesh"]["agent_flow"]["livekit_configured"])
         self.assertIsInstance(dashboard["mesh"]["runs"]["runs"], list)
         self.assertIsInstance(dashboard["mesh"]["trust_ladder"]["entries"], list)
         self.assertIn("active", dashboard["mesh"]["memory"])

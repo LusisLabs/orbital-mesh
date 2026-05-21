@@ -89,6 +89,30 @@ class RuntimeConfigPathTests(unittest.TestCase):
             cfg = RuntimeConfig.from_env()
         self.assertFalse(cfg.correlation_enabled)
 
+    def test_livekit_agent_flow_env(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_LIVEKIT_URL": "wss://livekit.example.test",
+                "MESH_LIVEKIT_API_KEY": "lk-key",
+                "MESH_LIVEKIT_API_SECRET": "lk-secret",
+                "MESH_LIVEKIT_TOKEN_TTL_SECONDS": "900",
+                "MESH_LIVEKIT_AGENT_NAME": "Harper-696",
+            },
+            clear=True,
+        ):
+            cfg = RuntimeConfig.from_env()
+
+        self.assertEqual(cfg.livekit_url, "wss://livekit.example.test")
+        self.assertEqual(cfg.livekit_api_key, "lk-key")
+        self.assertEqual(cfg.livekit_api_secret, "lk-secret")
+        self.assertEqual(cfg.livekit_token_ttl_seconds, 900)
+        self.assertEqual(cfg.livekit_agent_name, "Harper-696")
+
+    def test_livekit_agent_flow_ttl_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "livekit_token_ttl_seconds must be > 0"):
+            RuntimeConfig(livekit_token_ttl_seconds=0)
+
     def test_observer_prompt_cache_env(self) -> None:
         with patch.dict(
             "os.environ",

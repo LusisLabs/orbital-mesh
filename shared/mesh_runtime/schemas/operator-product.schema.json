@@ -3,6 +3,408 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "agent_flow_chat_response": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "additionalProperties": false,
+          "properties": {
+            "authority": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "source"
+          ],
+          "type": "object"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "authority_boundary": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "state_slice": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "state_slice",
+              "summary"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "lifecycle": {
+          "additionalProperties": false,
+          "properties": {
+            "state_slice": {
+              "type": "string"
+            },
+            "tasks": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "dependencies": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "integer"
+                  },
+                  "priority": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "subtasks": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "description": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "priority": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "tools": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title",
+                        "description",
+                        "status",
+                        "priority"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "description",
+                  "status",
+                  "priority",
+                  "level",
+                  "dependencies",
+                  "subtasks"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "state_slice",
+            "tasks"
+          ],
+          "type": "object"
+        },
+        "mutation_preview": {
+          "additionalProperties": false,
+          "properties": {
+            "action": {
+              "type": "string"
+            },
+            "confirmation_required": {
+              "type": "boolean"
+            },
+            "endpoint": {
+              "type": "string"
+            },
+            "issued_at": {
+              "type": "string"
+            },
+            "issued_operator_id": {
+              "type": "string"
+            },
+            "issued_scope": {
+              "type": "string"
+            },
+            "preview_id": {
+              "type": "string"
+            },
+            "proof": {
+              "additionalProperties": false,
+              "properties": {
+                "algorithm": {
+                  "type": "string"
+                },
+                "bound_state_slice": {
+                  "type": "string"
+                },
+                "signature": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "algorithm",
+                "bound_state_slice",
+                "signature"
+              ],
+              "type": "object"
+            },
+            "proposed_resource": {
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            },
+            "side_effects_executed": {
+              "type": "boolean"
+            },
+            "state_slice": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "target": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "would_touch_state_slice": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_version",
+            "state_slice",
+            "preview_id",
+            "status",
+            "proposed_resource",
+            "action",
+            "target",
+            "endpoint",
+            "would_touch_state_slice",
+            "confirmation_required",
+            "side_effects_executed",
+            "issued_scope",
+            "issued_operator_id",
+            "issued_at",
+            "proof"
+          ],
+          "type": "object"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "state_slice": {
+          "type": "string"
+        },
+        "state_slices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state_slice",
+        "agent",
+        "answer",
+        "state_slices",
+        "evidence",
+        "lifecycle",
+        "mutation_preview",
+        "authority_boundary",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "agent_flow_confirmation_response": {
+      "additionalProperties": false,
+      "properties": {
+        "confirmed_by": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "next_step": {
+          "type": "string"
+        },
+        "preview_id": {
+          "type": "string"
+        },
+        "proposed_resource": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "routed_to": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "side_effects_executed": {
+          "type": "boolean"
+        },
+        "state_slice": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "would_touch_state_slice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "state_slice",
+        "preview_id",
+        "status",
+        "confirmed_by",
+        "reason",
+        "proposed_resource",
+        "would_touch_state_slice",
+        "routed_to",
+        "side_effects_executed",
+        "next_step",
+        "created_at"
+      ],
+      "type": "object"
+    },
+    "agent_flow_livekit_session_response": {
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "additionalProperties": false,
+          "properties": {
+            "authority": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "source"
+          ],
+          "type": "object"
+        },
+        "livekit_url": {
+          "type": "string"
+        },
+        "participant_identity": {
+          "type": "string"
+        },
+        "required_env": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "room": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "string"
+        },
+        "side_effects_executed": {
+          "type": "boolean"
+        },
+        "state_slice": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "token_expires_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "schema_version",
+        "state_slice",
+        "agent",
+        "status",
+        "livekit_url",
+        "room",
+        "participant_identity",
+        "token",
+        "token_expires_at",
+        "required_env",
+        "side_effects_executed"
+      ],
+      "type": "object"
+    },
     "auth_config": {
       "additionalProperties": false,
       "properties": {
@@ -117,6 +519,54 @@
         },
         "mesh": {
           "properties": {
+            "agent_flow": {
+              "additionalProperties": false,
+              "properties": {
+                "agent": {
+                  "type": "string"
+                },
+                "authority": {
+                  "type": "string"
+                },
+                "chat_endpoint": {
+                  "type": "string"
+                },
+                "confirmation_endpoint": {
+                  "type": "string"
+                },
+                "livekit_configured": {
+                  "type": "boolean"
+                },
+                "livekit_endpoint": {
+                  "type": "string"
+                },
+                "schema_version": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string"
+                },
+                "state_slice": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "schema_version",
+                "state_slice",
+                "status",
+                "agent",
+                "source",
+                "chat_endpoint",
+                "livekit_endpoint",
+                "confirmation_endpoint",
+                "livekit_configured",
+                "authority"
+              ],
+              "type": "object"
+            },
             "approvals": {
               "type": "object"
             },
@@ -204,6 +654,7 @@
           "required": [
             "health",
             "read_model",
+            "agent_flow",
             "readiness",
             "connectors",
             "approvals",
