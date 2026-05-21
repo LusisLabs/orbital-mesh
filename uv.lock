@@ -2159,7 +2159,7 @@ helix = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography", specifier = ">=44,<47" },
+    { name = "cryptography", specifier = ">=44,<49" },
     { name = "deepagents", editable = "deepagents/libs/deepagents" },
     { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0,<4.0" },
     { name = "halo-engine" },

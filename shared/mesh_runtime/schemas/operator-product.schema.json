@@ -218,6 +218,160 @@
           ],
           "type": "object"
         },
+        "operator_preferences": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "operator_preferences_schema": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "properties": {
+              "default": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "enum",
+                  "multi",
+                  "boolean",
+                  "string"
+                ]
+              },
+              "values": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "default",
+              "description"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "operator_preferences_state": {
+          "additionalProperties": false,
+          "properties": {
+            "operator_preferences": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "operator_preferences_schema": {
+              "additionalProperties": {
+                "additionalProperties": true,
+                "properties": {
+                  "default": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "enum",
+                      "multi",
+                      "boolean",
+                      "string"
+                    ]
+                  },
+                  "values": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "default",
+                  "description"
+                ],
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "schema_version": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "state_slice": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_version",
+            "state_slice",
+            "scope",
+            "operator_preferences",
+            "operator_preferences_schema"
+          ],
+          "type": "object"
+        },
         "scope": {
           "additionalProperties": false,
           "properties": {
@@ -496,6 +650,9 @@
         "session",
         "settings",
         "settings_schema",
+        "operator_preferences",
+        "operator_preferences_schema",
+        "operator_preferences_state",
         "mesh",
         "authority_boundary"
       ],
@@ -510,6 +667,114 @@
       },
       "required": [
         "status"
+      ],
+      "type": "object"
+    },
+    "operator_preferences_update_response": {
+      "additionalProperties": false,
+      "properties": {
+        "audit": {
+          "additionalProperties": false,
+          "properties": {
+            "fields": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "recorded": {
+              "type": "boolean"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "state_slice": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "recorded",
+            "state_slice",
+            "scope",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "operator_preferences": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ]
+          },
+          "type": "object"
+        },
+        "operator_preferences_schema": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "properties": {
+              "default": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                ]
+              },
+              "description": {
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "enum",
+                  "multi",
+                  "boolean",
+                  "string"
+                ]
+              },
+              "values": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "default",
+              "description"
+            ],
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "state_slice": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state_slice",
+        "operator_preferences",
+        "operator_preferences_schema",
+        "audit"
       ],
       "type": "object"
     },

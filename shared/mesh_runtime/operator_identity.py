@@ -55,6 +55,91 @@ SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
         "description": "Default target-lock requirement for product-launched runs.",
     },
 }
+OPERATOR_PREFERENCES_STATE_SLICE = "mesh.operator-preferences.v1"
+OPERATOR_PREFERENCES_SCHEMA: dict[str, dict[str, Any]] = {
+    "agent_fabric_mode": {
+        "kind": "enum",
+        "values": ["native", "deepagents", "langgraph"],
+        "default": "native",
+        "description": "Preferred agent fabric for proposal lanes. Runtime deployment config can still restrict this.",
+    },
+    "preferred_agents": {
+        "kind": "multi",
+        "values": [
+            "hermes",
+            "goose",
+            "codex",
+            "claudecode",
+            "openclaw",
+            "temporal",
+            "kubernetes",
+            "dagster",
+            "prefect",
+            "flyte",
+            "latentmas",
+        ],
+        "default": ["hermes", "goose", "kubernetes"],
+        "description": "Preferred proposal and evidence lanes for new operator-created runs.",
+    },
+    "model_provider": {
+        "kind": "enum",
+        "values": ["openai-compatible", "openai", "anthropic", "huggingface", "ollama", "local"],
+        "default": "openai-compatible",
+        "description": "Preferred model provider family for advisory lanes.",
+    },
+    "model_name": {
+        "kind": "enum",
+        "values": ["MiniMax-M2.7", "MiniMax-M2.5", "Qwen/Qwen3-4B", "local-default"],
+        "default": "MiniMax-M2.7",
+        "description": "Preferred model binding shown in run preflight and agent mesh review.",
+    },
+    "approval_policy": {
+        "kind": "enum",
+        "values": ["approval_required", "interruptible_auto", "read_only_review"],
+        "default": "approval_required",
+        "description": "Operator's default posture for Mesh approval and steering workflows.",
+    },
+    "pause_points": {
+        "kind": "multi",
+        "values": ["intake", "evidence", "evaluation", "pre_actuation", "postmortem"],
+        "default": ["evaluation", "pre_actuation"],
+        "description": "Preferred human review points for product-launched runs.",
+    },
+    "target_environment": {
+        "kind": "enum",
+        "values": ["local", "pilot", "staging", "production"],
+        "default": "pilot",
+        "description": "Default target environment displayed in run preflight.",
+    },
+    "target_namespace": {
+        "kind": "string",
+        "default": "search",
+        "description": "Default target namespace or service boundary label for launch preflight.",
+    },
+    "target_service": {
+        "kind": "string",
+        "default": "semantic-search",
+        "description": "Default target service shown before Mesh admission.",
+    },
+    "target_lock_required": {
+        "kind": "boolean",
+        "default": False,
+        "description": "Whether product launch should require a Mesh target lock by default.",
+    },
+    "run_template": {
+        "kind": "enum",
+        "values": [
+            "reth_peer_starvation",
+            "reth_sync_stalled_disk_pressure",
+            "kubernetes_crashloop_patch",
+            "search_latency_regression",
+        ],
+        "default": "reth_peer_starvation",
+        "description": "Preferred run scenario template used by operator setup.",
+    },
+}
+def default_operator_preferences() -> dict[str, Any]:
+    return {key: json.loads(json.dumps(schema["default"])) for key, schema in OPERATOR_PREFERENCES_SCHEMA.items()}
 
 
 def settings_audit_path(identity_path: str | Path) -> Path:
@@ -80,6 +165,35 @@ def write_settings_audit(
         "reason": cleaned_reason,
         "scope": scope,
         "state_slice": "mesh-settings-control",
+        "fields": sorted(updates),
+        "config_hash": _file_sha256(Path(identity_path)),
+        "git_commit": git_commit,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+    return {"audit_path": str(path), "record": record}
+
+
+def write_operator_preferences_audit(
+    identity_path: str | Path,
+    *,
+    operator_id: str,
+    reason: str,
+    scope: str,
+    updates: dict[str, Any],
+    git_commit: str = "unknown",
+) -> dict[str, Any]:
+    cleaned_reason = reason.strip()
+    if not cleaned_reason:
+        raise ValueError("operator preferences update reason is required")
+    path = settings_audit_path(identity_path)
+    record = {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "operator_id": operator_id,
+        "reason": cleaned_reason,
+        "scope": scope,
+        "state_slice": OPERATOR_PREFERENCES_STATE_SLICE,
         "fields": sorted(updates),
         "config_hash": _file_sha256(Path(identity_path)),
         "git_commit": git_commit,
@@ -407,11 +521,22 @@ class OperatorIdentityStore:
                 raise PermissionError("team access denied")
             team = _public_team(data["teams"][team_id], membership=membership, members=data["memberships"].get(team_id, {}))
         settings = self._settings_for_scope(data, user_id=user_id, team_id=team_id)
+        operator_preferences = self._operator_preferences_for_scope(data, user_id=user_id, team_id=team_id)
+        preference_scope = f"team:{team_id}" if team_id else f"user:{user_id}"
         return {
             "scope": {"kind": "team" if team else "solo", "team": team},
             "session": self.session_payload(token),
             "settings": settings,
             "settings_schema": SETTINGS_SCHEMA,
+            "operator_preferences": operator_preferences,
+            "operator_preferences_schema": OPERATOR_PREFERENCES_SCHEMA,
+            "operator_preferences_state": {
+                "schema_version": OPERATOR_PREFERENCES_STATE_SLICE,
+                "state_slice": OPERATOR_PREFERENCES_STATE_SLICE,
+                "scope": preference_scope,
+                "operator_preferences": operator_preferences,
+                "operator_preferences_schema": OPERATOR_PREFERENCES_SCHEMA,
+            },
             "mesh": mesh,
             "authority_boundary": (
                 "Dashboard identity scopes the product read model. Mesh remains the authority for "
@@ -448,6 +573,24 @@ class OperatorIdentityStore:
         self._write(data)
         return {"settings": settings, "settings_schema": SETTINGS_SCHEMA}
 
+    def update_operator_preferences(self, token: str, *, team_id: str | None, updates: dict[str, Any]) -> dict[str, Any]:
+        data = self._read()
+        session = self._valid_session(data, token)
+        user_id = session["user_id"]
+        if team_id and not self._membership_for_user(data, user_id, team_id):
+            raise PermissionError("team access denied")
+        preferences = self._operator_preferences_for_scope(data, user_id=user_id, team_id=team_id)
+        for key, value in updates.items():
+            preferences[key] = _validated_operator_preference(key, value)
+        bucket = self._operator_preferences_bucket(data, user_id=user_id, team_id=team_id)
+        bucket.update(preferences)
+        self._write(data)
+        return {
+            "state_slice": OPERATOR_PREFERENCES_STATE_SLICE,
+            "operator_preferences": preferences,
+            "operator_preferences_schema": OPERATOR_PREFERENCES_SCHEMA,
+        }
+
     def read_scoped_settings(self, scope: str) -> dict[str, Any]:
         data = self._read()
         settings = {key: schema["default"] for key, schema in SETTINGS_SCHEMA.items()}
@@ -469,6 +612,17 @@ class OperatorIdentityStore:
         data["settings"][scope] = settings
         self._write(data)
         return {"scope": scope, "settings": settings, "settings_schema": SETTINGS_SCHEMA}
+
+    def read_scoped_operator_preferences(self, scope: str) -> dict[str, Any]:
+        data = self._read()
+        preferences = default_operator_preferences()
+        preferences.update(data["operator_preferences"].get(scope, {}))
+        return {
+            "scope": scope,
+            "state_slice": OPERATOR_PREFERENCES_STATE_SLICE,
+            "operator_preferences": preferences,
+            "operator_preferences_schema": OPERATOR_PREFERENCES_SCHEMA,
+        }
 
     def create_oauth_state(self, provider: str, *, now: float | None = None) -> dict[str, str]:
         now_value = now or time.time()
@@ -618,6 +772,17 @@ class OperatorIdentityStore:
         settings = {key: schema["default"] for key, schema in SETTINGS_SCHEMA.items()}
         settings.update(self._settings_bucket(data, user_id=user_id, team_id=team_id))
         return settings
+
+    def _operator_preferences_bucket(self, data: dict[str, Any], *, user_id: str, team_id: str | None) -> dict[str, Any]:
+        key = f"team:{team_id}" if team_id else f"user:{user_id}"
+        if key not in data["operator_preferences"]:
+            data["operator_preferences"][key] = {}
+        return data["operator_preferences"][key]
+
+    def _operator_preferences_for_scope(self, data: dict[str, Any], *, user_id: str, team_id: str | None) -> dict[str, Any]:
+        preferences = default_operator_preferences()
+        preferences.update(self._operator_preferences_bucket(data, user_id=user_id, team_id=team_id))
+        return preferences
 
     def _captcha_configured(self, captcha: CaptchaConfig) -> bool:
         return captcha.provider in {"hcaptcha", "recaptcha", "turnstile"} and bool(captcha.site_key and captcha.secret)
@@ -852,6 +1017,7 @@ def _empty_store() -> dict[str, Any]:
         "memberships": {},
         "active_team_by_user": {},
         "settings": {},
+        "operator_preferences": {},
         "oauth_states": {},
     }
 
@@ -864,6 +1030,50 @@ def _merge_defaults(data: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(merged[key], list) and isinstance(data.get(key), list):
             merged[key] = data[key]
     return merged
+
+
+def _validated_operator_preference(key: str, value: Any) -> Any:
+    if key not in OPERATOR_PREFERENCES_SCHEMA:
+        raise ValueError(f"unknown operator preference: {key}")
+    schema = OPERATOR_PREFERENCES_SCHEMA[key]
+    kind = schema["kind"]
+    if kind == "enum":
+        normalized = str(value)
+        allowed = schema["values"]
+        if normalized not in allowed:
+            raise ValueError(f"{key} must be one of: {', '.join(allowed)}")
+        return normalized
+    if kind == "multi":
+        raw_values = value
+        if isinstance(value, str):
+            raw_values = [part.strip() for part in value.split(",") if part.strip()]
+        if not isinstance(raw_values, list):
+            raise ValueError(f"{key} must be a list")
+        allowed = set(schema["values"])
+        cleaned = sorted({str(item).strip() for item in raw_values if str(item).strip()})
+        invalid = [item for item in cleaned if item not in allowed]
+        if invalid:
+            raise ValueError(f"{key} has unsupported value(s): {', '.join(invalid)}")
+        return cleaned
+    if kind == "boolean":
+        if isinstance(value, bool):
+            return value
+        if str(value).lower() in {"true", "1", "yes", "required"}:
+            return True
+        if str(value).lower() in {"false", "0", "no", "optional"}:
+            return False
+        raise ValueError(f"{key} must be boolean")
+    if kind == "string":
+        cleaned = str(value or "").strip()
+        if len(cleaned) > 96:
+            raise ValueError(f"{key} is too long")
+        if cleaned and not re.match(r"^[A-Za-z0-9._:/-]+$", cleaned):
+            raise ValueError(f"{key} contains unsupported characters")
+        lowered = cleaned.lower()
+        if any(marker in lowered for marker in ("secret", "token", "password", "bearer", "api_key", "apikey")):
+            raise ValueError(f"{key} must not contain secret material")
+        return cleaned
+    raise ValueError(f"{key} has unsupported preference kind")
 
 
 def build_auth_provider_evidence(data: dict[str, Any]) -> dict[str, Any]:

@@ -80,6 +80,7 @@ export type ViewKey =
   | "team"
   | "members"
   | "keys"
+  | "operator-setup"
   | "settings";
 
 const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: any }[] }[] = [
@@ -108,6 +109,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "team", label: "Team Settings", icon: Settings },
       { key: "members", label: "Members", icon: Users },
       { key: "keys", label: "Keys & Secrets", icon: KeyRound },
+      { key: "operator-setup", label: "Operator Setup", icon: SlidersHorizontal },
       { key: "settings", label: "Settings", icon: SlidersHorizontal },
     ],
   },
@@ -165,6 +167,60 @@ type DashboardControlModel = {
   recentRuns: ControlRow[];
   connectors: ControlRow[];
   systemRows: Array<ControlRow & { view: ViewKey }>;
+};
+type OperatorSetupModel = {
+  stateSlice: string;
+  scope: string;
+  operatorId: string;
+  roles: string[];
+  source: string;
+  team: string;
+  agentFabricMode: string;
+  preferredAgents: string[];
+  modelBinding: string;
+  approvalPolicy: string;
+  pausePoints: string[];
+  target: {
+    environment: string;
+    namespace: string;
+    service: string;
+    lockRequired: boolean;
+  };
+  runTemplate: string;
+  topology: {
+    active: string;
+    preferredAgents: string[];
+    allowedModels: string[];
+    blockers: string[];
+  };
+};
+type RunPreflightModel = {
+  operatorPresent: boolean;
+  operatorId: string;
+  roles: string[];
+  source: string;
+  team: string;
+  selectedTopology: string;
+  selectedAgents: string[];
+  modelBinding: string;
+  pausePoints: string[];
+  target: string;
+  targetLock: string;
+  connectorScopes: string[];
+  readiness: string;
+  blockers: string[];
+};
+type RunWorkbenchModel = {
+  runId: string;
+  currentStage: string;
+  status: string;
+  nextAction: string;
+  operator: string;
+  evidenceSummary: string;
+  decisionSummary: string;
+  agentSummary: string;
+  blockers: string[];
+  events: number;
 };
 type DashboardTileModel = {
   title: string;
@@ -227,7 +283,7 @@ type PraxisProductModel = {
   runtimeStatus: string;
   managedRuntime: boolean;
   blockerCount: number;
-  tools: Array<ControlRow & { method: string; path: string; tone: ConsoleTone }>;
+  tools: Array<ControlRow & { method: string; path: string; tone: ConsoleTone; authScopes: string[]; blockers: string[]; testPlan: string[] }>;
   controls: Array<ControlRow & { state: string; requiresMeshApproval: boolean }>;
 };
 
@@ -946,12 +1002,13 @@ function Sidebar({
             </div>
           ) : null}
         </div>
-        <div className="nav-group">
-          <p>Support</p>
-          <button type="button" onClick={() => onView("evaluations")} title="Run Review" aria-label="Run Review"><Mail size={16} /> <span className="nav-label">Run Review</span></button>
-          <button type="button" onClick={openDocs} title="Documentation" aria-label="Documentation"><BookOpen size={16} /> <span className="nav-label">Documentation</span></button>
-          <button type="button" onClick={() => onView("settings")} title="Config" aria-label="Config"><Database size={16} /> <span className="nav-label">Config</span></button>
-        </div>
+      <div className="nav-group">
+        <p>Support</p>
+        <button type="button" onClick={() => onView("evaluations")} title="Run Review" aria-label="Run Review"><Mail size={16} /> <span className="nav-label">Run Review</span></button>
+        <button type="button" onClick={() => onView("operator-setup")} title="Operator Setup" aria-label="Operator Setup"><SlidersHorizontal size={16} /> <span className="nav-label">Operator Setup</span></button>
+        <button type="button" onClick={openDocs} title="Documentation" aria-label="Documentation"><BookOpen size={16} /> <span className="nav-label">Documentation</span></button>
+        <button type="button" onClick={() => onView("settings")} title="Config" aria-label="Config"><Database size={16} /> <span className="nav-label">Config</span></button>
+      </div>
       </nav>
       <div className="sidebar-footer">
         <div>
@@ -1031,6 +1088,7 @@ function pageMetaForView(view: ViewKey): { title: string; group: string; detail:
     team: "Create or review the active team scope for partner-safe access.",
     members: "Review team roles that map into Mesh operator permissions.",
     keys: "Review deployment-owned auth and secret posture without exposing raw values.",
+    "operator-setup": "Configure operator preferences, agent lanes, model defaults, target posture, and run templates.",
   };
   return { title, group: match?.group || "Product", detail: details[view] || "Mesh-owned read model with product-safe controls." };
 }
@@ -1086,6 +1144,7 @@ function ContentRouter({
   if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
   if (view === "members") return <MembersView session={session} setView={setView} onSession={onSession} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "keys") return <KeysView authConfig={authConfig} dashboard={dashboard} setView={setView} />;
+  if (view === "operator-setup") return <OperatorSetupView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} setView={setView} />;
   if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} /></div>;
   return <CapabilityView view={view} dashboard={dashboard} setView={setView} />;
 }
@@ -1504,6 +1563,7 @@ function PraxisView({
         action="Back Home"
         onAction={() => setView("home")}
       />
+      <PraxisJourney model={model} sourcePackets={sourcePackets.length} securityFindings={securityFindings.length} />
       <section className="praxis-import-panel" aria-label="Praxis source import">
         <div className="panel-heading">
           <div>
@@ -1578,7 +1638,12 @@ function PraxisView({
             <div className={`praxis-tool ${tool.tone}`} key={tool.id}>
               <span>{tool.method} {tool.path}</span>
               <strong>{tool.label}</strong>
-              <small>{tool.value} · {tool.detail}</small>
+              <small>{tool.value} · scopes {tool.authScopes.length ? tool.authScopes.join(", ") : "none"} · {tool.detail}</small>
+              <details>
+                <summary>Review plan</summary>
+                <p>Blockers: {tool.blockers.length ? tool.blockers.join(", ") : "none"}</p>
+                <p>Tests: {tool.testPlan.join(" / ")}</p>
+              </details>
             </div>
           ))}
         </PraxisLane>
@@ -1621,6 +1686,30 @@ function PraxisStepper({
         ))}
       </div>
     </div>
+  );
+}
+
+function PraxisJourney({ model, sourcePackets, securityFindings }: { model: PraxisProductModel; sourcePackets: number; securityFindings: number }) {
+  const stages = [
+    { label: "Source", value: `${sourcePackets || model.sourcePackets} packet(s)`, detail: "OpenAPI, Postman, SOP, and traffic refs are redacted before persistence." },
+    { label: "Candidate Tools", value: `${model.toolCandidates} candidate(s)`, detail: "Generated MCP tools stay candidates until Mesh certification." },
+    { label: "Security Evidence", value: `${securityFindings} finding(s)`, detail: "Akto evidence is advisory and cannot grant authority." },
+    { label: "Certification", value: `${model.certifiedTools}/${model.deniedTools}`, detail: "Read-only scopes can be admitted; unsafe mutations stay denied." },
+    { label: "Dry-run MCP", value: model.runtimeStatus, detail: "Calls are audited and side effects stay disabled." },
+    { label: "Operator Decision", value: model.proofStatus, detail: "Approval evidence is bound into proof, not inferred from UI state." },
+    { label: "Proof Packet", value: model.proofStatus, detail: "P10 export binds source, tools, evidence, certification, runtime, and revocation." },
+    { label: "Revocation", value: model.managedRuntime ? "pilot blocked" : "available", detail: "Managed pilot runtime remains blocked until production-like proof exists." },
+  ];
+  return (
+    <section className="praxis-journey" aria-label="Praxis V2 journey">
+      {stages.map((stage) => (
+        <div key={stage.label}>
+          <span>{stage.label}</span>
+          <strong>{humanize(stage.value)}</strong>
+          <small>{stage.detail}</small>
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -1845,6 +1934,14 @@ export function buildDashboardTiles(dashboard: DashboardPayload): DashboardTileM
       payload: { settings: dashboard.settings, settings_schema: dashboard.settings_schema },
     },
     {
+      title: "Operator setup",
+      detail: `${buildOperatorSetupModel(dashboard).preferredAgents.length} preferred agent lanes`,
+      icon: SlidersHorizontal,
+      view: "operator-setup" as ViewKey,
+      apiSection: "operator_preferences_state",
+      payload: dashboard.operator_preferences_state,
+    },
+    {
       title: "Trust ladder",
       detail: `${Array.isArray(mesh.trust_ladder?.entries) ? mesh.trust_ladder.entries.length : 0} trust entries`,
       icon: ShieldCheck,
@@ -1982,6 +2079,12 @@ export function buildPraxisProductModel(dashboard: DashboardPayload): PraxisProd
         detail: tool.readiness_blockers?.length ? `${tool.readiness_blockers.length} blocker(s)` : String(tool.mutation_class || "unknown"),
         method: String(tool.method || "GET"),
         path: String(tool.path || "/"),
+        authScopes: Array.isArray(tool.allowed_scopes) ? tool.allowed_scopes.map(String) : Array.isArray(tool.auth_scope?.allowed_scopes) ? tool.auth_scope.allowed_scopes.map(String) : [],
+        blockers: Array.isArray(tool.readiness_blockers) ? tool.readiness_blockers.map(String) : Array.isArray(tool.blockers) ? tool.blockers.map(String) : [],
+        testPlan: Array.isArray(tool.test_plan) ? tool.test_plan.map(String) : [
+          `Validate ${String(tool.method || "GET")} ${String(tool.path || "/")} with redacted fixture input.`,
+          "Confirm dry-run call records side_effects_executed=false.",
+        ],
         tone: result === "read_only" || result === "staging_ready" ? "good" as const : result === "denied" ? "warn" as const : "neutral" as const,
       };
     }),
@@ -2044,6 +2147,101 @@ export function settingsParityRows(dashboard: DashboardPayload): SettingsParityR
     },
   ];
   return [...mutableRows, ...readonlyRows];
+}
+
+function listPreference(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String).filter(Boolean);
+  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function stringPreference(value: unknown, fallback = ""): string {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (Array.isArray(value)) return value.join(", ");
+  return String(value || fallback);
+}
+
+function booleanPreference(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  return ["true", "1", "yes", "required"].includes(String(value || "").toLowerCase());
+}
+
+export function buildOperatorSetupModel(dashboard: DashboardPayload): OperatorSetupModel {
+  const preferencesState = dashboard.operator_preferences_state || {};
+  const preferences = preferencesState.operator_preferences || dashboard.operator_preferences || {};
+  const schema = preferencesState.operator_preferences_schema || dashboard.operator_preferences_schema || {};
+  const readiness = dashboard.mesh.readiness || {};
+  const topology = readiness.orchestration_topology || dashboard.mesh.graph || {};
+  const topologyProfile = topology.organization_profile || {};
+  const providerPolicy = topology.model_provider_policy || {};
+  const preferredAgents = listPreference(preferences.preferred_agents ?? schema.preferred_agents?.default);
+  const pausePoints = listPreference(preferences.pause_points ?? schema.pause_points?.default);
+  const modelProvider = stringPreference(preferences.model_provider ?? schema.model_provider?.default, "openai-compatible");
+  const modelName = stringPreference(preferences.model_name ?? schema.model_name?.default, "MiniMax-M2.7");
+  const scopeTeam = dashboard.scope?.team || null;
+  const sessionUser = dashboard.session?.user || { id: "unknown", email: "unknown", display_name: "Unknown" };
+  const sessionRoles = dashboard.session?.active_team?.roles || (scopeTeam?.roles ?? ["viewer", "launcher"]);
+  const scope = String(preferencesState.scope || (scopeTeam ? `team:${scopeTeam.id}` : `user:${sessionUser.id}`));
+  return {
+    stateSlice: String(preferencesState.state_slice || "mesh.operator-preferences.v1"),
+    scope,
+    operatorId: sessionUser.email || sessionUser.id,
+    roles: sessionRoles,
+    source: "operator_session",
+    team: scopeTeam?.display_name || scopeTeam?.name || "Solo",
+    agentFabricMode: stringPreference(preferences.agent_fabric_mode ?? schema.agent_fabric_mode?.default, "native"),
+    preferredAgents,
+    modelBinding: `${modelProvider}:${modelName}`,
+    approvalPolicy: stringPreference(preferences.approval_policy ?? schema.approval_policy?.default, "approval_required"),
+    pausePoints,
+    target: {
+      environment: stringPreference(preferences.target_environment ?? schema.target_environment?.default, "pilot"),
+      namespace: stringPreference(preferences.target_namespace ?? schema.target_namespace?.default, "search"),
+      service: stringPreference(preferences.target_service ?? schema.target_service?.default, "semantic-search"),
+      lockRequired: booleanPreference(preferences.target_lock_required ?? schema.target_lock_required?.default),
+    },
+    runTemplate: stringPreference(preferences.run_template ?? schema.run_template?.default, "reth_peer_starvation"),
+    topology: {
+      active: String(topology.active_topology || topology.mode || topology.status || "centralized"),
+      preferredAgents: Array.isArray(topologyProfile.preferred_agents) ? topologyProfile.preferred_agents.map(String) : [],
+      allowedModels: Array.isArray(providerPolicy.allowed_models) ? providerPolicy.allowed_models.map((item: any) => `${item.provider}:${item.model}`) : [],
+      blockers: Array.isArray(topology.blockers) ? topology.blockers.map(String) : [],
+    },
+  };
+}
+
+export function buildRunPreflightModel(
+  dashboard: DashboardPayload,
+  selection?: { scenarioKey?: string; orchestrationMode?: string; steeringMode?: string; requireTargetLock?: boolean },
+): RunPreflightModel {
+  const setup = buildOperatorSetupModel(dashboard);
+  const readiness = dashboard.mesh.readiness || {};
+  const connectors = dashboard.mesh.connectors?.connectors || dashboard.mesh.connectors?.connector_certification || {};
+  const connectorScopes = Object.values(connectors)
+    .flatMap((connector: any) => Array.isArray(connector?.allowed_scopes) ? connector.allowed_scopes : [])
+    .map(String);
+  const uniqueScopes = Array.from(new Set(connectorScopes)).sort();
+  const readinessBlockers = [
+    ...(Array.isArray(readiness.blockers) ? readiness.blockers.map(String) : []),
+    ...setup.topology.blockers,
+  ];
+  const operatorPresent = Boolean(setup.operatorId && setup.roles.length);
+  return {
+    operatorPresent,
+    operatorId: setup.operatorId,
+    roles: setup.roles,
+    source: setup.source,
+    team: setup.team,
+    selectedTopology: setup.topology.active,
+    selectedAgents: setup.preferredAgents,
+    modelBinding: setup.modelBinding,
+    pausePoints: setup.pausePoints,
+    target: `${setup.target.environment}/${setup.target.namespace}/${setup.target.service}`,
+    targetLock: (selection?.requireTargetLock ?? setup.target.lockRequired) ? "required" : "optional",
+    connectorScopes: uniqueScopes.slice(0, 8),
+    readiness: humanize(String(readiness.status || (readiness.ready === true ? "ready" : readiness.ready === false ? "blocked" : "unknown"))),
+    blockers: operatorPresent ? readinessBlockers : ["operator_identity_missing", ...readinessBlockers],
+  };
 }
 
 function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
@@ -2226,6 +2424,14 @@ function ApprovalQueuePanel({ dashboard, onDashboardRefresh }: { dashboard: Dash
                   <small>{item.run_id}</small>
                 </div>
                 <p>{item.blockers?.length ? `Blocked by ${item.blockers.join(", ")}` : item.final_recommendation || "Awaiting Mesh-approved operator decision."}</p>
+                <div className="approval-evidence-grid">
+                  <span>Risk <strong>{humanize(String(item.risk_tier || item.risk || "unknown"))}</strong></span>
+                  <span>Action <strong>{humanize(String(item.proposed_action || item.decision_type || "review"))}</strong></span>
+                  <span>Evidence <strong>{Array.isArray(item.evidence_refs) ? item.evidence_refs.length : 0} ref(s)</strong></span>
+                  <span>Approver <strong>{item.approver_role || "approver/admin"}</strong></span>
+                  <span>Rollback <strong>{item.rollback_authority || item.rollback_ref || "Mesh-owned"}</strong></span>
+                  <span>Expires <strong>{item.expires_at || item.approval_expires_at || "policy default"}</strong></span>
+                </div>
                 <label>
                   Action reason
                   <input
@@ -2343,28 +2549,56 @@ function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
       ) : <EmptyInline text="No run summaries available for proof drill-in." />}
       {proof.message ? <div className={proof.status === "error" ? "auth-error" : "product-alert success"}>{proof.message}</div> : null}
       {proof.status === "ready" ? (
-        <div className="proof-grid">
-          {Object.entries(proof.payloads).map(([key, value]) => (
-            <ReadModelCard key={key} title={humanize(key)} payload={value} />
-          ))}
-        </div>
+        <>
+          <RunWorkbenchSummary model={buildRunWorkbenchModel(proof.payloads)} />
+          <div className="proof-grid">
+            {Object.entries(proof.payloads).map(([key, value]) => (
+              <ReadModelCard key={key} title={humanize(key)} payload={value} />
+            ))}
+          </div>
+        </>
       ) : null}
     </section>
   );
 }
 
+function RunWorkbenchSummary({ model }: { model: RunWorkbenchModel }) {
+  return (
+    <section className="run-workbench" aria-label="Run workbench">
+      <div className="panel-title"><Activity size={15} /><span>meshapp.run-workbench.v1</span></div>
+      <div className="preflight-grid">
+        <div><span>Run</span><strong>{model.runId || "selected run"}</strong><small>{model.currentStage} / {model.status}</small></div>
+        <div><span>Operator</span><strong>{model.operator}</strong><small>Launcher or Mesh-owned system context</small></div>
+        <div><span>Evidence</span><strong>{model.evidenceSummary}</strong><small>{model.events} event(s) loaded</small></div>
+        <div><span>Decision</span><strong>{humanize(model.decisionSummary)}</strong><small>{model.nextAction}</small></div>
+        <div><span>Agent mesh</span><strong>{model.agentSummary}</strong><small>Review lane outputs in detail payload.</small></div>
+        <div><span>Blockers</span><strong>{model.blockers.length ? model.blockers.join(", ") : "none"}</strong><small>Evidence translation, not authority replacement.</small></div>
+      </div>
+    </section>
+  );
+}
+
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
-  const configuredDefaultScenario = dashboard.settings.default_run_scenario || "reth_peer_starvation";
+  const setup = buildOperatorSetupModel(dashboard);
+  const operatorDefaultTemplate = String(dashboard.operator_preferences_schema?.run_template?.default || "reth_peer_starvation");
+  const settingsDefaultScenario = dashboard.settings.default_run_scenario || "";
+  const configuredDefaultScenario = setup.runTemplate && setup.runTemplate !== operatorDefaultTemplate
+    ? setup.runTemplate
+    : settingsDefaultScenario || setup.runTemplate || "reth_peer_starvation";
   const defaultScenarioKnown = SCENARIO_PICKER.some((scenario) => scenario.key === configuredDefaultScenario);
+  const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
+    ? setup.agentFabricMode
+    : dashboard.settings.default_orchestration_mode || "auto";
   const [scenarioKey, setScenarioKey] = useState(defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation");
   const [evaluationMode, setEvaluationMode] = useState(dashboard.settings.default_evaluation_mode || "native");
-  const [orchestrationMode, setOrchestrationMode] = useState(dashboard.settings.default_orchestration_mode || "native");
-  const [steeringMode, setSteeringMode] = useState(dashboard.settings.default_steering_mode || "approval_gate");
+  const [orchestrationMode, setOrchestrationMode] = useState(String(preferredOrchestration));
+  const [steeringMode, setSteeringMode] = useState(setup.approvalPolicy === "interruptible_auto" ? "interruptible_auto" : dashboard.settings.default_steering_mode || "approval_gate");
   const [auditReason, setAuditReason] = useState("");
-  const [requireTargetLock, setRequireTargetLock] = useState(dashboard.settings.default_target_lock === "required");
+  const [requireTargetLock, setRequireTargetLock] = useState(setup.target.lockRequired || dashboard.settings.default_target_lock === "required");
   const [result, setResult] = useState<RunLaunchResponse | null>(null);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const preflight = buildRunPreflightModel(dashboard, { scenarioKey, orchestrationMode, steeringMode, requireTargetLock });
 
   async function launchRun() {
     const cleanedReason = auditReason.trim();
@@ -2383,6 +2617,14 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
         orchestration_mode: orchestrationMode,
         steering_mode: steeringMode,
         require_target_lock: requireTargetLock,
+        pause_points: setup.pausePoints,
+        simulation_context: {
+          state_slice: "meshapp.run-preflight.v1",
+          operator_preferences_ref: setup.stateSlice,
+          preferred_agents: setup.preferredAgents,
+          model_binding: setup.modelBinding,
+          target: setup.target,
+        },
       });
       setResult(response);
       await onDashboardRefresh();
@@ -2454,18 +2696,94 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
           Require target lock
         </label>
       </div>
+      <RunPreflightPanel preflight={preflight} scenarioKey={scenarioKey} orchestrationMode={orchestrationMode} steeringMode={steeringMode} />
       {message ? <div className={messageClass}>{message}</div> : null}
       {result ? (
         <div className={`admission-result ${admission?.decision === "blocked" ? "blocked" : "ready"}`}>
           <span>{admission?.schema_version || "mesh.run_admission.v1"}</span>
           <strong>{admission?.decision || result.status || result.stage}</strong>
           <small>{result.run_id}</small>
+          <p>Operator: {result.artifacts?.operator_audit?.operator_id || preflight.operatorId} / {result.artifacts?.operator_audit?.state_slice || "meshapp.run-admission-launch.v1"}</p>
           {blockers.length ? <p>Blocked by: {blockers.join(", ")}</p> : <p>Queue depth: {admission?.queue?.current_depth ?? 0} / {admission?.queue?.max_size ?? "unknown"}</p>}
           <button type="button" onClick={() => setAuditReason(`Follow-up on ${result.run_id}: review Mesh proof and admission outcome.`)}>Prepare follow-up reason</button>
         </div>
       ) : null}
     </section>
   );
+}
+
+function RunPreflightPanel({
+  preflight,
+  scenarioKey,
+  orchestrationMode,
+  steeringMode,
+}: {
+  preflight: RunPreflightModel;
+  scenarioKey: string;
+  orchestrationMode: string;
+  steeringMode: string;
+}) {
+  const rows = [
+    { label: "Operator", value: preflight.operatorId, detail: `${preflight.source} / ${preflight.roles.join(", ")}` },
+    { label: "Team", value: preflight.team, detail: preflight.operatorPresent ? "Identity present for Mesh role checks" : "Mesh will reject missing identity" },
+    { label: "Topology", value: preflight.selectedTopology, detail: `${preflight.selectedAgents.join(", ") || "no preferred agents"} / ${preflight.modelBinding}` },
+    { label: "Target", value: preflight.target, detail: `target lock ${preflight.targetLock}` },
+    { label: "Run mode", value: scenarioKey, detail: `${orchestrationMode} / ${steeringMode}` },
+    { label: "Readiness", value: preflight.readiness, detail: preflight.blockers.length ? preflight.blockers.join(", ") : "No preflight blockers surfaced" },
+  ];
+  return (
+    <section className={preflight.blockers.length ? "run-preflight blocked" : "run-preflight ready"} aria-label="Run preflight">
+      <div className="panel-title"><ShieldCheck size={15} /><span>meshapp.run-preflight.v1</span></div>
+      <div className="preflight-grid">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <span>{row.label}</span>
+            <strong>{humanize(row.value)}</strong>
+            <small>{row.detail}</small>
+          </div>
+        ))}
+      </div>
+      <small>Connector scopes: {preflight.connectorScopes.length ? preflight.connectorScopes.join(", ") : "no connector scopes returned"}</small>
+    </section>
+  );
+}
+
+export function buildRunWorkbenchModel(payloads: Record<string, any>): RunWorkbenchModel {
+  const detail = payloads.detail?.payload || payloads.detail || {};
+  const eventsPayload = payloads.events?.payload || payloads.events || {};
+  const exportPayload = payloads.exportPackage?.payload || payloads.exportPackage || {};
+  const artifacts = detail.artifacts || exportPayload.artifacts || {};
+  const admission = artifacts.run_admission || detail.artifacts?.run_admission || {};
+  const operator = artifacts.operator || detail.artifacts?.operator || {};
+  const decision = artifacts.decision || exportPayload.decision_record || {};
+  const evaluation = artifacts.evaluation || exportPayload.evaluation_record || {};
+  const agentTasks = Array.isArray(artifacts.agent_tasks) ? artifacts.agent_tasks : [];
+  const events = Array.isArray(detail.events) ? detail.events : Array.isArray(eventsPayload.events) ? eventsPayload.events : [];
+  const blockers = [
+    ...(Array.isArray(admission.blockers) ? admission.blockers.map(String) : []),
+    ...(Array.isArray(evaluation.blocking_reasons) ? evaluation.blocking_reasons.map(String) : []),
+  ];
+  const status = String(detail.status || "unknown");
+  const stage = String(detail.stage || "unknown");
+  const nextAction = blockers.length
+    ? "Resolve blockers or ask Mesh to explain blockers."
+    : status === "awaiting_operator" || stage === "awaiting_operator"
+      ? "Approve, resume, cancel, or hand off through Mesh steering."
+      : ["completed", "failed", "cancelled"].includes(status)
+        ? "Export proof package and review postmortem evidence."
+        : "Watch events and wait for the next Mesh pause point.";
+  return {
+    runId: String(detail.run_id || exportPayload.run_id || ""),
+    currentStage: stage,
+    status,
+    nextAction,
+    operator: String(operator.operator_id || detail.artifacts?.operator_audit?.operator_id || "Mesh"),
+    evidenceSummary: blockers.length ? `${blockers.length} blocker(s) require attention` : "Evidence, Merkle, timeline, and export endpoints loaded.",
+    decisionSummary: String(decision.decision_type || decision.final_recommendation || admission.decision || "No decision artifact yet."),
+    agentSummary: agentTasks.length ? `${agentTasks.length} agent task(s) recorded` : "No agent task artifact returned for this run.",
+    blockers,
+    events: events.length,
+  };
 }
 
 function runAdmission(run: RunLaunchResponse): RunAdmissionPacket | null {
@@ -2718,8 +3036,180 @@ function MembersView({
   );
 }
 
-function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig | null; dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+function OperatorSetupView({
+  dashboard,
+  onDashboardRefresh,
+  setView,
+}: {
+  dashboard: DashboardPayload;
+  onDashboardRefresh: () => Promise<void>;
+  setView: (view: ViewKey) => void;
+}) {
+  const model = buildOperatorSetupModel(dashboard);
+  const schema = dashboard.operator_preferences_state?.operator_preferences_schema || dashboard.operator_preferences_schema || {};
+  const [draft, setDraft] = useState<Record<string, string | boolean | string[]>>({});
+  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft({ ...(dashboard.operator_preferences_state?.operator_preferences || dashboard.operator_preferences || {}) });
+  }, [dashboard]);
+
+  function updateDraft(key: string, value: string | boolean | string[]) {
+    setDraft({ ...draft, [key]: value });
+  }
+
+  async function savePreferences() {
+    const cleanedReason = reason.trim();
+    if (!cleanedReason) {
+      setMessage("Audit reason is required before operator preferences can be saved.");
+      return;
+    }
+    setSaving(true);
+    setMessage("");
+    try {
+      const response = await productApi.updateOperatorPreferences(dashboard.scope.team?.id || null, draft, cleanedReason);
+      setDraft(response.operator_preferences);
+      setReason("");
+      await onDashboardRefresh();
+      setMessage(`Saved ${response.audit.fields.join(", ")} for ${response.audit.scope}.`);
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Operator preferences update failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="content-stack">
+      <Toolbar
+        title="Operator Setup"
+        detail="Preferences mutate mesh.operator-preferences.v1. Mesh still owns topology resolution, connector certification, approval, and actuation."
+        action="Launch Run"
+        onAction={() => setView("evaluations")}
+      />
+      <section className="operator-setup-summary">
+        <ConfigPostureCard title="Operator" value={model.operatorId} state="ready" detail={`${model.source} / ${model.roles.join(", ") || "no roles"}`} />
+        <ConfigPostureCard title="Team scope" value={model.team} state="ready" detail={model.scope} />
+        <ConfigPostureCard title="Agent fabric" value={model.agentFabricMode} state="ready" detail={`${model.preferredAgents.length} preferred lane(s)`} />
+        <ConfigPostureCard title="Model binding" value={model.modelBinding} state="ready" detail="Preference only; deployment secrets stay out of product state." />
+        <ConfigPostureCard title="Approval policy" value={model.approvalPolicy} state={model.approvalPolicy === "approval_required" ? "ready" : "config-only"} detail={`${model.pausePoints.length} pause point(s)`} />
+        <ConfigPostureCard title="Target" value={`${model.target.namespace}/${model.target.service}`} state={model.target.lockRequired ? "ready" : "config-only"} detail={`${model.target.environment}; lock ${model.target.lockRequired ? "required" : "optional"}`} />
+      </section>
+      <section className="operator-setup-editor">
+        <div className="panel-heading">
+          <div>
+            <span>{model.stateSlice}</span>
+            <h3>Governed setup editor</h3>
+            <p>These preferences are stamped into preflight context and launch payloads. Runtime env vars and Mesh policy can still narrow actual lanes.</p>
+          </div>
+          <button className="primary-button" type="button" onClick={savePreferences} disabled={saving}>{saving ? "Saving" : "Save setup"}</button>
+        </div>
+        <div className="setting-grid operator-grid">
+          {Object.entries(schema).map(([key, item]) => (
+            <OperatorPreferenceField
+              key={key}
+              name={key}
+              schema={item}
+              value={draft[key] ?? item.default}
+              onChange={(value) => updateDraft(key, value)}
+            />
+          ))}
+        </div>
+        <div className="settings-save-row">
+          <label>
+            Audit reason
+            <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="why this operator setup change is required" />
+          </label>
+          <button className="primary-button" type="button" onClick={savePreferences} disabled={saving}>{saving ? "Saving" : "Save setup"}</button>
+        </div>
+        {message ? <div className={message.startsWith("Saved") ? "product-alert success" : "auth-error"}>{message}</div> : null}
+      </section>
+      <section className="operator-topology-panel">
+        <div>
+          <span>mesh.orchestration_topology_profile.v1</span>
+          <strong>{humanize(model.topology.active)}</strong>
+          <small>{model.topology.blockers.length ? model.topology.blockers.join(", ") : "No topology blockers in the dashboard read model."}</small>
+        </div>
+        <div>
+          <span>Preferred profile agents</span>
+          <strong>{model.topology.preferredAgents.slice(0, 6).join(", ") || "unavailable"}</strong>
+          <small>Runtime filter can still remove lanes before attempts are collected.</small>
+        </div>
+        <div>
+          <span>Allowed model policy</span>
+          <strong>{model.topology.allowedModels.slice(0, 3).join(", ") || "unavailable"}</strong>
+          <small>Provider secrets remain deployment-owned.</small>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function OperatorPreferenceField({
+  name,
+  schema,
+  value,
+  onChange,
+}: {
+  name: string;
+  schema: { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string };
+  value: string | boolean | string[];
+  onChange: (value: string | boolean | string[]) => void;
+}) {
+  const values = schema.values || [];
+  return (
+    <div className="setting-card">
+      <span>{titleize(name)}</span>
+      {schema.kind === "enum" ? (
+        <select value={String(value)} onChange={(event) => onChange(event.target.value)}>
+          {values.map((option) => <option key={option} value={option}>{humanize(option)}</option>)}
+        </select>
+      ) : schema.kind === "multi" ? (
+        <div className="preference-checkboxes">
+          {values.map((option) => {
+            const checked = listPreference(value).includes(option);
+            return (
+              <label key={option}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(event) => {
+                    const current = new Set(listPreference(value));
+                    if (event.target.checked) current.add(option);
+                    else current.delete(option);
+                    onChange(Array.from(current).sort());
+                  }}
+                />
+                {humanize(option)}
+              </label>
+            );
+          })}
+        </div>
+      ) : schema.kind === "boolean" ? (
+        <label className="toggle-row inline">
+          <input type="checkbox" checked={booleanPreference(value)} onChange={(event) => onChange(event.target.checked)} />
+          {booleanPreference(value) ? "Required" : "Optional"}
+        </label>
+      ) : (
+        <input value={String(value || "")} onChange={(event) => onChange(event.target.value)} />
+      )}
+      <p>{schema.description}</p>
+    </div>
+  );
+}
+
+export function buildKeysReadinessRows(authConfig: AuthConfig | null, dashboard: DashboardPayload): Array<{ title: string; value: string; state: string; detail: string }> {
   const readiness = dashboard.mesh.readiness || {};
+  const connectors = dashboard.mesh.connectors?.connectors || dashboard.mesh.connectors?.connector_certification || {};
+  const connectorRows = Object.entries(connectors).slice(0, 6).map(([id, connector]: [string, any]) => ({
+    title: `Connector: ${connector.display_name || connector.name || id}`,
+    value: String(connector.state || connector.status || "unknown"),
+    state: String(connector.state || connector.status || "read-only"),
+    detail: `${connector.authority_posture || "Mesh-certified connector"} / scopes ${(connector.allowed_scopes || []).slice(0, 4).join(", ") || "none"} / ${connector.credential_boundary?.credential_mode || connector.credential_policy || "credential boundary unavailable"}`,
+  }));
+  const setup = buildOperatorSetupModel(dashboard);
   const rows = authConfig ? [
     {
       title: "Auth mode",
@@ -2767,6 +3257,18 @@ function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig |
   ];
   const deploymentRows = [
     {
+      title: "Model route",
+      value: setup.modelBinding,
+      state: "read-only",
+      detail: "Provider route preference is stored in mesh.operator-preferences.v1; raw provider keys remain deployment-owned.",
+    },
+    {
+      title: "Agent fabric",
+      value: setup.agentFabricMode,
+      state: "config-only",
+      detail: `Preferred agents: ${setup.preferredAgents.join(", ") || "none"}. Runtime config can still narrow lanes.`,
+    },
+    {
       title: "State backend",
       value: String(readiness.state_backend || "RuntimeConfig-owned"),
       state: readiness.state_backend ? "ready" : "read-only",
@@ -2785,6 +3287,11 @@ function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig |
       detail: "Defaults on the Settings page mutate mesh-settings-control with an audit reason.",
     },
   ];
+  return [...rows, ...deploymentRows, ...connectorRows];
+}
+
+function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig | null; dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+  const rows = buildKeysReadinessRows(authConfig, dashboard);
 
   return (
     <div className="content-stack">
@@ -2795,7 +3302,7 @@ function KeysView({ authConfig, dashboard, setView }: { authConfig: AuthConfig |
         onAction={() => setView("settings")}
       />
       <section className="keys-posture-grid">
-        {[...rows, ...deploymentRows].map((row) => <ConfigPostureCard key={row.title} {...row} />)}
+        {rows.map((row) => <ConfigPostureCard key={row.title} {...row} />)}
       </section>
       <section className="keys-env-panel">
         <h3>Deployment-owned variables</h3>
@@ -3017,7 +3524,7 @@ export function runtimeProductPage(view: ViewKey, dashboard: DashboardPayload): 
 
 export function workflowForView(view: ViewKey): OperatorWorkflowKey {
   if (isConsoleProductView(view)) return workflowForView(consoleWorkflowForView(view).productFallback);
-  if (view === "keys" || view === "settings") return "settings";
+  if (view === "keys" || view === "settings" || view === "operator-setup") return "settings";
   if (view === "environments") return "connector";
   if (view === "evaluations") return "launch";
   if (view === "training" || view === "inference" || view === "gpu" || view === "clusters" || view === "instances") return "readiness";
@@ -3042,10 +3549,10 @@ function isLensKey(value: string | null): value is LensKey {
 
 export function orderDashboardInsights(insights: DashboardInsight[], lens: LensKey): DashboardInsight[] {
   const lensPriority: Record<LensKey, string[]> = {
-    operator: ["readiness", "run", "praxis", "connector", "settings", "proof", "approval", "auth"],
-    approver: ["approval", "proof", "readiness", "run", "settings", "connector", "auth", "praxis"],
-    security: ["auth", "connector", "proof", "readiness", "settings", "approval", "run", "praxis"],
-    "partner-review": ["proof", "readiness", "auth", "connector", "praxis", "run", "approval", "settings"],
+    operator: ["readiness", "run", "operator", "praxis", "connector", "settings", "proof", "approval", "auth"],
+    approver: ["approval", "proof", "readiness", "run", "operator", "settings", "connector", "auth", "praxis"],
+    security: ["auth", "connector", "proof", "readiness", "operator", "settings", "approval", "run", "praxis"],
+    "partner-review": ["proof", "readiness", "auth", "connector", "praxis", "run", "approval", "operator", "settings"],
   };
   return [...insights].sort((a, b) => {
     const severityDelta = severityRank(b.severity) - severityRank(a.severity);
@@ -3060,9 +3567,9 @@ export function orderDashboardInsights(insights: DashboardInsight[], lens: LensK
 
 export function orderDashboardTiles(cards: DashboardTileModel[], lens: LensKey): DashboardTileModel[] {
   const priority: Record<LensKey, string[]> = {
-    operator: ["Run admission", "Runtime readiness", "Praxis MCP generator", "Connector status", "Evidence packets", "Settings parity"],
+    operator: ["Run admission", "Operator setup", "Runtime readiness", "Praxis MCP generator", "Connector status", "Evidence packets", "Settings parity"],
     approver: ["Policy approvals", "Evidence packets", "Runtime readiness", "Run admission", "Trust ladder", "Settings parity"],
-    security: ["Connector status", "Runtime readiness", "Evidence packets", "Settings parity", "Watchers", "Policy approvals"],
+    security: ["Connector status", "Runtime readiness", "Evidence packets", "Operator setup", "Settings parity", "Watchers", "Policy approvals"],
     "partner-review": ["Evidence packets", "Runtime readiness", "Connector status", "Praxis MCP generator", "Policy approvals", "Settings parity"],
   };
   return [...cards].sort((a, b) => {
@@ -3253,7 +3760,8 @@ export function askMesh(query: string, dashboard: DashboardPayload, authConfig: 
   const missingEvidence = Array.isArray(pilot.missing_evidence) ? pilot.missing_evidence : [];
   const connectors = Object.entries(mesh.connectors?.connectors || mesh.connectors?.connector_certification || {}) as Array<[string, any]>;
   const connectorNotReady = connectors.filter(([, value]) => !String(value?.state || value?.status || "").toLowerCase().includes("ready"));
-  const suggestions = ["why blocked", "latest runs", "failed runs", "pending approvals", "connector readiness", "proof gaps", "auth posture", "settings defaults"];
+  const setup = buildOperatorSetupModel(dashboard);
+  const suggestions = ["why blocked", "latest runs", "failed runs", "pending approvals", "operator setup", "agent preferences", "connector readiness", "proof gaps", "auth posture", "settings defaults"];
 
   if (normalized.includes("block") || normalized.includes("why")) {
     const blockers = [...readinessBlockers, ...missingEvidence].map((item) => humanize(String(item)));
@@ -3317,6 +3825,18 @@ export function askMesh(query: string, dashboard: DashboardPayload, authConfig: 
       suggestions,
     };
   }
+  if (normalized.includes("operator") || normalized.includes("agent preference") || normalized.includes("agent setup") || normalized.includes("agent preferences")) {
+    return {
+      query,
+      intent: "operator setup",
+      supported: true,
+      answer: `${setup.operatorId} is using ${setup.agentFabricMode} with ${setup.preferredAgents.join(", ") || "no preferred agents"} and model ${setup.modelBinding}. Target is ${setup.target.environment}/${setup.target.namespace}/${setup.target.service}.`,
+      sourcePath: "operator_preferences_state",
+      targetView: "operator-setup",
+      filters: [setup.agentFabricMode, ...setup.preferredAgents].filter(Boolean),
+      suggestions,
+    };
+  }
   if (normalized.includes("proof") || normalized.includes("evidence")) {
     return {
       query,
@@ -3365,7 +3885,7 @@ export function askMesh(query: string, dashboard: DashboardPayload, authConfig: 
     query,
     intent: "unsupported",
     supported: false,
-    answer: "Ask Mesh V1 supports deterministic prompts for blockers, runs, approvals, connectors, proof, auth posture, and settings defaults.",
+    answer: "Ask Mesh V1 supports deterministic prompts for blockers, runs, approvals, operator setup, connectors, proof, auth posture, and settings defaults.",
     sourcePath: "ui-product-shell.ask_mesh.v1",
     targetView: "home",
     filters: [],
@@ -3377,7 +3897,7 @@ export function sensitivityBadgesForSource(sourcePath: string): SensitivityBadge
   const normalized = sourcePath.toLowerCase();
   const badges: SensitivityBadge[] = normalized.includes("auth") || normalized.includes("key") || normalized.includes("secret") || normalized.includes("captcha") || normalized.includes("oauth") || normalized.includes("invite")
     ? ["Read-only", "Deployment-owned", "Sensitive", "Redacted"]
-    : normalized.includes("approval") || normalized.includes("proof") || normalized.includes("evidence") || normalized.includes("settings")
+    : normalized.includes("approval") || normalized.includes("proof") || normalized.includes("evidence") || normalized.includes("settings") || normalized.includes("preference")
       ? ["Read-only", "Mesh-owned", "Audit required"]
       : ["Read-only", "Mesh-owned"];
   if (normalized.includes("connector")) badges.push("Sensitive");

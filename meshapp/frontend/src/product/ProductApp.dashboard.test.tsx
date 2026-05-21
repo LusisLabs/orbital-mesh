@@ -6,7 +6,11 @@ import {
   buildDashboardInsights,
   buildDashboardControlModel,
   buildDashboardTiles,
+  buildKeysReadinessRows,
+  buildOperatorSetupModel,
   buildPraxisProductModel,
+  buildRunPreflightModel,
+  buildRunWorkbenchModel,
   consoleParityMatrix,
   consoleWorkflowForView,
   dashboardLoadSurfaceState,
@@ -187,7 +191,7 @@ describe("dashboard section state coverage", () => {
       },
     } as any);
 
-    expect(tiles).toHaveLength(12);
+    expect(tiles).toHaveLength(13);
     expect(tiles.every((tile) => tile.apiSection)).toBe(true);
     expect(tiles.map((tile) => tile.state)).toEqual(expect.arrayContaining(["ready", "empty", "blocked"]));
     expect(tiles.find((tile) => tile.title === "Control console")).toMatchObject({
@@ -198,6 +202,114 @@ describe("dashboard section state coverage", () => {
       apiSection: "mesh.pilot_go_no_go",
       state: "blocked",
     });
+    expect(tiles.find((tile) => tile.title === "Operator setup")).toMatchObject({
+      apiSection: "operator_preferences_state",
+      state: "empty",
+    });
+  });
+});
+
+describe("operator setup and preflight models", () => {
+  const dashboard = {
+    scope: { kind: "team", team: { id: "team-1", name: "Mesh Ops", display_name: "Mesh Ops" } },
+    session: { user: { id: "user-1", email: "operator@example.com" }, active_team: { roles: ["admin", "launcher"] } },
+    settings: { default_orchestration_mode: "native", default_steering_mode: "approval_gate" },
+    settings_schema: {},
+    operator_preferences_state: {
+      state_slice: "mesh.operator-preferences.v1",
+      scope: "team:team-1",
+      operator_preferences: {
+        agent_fabric_mode: "deepagents",
+        preferred_agents: ["codex", "hermes"],
+        model_provider: "openai-compatible",
+        model_name: "MiniMax-M2.7",
+        approval_policy: "approval_required",
+        pause_points: ["evaluation", "pre_actuation"],
+        target_environment: "pilot",
+        target_namespace: "search",
+        target_service: "semantic-search",
+        target_lock_required: true,
+        run_template: "search_latency_regression",
+      },
+      operator_preferences_schema: {},
+    },
+    mesh: {
+      health: {},
+      readiness: {
+        status: "ready",
+        orchestration_topology: {
+          active_topology: "hybrid",
+          organization_profile: { preferred_agents: ["hermes", "goose"] },
+          model_provider_policy: { allowed_models: [{ provider: "openai-compatible", model: "MiniMax-M2.7" }] },
+        },
+      },
+      connectors: { connectors: { kubernetes: { state: "pilot-ready", allowed_scopes: ["rollback"], credential_boundary: { credential_mode: "runtime-secret" } } } },
+    },
+  } as any;
+
+  it("builds governed operator setup from mesh.operator-preferences.v1", () => {
+    const model = buildOperatorSetupModel(dashboard);
+    expect(model.stateSlice).toBe("mesh.operator-preferences.v1");
+    expect(model.scope).toBe("team:team-1");
+    expect(model.agentFabricMode).toBe("deepagents");
+    expect(model.preferredAgents).toEqual(["codex", "hermes"]);
+    expect(model.target.lockRequired).toBe(true);
+    expect(model.topology.active).toBe("hybrid");
+  });
+
+  it("builds run preflight with operator proof, target, agents, and connector scopes", () => {
+    const preflight = buildRunPreflightModel(dashboard, { requireTargetLock: true });
+    expect(preflight.operatorPresent).toBe(true);
+    expect(preflight.operatorId).toBe("operator@example.com");
+    expect(preflight.selectedAgents).toEqual(["codex", "hermes"]);
+    expect(preflight.targetLock).toBe("required");
+    expect(preflight.connectorScopes).toEqual(["rollback"]);
+  });
+});
+
+describe("run workbench and keys readiness", () => {
+  it("translates raw run payloads into next-action workbench copy", () => {
+    const model = buildRunWorkbenchModel({
+      detail: {
+        payload: {
+          run_id: "run-1",
+          stage: "awaiting_operator",
+          status: "awaiting_operator",
+          events: [{ event_id: "evt-1" }],
+          artifacts: {
+            operator: { operator_id: "operator@example.com" },
+            run_admission: { decision: "admitted", blockers: [] },
+            agent_tasks: [{ task_id: "task-1" }],
+          },
+        },
+      },
+    });
+    expect(model.nextAction).toContain("Approve");
+    expect(model.agentSummary).toBe("1 agent task(s) recorded");
+    expect(model.events).toBe(1);
+  });
+
+  it("summarizes auth, model route, agent fabric, and connector readiness without secret values", () => {
+    const rows = buildKeysReadinessRows({
+      auth_mode: "app_session",
+      signup_enabled: true,
+      password_auth_enabled: true,
+      captcha: { provider: "hcaptcha", site_key: "site", configured: true, dev_bypass_enabled: false },
+      oauth: { google: { configured: false }, github: { configured: true } },
+      invite: { required: false, configured: true, allowlist_enabled: true },
+    }, {
+      operator_preferences_state: {
+        operator_preferences: { agent_fabric_mode: "deepagents", preferred_agents: ["codex"], model_provider: "openai-compatible", model_name: "MiniMax-M2.7" },
+        operator_preferences_schema: {},
+      },
+      scope: { kind: "solo", team: null },
+      session: { user: { id: "user-1", email: "operator@example.com" }, active_team: null },
+      settings: {},
+      settings_schema: {},
+      mesh: { health: {}, readiness: {}, connectors: { connectors: { kubernetes: { state: "pilot-ready", allowed_scopes: ["rollback"] } } } },
+    } as any);
+    expect(rows.map((row) => row.title)).toEqual(expect.arrayContaining(["Model route", "Agent fabric", "Connector: kubernetes"]));
+    expect(JSON.stringify(rows)).not.toContain("site");
   });
 });
 

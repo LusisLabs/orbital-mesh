@@ -79,6 +79,29 @@ class RunSession(JsonModel):
     artifacts: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "run_id": self.run_id,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "goal_id": self.goal_id,
+            "scenario_key": self.scenario_key,
+            "stage": self.stage,
+            "status": self.status,
+            "steering_mode": self.steering_mode,
+            "auto_mode": self.auto_mode,
+            "pause_points": list(self.pause_points),
+            "pending_pause_stage": self.pending_pause_stage,
+            "evaluation_mode": self.evaluation_mode,
+            "orchestration_mode": self.orchestration_mode,
+            "latest_event_id": self.latest_event_id,
+            "latest_event_sequence": self.latest_event_sequence,
+            "latest_merkle_root": self.latest_merkle_root,
+            "operator_notes": list(self.operator_notes),
+            "artifacts": dict(self.artifacts),
+            "error": self.error,
+        }
+
     @classmethod
     def new(
         cls,

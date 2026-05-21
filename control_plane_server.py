@@ -24,6 +24,7 @@ from shared.mesh_runtime.operator_identity import (
     OperatorIdentityStore,
     exchange_oauth_profile,
     oauth_authorize_url,
+    write_operator_preferences_audit,
     write_settings_audit,
 )
 from shared.mesh_runtime.praxis import PraxisManagedRuntimeStore, build_praxis_product_dashboard
@@ -1186,6 +1187,43 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                     return
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
+        if path == "/api/operator/preferences":
+            token = self._session_token()
+            if not token:
+                self._send_json({"error": "session required"}, status=HTTPStatus.UNAUTHORIZED)
+                return
+            team_id = str(payload.get("team_id")) if payload.get("team_id") else None
+            updates = payload.get("operator_preferences") if isinstance(payload.get("operator_preferences"), dict) else {}
+            reason = str(payload.get("reason") or "").strip()
+            if not reason:
+                self._send_json({"error": "operator preferences update reason is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                response = self.server.operator_identity.update_operator_preferences(token, team_id=team_id, updates=updates)
+                operator = self.server.operator_identity.operator_context_from_session(token) or {}
+                scope = f"team:{team_id}" if team_id else f"user:{operator.get('user_id') or 'unknown'}"
+                audit = write_operator_preferences_audit(
+                    self.server.config.operator_identity_path,
+                    operator_id=str(operator.get("operator_id") or "unknown"),
+                    reason=reason,
+                    scope=scope,
+                    updates=updates,
+                    git_commit=self.server.config.build_commit or "unknown",
+                )
+                response["audit"] = {
+                    "recorded": True,
+                    "state_slice": audit["record"]["state_slice"],
+                    "scope": audit["record"]["scope"],
+                    "fields": audit["record"]["fields"],
+                }
+                self._send_json(response)
+            except PermissionError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+            except ValueError as exc:
+                if self._send_session_value_error(exc):
+                    return
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
 
     def _handle_operator_praxis_post(self, path: str, payload: dict[str, Any]) -> None:
@@ -1433,7 +1471,10 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     def _clear_session_cookie_header(self) -> tuple[str, str]:
         return (
             "Set-Cookie",
-            f"{self.server.config.session_cookie_name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0",
+            (
+                f"{self.server.config.session_cookie_name}=; Path=/; HttpOnly; SameSite=Lax; "
+                "Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0"
+            ),
         )
 
     def _mesh_dashboard_snapshot(self, *, praxis_scope: dict[str, str] | None = None) -> dict[str, Any]:

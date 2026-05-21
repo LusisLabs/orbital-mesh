@@ -89,7 +89,7 @@ class LockedJsonFile:
         raw = self.path.read_text(encoding="utf-8") if self._file_existed else ""
         self.payload, self._recovered_corrupt_input = _load_payload(self.path, raw)
         if raw.strip() and not self._recovered_corrupt_input:
-            self._serialized_on_enter = _serialize_payload(self.payload)
+            self._serialized_on_enter = raw
         else:
             self._serialized_on_enter = ""
         return self.payload

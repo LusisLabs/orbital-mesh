@@ -6,6 +6,9 @@ State slices:
 - `team-tenancy`: team profile, active team, membership, role mapping.
 - `mesh-dashboard-read-model`: product dashboard aggregation over Mesh-owned APIs.
 - `mesh-settings-control`: validated UI/CLI settings stored in operator identity state.
+- `mesh.operator-preferences.v1`: scoped operator setup preferences for agent fabric, preferred agents, model defaults, approval posture, pause points, target defaults, and run templates.
+- `meshapp.run-preflight.v1`: product launch preflight read model over operator identity, preferences, topology, connector scopes, readiness, and target lock posture.
+- `meshapp.run-workbench.v1`: product run review model over Mesh run detail, events, evidence, decisions, agent tasks, timeline proof, and export endpoints.
 - `ui-product-shell`: `meshapp/frontend` production product shell.
 
 ## Auth Modes
@@ -153,6 +156,18 @@ python scripts/operator_config.py validate --scope team:<team_id>
 UI, API, and CLI mutations require an audit reason and append redacted audit records to `operator-config-audit.jsonl` next to the configured operator identity store. Audit records name `state_slice=mesh-settings-control`, operator id, scope, changed fields, config hash, and git/build commit.
 
 The product settings page renders a parity row for every key in `settings_schema`. Mutable rows show both `/api/operator/settings` and the equivalent `python scripts/operator_config.py set --scope ... --operator-id ... --reason ... key=...` command. Deployment-owned values such as API base URL, build commit, state backend, and captcha provider render as read-only rows with an explicit reason instead of pretending to be dashboard settings.
+
+## Operator Setup
+
+The Operator Setup page mutates `mesh.operator-preferences.v1` through `/api/operator/preferences`. It is separate from `mesh-settings-control`: settings remain launch defaults with CLI parity, while preferences describe the operator's desired agent fabric, preferred proposal lanes, model provider/model, approval policy, pause points, target environment, target namespace/service, target lock default, and run template.
+
+`/api/operator/dashboard` returns both the raw `operator_preferences` fields and an explicit `operator_preferences_state` wrapper with `schema_version`, `state_slice`, `scope`, `operator_preferences`, and `operator_preferences_schema`. The wrapper is the product source of truth for the setup page and run preflight.
+
+Preference updates require an audit reason and append redacted audit records to `operator-config-audit.jsonl` with `state_slice=mesh.operator-preferences.v1`. Preferences never store provider secrets, kubeconfigs, bearer tokens, passwords, or raw API keys. Runtime environment variables and Mesh policy can still narrow or block requested lanes.
+
+The Evaluations launch panel now renders `meshapp.run-preflight.v1` before `POST /api/runs`. It shows operator id, roles, team, auth source, selected topology, preferred agents, model binding, pause points, target environment/namespace/service, target lock posture, connector scopes, readiness, and blockers. Run creation stamps the preflight context into `simulation_context`; Mesh remains responsible for actual admission, target locks, policy, evidence, and actuation.
+
+The proof drill-in now renders `meshapp.run-workbench.v1` after loading run detail, events, evidence graph, RCA, Merkle, timeline proof, and export package. It translates raw artifacts into current stage, operator, evidence summary, decision summary, agent task summary, blockers, and next valid operator action without replacing Mesh authority.
 
 ## Console Workflow Parity
 

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from scripts.operator_config import main as operator_config_main
 from shared.mesh_runtime.operator_identity import (
+    OPERATOR_PREFERENCES_STATE_SLICE,
     SESSION_TTL_SECONDS,
     CaptchaConfig,
     OAuthProviderConfig,
@@ -81,6 +82,25 @@ class OperatorIdentityStoreTests(unittest.TestCase):
             scoped = store.read_scoped_settings(f"team:{active_team['id']}")
             self.assertEqual(scoped["settings"]["default_orchestration_mode"], "hermes")
 
+            preferences = store.update_operator_preferences(
+                token,
+                team_id=active_team["id"],
+                updates={
+                    "agent_fabric_mode": "deepagents",
+                    "preferred_agents": ["codex", "hermes"],
+                    "target_lock_required": True,
+                },
+            )
+            self.assertEqual(preferences["state_slice"], OPERATOR_PREFERENCES_STATE_SLICE)
+            self.assertEqual(preferences["operator_preferences"]["agent_fabric_mode"], "deepagents")
+            self.assertEqual(preferences["operator_preferences"]["preferred_agents"], ["codex", "hermes"])
+            self.assertTrue(preferences["operator_preferences"]["target_lock_required"])
+
+            dashboard = store.dashboard(token, team_id=active_team["id"], mesh={})
+            self.assertEqual(dashboard["operator_preferences_state"]["state_slice"], OPERATOR_PREFERENCES_STATE_SLICE)
+            self.assertEqual(dashboard["operator_preferences_state"]["scope"], f"team:{active_team['id']}")
+            self.assertNotIn("agent_fabric_mode", dashboard["settings"])
+
     def test_operator_config_cli_mutates_same_settings_slice(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             identity_path = Path(temp_dir) / "operator-identity.json"
@@ -114,6 +134,22 @@ class OperatorIdentityStoreTests(unittest.TestCase):
             store = OperatorIdentityStore(Path(temp_dir) / "operator-identity.json")
             with self.assertRaises(ValueError):
                 store.update_scoped_settings("global", {"default_evaluation_mode": "unsafe"})
+
+    def test_invalid_operator_preference_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = OperatorIdentityStore(Path(temp_dir) / "operator-identity.json")
+            captcha = CaptchaConfig(provider="disabled", dev_bypass_enabled=True)
+            session = store.create_user(
+                email="prefs@example.com",
+                password="correct-horse-42",
+                captcha_token="dev-captcha-ok",
+                captcha=captcha,
+                accepted_terms=True,
+            )
+            with self.assertRaises(ValueError):
+                store.update_operator_preferences(session["token"], team_id=None, updates={"preferred_agents": ["unknown-agent"]})
+            with self.assertRaises(ValueError):
+                store.update_operator_preferences(session["token"], team_id=None, updates={"target_service": "Bearer-secret-value"})
 
     def test_public_captcha_config_requires_site_key_and_secret(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

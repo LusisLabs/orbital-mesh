@@ -11,7 +11,7 @@ http://127.0.0.1:8787
 For local development:
 
 ```bash
-npm --prefix meshapp/frontend run build
+pnpm --dir meshapp/frontend run build
 python3 run_server.py
 ```
 

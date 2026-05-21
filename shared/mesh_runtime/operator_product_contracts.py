@@ -65,6 +65,48 @@ def operator_product_schema() -> dict[str, Any]:
             },
         },
     }
+    operator_preferences = {
+        "type": "object",
+        "additionalProperties": {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "boolean"},
+                {"type": "array", "items": {"type": "string"}},
+            ]
+        },
+    }
+    operator_preferences_schema = {
+        "type": "object",
+        "additionalProperties": {
+            "type": "object",
+            "additionalProperties": True,
+            "required": ["kind", "default", "description"],
+            "properties": {
+                "kind": {"enum": ["enum", "multi", "boolean", "string"]},
+                "values": {"type": "array", "items": {"type": "string"}},
+                "default": {
+                    "anyOf": [
+                        {"type": "string"},
+                        {"type": "boolean"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ]
+                },
+                "description": {"type": "string"},
+            },
+        },
+    }
+    operator_preferences_state = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["schema_version", "state_slice", "scope", "operator_preferences", "operator_preferences_schema"],
+        "properties": {
+            "schema_version": {"type": "string"},
+            "state_slice": {"type": "string"},
+            "scope": {"type": "string"},
+            "operator_preferences": operator_preferences,
+            "operator_preferences_schema": operator_preferences_schema,
+        },
+    }
     dashboard_mesh = {
         "type": "object",
         "required": [
@@ -172,7 +214,17 @@ def operator_product_schema() -> dict[str, Any]:
             "dashboard_payload": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["scope", "session", "settings", "settings_schema", "mesh", "authority_boundary"],
+                "required": [
+                    "scope",
+                    "session",
+                    "settings",
+                    "settings_schema",
+                    "operator_preferences",
+                    "operator_preferences_schema",
+                    "operator_preferences_state",
+                    "mesh",
+                    "authority_boundary",
+                ],
                 "properties": {
                     "scope": {
                         "type": "object",
@@ -186,6 +238,9 @@ def operator_product_schema() -> dict[str, Any]:
                     "session": session_payload,
                     "settings": string_map,
                     "settings_schema": settings_schema,
+                    "operator_preferences": operator_preferences,
+                    "operator_preferences_schema": operator_preferences_schema,
+                    "operator_preferences_state": operator_preferences_state,
                     "mesh": dashboard_mesh,
                     "authority_boundary": {"type": "string"},
                 },
@@ -197,6 +252,27 @@ def operator_product_schema() -> dict[str, Any]:
                 "properties": {
                     "settings": string_map,
                     "settings_schema": settings_schema,
+                    "audit": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["recorded", "state_slice", "scope", "fields"],
+                        "properties": {
+                            "recorded": {"type": "boolean"},
+                            "state_slice": {"type": "string"},
+                            "scope": {"type": "string"},
+                            "fields": {"type": "array", "items": {"type": "string"}},
+                        },
+                    },
+                },
+            },
+            "operator_preferences_update_response": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["state_slice", "operator_preferences", "operator_preferences_schema", "audit"],
+                "properties": {
+                    "state_slice": {"type": "string"},
+                    "operator_preferences": operator_preferences,
+                    "operator_preferences_schema": operator_preferences_schema,
                     "audit": {
                         "type": "object",
                         "additionalProperties": False,
@@ -275,6 +351,15 @@ export interface DashboardPayload {
   session: SessionPayload;
   settings: Record<string, string>;
   settings_schema: Record<string, { values: string[]; default: string; description: string }>;
+  operator_preferences: Record<string, string | boolean | string[]>;
+  operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
+  operator_preferences_state: {
+    schema_version: string;
+    state_slice: string;
+    scope: string;
+    operator_preferences: Record<string, string | boolean | string[]>;
+    operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
+  };
   mesh: Record<string, any>;
   authority_boundary: string;
 }
@@ -282,6 +367,18 @@ export interface DashboardPayload {
 export interface SettingsUpdateResponse {
   settings: Record<string, string>;
   settings_schema: Record<string, { values: string[]; default: string; description: string }>;
+  audit: {
+    recorded: boolean;
+    state_slice: string;
+    scope: string;
+    fields: string[];
+  };
+}
+
+export interface OperatorPreferencesUpdateResponse {
+  state_slice: string;
+  operator_preferences: Record<string, string | boolean | string[]>;
+  operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
   audit: {
     recorded: boolean;
     state_slice: string;

@@ -52,6 +52,15 @@ export interface DashboardPayload {
   session: SessionPayload;
   settings: Record<string, string>;
   settings_schema: Record<string, { values: string[]; default: string; description: string }>;
+  operator_preferences: Record<string, string | boolean | string[]>;
+  operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
+  operator_preferences_state: {
+    schema_version: string;
+    state_slice: string;
+    scope: string;
+    operator_preferences: Record<string, string | boolean | string[]>;
+    operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
+  };
   mesh: Record<string, any>;
   authority_boundary: string;
 }
@@ -59,6 +68,18 @@ export interface DashboardPayload {
 export interface SettingsUpdateResponse {
   settings: Record<string, string>;
   settings_schema: Record<string, { values: string[]; default: string; description: string }>;
+  audit: {
+    recorded: boolean;
+    state_slice: string;
+    scope: string;
+    fields: string[];
+  };
+}
+
+export interface OperatorPreferencesUpdateResponse {
+  state_slice: string;
+  operator_preferences: Record<string, string | boolean | string[]>;
+  operator_preferences_schema: Record<string, { kind: "enum" | "multi" | "boolean" | "string"; values?: string[]; default: string | boolean | string[]; description: string }>;
   audit: {
     recorded: boolean;
     state_slice: string;

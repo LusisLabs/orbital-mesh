@@ -114,6 +114,23 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(dashboard["mesh"]["praxis"]["pilot_runtime"]["status"], "not_started")
         self.assertTrue(dashboard["mesh"]["praxis"]["pilot_runtime"]["dry_run_only"])
         self.assertFalse(dashboard["mesh"]["praxis"]["pilot_runtime"]["managed_runtime_deployed"])
+        self.assertEqual(dashboard["operator_preferences_state"]["state_slice"], "mesh.operator-preferences.v1")
+        self.assertEqual(dashboard["operator_preferences_state"]["scope"], f"team:{team_id}")
+
+        preferences, _ = self._request(
+            "POST",
+            "/api/operator/preferences",
+            {
+                "team_id": team_id,
+                "operator_preferences": {"agent_fabric_mode": "deepagents", "preferred_agents": ["codex", "hermes"]},
+                "reason": "configure operator lanes",
+            },
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(preferences["state_slice"], "mesh.operator-preferences.v1")
+        self.assertEqual(preferences["audit"]["state_slice"], "mesh.operator-preferences.v1")
+        self.assertEqual(preferences["operator_preferences"]["agent_fabric_mode"], "deepagents")
 
         run, _ = self._request(
             "POST",
@@ -379,6 +396,15 @@ class OperatorAuthHttpTests(unittest.TestCase):
             )
         self.assertEqual(settings_error.exception.code, HTTPStatus.FORBIDDEN)
 
+        with self.assertRaises(HTTPError) as preferences_error:
+            self._request(
+                "POST",
+                "/api/operator/preferences",
+                {"team_id": team_id, "operator_preferences": {"agent_fabric_mode": "deepagents"}, "reason": "verify team isolation"},
+                cookie=outsider_cookie,
+            )
+        self.assertEqual(preferences_error.exception.code, HTTPStatus.FORBIDDEN)
+
     def test_operator_settings_requires_reason_and_writes_shared_audit(self) -> None:
         payload, cookie = self._request(
             "POST",
@@ -416,9 +442,33 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(updated["audit"]["scope"], scope)
         self.assertEqual(updated["audit"]["state_slice"], "mesh-settings-control")
 
+        with self.assertRaises(HTTPError) as missing_preference_reason:
+            self._request(
+                "POST",
+                "/api/operator/preferences",
+                {"operator_preferences": {"agent_fabric_mode": "deepagents"}},
+                cookie=cookie,
+            )
+        self.assertEqual(missing_preference_reason.exception.code, HTTPStatus.BAD_REQUEST)
+
+        preference_update, _ = self._request(
+            "POST",
+            "/api/operator/preferences",
+            {
+                "operator_preferences": {"agent_fabric_mode": "deepagents", "preferred_agents": ["codex"]},
+                "reason": "preference parity test",
+            },
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual(preference_update["operator_preferences"]["agent_fabric_mode"], "deepagents")
+        self.assertEqual(preference_update["audit"]["scope"], scope)
+        self.assertEqual(preference_update["audit"]["state_slice"], "mesh.operator-preferences.v1")
+
         identity_path = Path(self.config.operator_identity_path)
         data = json.loads(identity_path.read_text(encoding="utf-8"))
         self.assertEqual(data["settings"][scope]["default_evaluation_mode"], "promptfoo")
+        self.assertEqual(data["operator_preferences"][scope]["agent_fabric_mode"], "deepagents")
         audit_path = identity_path.parent / "operator-config-audit.jsonl"
         audit_record = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[0])
         self.assertEqual(audit_record["operator_id"], "settings@example.com")

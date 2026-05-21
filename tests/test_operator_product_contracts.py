@@ -96,6 +96,9 @@ class OperatorProductContractTests(unittest.TestCase):
         self.assertEqual(dashboard["mesh"]["praxis"]["status"], "no_runs")
         self.assertTrue(dashboard["mesh"]["praxis"]["pilot_runtime"]["dry_run_only"])
         self.assertFalse(dashboard["mesh"]["praxis"]["pilot_runtime"]["managed_runtime_deployed"])
+        self.assertEqual(dashboard["operator_preferences_state"]["schema_version"], "mesh.operator-preferences.v1")
+        self.assertEqual(dashboard["operator_preferences_state"]["state_slice"], "mesh.operator-preferences.v1")
+        self.assertEqual(dashboard["operator_preferences_state"]["scope"], f"team:{team_id}")
         for scenario_key in dashboard["settings_schema"]["default_run_scenario"]["values"]:
             fixture_path = Path("fixtures/signals") / f"{scenario_key}.json"
             self.assertTrue(fixture_path.exists(), f"{scenario_key} must map to a runnable signal fixture")
@@ -112,6 +115,19 @@ class OperatorProductContractTests(unittest.TestCase):
         )
         validate_payload("operator-product.schema.json", {"settings_update_response": settings})
         self.assertEqual(settings["audit"]["state_slice"], "mesh-settings-control")
+
+        preferences = self._request(
+            "POST",
+            "/api/operator/preferences",
+            {
+                "team_id": team_id,
+                "operator_preferences": {"agent_fabric_mode": "deepagents", "preferred_agents": ["codex", "hermes"]},
+                "reason": "operator preference contract validation",
+            },
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"operator_preferences_update_response": preferences})
+        self.assertEqual(preferences["audit"]["state_slice"], "mesh.operator-preferences.v1")
 
     def test_operator_dashboard_exposes_every_product_home_section(self) -> None:
         _, cookie = self._request(
@@ -161,6 +177,8 @@ class OperatorProductContractTests(unittest.TestCase):
         self.assertIsInstance(dashboard["mesh"]["trust_ladder"]["entries"], list)
         self.assertIn("active", dashboard["mesh"]["memory"])
         self.assertIn("graph", dashboard["mesh"]["memory"])
+        self.assertEqual(dashboard["operator_preferences_state"]["state_slice"], "mesh.operator-preferences.v1")
+        self.assertIn("agent_fabric_mode", dashboard["operator_preferences_state"]["operator_preferences"])
 
     def _request(
         self,

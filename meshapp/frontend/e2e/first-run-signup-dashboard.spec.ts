@@ -30,8 +30,8 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await expect(page.locator(".partner-home-hero").getByText("Readiness", { exact: true })).toBeVisible();
   await expect(page.getByText(/Next step/)).toBeVisible();
   await expect(page.getByRole("navigation").getByRole("button", { name: "Connectors", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Evaluations" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Runtime readiness ready/ })).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("button", { name: "Evaluations", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation").getByRole("button", { name: "Readiness", exact: true })).toBeVisible();
 });
 
 test("team settings, member invites, provider posture, connector filters, and launch defaults work end to end", async ({ page }) => {
@@ -111,7 +111,8 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
-  await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes" }).click();
+  await page.locator(".product-sidebar nav").getByRole("button", { name: "Advanced Console", exact: true }).click();
+  await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes", exact: true }).click();
   await expect(page.locator(".product-header h1", { hasText: "Hermes" })).toBeVisible();
   await expect(page.locator(".console-workspace-toolbar").getByText("Hermes chat, explanation, advisory context")).toBeVisible();
   await expect(page.locator(".console-workspace .mesh-session-rail")).toBeHidden();

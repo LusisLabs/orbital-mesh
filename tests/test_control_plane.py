@@ -9,7 +9,7 @@ from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import urlencode
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from unittest.mock import patch
 
@@ -28,7 +28,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             integrations_config_path=str(Path(self.temp_dir.name) / "integrations.json"),
             server_host="127.0.0.1",
             server_port=0,
-            vault_ai_postprocess_enabled=True,
+            vault_ai_postprocess_enabled=False,
             promptfoo_command="/missing/promptfoo",
             hermes_command="/missing/hermes",
             goose_command="/missing/goose",
@@ -153,6 +153,13 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(corpus["classification_counts"]["off_domain"], 1)
 
     def test_approval_gate_http_flow_writes_vault_and_merkle(self) -> None:
+        self.config.vault_ai_postprocess_enabled = True
+        self.server.config.vault_ai_postprocess_enabled = True
+        self.server.coordinator.config.vault_ai_postprocess_enabled = True
+        self.config.agent_tasks_mode = "off"
+        self.server.config.agent_tasks_mode = "off"
+        self.server.coordinator.config.agent_tasks_mode = "off"
+
         goal = self._request(
             "POST",
             "/api/goals",
@@ -286,6 +293,10 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertNotIn("merkle", matching[0])
 
     def test_interruptible_auto_executes_without_operator_pause(self) -> None:
+        self.config.agent_tasks_mode = "off"
+        self.server.config.agent_tasks_mode = "off"
+        self.server.coordinator.config.agent_tasks_mode = "off"
+
         run = self._request(
             "POST",
             "/api/runs",
@@ -474,6 +485,10 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertTrue(blocked_events[-1]["payload"]["blocking_reasons"])
 
     def test_interruptible_auto_launches_recovery_child_for_recoverable_blockers(self) -> None:
+        self.config.agent_tasks_mode = "off"
+        self.server.config.agent_tasks_mode = "off"
+        self.server.coordinator.config.agent_tasks_mode = "off"
+
         signal = load_fixture("signals", "search_latency_regression.json")
         signal["related_context"]["conflicting_signals"] = True
         run = self._request(
@@ -827,8 +842,14 @@ class ControlPlaneApiTests(unittest.TestCase):
     ) -> dict[str, Any]:
         deadline = time.monotonic() + timeout_seconds
         last_payload: dict[str, Any] | None = None
+        last_error: BaseException | None = None
         while time.monotonic() < deadline:
-            payload = self._request("GET", f"/api/runs/{run_id}")
+            try:
+                payload = self._request("GET", f"/api/runs/{run_id}")
+            except (TimeoutError, URLError) as exc:
+                last_error = exc
+                time.sleep(0.1)
+                continue
             last_payload = payload
             if predicate(payload):
                 return payload
@@ -840,6 +861,8 @@ class ControlPlaneApiTests(unittest.TestCase):
                 f" last_status={last_payload.get('status')!r}"
                 f" event_count={len(last_payload.get('events') or [])}"
             )
+        elif last_error is not None:
+            detail = f" last_error={last_error!r}"
         raise AssertionError(f"run {run_id} did not satisfy predicate before timeout.{detail}")
 
     def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:

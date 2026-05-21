@@ -1,5 +1,5 @@
-import type { AuthConfig, DashboardPayload, LogoutResponse, SessionPayload, SettingsUpdateResponse } from "./types";
-export type { AuthConfig, DashboardPayload, LogoutResponse, SessionPayload, SettingsUpdateResponse, TeamProfile, UserProfile } from "./types";
+import type { AuthConfig, DashboardPayload, LogoutResponse, OperatorPreferencesUpdateResponse, SessionPayload, SettingsUpdateResponse } from "./types";
+export type { AuthConfig, DashboardPayload, LogoutResponse, OperatorPreferencesUpdateResponse, SessionPayload, SettingsUpdateResponse, TeamProfile, UserProfile } from "./types";
 
 export type LoadState<T> =
   | { state: "loading" }
@@ -47,6 +47,8 @@ export type RunLaunchPayload = {
   orchestration_mode?: string;
   steering_mode?: string;
   require_target_lock?: boolean;
+  pause_points?: string[];
+  simulation_context?: Record<string, any>;
 };
 
 export type RunLaunchResponse = {
@@ -209,6 +211,12 @@ export const productApi = {
     return request<SettingsUpdateResponse>("/api/operator/settings", {
       method: "POST",
       body: JSON.stringify({ team_id: teamId, settings, reason }),
+    });
+  },
+  updateOperatorPreferences(teamId: string | null, operatorPreferences: Record<string, string | boolean | string[]>, reason: string) {
+    return request<OperatorPreferencesUpdateResponse>("/api/operator/preferences", {
+      method: "POST",
+      body: JSON.stringify({ team_id: teamId, operator_preferences: operatorPreferences, reason }),
     });
   },
   createRun(payload: RunLaunchPayload) {
