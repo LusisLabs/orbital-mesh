@@ -44,7 +44,7 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes" }).click();
   await expect(page.getByRole("heading", { name: "Control Console" })).toBeVisible();
   await expect(page.getByText("Hermes chat, explanation, advisory context")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
+  await expect(page.locator(".console-workspace .mesh-session-rail")).toBeHidden();
   await expect(page.getByText("Hermes Status")).toBeVisible();
 
   await page.locator(".product-sidebar nav").getByRole("button", { name: "Evidence Runs" }).click();
