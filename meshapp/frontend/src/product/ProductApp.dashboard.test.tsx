@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  askMesh,
   approvalCommands,
+  buildDashboardInsights,
   buildDashboardControlModel,
   buildDashboardTiles,
   buildPraxisProductModel,
@@ -11,9 +13,12 @@ import {
   dashboardSectionState,
   evidenceTraceSteps,
   operatorWorkflowPosture,
+  orderDashboardInsights,
+  orderDashboardTiles,
   readModelCardPayload,
   readModelSummary,
   runtimeProductPage,
+  sensitivityBadgesForSource,
   settingsParityRows,
   workflowForView,
 } from "./ProductApp";
@@ -292,6 +297,93 @@ describe("Praxis product dashboard model", () => {
       expect.objectContaining({ id: "start_dry_run", state: "ready", requiresMeshApproval: false }),
       expect.objectContaining({ id: "deploy_managed_runtime", state: "blocked", requiresMeshApproval: true }),
     ]));
+  });
+});
+
+describe("future-ready dashboard insight helpers", () => {
+  const dashboard = {
+    scope: { kind: "team", team: { id: "team-1" } },
+    session: { user: { id: "user-1", email: "operator@example.com" } },
+    settings: {
+      default_evaluation_mode: "native",
+      default_orchestration_mode: "hermes",
+      default_steering_mode: "interruptible_auto",
+    },
+    settings_schema: {},
+    mesh: {
+      readiness: { status: "blocked", ready: false, blockers: ["auth_provider_proof_missing"] },
+      runs: {
+        runs: [
+          { run_id: "run-failed", scenario_key: "reth_peer_starvation", status: "failed" },
+          { run_id: "run-ok", scenario_key: "packet_export", status: "completed" },
+        ],
+      },
+      approvals: { items: [{ queue_id: "approval://run-failed", run_id: "run-failed", decision_type: "manual_review" }] },
+      pilot_go_no_go: { status: "blocked", missing_evidence: ["decision_record_present", "run_export_present"] },
+      connectors: {
+        connectors: {
+          github: { state: "ready", authority_posture: "advisory" },
+          pagerduty: { state: "blocked", authority_posture: "signal only" },
+        },
+      },
+      praxis: { summary: { source_packets: 0 }, proof_packet: {} },
+    },
+  } as any;
+
+  it("ranks deterministic insights from readiness, runs, proof, approvals, connectors, auth, and settings", () => {
+    const insights = buildDashboardInsights(dashboard, null);
+
+    expect(insights.map((insight) => insight.id)).toEqual(expect.arrayContaining([
+      "readiness-blockers",
+      "proof-gaps",
+      "pending-approvals",
+      "failed-runs",
+      "connector-posture",
+      "praxis-source",
+      "auth-provider-posture",
+      "settings-defaults",
+    ]));
+    expect(insights[0]).toMatchObject({
+      severity: "critical",
+      sourcePath: "mesh.readiness.blockers",
+      actionView: "gpu",
+    });
+    expect(insights.find((insight) => insight.id === "auth-provider-posture")?.badges).toEqual(expect.arrayContaining(["Sensitive", "Redacted", "Deployment-owned"]));
+  });
+
+  it("answers supported Ask Mesh prompts and gives suggestions for unsupported prompts", () => {
+    expect(askMesh("why blocked", dashboard, null)).toMatchObject({
+      intent: "blockers",
+      supported: true,
+      targetView: "evaluations",
+      sourcePath: expect.stringContaining("mesh.readiness.blockers"),
+    });
+    expect(askMesh("failed runs", dashboard, null).answer).toContain("run-failed");
+    expect(askMesh("connector readiness", dashboard, null)).toMatchObject({
+      intent: "connector readiness",
+      targetView: "environments",
+      filters: ["pagerduty"],
+    });
+    const unsupported = askMesh("compare market options", dashboard, null);
+    expect(unsupported.supported).toBe(false);
+    expect(unsupported.suggestions).toContain("proof gaps");
+  });
+
+  it("reorders cards and insights by lens without hiding blockers", () => {
+    const cards = buildDashboardTiles(dashboard);
+    const securityTiles = orderDashboardTiles(cards, "security");
+    const approverInsights = orderDashboardInsights(buildDashboardInsights(dashboard, null), "approver");
+
+    expect(securityTiles[0].state).toBe("blocked");
+    expect(securityTiles.slice(0, 4).map((card) => card.title)).toContain("Connector status");
+    expect(approverInsights[0].id).toBe("readiness-blockers");
+    expect(approverInsights.slice(1, 3).map((insight) => insight.id)).toEqual(expect.arrayContaining(["pending-approvals", "proof-gaps"]));
+  });
+
+  it("maps sensitivity and source badges from dashboard/auth/settings paths", () => {
+    expect(sensitivityBadgesForSource("auth-provider-proof.v1")).toEqual(expect.arrayContaining(["Read-only", "Deployment-owned", "Sensitive", "Redacted"]));
+    expect(sensitivityBadgesForSource("mesh.pilot_go_no_go.missing_evidence")).toEqual(expect.arrayContaining(["Mesh-owned", "Audit required"]));
+    expect(sensitivityBadgesForSource("mesh.connectors.connectors")).toEqual(expect.arrayContaining(["Mesh-owned", "Sensitive"]));
   });
 });
 

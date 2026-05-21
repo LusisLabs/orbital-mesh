@@ -111,33 +111,34 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "settings", label: "Settings", icon: SlidersHorizontal },
     ],
   },
-  {
-    label: "Advanced Console",
-    items: [
-      { key: "console", label: "Command", icon: Home },
-      { key: "console-runs", label: "Evidence Runs", icon: Activity },
-      { key: "console-approvals", label: "Approvals", icon: Lock },
-      { key: "console-launch", label: "Launch", icon: Play },
-      { key: "console-readiness", label: "Control Plane", icon: Cpu },
-      { key: "console-evidence", label: "Evidence", icon: ShieldCheck },
-      { key: "console-connectors", label: "Connector Matrix", icon: Boxes },
-      { key: "console-packets", label: "Pilot Packet", icon: BookOpen },
-      { key: "console-hermes", label: "Hermes", icon: Sparkles },
-      { key: "console-agents", label: "Proposal Lanes", icon: Network },
-      { key: "console-signals", label: "Signals", icon: Zap },
-      { key: "console-simulator", label: "Simulator", icon: Layers },
-      { key: "console-trust", label: "Trust Ladder", icon: ShieldCheck },
-      { key: "console-audit", label: "Audit", icon: Search },
-      { key: "console-roadmap", label: "Roadmap", icon: Calendar },
-    ],
-  },
+];
+
+const ADVANCED_CONSOLE_NAV_ITEMS: { key: ViewKey; label: string; icon: any }[] = [
+  { key: "console", label: "Command", icon: Home },
+  { key: "console-runs", label: "Evidence Runs", icon: Activity },
+  { key: "console-approvals", label: "Approvals", icon: Lock },
+  { key: "console-launch", label: "Launch", icon: Play },
+  { key: "console-readiness", label: "Control Plane", icon: Cpu },
+  { key: "console-evidence", label: "Evidence", icon: ShieldCheck },
+  { key: "console-connectors", label: "Connector Matrix", icon: Boxes },
+  { key: "console-packets", label: "Pilot Packet", icon: BookOpen },
+  { key: "console-hermes", label: "Hermes", icon: Sparkles },
+  { key: "console-agents", label: "Proposal Lanes", icon: Network },
+  { key: "console-signals", label: "Signals", icon: Zap },
+  { key: "console-simulator", label: "Simulator", icon: Layers },
+  { key: "console-trust", label: "Trust Ladder", icon: ShieldCheck },
+  { key: "console-audit", label: "Audit", icon: Search },
+  { key: "console-roadmap", label: "Roadmap", icon: Calendar },
 ];
 
 type OperatorWorkflowKey = "launch" | "approval" | "evidence" | "readiness" | "connector" | "settings";
 type ConsoleTone = "good" | "warn" | "neutral";
 type MemberRole = "viewer" | "launcher" | "approver" | "admin";
 export type DashboardSurfaceState = "ready" | "empty" | "degraded" | "blocked" | "unauthorized" | "backend-unavailable";
+export type LensKey = "operator" | "approver" | "security" | "partner-review";
 type AuthProviderKey = "google" | "github";
+export type SensitivityBadge = "Read-only" | "Deployment-owned" | "Sensitive" | "Redacted" | "Audit required" | "Mesh-owned";
+type InsightSeverity = "critical" | "warning" | "info" | "success";
 export type ConsoleWorkflow = {
   productView: ViewKey;
   consoleView: AppView;
@@ -173,6 +174,28 @@ type DashboardTileModel = {
   apiSection: string;
   state: DashboardSurfaceState;
   stateReason: string;
+};
+export type DashboardInsight = {
+  id: string;
+  title: string;
+  severity: InsightSeverity;
+  confidence: number;
+  sourcePath: string;
+  authority: string;
+  why: string;
+  actionLabel: string;
+  actionView: ViewKey;
+  badges: SensitivityBadge[];
+};
+export type AskMeshResult = {
+  query: string;
+  intent: string;
+  supported: boolean;
+  answer: string;
+  sourcePath: string;
+  targetView: ViewKey;
+  filters: string[];
+  suggestions: string[];
 };
 type PartnerHomeModel = {
   readiness: { label: "Go" | "Blocked" | "Demo-only"; detail: string; tone: ConsoleTone };
@@ -284,6 +307,7 @@ export default function ProductApp() {
   const [logoutError, setLogoutError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [lens, setLens] = useState<LensKey>("operator");
 
   function soloOnboardingKey(userId: string): string {
     return `mesh.product.solo.${userId}`;
@@ -300,6 +324,13 @@ export default function ProductApp() {
     setSessionState(state);
     setOnboardingComplete(false);
     setDashboardState({ state: "empty", message: "Sign in to load the dashboard." });
+  }
+
+  function updateLens(nextLens: LensKey) {
+    setLens(nextLens);
+    if (session && typeof window !== "undefined") {
+      window.localStorage.setItem(lensStorageKey(session), nextLens);
+    }
   }
 
   async function refreshDashboard() {
@@ -364,6 +395,12 @@ export default function ProductApp() {
       mounted = false;
     };
   }, [session, onboardingComplete]);
+
+  useEffect(() => {
+    if (!session || typeof window === "undefined") return;
+    const savedLens = window.localStorage.getItem(lensStorageKey(session));
+    setLens(isLensKey(savedLens) ? savedLens : defaultLensForSession(session));
+  }, [session?.user.id, session?.active_team?.id]);
 
   async function refreshSession() {
     const payload = await productApi.me();
@@ -433,7 +470,7 @@ export default function ProductApp() {
         onCollapsedChange={setSidebarCollapsed}
       />
       <main className="product-main">
-        <Header session={session} dashboard={dashboard} refreshSession={refreshSession} consoleMode={consoleMode} activePage={activePage} />
+        <Header session={session} dashboard={dashboard} refreshSession={refreshSession} consoleMode={consoleMode} activePage={activePage} lens={lens} onLens={updateLens} />
         {logoutError ? (
           <div className="product-alert" role="alert">
             <AlertTriangle size={16} />
@@ -445,6 +482,7 @@ export default function ProductApp() {
           authConfig={authConfig}
           session={session}
           dashboardState={dashboardState}
+          lens={lens}
           setView={openView}
           onDashboardRefresh={refreshDashboard}
           onSession={acceptSession}
@@ -844,6 +882,13 @@ function Sidebar({
   function openDocs() {
     window.open("https://github.com/LusisLabs/orbital-mesh/tree/master/docs", "_blank", "noopener,noreferrer");
   }
+  const [advancedOpen, setAdvancedOpen] = useState(isConsoleProductView(activeView));
+  const [advancedQuery, setAdvancedQuery] = useState("");
+  const filteredAdvancedItems = ADVANCED_CONSOLE_NAV_ITEMS.filter((item) => item.label.toLowerCase().includes(advancedQuery.trim().toLowerCase()));
+
+  useEffect(() => {
+    if (isConsoleProductView(activeView)) setAdvancedOpen(true);
+  }, [activeView]);
 
   return (
     <aside className="product-sidebar">
@@ -872,6 +917,35 @@ function Sidebar({
             })}
           </div>
         ))}
+        <div className="nav-group advanced-nav-group">
+          <p>Advanced Console</p>
+          <button
+            className={isConsoleProductView(activeView) ? "active advanced-nav-toggle" : "advanced-nav-toggle"}
+            type="button"
+            onClick={() => setAdvancedOpen(!advancedOpen)}
+            title="Advanced Console"
+            aria-label="Advanced Console"
+            aria-expanded={advancedOpen}
+          >
+            <Cpu size={16} /> <span className="nav-label">Advanced Console</span>
+          </button>
+          {advancedOpen ? (
+            <div className="advanced-nav-panel">
+              <label className="advanced-nav-search">
+                <Search size={13} />
+                <input value={advancedQuery} onChange={(event) => setAdvancedQuery(event.target.value)} placeholder="Filter console" />
+              </label>
+              {filteredAdvancedItems.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button key={item.key} className={activeView === item.key ? "active" : ""} type="button" onClick={() => onView(item.key)} title={item.label} aria-label={item.label}>
+                    <Icon size={15} /> <span className="nav-label">{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
         <div className="nav-group">
           <p>Support</p>
           <button type="button" onClick={() => onView("evaluations")} title="Run Review" aria-label="Run Review"><Mail size={16} /> <span className="nav-label">Run Review</span></button>
@@ -896,12 +970,16 @@ function Header({
   refreshSession,
   consoleMode,
   activePage,
+  lens,
+  onLens,
 }: {
   session: SessionPayload;
   dashboard: DashboardPayload | null;
   refreshSession: () => Promise<SessionPayload>;
   consoleMode?: boolean;
   activePage: { title: string; group: string; detail: string };
+  lens: LensKey;
+  onLens: (lens: LensKey) => void;
 }) {
   const scope = dashboard?.scope.kind === "team" ? dashboard.scope.team?.display_name : "Solo dashboard";
   return (
@@ -916,9 +994,24 @@ function Header({
         <p>{consoleMode ? activePage.detail : activePage.detail || dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
       </div>
       <div className="header-actions">
+        <LensSelector lens={lens} onLens={onLens} />
         <TeamSwitcher session={session} refreshSession={refreshSession} />
       </div>
     </header>
+  );
+}
+
+function LensSelector({ lens, onLens }: { lens: LensKey; onLens: (lens: LensKey) => void }) {
+  return (
+    <label className="lens-selector">
+      Lens
+      <select value={lens} onChange={(event) => onLens(event.target.value as LensKey)}>
+        <option value="operator">Operator</option>
+        <option value="approver">Approver</option>
+        <option value="security">Security</option>
+        <option value="partner-review">Partner Review</option>
+      </select>
+    </label>
   );
 }
 
@@ -959,6 +1052,7 @@ function TeamSwitcher({ session, refreshSession }: { session: SessionPayload; re
 function ContentRouter({
   view,
   authConfig,
+  lens,
   session,
   dashboardState,
   setView,
@@ -969,6 +1063,7 @@ function ContentRouter({
 }: {
   view: ViewKey;
   authConfig: AuthConfig | null;
+  lens: LensKey;
   session: SessionPayload;
   dashboardState: LoadState<DashboardPayload>;
   setView: (view: ViewKey) => void;
@@ -984,7 +1079,7 @@ function ContentRouter({
     return <LoadStatePanel state={dashboardState} />;
   }
   const dashboard = dashboardState.data;
-  if (view === "home") return <HomeView dashboard={dashboard} setView={setView} />;
+  if (view === "home") return <HomeView dashboard={dashboard} authConfig={authConfig} lens={lens} setView={setView} />;
   if (view === "praxis") return <PraxisView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
@@ -1020,10 +1115,11 @@ function LoadStatePanel<T>({ state }: { state: LoadState<T> }) {
   return <div className={`state-panel ${state.state}`}><AlertTriangle size={18} /> {state.message}</div>;
 }
 
-function HomeView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+function HomeView({ dashboard, authConfig, lens, setView }: { dashboard: DashboardPayload; authConfig: AuthConfig | null; lens: LensKey; setView: (view: ViewKey) => void }) {
   const praxis = buildPraxisProductModel(dashboard);
-  const capabilityCards = buildDashboardTiles(dashboard);
+  const capabilityCards = orderDashboardTiles(buildDashboardTiles(dashboard), lens);
   const partnerHome = buildPartnerHomeModel(dashboard);
+  const insights = orderDashboardInsights(buildDashboardInsights(dashboard, authConfig), lens);
 
   return (
     <div className="content-stack">
@@ -1065,6 +1161,10 @@ function HomeView({ dashboard, setView }: { dashboard: DashboardPayload; setView
           )) : <EmptyInline text="No missing proof reported by Mesh." />}
         </article>
       </section>
+      <section className="insights-ask-grid">
+        <InsightsPanel insights={insights} setView={setView} />
+        <AskMeshPanel dashboard={dashboard} authConfig={authConfig} setView={setView} />
+      </section>
       <PraxisHomeModule model={praxis} setView={setView} />
       <section className="advanced-console-band">
         <div>
@@ -1083,12 +1183,73 @@ function HomeView({ dashboard, setView }: { dashboard: DashboardPayload; setView
               <strong>{card.title}</strong>
               <span className={`tile-state ${card.state}`}>{card.state}</span>
               <span>{card.detail}</span>
+              <SensitivityBadges badges={sensitivityBadgesForSource(card.apiSection)} />
               <small>{card.apiSection}</small>
             </button>
           );
         })}
       </div>
     </div>
+  );
+}
+
+function InsightsPanel({ insights, setView }: { insights: DashboardInsight[]; setView: (view: ViewKey) => void }) {
+  return (
+    <section className="insights-panel" aria-label="Insights and recommendations">
+      <div className="panel-title"><Sparkles size={15} /><span>Insights & Recommendations</span></div>
+      <div className="insight-list">
+        {insights.slice(0, 5).map((insight) => (
+          <article className={`insight-card ${insight.severity}`} key={insight.id}>
+            <div className="insight-card-head">
+              <span>{humanize(insight.severity)}</span>
+              <strong>{Math.round(insight.confidence * 100)}%</strong>
+            </div>
+            <h3>{insight.title}</h3>
+            <p>{insight.why}</p>
+            <SensitivityBadges badges={insight.badges} />
+            <SourceLine sourcePath={insight.sourcePath} authority={insight.authority} />
+            <button type="button" onClick={() => setView(insight.actionView)}>{insight.actionLabel}</button>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AskMeshPanel({ dashboard, authConfig, setView }: { dashboard: DashboardPayload; authConfig: AuthConfig | null; setView: (view: ViewKey) => void }) {
+  const [query, setQuery] = useState("why blocked");
+  const [result, setResult] = useState<AskMeshResult>(() => askMesh("why blocked", dashboard, authConfig));
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setResult(askMesh(query, dashboard, authConfig));
+  }
+
+  function useSuggestion(suggestion: string) {
+    setQuery(suggestion);
+    setResult(askMesh(suggestion, dashboard, authConfig));
+  }
+
+  return (
+    <section className="ask-mesh-panel" aria-label="Ask Mesh">
+      <div className="panel-title"><Search size={15} /><span>Ask Mesh</span></div>
+      <form className="ask-mesh-form" onSubmit={submit}>
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ask about blockers, runs, approvals, proof..." />
+        <button type="submit">Ask</button>
+      </form>
+      <article className={result.supported ? "ask-result" : "ask-result unsupported"}>
+        <span>{result.supported ? humanize(result.intent) : "Suggested queries"}</span>
+        <p>{result.answer}</p>
+        <SourceLine sourcePath={result.sourcePath} authority="Mesh read models" />
+        {result.filters.length ? <small>{result.filters.join(" | ")}</small> : null}
+        <button type="button" onClick={() => setView(result.targetView)}>Open {pageMetaForView(result.targetView).title}</button>
+      </article>
+      {!result.supported ? (
+        <div className="ask-suggestions">
+          {result.suggestions.map((suggestion) => <button key={suggestion} type="button" onClick={() => useSuggestion(suggestion)}>{suggestion}</button>)}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1569,6 +1730,13 @@ export function dashboardSectionState(payload: any): { state: DashboardSurfaceSt
   for (const key of arrayKeys) {
     if (Array.isArray(payload[key]) && payload[key].length === 0) {
       return { state: "empty", reason: `${key} returned no records.` };
+    }
+  }
+  const connectorRecords = payload.connectors || payload.connector_certification;
+  if (connectorRecords && typeof connectorRecords === "object") {
+    const connectorStates = Object.values(connectorRecords).map((value: any) => String(value?.state || value?.status || "").toLowerCase());
+    if (connectorStates.some((connectorState) => connectorState.includes("blocked") || connectorState.includes("degraded") || connectorState.includes("failed"))) {
+      return { state: "blocked", reason: "One or more connector certification records are blocked or degraded." };
     }
   }
   return { state: "ready", reason: status || "Dashboard section returned a usable payload." };
@@ -2656,6 +2824,7 @@ function ConfigPostureCard({ title, value, detail, state }: { title: string; val
       <span>{title}</span>
       <strong>{humanize(value)}</strong>
       <p>{detail}</p>
+      <SensitivityBadges badges={sensitivityBadgesForSource(title.toLowerCase().includes("auth") || title.toLowerCase().includes("oauth") || title.toLowerCase().includes("captcha") || title.toLowerCase().includes("invite") ? "auth-provider-proof.v1" : "mesh-settings-control")} />
     </article>
   );
 }
@@ -2855,20 +3024,435 @@ export function workflowForView(view: ViewKey): OperatorWorkflowKey {
   return "evidence";
 }
 
+export function defaultLensForSession(session: SessionPayload): LensKey {
+  const roles = [session.active_team?.role, ...(session.active_team?.roles || [])].map((role) => String(role || "").toLowerCase());
+  if (roles.some((role) => role.includes("security") || role.includes("admin"))) return "security";
+  if (roles.some((role) => role.includes("approver"))) return "approver";
+  if (roles.some((role) => role.includes("viewer") || role.includes("partner"))) return "partner-review";
+  return "operator";
+}
+
+export function lensStorageKey(session: SessionPayload): string {
+  return `mesh.product.lens.${session.active_team?.id || `solo.${session.user.id}`}`;
+}
+
+function isLensKey(value: string | null): value is LensKey {
+  return value === "operator" || value === "approver" || value === "security" || value === "partner-review";
+}
+
+export function orderDashboardInsights(insights: DashboardInsight[], lens: LensKey): DashboardInsight[] {
+  const lensPriority: Record<LensKey, string[]> = {
+    operator: ["readiness", "run", "praxis", "connector", "settings", "proof", "approval", "auth"],
+    approver: ["approval", "proof", "readiness", "run", "settings", "connector", "auth", "praxis"],
+    security: ["auth", "connector", "proof", "readiness", "settings", "approval", "run", "praxis"],
+    "partner-review": ["proof", "readiness", "auth", "connector", "praxis", "run", "approval", "settings"],
+  };
+  return [...insights].sort((a, b) => {
+    const severityDelta = severityRank(b.severity) - severityRank(a.severity);
+    if (severityDelta !== 0) return severityDelta;
+    const aLens = lensPriority[lens].findIndex((key) => a.id.includes(key) || a.sourcePath.includes(key));
+    const bLens = lensPriority[lens].findIndex((key) => b.id.includes(key) || b.sourcePath.includes(key));
+    const lensDelta = (aLens === -1 ? 99 : aLens) - (bLens === -1 ? 99 : bLens);
+    if (lensDelta !== 0) return lensDelta;
+    return b.confidence - a.confidence;
+  });
+}
+
+export function orderDashboardTiles(cards: DashboardTileModel[], lens: LensKey): DashboardTileModel[] {
+  const priority: Record<LensKey, string[]> = {
+    operator: ["Run admission", "Runtime readiness", "Praxis MCP generator", "Connector status", "Evidence packets", "Settings parity"],
+    approver: ["Policy approvals", "Evidence packets", "Runtime readiness", "Run admission", "Trust ladder", "Settings parity"],
+    security: ["Connector status", "Runtime readiness", "Evidence packets", "Settings parity", "Watchers", "Policy approvals"],
+    "partner-review": ["Evidence packets", "Runtime readiness", "Connector status", "Praxis MCP generator", "Policy approvals", "Settings parity"],
+  };
+  return [...cards].sort((a, b) => {
+    const blockerDelta = surfaceRank(b.state) - surfaceRank(a.state);
+    if (blockerDelta !== 0) return blockerDelta;
+    const aIndex = priority[lens].indexOf(a.title);
+    const bIndex = priority[lens].indexOf(b.title);
+    return (aIndex === -1 ? 99 : aIndex) - (bIndex === -1 ? 99 : bIndex);
+  });
+}
+
+export function buildDashboardInsights(dashboard: DashboardPayload, authConfig: AuthConfig | null): DashboardInsight[] {
+  const mesh = dashboard.mesh || {};
+  const readiness = mesh.readiness || {};
+  const pilot = mesh.pilot_go_no_go || {};
+  const runs = Array.isArray(mesh.runs?.runs) ? mesh.runs.runs : [];
+  const approvals = Array.isArray(mesh.approvals?.items) ? mesh.approvals.items : [];
+  const connectorRecords = mesh.connectors?.connectors || mesh.connectors?.connector_certification || {};
+  const connectorEntries = Object.entries(connectorRecords) as Array<[string, any]>;
+  const praxis = buildPraxisProductModel(dashboard);
+  const insights: DashboardInsight[] = [];
+  const readinessBlockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+  const missingEvidence = Array.isArray(pilot.missing_evidence) ? pilot.missing_evidence : [];
+  const failedRuns = runs.filter((run: any) => String(run.status || "").toLowerCase() === "failed");
+  const degradedConnectors = connectorEntries.filter(([, value]) => !String(value?.state || value?.status || "").toLowerCase().includes("ready"));
+
+  if (readiness.ready === false || readinessBlockers.length || String(readiness.status || "").toLowerCase().includes("blocked")) {
+    insights.push({
+      id: "readiness-blockers",
+      title: "Readiness is blocked",
+      severity: "critical",
+      confidence: 0.96,
+      sourcePath: "mesh.readiness.blockers",
+      authority: "Mesh readiness read model",
+      why: `${readinessBlockers.length || 1} readiness blocker(s) are stopping a clean operator handoff.`,
+      actionLabel: "Review proof",
+      actionView: "gpu",
+      badges: sensitivityBadgesForSource("mesh.readiness.blockers"),
+    });
+  }
+
+  if (missingEvidence.length) {
+    insights.push({
+      id: "proof-gaps",
+      title: "Proof packet has gaps",
+      severity: "warning",
+      confidence: 0.93,
+      sourcePath: "mesh.pilot_go_no_go.missing_evidence",
+      authority: "Mesh evidence packet",
+      why: `${missingEvidence.slice(0, 3).map((item: any) => humanize(String(item))).join(", ")} ${missingEvidence.length > 3 ? "and more " : ""}must be resolved before review.`,
+      actionLabel: "Review proof",
+      actionView: "evaluations",
+      badges: sensitivityBadgesForSource("mesh.pilot_go_no_go.missing_evidence"),
+    });
+  }
+
+  if (approvals.length) {
+    insights.push({
+      id: "pending-approvals",
+      title: "Approval queue needs attention",
+      severity: "warning",
+      confidence: 0.9,
+      sourcePath: "mesh.approvals.items",
+      authority: "Mesh policy and approvals",
+      why: `${approvals.length} pending approval item(s) require an audited operator reason before steering.`,
+      actionLabel: "Review proof",
+      actionView: "evaluations",
+      badges: sensitivityBadgesForSource("mesh.approvals.items"),
+    });
+  }
+
+  if (failedRuns.length) {
+    insights.push({
+      id: "failed-runs",
+      title: "Recent runs failed",
+      severity: "warning",
+      confidence: 0.88,
+      sourcePath: "mesh.runs.runs",
+      authority: "Mesh run state",
+      why: `${failedRuns.length} failed run(s) should be inspected for evidence, RCA, and admission blockers.`,
+      actionLabel: "Review proof",
+      actionView: "evaluations",
+      badges: sensitivityBadgesForSource("mesh.runs.runs"),
+    });
+  } else if (!runs.length) {
+    insights.push({
+      id: "launch-first-run",
+      title: "No run evidence yet",
+      severity: "info",
+      confidence: 0.82,
+      sourcePath: "mesh.runs.runs",
+      authority: "Mesh run state",
+      why: "Launch a sandbox scenario so readiness, evidence, and approval views have a current Mesh-owned record.",
+      actionLabel: "Launch run",
+      actionView: "evaluations",
+      badges: sensitivityBadgesForSource("mesh.runs.runs"),
+    });
+  }
+
+  if (degradedConnectors.length) {
+    insights.push({
+      id: "connector-posture",
+      title: "Connector posture is degraded",
+      severity: "warning",
+      confidence: 0.86,
+      sourcePath: "mesh.connectors.connectors",
+      authority: "Mesh connector certification",
+      why: `${degradedConnectors.length} connector(s) are not reporting a ready certification posture.`,
+      actionLabel: "Open Connectors",
+      actionView: "environments",
+      badges: sensitivityBadgesForSource("mesh.connectors.connectors"),
+    });
+  }
+
+  if (Number(praxis.sourcePackets) === 0) {
+    insights.push({
+      id: "praxis-source",
+      title: "Praxis source is missing",
+      severity: "info",
+      confidence: 0.78,
+      sourcePath: "mesh.praxis.source_bundle",
+      authority: "Mesh Praxis read model",
+      why: "Import redacted OpenAPI, SOP, Postman, or traffic references before generating and certifying tools.",
+      actionLabel: "Import source",
+      actionView: "praxis",
+      badges: sensitivityBadgesForSource("mesh.praxis.source_bundle"),
+    });
+  }
+
+  const authBlocked = !authConfig || !authConfig.captcha.configured || !authConfig.invite.configured || (!authConfig.oauth.google.configured && !authConfig.oauth.github.configured);
+  if (authBlocked) {
+    insights.push({
+      id: "auth-provider-posture",
+      title: "Provider posture needs review",
+      severity: "warning",
+      confidence: authConfig ? 0.84 : 0.91,
+      sourcePath: "auth-provider-proof.v1",
+      authority: "Deployment-owned auth config",
+      why: "Signup, captcha, invite, or OAuth posture is incomplete or unavailable in the read-only provider proof.",
+      actionLabel: "Open Keys",
+      actionView: "keys",
+      badges: sensitivityBadgesForSource("auth-provider-proof.v1"),
+    });
+  }
+
+  if (dashboard.settings.default_steering_mode !== "approval_gate") {
+    insights.push({
+      id: "settings-defaults",
+      title: "Settings default weakens review posture",
+      severity: "info",
+      confidence: 0.76,
+      sourcePath: "mesh-settings-control.default_steering_mode",
+      authority: "Mesh settings control",
+      why: "Approval gate is the safest product default for partner-facing or security-sensitive launches.",
+      actionLabel: "Open Settings",
+      actionView: "settings",
+      badges: sensitivityBadgesForSource("mesh-settings-control.default_steering_mode"),
+    });
+  }
+
+  if (!insights.length) {
+    insights.push({
+      id: "dashboard-clear",
+      title: "No immediate blockers surfaced",
+      severity: "success",
+      confidence: 0.7,
+      sourcePath: "mesh-dashboard-read-model",
+      authority: "Mesh dashboard read model",
+      why: "The dashboard did not report blockers, proof gaps, pending approvals, failed runs, or degraded connectors.",
+      actionLabel: "Launch run",
+      actionView: "evaluations",
+      badges: sensitivityBadgesForSource("mesh-dashboard-read-model"),
+    });
+  }
+
+  return orderDashboardInsights(insights, "operator");
+}
+
+export function askMesh(query: string, dashboard: DashboardPayload, authConfig: AuthConfig | null): AskMeshResult {
+  const normalized = query.trim().toLowerCase();
+  const mesh = dashboard.mesh || {};
+  const runs = Array.isArray(mesh.runs?.runs) ? mesh.runs.runs : [];
+  const failedRuns = runs.filter((run: any) => String(run.status || "").toLowerCase() === "failed");
+  const approvals = Array.isArray(mesh.approvals?.items) ? mesh.approvals.items : [];
+  const readiness = mesh.readiness || {};
+  const readinessBlockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+  const pilot = mesh.pilot_go_no_go || {};
+  const missingEvidence = Array.isArray(pilot.missing_evidence) ? pilot.missing_evidence : [];
+  const connectors = Object.entries(mesh.connectors?.connectors || mesh.connectors?.connector_certification || {}) as Array<[string, any]>;
+  const connectorNotReady = connectors.filter(([, value]) => !String(value?.state || value?.status || "").toLowerCase().includes("ready"));
+  const suggestions = ["why blocked", "latest runs", "failed runs", "pending approvals", "connector readiness", "proof gaps", "auth posture", "settings defaults"];
+
+  if (normalized.includes("block") || normalized.includes("why")) {
+    const blockers = [...readinessBlockers, ...missingEvidence].map((item) => humanize(String(item)));
+    return {
+      query,
+      intent: "blockers",
+      supported: true,
+      answer: blockers.length ? `Mesh reports ${blockers.length} blocker(s): ${blockers.slice(0, 4).join(", ")}.` : "Mesh does not report readiness blockers or missing proof in this dashboard payload.",
+      sourcePath: "mesh.readiness.blockers + mesh.pilot_go_no_go.missing_evidence",
+      targetView: missingEvidence.length ? "evaluations" : "gpu",
+      filters: blockers.slice(0, 4),
+      suggestions,
+    };
+  }
+  if (normalized.includes("latest") || normalized.includes("recent")) {
+    const latest = runs[0];
+    return {
+      query,
+      intent: "latest runs",
+      supported: true,
+      answer: latest ? `Latest run ${latest.run_id || latest.id || "unknown"} is ${humanize(String(latest.status || latest.stage || "unknown"))} for ${latest.scenario_key || "custom scenario"}.` : "No run summaries are present in this dashboard payload.",
+      sourcePath: "mesh.runs.runs[0]",
+      targetView: "evaluations",
+      filters: latest ? [String(latest.run_id || latest.id || ""), String(latest.status || "")] : [],
+      suggestions,
+    };
+  }
+  if (normalized.includes("fail")) {
+    return {
+      query,
+      intent: "failed runs",
+      supported: true,
+      answer: failedRuns.length ? `${failedRuns.length} failed run(s): ${failedRuns.slice(0, 3).map((run: any) => run.run_id || run.id).join(", ")}.` : "No failed runs are present in the dashboard read model.",
+      sourcePath: "mesh.runs.runs",
+      targetView: "evaluations",
+      filters: failedRuns.map((run: any) => String(run.run_id || run.id || "failed")).slice(0, 4),
+      suggestions,
+    };
+  }
+  if (normalized.includes("approval")) {
+    return {
+      query,
+      intent: "pending approvals",
+      supported: true,
+      answer: approvals.length ? `${approvals.length} pending approval item(s) require Mesh steering commands with an audit reason.` : "No pending approval queue items are present.",
+      sourcePath: "mesh.approvals.items",
+      targetView: "evaluations",
+      filters: approvals.map((item: any) => String(item.run_id || item.queue_id || "approval")).slice(0, 4),
+      suggestions,
+    };
+  }
+  if (normalized.includes("connector") || normalized.includes("integration")) {
+    return {
+      query,
+      intent: "connector readiness",
+      supported: true,
+      answer: connectorNotReady.length ? `${connectorNotReady.length}/${connectors.length} connector(s) are not ready.` : `${connectors.length} connector(s) are reporting ready or no connector blockers were returned.`,
+      sourcePath: "mesh.connectors.connectors",
+      targetView: "environments",
+      filters: connectorNotReady.map(([id]) => id).slice(0, 4),
+      suggestions,
+    };
+  }
+  if (normalized.includes("proof") || normalized.includes("evidence")) {
+    return {
+      query,
+      intent: "proof gaps",
+      supported: true,
+      answer: missingEvidence.length ? `${missingEvidence.length} proof gap(s): ${missingEvidence.slice(0, 4).map((item: any) => humanize(String(item))).join(", ")}.` : "No missing evidence is present in the pilot go/no-go read model.",
+      sourcePath: "mesh.pilot_go_no_go.missing_evidence",
+      targetView: "evaluations",
+      filters: missingEvidence.slice(0, 4).map(String),
+      suggestions,
+    };
+  }
+  if (normalized.includes("auth") || normalized.includes("provider") || normalized.includes("key") || normalized.includes("secret")) {
+    const configured = authConfig ? [
+      authConfig.captcha.configured || authConfig.captcha.dev_bypass_enabled ? "captcha configured" : "captcha blocked",
+      authConfig.invite.configured ? "invite configured" : "invite not configured",
+      authConfig.oauth.google.configured ? "google oauth configured" : "google oauth not configured",
+      authConfig.oauth.github.configured ? "github oauth configured" : "github oauth not configured",
+    ] : ["auth config unavailable"];
+    return {
+      query,
+      intent: "auth/provider posture",
+      supported: true,
+      answer: configured.join("; "),
+      sourcePath: "auth-provider-proof.v1",
+      targetView: "keys",
+      filters: configured,
+      suggestions,
+    };
+  }
+  if (normalized.includes("setting") || normalized.includes("default")) {
+    const defaults = Object.entries(dashboard.settings).map(([key, value]) => `${humanize(key)}: ${value}`);
+    return {
+      query,
+      intent: "settings defaults",
+      supported: true,
+      answer: defaults.length ? defaults.slice(0, 4).join("; ") : "No operator settings are present in this dashboard payload.",
+      sourcePath: "mesh-settings-control",
+      targetView: "settings",
+      filters: defaults.slice(0, 4),
+      suggestions,
+    };
+  }
+
+  return {
+    query,
+    intent: "unsupported",
+    supported: false,
+    answer: "Ask Mesh V1 supports deterministic prompts for blockers, runs, approvals, connectors, proof, auth posture, and settings defaults.",
+    sourcePath: "ui-product-shell.ask_mesh.v1",
+    targetView: "home",
+    filters: [],
+    suggestions,
+  };
+}
+
+export function sensitivityBadgesForSource(sourcePath: string): SensitivityBadge[] {
+  const normalized = sourcePath.toLowerCase();
+  const badges: SensitivityBadge[] = normalized.includes("auth") || normalized.includes("key") || normalized.includes("secret") || normalized.includes("captcha") || normalized.includes("oauth") || normalized.includes("invite")
+    ? ["Read-only", "Deployment-owned", "Sensitive", "Redacted"]
+    : normalized.includes("approval") || normalized.includes("proof") || normalized.includes("evidence") || normalized.includes("settings")
+      ? ["Read-only", "Mesh-owned", "Audit required"]
+      : ["Read-only", "Mesh-owned"];
+  if (normalized.includes("connector")) badges.push("Sensitive");
+  return Array.from(new Set(badges));
+}
+
+function sourceLineage(sourcePath: string, payload: any, fallbackAuthority: string): { sourcePath: string; authority: string; timestamp?: string; degraded?: string } {
+  const authority = String(payload?.authority || payload?.authority_posture || payload?.source_authority || fallbackAuthority);
+  const timestamp = payload?.updated_at || payload?.last_updated || payload?.timestamp || payload?.created_at;
+  const degraded = payload?.degraded_reason || payload?.error || (timestamp ? "" : "freshness missing");
+  return {
+    sourcePath,
+    authority,
+    timestamp: timestamp ? String(timestamp) : undefined,
+    degraded: degraded ? String(degraded) : undefined,
+  };
+}
+
+function badgeToneClass(badge: SensitivityBadge): string {
+  if (badge === "Sensitive" || badge === "Audit required") return "warn";
+  if (badge === "Deployment-owned" || badge === "Redacted") return "info";
+  return "neutral";
+}
+
+function severityRank(severity: InsightSeverity): number {
+  if (severity === "critical") return 4;
+  if (severity === "warning") return 3;
+  if (severity === "info") return 2;
+  return 1;
+}
+
+function surfaceRank(state: DashboardSurfaceState): number {
+  if (state === "blocked" || state === "degraded" || state === "backend-unavailable" || state === "unauthorized") return 2;
+  if (state === "empty") return 1;
+  return 0;
+}
+
 function ReadModelCard({ title, payload }: { title: string; payload: any }) {
   const displayPayload = readModelCardPayload(title, payload);
   const display = readModelDisplay(displayPayload);
+  const sourcePath = `mesh.${title.toLowerCase().replaceAll(" ", "_")}`;
+  const lineage = sourceLineage(sourcePath, displayPayload, "Mesh read model");
   return (
     <section className={`read-model-card ${display.state}`}>
       <CircleDot size={15} />
       <strong>{title}</strong>
       <span>{humanize(display.status)}</span>
       <p>{display.summary}</p>
+      <SensitivityBadges badges={sensitivityBadgesForSource(sourcePath)} />
+      <SourceLine {...lineage} />
       <details>
         <summary>Payload</summary>
         <pre>{JSON.stringify(displayPayload, null, 2).slice(0, 720)}</pre>
       </details>
     </section>
+  );
+}
+
+function SensitivityBadges({ badges }: { badges: SensitivityBadge[] }) {
+  const uniqueBadges = Array.from(new Set(badges));
+  return (
+    <div className="sensitivity-badges">
+      {uniqueBadges.map((badge) => <span key={badge} className={badgeToneClass(badge)}>{badge}</span>)}
+    </div>
+  );
+}
+
+function SourceLine({ sourcePath, authority, timestamp, degraded }: { sourcePath: string; authority: string; timestamp?: string; degraded?: string }) {
+  return (
+    <small className="source-line">
+      <span>{sourcePath}</span>
+      <span>{authority}</span>
+      <span>{timestamp || "timestamp unavailable"}</span>
+      {degraded ? <span>{degraded}</span> : null}
+    </small>
   );
 }
 
