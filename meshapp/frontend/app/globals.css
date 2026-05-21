@@ -3,3 +3,6 @@
 @import "../src/mesh-tokens.css";
 @import "../src/index.css";
 @import "../src/product/product.css";
+
+@tailwind components;
+@tailwind utilities;

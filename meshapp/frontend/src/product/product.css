@@ -6,6 +6,23 @@
   color: #f4f4f1;
 }
 
+.mesh-prompt-textarea::-webkit-scrollbar {
+  width: 6px;
+}
+
+.mesh-prompt-textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.mesh-prompt-textarea::-webkit-scrollbar-thumb {
+  background-color: #444;
+  border-radius: 3px;
+}
+
+.mesh-prompt-textarea::-webkit-scrollbar-thumb:hover {
+  background-color: #555;
+}
+
 .product-sidebar {
   min-height: 100dvh;
   border-right: 1px solid #272727;
@@ -262,6 +279,179 @@
   border-radius: 6px;
   background: #050606;
   overflow: hidden;
+}
+
+.agent-flow-page {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-flow-hero {
+  min-height: 186px;
+  border: 1px solid #28433f;
+  border-radius: 6px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    radial-gradient(circle at 28% 16%, rgba(137, 205, 187, 0.18), transparent 42%),
+    #0a0d0c;
+  background-size: 66px 66px, 66px 66px, auto, auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+}
+
+.agent-flow-hero span,
+.agent-flow-chat article span,
+.agent-flow-metrics span {
+  color: #89cdbb;
+  font-size: 0.76rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agent-flow-hero h2 {
+  margin: 5px 0;
+  font-size: clamp(1.9rem, 4vw, 3.1rem);
+  line-height: 1;
+}
+
+.agent-flow-hero p {
+  max-width: 710px;
+  margin: 0;
+  color: #c6c8c1;
+  line-height: 1.5;
+}
+
+.agent-flow-posture {
+  min-width: 220px;
+  border: 1px solid #315f55;
+  border-radius: 6px;
+  background: rgba(137, 205, 187, 0.08);
+  padding: 14px;
+  display: grid;
+  gap: 5px;
+}
+
+.agent-flow-posture strong {
+  color: #f4f4f1;
+}
+
+.agent-flow-posture small {
+  color: #a9a9a4;
+  overflow-wrap: anywhere;
+}
+
+.agent-flow-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+  gap: 12px;
+}
+
+.agent-flow-chat,
+.agent-flow-system,
+.agent-flow-plan {
+  min-width: 0;
+  border: 1px solid #262828;
+  border-radius: 6px;
+  background: #101211;
+  overflow: hidden;
+}
+
+.agent-flow-chat-log {
+  min-height: 248px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+}
+
+.agent-flow-chat article {
+  max-width: 84%;
+  border: 1px solid #292c2b;
+  border-radius: 6px;
+  background: #151817;
+  padding: 10px 12px;
+}
+
+.agent-flow-chat article.operator {
+  justify-self: end;
+  border-color: #3e3b57;
+  background: #171524;
+}
+
+.agent-flow-chat article.operator span {
+  color: #b7a6ff;
+}
+
+.agent-flow-chat article p {
+  margin: 4px 0 0;
+  color: #e8e8e2;
+  line-height: 1.45;
+}
+
+.agent-flow-composer {
+  border-top: 1px solid #262828;
+  padding: 12px;
+  background: #0b0c0c;
+}
+
+.agent-flow-system {
+  display: grid;
+  align-content: start;
+}
+
+.agent-flow-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid #262828;
+}
+
+.agent-flow-metrics div {
+  min-height: 100px;
+  border-right: 1px solid #262828;
+  border-bottom: 1px solid #262828;
+  padding: 14px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.agent-flow-metrics div:nth-child(2n) {
+  border-right: 0;
+}
+
+.agent-flow-metrics div:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.agent-flow-metrics strong {
+  color: #f4f4f1;
+  font-size: 1.2rem;
+}
+
+.agent-flow-system button {
+  min-height: 44px;
+  border: 0;
+  border-bottom: 1px solid #262828;
+  background: transparent;
+  color: #f4f4f1;
+  text-align: left;
+  padding: 11px 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.agent-flow-system button:hover {
+  background: #171a19;
+}
+
+.agent-flow-plan {
+  background: #050606;
 }
 
 .console-workspace .mesh-agent-console {

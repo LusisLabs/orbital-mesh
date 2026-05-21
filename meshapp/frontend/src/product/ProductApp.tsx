@@ -6,6 +6,7 @@ import {
   ArrowRight,
   BarChart3,
   BookOpen,
+  Bot,
   Boxes,
   Calendar,
   CheckCircle2,
@@ -37,6 +38,8 @@ import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
 import AsciiFlowCanvas from "../landing/AsciiFlowCanvas";
 import OperatorConsole, { type AppView } from "../App";
+import AgentLifecyclePlan from "../../components/ui/agent-lifecycle-plan";
+import { PromptInputBox } from "../../components/ui/prompt-input-box";
 import {
   type AuthConfig,
   type ApprovalCommand,
@@ -70,6 +73,7 @@ export type ViewKey =
   | "console-audit"
   | "console-roadmap"
   | "praxis"
+  | "agent-flow"
   | "environments"
   | "evaluations"
   | "training"
@@ -89,6 +93,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
     items: [
       { key: "home", label: "Home", icon: Home },
       { key: "praxis", label: "Praxis", icon: Sparkles },
+      { key: "agent-flow", label: "Agent Flow", icon: Bot },
       { key: "evaluations", label: "Evaluations", icon: BarChart3 },
       { key: "environments", label: "Connectors", icon: Boxes },
       { key: "gpu", label: "Readiness", icon: Cpu },
@@ -1082,6 +1087,7 @@ function pageMetaForView(view: ViewKey): { title: string; group: string; detail:
   const details: Partial<Record<ViewKey, string>> = {
     home: "Readiness, next action, recent activity, and blockers before the console.",
     praxis: "Upload sources, certify generated tools, start dry-run, and export proof.",
+    "agent-flow": "Chat with Harper-696, then drill into the Mesh lifecycle, agent lanes, proof gaps, and mutation preview path.",
     evaluations: "Choose a scenario, launch through Mesh admission, and inspect proof.",
     environments: "Filter connector status by domain, state, and blocker evidence.",
     settings: "Choose safe defaults for new runs; deployment and CLI parity stay in Advanced.",
@@ -1139,6 +1145,7 @@ function ContentRouter({
   const dashboard = dashboardState.data;
   if (view === "home") return <HomeView dashboard={dashboard} authConfig={authConfig} lens={lens} setView={setView} />;
   if (view === "praxis") return <PraxisView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
+  if (view === "agent-flow") return <AgentFlowView dashboard={dashboard} setView={setView} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
@@ -1165,6 +1172,91 @@ function ConsoleWorkspace({ view, setView }: { view: ViewKey; setView: (view: Vi
       </div>
       <OperatorConsole initialView={workflow.consoleView} />
     </section>
+  );
+}
+
+function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+  const mesh = dashboard.mesh ?? {};
+  const runs = Array.isArray(mesh.runs?.runs) ? mesh.runs.runs : [];
+  const approvals = Array.isArray(mesh.approvals?.items) ? mesh.approvals.items : [];
+  const readinessStatus = String(mesh.readiness?.status ?? "unknown");
+  const harperSource = "Harper-696/src/agent.py";
+  const [activePrompt, setActivePrompt] = useState("");
+  const [messages, setMessages] = useState<Array<{ role: "operator" | "harper"; content: string }>>([
+    {
+      role: "harper",
+      content:
+        "Harper-696 is embedded as an operator-safe agent flow. Live voice transport requires a LiveKit token endpoint; this web surface stays read-only until Mesh confirms a mutation path.",
+    },
+  ]);
+
+  function handleSend(message: string) {
+    const clean = message.trim() || "[image prompt]";
+    setActivePrompt(clean);
+    setMessages((previous) => [
+      ...previous,
+      { role: "operator", content: clean },
+      {
+        role: "harper",
+        content:
+          "State slice: meshapp.frontend.agent_flow.ui.v1. I can inspect dashboard, readiness, approvals, runs, evidence, and agent lanes. Mutations still route through Mesh-owned run admission or steering.",
+      },
+    ]);
+  }
+
+  return (
+    <div className="content-stack agent-flow-page">
+      <section className="agent-flow-hero">
+        <div>
+          <span>Harper-696</span>
+          <h2>Agent flow workspace</h2>
+          <p>
+            Chat drives the lifecycle view. Harper can explain Mesh state, prepare bounded run drafts, and surface proof gaps while Mesh keeps policy, approvals, audit, and actuation authority.
+          </p>
+        </div>
+        <div className="agent-flow-posture">
+          <strong>Read-only composer</strong>
+          <small>{harperSource}</small>
+        </div>
+      </section>
+
+      <section className="agent-flow-grid">
+        <div className="agent-flow-chat">
+          <div className="panel-title"><Bot size={15} /><span>Harper Chat Box</span></div>
+          <div className="agent-flow-chat-log" aria-live="polite">
+            {messages.slice(-6).map((message, index) => (
+              <article key={`${message.role}-${index}`} className={message.role}>
+                <span>{message.role === "operator" ? "Operator" : "Harper-696"}</span>
+                <p>{message.content}</p>
+              </article>
+            ))}
+          </div>
+          <div className="agent-flow-composer">
+            <PromptInputBox
+              onSend={(message) => handleSend(message)}
+              placeholder="Ask Harper to inspect blockers, evidence, approvals, or lifecycle state..."
+            />
+          </div>
+        </div>
+
+        <div className="agent-flow-system">
+          <div className="panel-title"><Activity size={15} /><span>Mesh Lifecycle Context</span></div>
+          <div className="agent-flow-metrics">
+            <div><span>Readiness</span><strong>{humanize(readinessStatus)}</strong></div>
+            <div><span>Runs</span><strong>{runs.length}</strong></div>
+            <div><span>Approvals</span><strong>{approvals.length}</strong></div>
+            <div><span>Boundary</span><strong>Mesh-owned</strong></div>
+          </div>
+          <button type="button" onClick={() => setView("console-hermes")}>Open Hermes</button>
+          <button type="button" onClick={() => setView("console-runs")}>Open Evidence Runs</button>
+          <button type="button" onClick={() => setView("console-approvals")}>Open Approvals</button>
+        </div>
+      </section>
+
+      <section className="agent-flow-plan">
+        <AgentLifecyclePlan activePrompt={activePrompt} />
+      </section>
+    </div>
   );
 }
 
