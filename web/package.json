@@ -18,21 +18,21 @@
     "test:e2e:playwright": "playwright test --config playwright.config.ts"
   },
   "dependencies": {
-    "@vscode/codicons": "^0.0.38",
+    "@vscode/codicons": "^0.0.45",
     "@xyflow/react": "^12.8.6",
-    "lucide-react": "^0.562.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "lucide-react": "^1.14.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "@types/react": "^18.3.24",
-    "@types/react-dom": "^18.3.7",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.0",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.8",
-    "vitest": "^4.1.4"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.11",
+    "vitest": "^4.1.5"
   }
 }

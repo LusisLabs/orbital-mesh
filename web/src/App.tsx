@@ -2114,8 +2114,8 @@ function RunsView({
   canvasEmptyMessage: string;
   canvasFitPadding: number;
   canvasFullscreen: boolean;
-  canvasPanelRef: React.RefObject<HTMLDivElement>;
-  timelineRef: React.RefObject<HTMLDivElement>;
+  canvasPanelRef: React.RefObject<HTMLDivElement | null>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   selectedEventId: string;
   agentTasks: AgentTask[];
   rcaSnapshot: RcaSnapshot;
@@ -3626,7 +3626,7 @@ function TimelineTable({
 }: {
   run: RunDetail | null;
   selectedEventId: string;
-  timelineRef: React.RefObject<HTMLDivElement>;
+  timelineRef: React.RefObject<HTMLDivElement | null>;
   onSelectEvent: (eventId: string) => void;
 }) {
   if (!run) return <EmptyState text="Select a run to inspect its timeline." />;
@@ -4128,7 +4128,7 @@ function TopologyPanel({
   canvasEmptyMessage: string;
   canvasFitPadding: number;
   canvasFullscreen: boolean;
-  canvasPanelRef: React.RefObject<HTMLDivElement>;
+  canvasPanelRef: React.RefObject<HTMLDivElement | null>;
   onCanvasModeChange: (mode: CanvasMode) => void;
   onToggleCanvasFullscreen: () => void;
   onSelectEvent: (eventId: string) => void;

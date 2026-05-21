@@ -103,6 +103,101 @@
   min-width: 0;
 }
 
+.product-shell.console-mode {
+  grid-template-columns: 252px minmax(0, 1fr);
+}
+
+.console-workspace {
+  min-width: 0;
+  padding: 14px;
+}
+
+.console-workspace-toolbar {
+  min-height: 58px;
+  margin-bottom: 10px;
+  border: 1px solid #262828;
+  border-radius: 6px;
+  background: #101211;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+}
+
+.console-workspace-toolbar div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.console-workspace-toolbar span {
+  color: #89cdbb;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.console-workspace-toolbar strong {
+  color: #f4f4f1;
+  font-size: 0.86rem;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.console-workspace-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+}
+
+.console-workspace-actions button {
+  min-height: 34px;
+  border: 1px solid #333;
+  border-radius: 6px;
+  background: #181a1a;
+  color: #f4f4f1;
+  padding: 7px 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.console-workspace-actions button:hover {
+  background: #202323;
+}
+
+.console-workspace .mesh-console-shell {
+  min-height: calc(100dvh - 174px);
+  border: 1px solid #262828;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.console-workspace .mesh-agent-console,
+.console-workspace .mesh-agent-console.drawer-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.console-workspace .mesh-agent-console .mesh-session-rail {
+  display: none;
+}
+
+.console-workspace .mesh-agent-console .mesh-console-topbar {
+  grid-template-columns: minmax(0, 1fr);
+  position: relative;
+}
+
+.console-workspace .mesh-agent-console .mesh-topbar-metrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.console-workspace .mesh-agent-console .mesh-topbar-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
 .product-header {
   min-height: 78px;
   border-bottom: 1px solid #272727;
@@ -1542,12 +1637,53 @@
     border-right: 0;
     border-bottom: 1px solid #272727;
   }
+  .brand-row {
+    height: 56px;
+    justify-content: space-between;
+  }
+  .brand-row .mesh-logo strong,
+  .sidebar-footer div {
+    display: block;
+  }
+  .brand-row .mesh-logo img {
+    width: 28px;
+  }
   .product-sidebar nav {
     display: flex;
+    gap: 8px;
     overflow-x: auto;
+    padding: 0 8px 10px;
   }
   .nav-group {
-    min-width: 180px;
+    min-width: auto;
+    display: flex;
+    gap: 6px;
+    margin-bottom: 0;
+  }
+  .nav-group p {
+    display: none;
+  }
+  .nav-group button,
+  .product-sidebar button {
+    width: auto;
+    min-width: max-content;
+    justify-content: flex-start;
+    font-size: 0.84rem;
+    white-space: nowrap;
+  }
+  .sidebar-footer {
+    min-height: 48px;
+    padding: 8px 12px;
+  }
+  .sidebar-footer div {
+    min-width: 0;
+  }
+  .product-header {
+    padding: 16px;
+  }
+  .product-header select {
+    width: 100%;
+    min-width: 0;
   }
   .product-header,
   .toolbar,
