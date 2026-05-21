@@ -190,6 +190,11 @@ class RuntimeConfig:
     github_oauth_client_id: str = ""
     github_oauth_client_secret: str = ""
     github_oauth_redirect_url: str = ""
+    livekit_url: str = ""
+    livekit_api_key: str = ""
+    livekit_api_secret: str = ""
+    livekit_token_ttl_seconds: int = 600
+    livekit_agent_name: str = "Harper-696"
     force_approval_gate: bool = False
     run_worker_count: int = 4
     run_queue_size: int = 100
@@ -384,6 +389,8 @@ class RuntimeConfig:
             raise ValueError("auth_mode must be proxy_header or app_session")
         if self.captcha_provider not in {"disabled", "hcaptcha", "recaptcha", "turnstile"}:
             raise ValueError("captcha_provider must be disabled, hcaptcha, recaptcha, or turnstile")
+        if self.livekit_token_ttl_seconds <= 0:
+            raise ValueError("livekit_token_ttl_seconds must be > 0")
         if self.auth_mode == "app_session":
             if not self.operator_identity_path:
                 raise ValueError("operator_identity_path is required for app_session auth")
@@ -704,6 +711,11 @@ class RuntimeConfig:
             github_oauth_client_id=os.getenv("MESH_GITHUB_OAUTH_CLIENT_ID", ""),
             github_oauth_client_secret=os.getenv("MESH_GITHUB_OAUTH_CLIENT_SECRET", ""),
             github_oauth_redirect_url=os.getenv("MESH_GITHUB_OAUTH_REDIRECT_URL", ""),
+            livekit_url=os.getenv("MESH_LIVEKIT_URL", ""),
+            livekit_api_key=os.getenv("MESH_LIVEKIT_API_KEY", ""),
+            livekit_api_secret=os.getenv("MESH_LIVEKIT_API_SECRET", ""),
+            livekit_token_ttl_seconds=int(os.getenv("MESH_LIVEKIT_TOKEN_TTL_SECONDS", "600")),
+            livekit_agent_name=os.getenv("MESH_LIVEKIT_AGENT_NAME", "Harper-696"),
             force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),
             run_worker_count=int(os.getenv("MESH_RUN_WORKER_COUNT", "4")),
             run_queue_size=int(os.getenv("MESH_RUN_QUEUE_SIZE", "100")),

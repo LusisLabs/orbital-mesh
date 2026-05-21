@@ -34,7 +34,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from "react";
 
 import AsciiFlowCanvas from "../landing/AsciiFlowCanvas";
 import OperatorConsole, { type AppView } from "../App";
@@ -43,6 +43,11 @@ import { PromptInputBox } from "../../components/ui/prompt-input-box";
 import {
   type AuthConfig,
   type ApprovalCommand,
+  type AgentFlowChatResponse,
+  type AgentFlowConfirmationResponse,
+  type AgentFlowLifecycleTask,
+  type AgentFlowLiveKitSessionResponse,
+  type AgentFlowMutationPreview,
   type DashboardPayload,
   type LoadState,
   type PraxisSourceInput,
@@ -86,6 +91,36 @@ export type ViewKey =
   | "keys"
   | "operator-setup"
   | "settings";
+
+type LiveKitAudioTrack = {
+  kind?: string;
+  attach: () => HTMLMediaElement;
+  detach?: () => HTMLMediaElement[];
+};
+
+function clearAgentFlowAudioElements() {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll<HTMLMediaElement>("[data-agent-flow-audio='harper-696']").forEach((element) => {
+    element.pause();
+    element.remove();
+  });
+}
+
+function attachAgentFlowAudioTrack(track: LiveKitAudioTrack) {
+  if (typeof document === "undefined" || track.kind !== "audio") return;
+  const element = track.attach();
+  element.autoplay = true;
+  element.dataset.agentFlowAudio = "harper-696";
+  element.style.display = "none";
+  document.body.appendChild(element);
+}
+
+function isLiveKitSessionFresh(session: AgentFlowLiveKitSessionResponse | null): session is AgentFlowLiveKitSessionResponse {
+  if (!session?.token || !session.livekit_url || session.status !== "ready") return false;
+  if (!session.token_expires_at) return true;
+  const expiresAt = Date.parse(session.token_expires_at);
+  return Number.isFinite(expiresAt) && expiresAt - Date.now() > 60_000;
+}
 
 const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: any }[] }[] = [
   {
@@ -1181,27 +1216,205 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
   const approvals = Array.isArray(mesh.approvals?.items) ? mesh.approvals.items : [];
   const readinessStatus = String(mesh.readiness?.status ?? "unknown");
   const harperSource = "Harper-696/src/agent.py";
+  const teamId = dashboard.scope.team?.id ?? null;
   const [activePrompt, setActivePrompt] = useState("");
-  const [messages, setMessages] = useState<Array<{ role: "operator" | "harper"; content: string }>>([
+  const [messages, setMessages] = useState<Array<{ role: "operator" | "harper"; content: string; response?: AgentFlowChatResponse }>>([
     {
       role: "harper",
       content:
-        "Harper-696 is embedded as an operator-safe agent flow. Live voice transport requires a LiveKit token endpoint; this web surface stays read-only until Mesh confirms a mutation path.",
+        "Harper-696 is ready as an operator-safe agent flow. I can inspect Mesh state, prepare draft previews, and keep side effects blocked until a Mesh-owned route receives explicit confirmation.",
     },
   ]);
+  const [lifecycleTasks, setLifecycleTasks] = useState<AgentFlowLifecycleTask[] | undefined>();
+  const [mutationPreview, setMutationPreview] = useState<AgentFlowMutationPreview | null>(null);
+  const [liveKitSession, setLiveKitSession] = useState<AgentFlowLiveKitSessionResponse | null>(null);
+  const [confirmation, setConfirmation] = useState<AgentFlowConfirmationResponse | null>(null);
+  const [confirmationReason, setConfirmationReason] = useState("");
+  const [chatError, setChatError] = useState("");
+  const [chatBusy, setChatBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "unavailable" | "failed">("idle");
+  const liveKitRoomRef = useRef<{ disconnect: () => void } | null>(null);
+  const liveKitConnectGenerationRef = useRef(0);
 
-  function handleSend(message: string) {
+  useEffect(() => {
+    let mounted = true;
+    liveKitConnectGenerationRef.current += 1;
+    liveKitRoomRef.current?.disconnect();
+    liveKitRoomRef.current = null;
+    clearAgentFlowAudioElements();
+    setVoiceStatus("idle");
+    setLiveKitSession(null);
+    productApi.agentFlowLiveKitSession({ team_id: teamId })
+      .then((payload) => {
+        if (mounted) setLiveKitSession(payload);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setLiveKitSession({
+          schema_version: "mesh.agent_flow.livekit_session.v1",
+          state_slice: "mesh.agent_flow.livekit_session.v1",
+          agent: { id: "harper-696", name: "Harper-696", source: harperSource },
+          status: "unavailable",
+          livekit_url: "",
+          room: "",
+          participant_identity: "",
+          token: "",
+          token_expires_at: null,
+          required_env: ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET"],
+          side_effects_executed: false,
+        });
+        setChatError(error instanceof Error ? error.message : "LiveKit session bootstrap failed");
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [teamId]);
+
+  useEffect(() => {
+    return () => {
+      liveKitConnectGenerationRef.current += 1;
+      liveKitRoomRef.current?.disconnect();
+      liveKitRoomRef.current = null;
+      clearAgentFlowAudioElements();
+    };
+  }, []);
+
+  async function handleSend(message: string, files?: File[]) {
     const clean = message.trim() || "[image prompt]";
     setActivePrompt(clean);
-    setMessages((previous) => [
-      ...previous,
-      { role: "operator", content: clean },
-      {
-        role: "harper",
-        content:
-          "State slice: meshapp.frontend.agent_flow.ui.v1. I can inspect dashboard, readiness, approvals, runs, evidence, and agent lanes. Mutations still route through Mesh-owned run admission or steering.",
-      },
-    ]);
+    setChatError("");
+    setConfirmation(null);
+    setConfirmationReason("");
+    setMutationPreview(null);
+    setLifecycleTasks(undefined);
+    setChatBusy(true);
+    setMessages((previous) => [...previous, { role: "operator", content: clean }]);
+    try {
+      const response = await productApi.agentFlowChat({
+        team_id: teamId,
+        message: clean,
+        attachments: files?.map((file) => ({ name: file.name, type: file.type, size: file.size })) ?? [],
+      });
+      setLifecycleTasks(response.lifecycle.tasks);
+      setMutationPreview(response.mutation_preview);
+      setMessages((previous) => [...previous, { role: "harper", content: response.answer, response }]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent Flow request failed";
+      setChatError(message);
+      setMessages((previous) => [
+        ...previous,
+        {
+          role: "harper",
+          content: `State slice: mesh.agent_flow.chat_response.v1. ${message}`,
+        },
+      ]);
+    } finally {
+      setChatBusy(false);
+    }
+  }
+
+  async function confirmPreview() {
+    if (!mutationPreview || chatBusy) return;
+    const reason = confirmationReason.trim();
+    if (!reason) {
+      setChatError("Confirmation reason is required for mesh.agent_flow.mutation_preview.v1.");
+      return;
+    }
+    setConfirming(true);
+    setChatError("");
+    try {
+      const response = await productApi.confirmAgentFlowPreview({
+        team_id: teamId,
+        preview_id: mutationPreview.preview_id,
+        preview: mutationPreview,
+        reason,
+      });
+      setConfirmation(response);
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : "Preview confirmation failed");
+    } finally {
+      setConfirming(false);
+    }
+  }
+
+  async function connectHarperVoice() {
+    let session = liveKitSession;
+    if (!isLiveKitSessionFresh(session)) {
+      try {
+        session = await productApi.agentFlowLiveKitSession({ team_id: teamId });
+        setLiveKitSession(session);
+      } catch (error) {
+        setVoiceStatus("failed");
+        setChatError(error instanceof Error ? error.message : "LiveKit session refresh failed");
+        return;
+      }
+    }
+    const unavailableStatus = session?.status ?? "";
+    if (!isLiveKitSessionFresh(session)) {
+      setVoiceStatus("unavailable");
+      setChatError(
+        unavailableStatus === "permission_required"
+          ? "LiveKit voice publishing requires a launcher, approver, or admin role for mesh.agent_flow.livekit_session.v1."
+          : "LiveKit is not configured for mesh.agent_flow.livekit_session.v1.",
+      );
+      return;
+    }
+    const activeSession = session;
+    const connectGeneration = liveKitConnectGenerationRef.current + 1;
+    liveKitConnectGenerationRef.current = connectGeneration;
+    setChatError("");
+    setVoiceStatus("connecting");
+    let pendingRoom: { disconnect: () => void } | null = null;
+    try {
+      const { Room, RoomEvent } = await import("livekit-client");
+      liveKitRoomRef.current?.disconnect();
+      clearAgentFlowAudioElements();
+      const room = new Room({ adaptiveStream: true, dynacast: true });
+      pendingRoom = room;
+      liveKitRoomRef.current = room;
+      room.on(RoomEvent.TrackSubscribed, (track: LiveKitAudioTrack) => {
+        attachAgentFlowAudioTrack(track);
+      });
+      room.on(RoomEvent.TrackUnsubscribed, (track: LiveKitAudioTrack) => {
+        track.detach?.().forEach((element) => element.remove());
+      });
+      await room.connect(activeSession.livekit_url, activeSession.token);
+      if (liveKitConnectGenerationRef.current !== connectGeneration) {
+        room.disconnect();
+        clearAgentFlowAudioElements();
+        return;
+      }
+      room.remoteParticipants.forEach((participant) => {
+        participant.trackPublications.forEach((publication) => {
+          const track = publication.track;
+          if (track) attachAgentFlowAudioTrack(track as LiveKitAudioTrack);
+        });
+      });
+      await room.localParticipant.setMicrophoneEnabled(true);
+      if (liveKitConnectGenerationRef.current !== connectGeneration) {
+        room.disconnect();
+        clearAgentFlowAudioElements();
+        return;
+      }
+      setVoiceStatus("connected");
+    } catch (error) {
+      pendingRoom?.disconnect();
+      clearAgentFlowAudioElements();
+      if (liveKitConnectGenerationRef.current === connectGeneration) {
+        liveKitRoomRef.current = null;
+        setVoiceStatus("failed");
+        setChatError(error instanceof Error ? error.message : "LiveKit voice connection failed");
+      }
+    }
+  }
+
+  function disconnectHarperVoice() {
+    liveKitConnectGenerationRef.current += 1;
+    liveKitRoomRef.current?.disconnect();
+    liveKitRoomRef.current = null;
+    clearAgentFlowAudioElements();
+    setVoiceStatus("idle");
   }
 
   return (
@@ -1215,8 +1428,8 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
           </p>
         </div>
         <div className="agent-flow-posture">
-          <strong>Read-only composer</strong>
-          <small>{harperSource}</small>
+          <strong>{liveKitSession?.status === "ready" ? "Voice bridge ready" : "Draft-first composer"}</strong>
+          <small>{liveKitSession?.status === "ready" ? liveKitSession.room : harperSource}</small>
         </div>
       </section>
 
@@ -1228,12 +1441,19 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
               <article key={`${message.role}-${index}`} className={message.role}>
                 <span>{message.role === "operator" ? "Operator" : "Harper-696"}</span>
                 <p>{message.content}</p>
+                {message.response ? (
+                  <div className="agent-flow-response-meta">
+                    {message.response.state_slices.slice(0, 5).map((slice) => <code key={slice}>{slice}</code>)}
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>
+          {chatError ? <div className="product-alert warning">{chatError}</div> : null}
           <div className="agent-flow-composer">
             <PromptInputBox
-              onSend={(message) => handleSend(message)}
+              onSend={(message, files) => handleSend(message, files)}
+              isLoading={chatBusy}
               placeholder="Ask Harper to inspect blockers, evidence, approvals, or lifecycle state..."
             />
           </div>
@@ -1245,7 +1465,19 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
             <div><span>Readiness</span><strong>{humanize(readinessStatus)}</strong></div>
             <div><span>Runs</span><strong>{runs.length}</strong></div>
             <div><span>Approvals</span><strong>{approvals.length}</strong></div>
-            <div><span>Boundary</span><strong>Mesh-owned</strong></div>
+            <div><span>Voice</span><strong>{humanize(liveKitSession?.status ?? "loading")}</strong></div>
+          </div>
+          <div className="agent-flow-session">
+            <span>LiveKit room</span>
+            <strong>{liveKitSession?.room || "not minted"}</strong>
+            <small>{liveKitSession?.status === "ready" ? "Browser token minted without exposing API secret." : "Set MESH_LIVEKIT_URL, MESH_LIVEKIT_API_KEY, and MESH_LIVEKIT_API_SECRET."}</small>
+          </div>
+          <div className="agent-flow-voice">
+            <span>Voice connection</span>
+            <strong>{humanize(voiceStatus)}</strong>
+            <button type="button" onClick={voiceStatus === "connected" ? disconnectHarperVoice : connectHarperVoice} disabled={voiceStatus === "connecting" || liveKitSession?.status !== "ready"}>
+              {voiceStatus === "connected" ? "Disconnect voice" : voiceStatus === "connecting" ? "Connecting" : "Connect voice"}
+            </button>
           </div>
           <button type="button" onClick={() => setView("console-hermes")}>Open Hermes</button>
           <button type="button" onClick={() => setView("console-runs")}>Open Evidence Runs</button>
@@ -1253,8 +1485,42 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
         </div>
       </section>
 
+      {mutationPreview ? (
+        <section className="agent-flow-preview" aria-label="Agent Flow mutation preview">
+          <div>
+            <span>Mutation preview</span>
+            <h3>{mutationPreview.proposed_resource}: {humanize(mutationPreview.action)}</h3>
+            <p>
+              Draft touches <code>{mutationPreview.would_touch_state_slice}</code> through <code>{mutationPreview.endpoint}</code>.
+              <code>side_effects_executed={String(mutationPreview.side_effects_executed)}</code>.
+            </p>
+          </div>
+          <div className="agent-flow-preview-actions">
+            <code>{mutationPreview.preview_id}</code>
+            <label>
+              Confirmation reason
+              <input
+                value={confirmationReason}
+                onChange={(event) => setConfirmationReason(event.target.value)}
+                placeholder="why this draft is ready for Mesh review"
+              />
+            </label>
+            <button type="button" onClick={confirmPreview} disabled={chatBusy || confirming || !confirmationReason.trim()}>
+              {confirming ? "Confirming" : "Confirm draft"}
+            </button>
+          </div>
+          {confirmation ? (
+            <div className="agent-flow-confirmation">
+              <strong>{humanize(confirmation.status)}</strong>
+              <span>{confirmation.next_step}</span>
+              <code>side_effects_executed={String(confirmation.side_effects_executed)}</code>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="agent-flow-plan">
-        <AgentLifecyclePlan activePrompt={activePrompt} />
+        <AgentLifecyclePlan activePrompt={activePrompt} lifecycleTasks={lifecycleTasks} />
       </section>
     </div>
   );

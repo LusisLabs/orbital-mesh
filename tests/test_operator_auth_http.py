@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import tempfile
 import time
@@ -13,6 +14,13 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from control_plane_server import start_server_in_thread
 from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime.schema_validation import validate_payload
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    payload = token.split(".")[1]
+    padded = payload + "=" * (-len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
 
 
 class OperatorAuthHttpTests(unittest.TestCase):
@@ -282,6 +290,175 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(dashboard["mesh"]["read_model"]["authority"], "read_only")
         self.assertEqual(dashboard["mesh"]["readiness"]["status"], "unavailable")
         self.assertEqual(dashboard["mesh"]["readiness"]["error"], "readiness unavailable")
+
+    def test_agent_flow_chat_livekit_and_confirmation_are_session_scoped(self) -> None:
+        with self.assertRaises(HTTPError) as unauth:
+            self._request("POST", "/api/operator/agent-flow/chat", {"message": "inspect readiness"})
+        self.assertEqual(unauth.exception.code, HTTPStatus.UNAUTHORIZED)
+
+        _, cookie = self._request(
+            "POST",
+            "/api/auth/signup",
+            {
+                "email": "agent-flow@example.com",
+                "password": "correct-horse-42",
+                "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
+            },
+            include_cookie=True,
+        )
+        team_payload = self._request(
+            "POST",
+            "/api/auth/team",
+            {"name": "Agent Flow Operators"},
+            cookie=cookie,
+        )
+        team_id = team_payload["active_team"]["id"]
+
+        unconfigured_livekit = self._request(
+            "POST",
+            "/api/operator/agent-flow/livekit-session",
+            {"team_id": team_id},
+            cookie=cookie,
+        )
+        self.assertEqual(unconfigured_livekit["state_slice"], "mesh.agent_flow.livekit_session.v1")
+        self.assertEqual(unconfigured_livekit["status"], "unconfigured")
+        self.assertEqual(unconfigured_livekit["token"], "")
+        self.assertFalse(unconfigured_livekit["side_effects_executed"])
+
+        self.server.config.livekit_url = "wss://livekit.example.test"
+        self.server.config.livekit_api_key = "lk-public-key"
+        self.server.config.livekit_api_secret = "lk-secret-redacted"
+        configured_livekit = self._request(
+            "POST",
+            "/api/operator/agent-flow/livekit-session",
+            {"team_id": team_id, "room": "agent-flow-test"},
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"agent_flow_livekit_session_response": configured_livekit})
+        second_livekit = self._request(
+            "POST",
+            "/api/operator/agent-flow/livekit-session",
+            {"team_id": team_id, "room": "agent-flow-test"},
+            cookie=cookie,
+        )
+        self.assertEqual(configured_livekit["status"], "ready")
+        self.assertEqual(configured_livekit["livekit_url"], "wss://livekit.example.test")
+        self.assertTrue(configured_livekit["room"].startswith("harper-696-team-"))
+        self.assertTrue(configured_livekit["room"].endswith("-agent-flow-test"))
+        self.assertNotEqual(configured_livekit["participant_identity"], second_livekit["participant_identity"])
+        self.assertTrue(configured_livekit["token"])
+        self.assertNotIn("lk-secret-redacted", configured_livekit["token"])
+        livekit_claims = _decode_jwt_payload(configured_livekit["token"])
+        self.assertEqual(livekit_claims["video"]["canPublishSources"], ["microphone"])
+        self.assertFalse(livekit_claims["video"]["canPublishData"])
+
+        chat = self._request(
+            "POST",
+            "/api/operator/agent-flow/chat",
+            {"team_id": team_id, "message": "Inspect blockers and draft a launch"},
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"agent_flow_chat_response": chat})
+        self.assertEqual(chat["state_slice"], "mesh.agent_flow.chat_response.v1")
+        self.assertIn("mesh.agent_flow.mutation_preview.v1", chat["state_slices"])
+        self.assertEqual(chat["mutation_preview"]["state_slice"], "mesh.agent_flow.mutation_preview.v1")
+        self.assertEqual(chat["mutation_preview"]["endpoint"], "/api/runs")
+        self.assertEqual(chat["mutation_preview"]["issued_scope"], f"team:{team_id}")
+        self.assertEqual(chat["mutation_preview"]["proof"]["algorithm"], "HMAC-SHA256")
+        self.assertTrue(chat["mutation_preview"]["proof"]["signature"])
+        self.assertTrue(chat["mutation_preview"]["confirmation_required"])
+        self.assertFalse(chat["mutation_preview"]["side_effects_executed"])
+        self.assertGreaterEqual(len(chat["lifecycle"]["tasks"]), 3)
+
+        with self.assertRaises(HTTPError) as missing_reason:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "team_id": team_id,
+                    "preview_id": chat["mutation_preview"]["preview_id"],
+                    "preview": chat["mutation_preview"],
+                    "reason": "",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(missing_reason.exception.code, HTTPStatus.BAD_REQUEST)
+
+        tampered_preview = dict(chat["mutation_preview"])
+        tampered_preview["endpoint"] = "/api/auth/logout"
+        with self.assertRaises(HTTPError) as tampered:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "team_id": team_id,
+                    "preview_id": chat["mutation_preview"]["preview_id"],
+                    "preview": tampered_preview,
+                    "reason": "tampered route should not be accepted",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(tampered.exception.code, HTTPStatus.BAD_REQUEST)
+
+        metadata_tampered_preview = dict(chat["mutation_preview"])
+        metadata_tampered_preview["proof"] = dict(chat["mutation_preview"]["proof"])
+        metadata_tampered_preview["status"] = "confirmed"
+        metadata_tampered_preview["proof"]["bound_state_slice"] = "mesh.other"
+        with self.assertRaises(HTTPError) as metadata_tampered:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "team_id": team_id,
+                    "preview_id": chat["mutation_preview"]["preview_id"],
+                    "preview": metadata_tampered_preview,
+                    "reason": "metadata tampering should not be accepted",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(metadata_tampered.exception.code, HTTPStatus.BAD_REQUEST)
+
+        _, other_cookie = self._request(
+            "POST",
+            "/api/auth/signup",
+            {
+                "email": "agent-flow-other@example.com",
+                "password": "correct-horse-42",
+                "captcha_token": "dev-captcha-ok",
+                "accepted_terms": True,
+            },
+            include_cookie=True,
+        )
+        with self.assertRaises(HTTPError) as wrong_session:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "preview_id": chat["mutation_preview"]["preview_id"],
+                    "preview": chat["mutation_preview"],
+                    "reason": "different session should not confirm this preview",
+                },
+                cookie=other_cookie,
+            )
+        self.assertEqual(wrong_session.exception.code, HTTPStatus.BAD_REQUEST)
+
+        confirmation = self._request(
+            "POST",
+            "/api/operator/agent-flow/confirm-preview",
+            {
+                "team_id": team_id,
+                "preview_id": chat["mutation_preview"]["preview_id"],
+                "preview": chat["mutation_preview"],
+                "reason": "operator reviewed state slice and endpoint",
+            },
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"agent_flow_confirmation_response": confirmation})
+        self.assertEqual(confirmation["state_slice"], "mesh.agent_flow.mutation_preview.v1")
+        self.assertEqual(confirmation["status"], "confirmation_recorded")
+        self.assertEqual(confirmation["routed_to"], "/api/runs")
+        self.assertFalse(confirmation["side_effects_executed"])
 
     def test_logout_login_and_dashboard_recovery(self) -> None:
         _, cookie = self._request(

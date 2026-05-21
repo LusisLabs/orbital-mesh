@@ -1,5 +1,31 @@
-import type { AuthConfig, DashboardPayload, LogoutResponse, OperatorPreferencesUpdateResponse, SessionPayload, SettingsUpdateResponse } from "./types";
-export type { AuthConfig, DashboardPayload, LogoutResponse, OperatorPreferencesUpdateResponse, SessionPayload, SettingsUpdateResponse, TeamProfile, UserProfile } from "./types";
+import type {
+  AgentFlowChatResponse,
+  AgentFlowConfirmationResponse,
+  AgentFlowLifecycleTask,
+  AgentFlowLiveKitSessionResponse,
+  AgentFlowMutationPreview,
+  AuthConfig,
+  DashboardPayload,
+  LogoutResponse,
+  OperatorPreferencesUpdateResponse,
+  SessionPayload,
+  SettingsUpdateResponse,
+} from "./types";
+export type {
+  AgentFlowChatResponse,
+  AgentFlowConfirmationResponse,
+  AgentFlowLifecycleTask,
+  AgentFlowLiveKitSessionResponse,
+  AgentFlowMutationPreview,
+  AuthConfig,
+  DashboardPayload,
+  LogoutResponse,
+  OperatorPreferencesUpdateResponse,
+  SessionPayload,
+  SettingsUpdateResponse,
+  TeamProfile,
+  UserProfile,
+} from "./types";
 
 export type LoadState<T> =
   | { state: "loading" }
@@ -206,6 +232,15 @@ export const productApi = {
   dashboard(teamId?: string | null) {
     const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
     return request<DashboardPayload>(`/api/operator/dashboard${query}`);
+  },
+  agentFlowChat(payload: { team_id?: string | null; message: string; attachments?: Array<{ name: string; type: string; size: number }> }) {
+    return request<AgentFlowChatResponse>("/api/operator/agent-flow/chat", { method: "POST", body: JSON.stringify(payload) });
+  },
+  agentFlowLiveKitSession(payload: { team_id?: string | null; room?: string }) {
+    return request<AgentFlowLiveKitSessionResponse>("/api/operator/agent-flow/livekit-session", { method: "POST", body: JSON.stringify(payload) });
+  },
+  confirmAgentFlowPreview(payload: { team_id?: string | null; preview_id: string; reason: string; preview: AgentFlowMutationPreview }) {
+    return request<AgentFlowConfirmationResponse>("/api/operator/agent-flow/confirm-preview", { method: "POST", body: JSON.stringify(payload) });
   },
   updateSettings(teamId: string | null, settings: Record<string, string>, reason: string) {
     return request<SettingsUpdateResponse>("/api/operator/settings", {

@@ -15,7 +15,7 @@ import { cn } from "../../lib/utils";
 type TaskStatus = "completed" | "in-progress" | "pending" | "need-help" | "failed";
 type TaskPriority = "high" | "medium" | "low";
 
-interface Subtask {
+export interface AgentLifecycleSubtask {
   id: string;
   title: string;
   description: string;
@@ -24,7 +24,7 @@ interface Subtask {
   tools?: string[];
 }
 
-interface Task {
+export interface AgentLifecycleTask {
   id: string;
   title: string;
   description: string;
@@ -32,10 +32,10 @@ interface Task {
   priority: TaskPriority;
   level: number;
   dependencies: string[];
-  subtasks: Subtask[];
+  subtasks: AgentLifecycleSubtask[];
 }
 
-const initialTasks: Task[] = [
+const initialTasks: AgentLifecycleTask[] = [
   {
     id: "1",
     title: "Harper-696 voice session boundary",
@@ -241,13 +241,18 @@ function nextStatus(status: TaskStatus): TaskStatus {
 export interface AgentLifecyclePlanProps {
   activePrompt?: string;
   className?: string;
+  lifecycleTasks?: AgentLifecycleTask[];
 }
 
-export default function AgentLifecyclePlan({ activePrompt, className }: AgentLifecyclePlanProps) {
-  const [tasks, setTasks] = React.useState<Task[]>(initialTasks);
+export default function AgentLifecyclePlan({ activePrompt, className, lifecycleTasks }: AgentLifecyclePlanProps) {
+  const [tasks, setTasks] = React.useState<AgentLifecycleTask[]>(lifecycleTasks ?? initialTasks);
   const [expandedTasks, setExpandedTasks] = React.useState<string[]>(["1", "2"]);
   const [expandedSubtasks, setExpandedSubtasks] = React.useState<Record<string, boolean>>({});
   const prefersReducedMotion = useReducedMotion();
+
+  React.useEffect(() => {
+    if (lifecycleTasks) setTasks(lifecycleTasks);
+  }, [lifecycleTasks]);
 
   const toggleTaskExpansion = (taskId: string) => {
     setExpandedTasks((previous) =>
