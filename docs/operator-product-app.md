@@ -142,6 +142,12 @@ UI, API, and CLI mutations require an audit reason and append redacted audit rec
 
 The product settings page renders a parity row for every key in `settings_schema`. Mutable rows show both `/api/operator/settings` and the equivalent `python scripts/operator_config.py set --scope ... --operator-id ... --reason ... key=...` command. Deployment-owned values such as API base URL, build commit, state backend, and captcha provider render as read-only rows with an explicit reason instead of pretending to be dashboard settings.
 
+## Console Workflow Parity
+
+`meshapp/frontend/src/product/ProductApp.tsx` is the default production product shell. It now exposes the migrated control-plane console from `meshapp/frontend/src/App.tsx` as first-class dashboard navigation under **Control Console**. Those entries open the full Mesh console in-place for Command, Evidence Runs, Approvals, Launch, Simulator, Trust Ladder, Pilot Packet, Readiness, Evidence, Connectors, Proposal Lanes, Signals, Hermes, Audit, and Roadmap.
+
+The product shell also keeps product-native pages for Praxis, connector status, evaluations, topology, memory projection, readiness, kill switch, policy state, team, members, keys, and settings. The console bridge is UI wiring only: run admission, approvals, policy, evidence, readiness, and actuation remain Mesh-owned API and state slices.
+
 ## Validation
 
 Use pnpm root gates:

@@ -121,7 +121,7 @@ const RESEARCH_SAFE_LAUNCH_OVERRIDES = {
 
 type RightRailTab = "steering" | InspectorTab;
 type CanvasMode = "labyrinth" | "flow" | "evidence" | "rca" | "signal" | "merkle" | "artifacts";
-type AppView =
+export type AppView =
   | "overview"
   | "incidents"
   | "fleet"
@@ -388,7 +388,7 @@ function inspectorTabForArtifact(artifactKey?: string | null): RightRailTab {
   }
 }
 
-export default function App() {
+export default function App({ initialView = "overview" }: { initialView?: AppView }) {
   const [baseUrl] = useState(resolveBaseUrl);
 
   const [health, setHealth] = useState<HealthSnapshot | null>(null);
@@ -435,7 +435,7 @@ export default function App() {
   const [leftRailOpen, setLeftRailOpen] = useState(true);
   const [rightRailOpen, setRightRailOpen] = useState(false);
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("evidence");
-  const [activeView, setActiveView] = useState<AppView>("overview");
+  const [activeView, setActiveView] = useState<AppView>(initialView);
   const [runDetailTab, setRunDetailTab] = useState<RunDetailTab>("evidence");
 
   const [rightRailTab, setRightRailTab] = useState<RightRailTab>("overview");
@@ -464,6 +464,10 @@ export default function App() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const canvasPanelRef = useRef<HTMLDivElement>(null);
   const [canvasFullscreen, setCanvasFullscreen] = useState(false);
+
+  useEffect(() => {
+    setActiveView(initialView);
+  }, [initialView]);
 
   const toggleCanvasFullscreen = useCallback(async () => {
     const el = canvasPanelRef.current;

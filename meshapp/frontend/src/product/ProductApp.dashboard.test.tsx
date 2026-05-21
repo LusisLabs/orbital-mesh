@@ -5,6 +5,8 @@ import {
   buildDashboardControlModel,
   buildDashboardTiles,
   buildPraxisProductModel,
+  consoleParityMatrix,
+  consoleWorkflowForView,
   dashboardLoadSurfaceState,
   dashboardSectionState,
   evidenceTraceSteps,
@@ -47,6 +49,31 @@ describe("operator workflow posture", () => {
     expect(workflowForView("environments")).toBe("connector");
     expect(workflowForView("gpu")).toBe("readiness");
     expect(workflowForView("keys")).toBe("settings");
+    expect(workflowForView("console-runs")).toBe("launch");
+  });
+
+  it("maps every migrated console workflow into the active product shell", () => {
+    expect(consoleParityMatrix().map((workflow) => workflow.consoleView)).toEqual([
+      "overview",
+      "runs",
+      "approvals",
+      "automation",
+      "simulator",
+      "trust",
+      "packets",
+      "control-plane",
+      "evidence",
+      "integrations",
+      "agents",
+      "fleet",
+      "hermes",
+      "audit",
+      "roadmap",
+    ]);
+    expect(consoleWorkflowForView("console-hermes")).toMatchObject({
+      consoleView: "hermes",
+      productFallback: "evaluations",
+    });
   });
 });
 
@@ -155,9 +182,13 @@ describe("dashboard section state coverage", () => {
       },
     } as any);
 
-    expect(tiles).toHaveLength(11);
+    expect(tiles).toHaveLength(12);
     expect(tiles.every((tile) => tile.apiSection)).toBe(true);
     expect(tiles.map((tile) => tile.state)).toEqual(expect.arrayContaining(["ready", "empty", "blocked"]));
+    expect(tiles.find((tile) => tile.title === "Control console")).toMatchObject({
+      apiSection: "meshapp.frontend.control_plane_api_client.v1",
+      state: "ready",
+    });
     expect(tiles.find((tile) => tile.title === "Evidence packets")).toMatchObject({
       apiSection: "mesh.pilot_go_no_go",
       state: "blocked",

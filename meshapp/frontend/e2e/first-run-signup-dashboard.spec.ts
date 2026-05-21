@@ -31,6 +31,28 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await expect(page.getByRole("button", { name: /Orchestration topology ready/ })).toBeVisible();
 });
 
+test("product dashboard opens migrated console workflows in place", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Console E2E Operator");
+  await page.getByLabel("Email address").fill(`console-${Date.now()}@example.com`);
+  await page.getByLabel("Password").fill("correct-horse-42");
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.locator(".product-sidebar nav").getByRole("button", { name: "Hermes" }).click();
+  await expect(page.getByRole("heading", { name: "Control Console" })).toBeVisible();
+  await expect(page.getByText("Hermes chat, explanation, advisory context")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Operator Console" })).toBeVisible();
+  await expect(page.getByText("Hermes Status")).toBeVisible();
+
+  await page.locator(".product-sidebar nav").getByRole("button", { name: "Evidence Runs" }).click();
+  await expect(page.getByText("Run timeline, delivery context, evidence graph")).toBeVisible();
+  await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delivery" })).toBeVisible();
+});
+
 test("product Praxis import generates, dry-runs, audits, exports P10 proof, and revokes", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();

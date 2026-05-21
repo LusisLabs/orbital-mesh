@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///Users/shaan.s.patel/Desktop/orbital-mesh/meshapp/frontend/app/page.tsx"],"sourcesContent":["\"use client\";\n\nimport { useMemo } from \"react\";\n\nimport Landing from \"../pages/Landing\";\nimport { shouldRenderLanding } from \"../src/product/entryMode\";\nimport OperatorApp from \"../src/product/ProductApp\";\n\nexport default function Home() {\n  const renderLanding = useMemo(() => {\n    if (typeof window === \"undefined\") return false;\n    return shouldRenderLanding(window.location.hostname, window.location.search);\n  }, []);\n\n  return renderLanding ? <Landing /> : <OperatorApp />;\n}\n"],"names":["Home","renderLanding","window","location","hostname","search"],"mappings":";;;;;AAEA;AAEA;AACA;AACA;;;AANA;;;;;AAQe,SAASA;;IACtB,MAAMC,gBAAgB,IAAA,8UAAO;uCAAC;YAC5B;;YACA,OAAO,IAAA,qJAAmB,EAACC,OAAOC,QAAQ,CAACC,QAAQ,EAAEF,OAAOC,QAAQ,CAACE,MAAM;QAC7E;sCAAG,EAAE;IAEL,OAAOJ,8BAAgB,mWAAC,wIAAO;;;;6BAAM,mWAAC,2IAAW;;;;;AACnD;GAPwBD;KAAAA"}}]
+}

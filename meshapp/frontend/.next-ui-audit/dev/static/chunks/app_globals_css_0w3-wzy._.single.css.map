@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 1, "column": 0}, "map": {"version":3,"sources":["turbopack:///[project]/app/globals.css"],"sourcesContent":["@import \"@vscode/codicons/dist/codicon.css\";\n@import \"@xyflow/react/dist/style.css\";\n@import \"../src/mesh-tokens.css\";\n@import \"../src/index.css\";\n@import \"../src/product/product.css\";\n"],"names":[],"mappings":""}}]
+}

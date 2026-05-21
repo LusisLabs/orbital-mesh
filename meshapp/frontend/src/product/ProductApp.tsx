@@ -33,6 +33,7 @@ import {
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 
 import AsciiFlowCanvas from "../landing/AsciiFlowCanvas";
+import OperatorConsole, { type AppView } from "../App";
 import {
   type AuthConfig,
   type ApprovalCommand,
@@ -48,8 +49,23 @@ import {
   productApi,
 } from "./api";
 
-type ViewKey =
+export type ViewKey =
   | "home"
+  | "console"
+  | "console-runs"
+  | "console-approvals"
+  | "console-launch"
+  | "console-simulator"
+  | "console-trust"
+  | "console-packets"
+  | "console-readiness"
+  | "console-evidence"
+  | "console-connectors"
+  | "console-agents"
+  | "console-signals"
+  | "console-hermes"
+  | "console-audit"
+  | "console-roadmap"
   | "praxis"
   | "environments"
   | "evaluations"
@@ -65,6 +81,26 @@ type ViewKey =
 
 const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: any }[] }[] = [
   { label: "", items: [{ key: "home", label: "Home", icon: Home }] },
+  {
+    label: "Control Console",
+    items: [
+      { key: "console", label: "Command", icon: Home },
+      { key: "console-runs", label: "Evidence Runs", icon: Activity },
+      { key: "console-approvals", label: "Approvals", icon: Lock },
+      { key: "console-launch", label: "Launch", icon: Play },
+      { key: "console-readiness", label: "Readiness", icon: Cpu },
+      { key: "console-evidence", label: "Evidence", icon: ShieldCheck },
+      { key: "console-hermes", label: "Hermes", icon: Sparkles },
+      { key: "console-agents", label: "Proposal Lanes", icon: Network },
+      { key: "console-connectors", label: "Connectors", icon: Boxes },
+      { key: "console-packets", label: "Pilot Packet", icon: BookOpen },
+      { key: "console-audit", label: "Audit", icon: Search },
+      { key: "console-signals", label: "Signals", icon: Zap },
+      { key: "console-simulator", label: "Simulator", icon: Layers },
+      { key: "console-trust", label: "Trust Ladder", icon: ShieldCheck },
+      { key: "console-roadmap", label: "Roadmap", icon: Calendar },
+    ],
+  },
   {
     label: "Lab",
     items: [
@@ -96,6 +132,13 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
 type OperatorWorkflowKey = "launch" | "approval" | "evidence" | "readiness" | "connector" | "settings";
 type ConsoleTone = "good" | "warn" | "neutral";
 export type DashboardSurfaceState = "ready" | "empty" | "degraded" | "blocked" | "unauthorized" | "backend-unavailable";
+export type ConsoleWorkflow = {
+  productView: ViewKey;
+  consoleView: AppView;
+  productFallback: ViewKey;
+  label: string;
+  description: string;
+};
 type ControlSummary = {
   value: string;
   detail: string;
@@ -152,6 +195,36 @@ type PraxisProductModel = {
   tools: Array<ControlRow & { method: string; path: string; tone: ConsoleTone }>;
   controls: Array<ControlRow & { state: string; requiresMeshApproval: boolean }>;
 };
+
+const CONSOLE_WORKFLOW_MATRIX: ConsoleWorkflow[] = [
+  { productView: "console", consoleView: "overview", productFallback: "home", label: "Command", description: "Production readiness cockpit, live system stream, launch prompts, and active run context." },
+  { productView: "console-runs", consoleView: "runs", productFallback: "evaluations", label: "Evidence Runs", description: "Run timeline, delivery context, evidence graph, RCA, approvals, actions, Darkharness, audit, agents, and topology." },
+  { productView: "console-approvals", consoleView: "approvals", productFallback: "evaluations", label: "Approvals", description: "Approval queue, steering commands, operator notes, and Hermes escalation hooks." },
+  { productView: "console-launch", consoleView: "automation", productFallback: "evaluations", label: "Launch", description: "Goal creation, scenario launch, evaluation mode, orchestration mode, steering mode, and target lock controls." },
+  { productView: "console-simulator", consoleView: "simulator", productFallback: "evaluations", label: "Simulator", description: "Scenario simulator and policy dry-run controls backed by Mesh admission and evaluation state." },
+  { productView: "console-trust", consoleView: "trust", productFallback: "instances", label: "Trust Ladder", description: "Trust ladder entries, autonomy tiers, service authority, and promotion posture." },
+  { productView: "console-packets", consoleView: "packets", productFallback: "evaluations", label: "Pilot Packet", description: "Pilot go/no-go, Darkharness packet, evidence packet, release proof, and boundary status." },
+  { productView: "console-readiness", consoleView: "control-plane", productFallback: "gpu", label: "Readiness", description: "Control-plane readiness, connector certification, watcher state, kill switch, and deployment blockers." },
+  { productView: "console-evidence", consoleView: "evidence", productFallback: "evaluations", label: "Evidence", description: "Evidence graph, proof drill-ins, selected event context, Merkle continuity, and export path." },
+  { productView: "console-connectors", consoleView: "integrations", productFallback: "environments", label: "Connectors", description: "Connector certification matrix, credential boundaries, authority posture, and integration groups." },
+  { productView: "console-agents", consoleView: "agents", productFallback: "training", label: "Proposal Lanes", description: "Hermes, Goose, native, custom HTTP agent lanes, certification, and bounded proposal posture." },
+  { productView: "console-signals", consoleView: "fleet", productFallback: "gpu", label: "Signals", description: "Fleet health, watcher signals, live events, and system stream status." },
+  { productView: "console-hermes", consoleView: "hermes", productFallback: "evaluations", label: "Hermes", description: "Hermes chat, explanation, advisory context, and steering-bound operator interaction." },
+  { productView: "console-audit", consoleView: "audit", productFallback: "evaluations", label: "Audit", description: "Timeline proof, Merkle proof, evidence continuity, operator audit, and export validation." },
+  { productView: "console-roadmap", consoleView: "roadmap", productFallback: "home", label: "Roadmap", description: "Operator roadmap, release gates, readiness milestones, and migration status." },
+];
+
+export function consoleParityMatrix(): ConsoleWorkflow[] {
+  return CONSOLE_WORKFLOW_MATRIX;
+}
+
+export function isConsoleProductView(view: ViewKey): boolean {
+  return CONSOLE_WORKFLOW_MATRIX.some((workflow) => workflow.productView === view);
+}
+
+export function consoleWorkflowForView(view: ViewKey): ConsoleWorkflow {
+  return CONSOLE_WORKFLOW_MATRIX.find((workflow) => workflow.productView === view) ?? CONSOLE_WORKFLOW_MATRIX[0];
+}
 
 export function operatorWorkflowPosture(workflow: OperatorWorkflowKey): { callPath: string; posture: "native" | "delegated" | "read_only"; reason: string } {
   const postures: Record<OperatorWorkflowKey, { callPath: string; posture: "native" | "delegated" | "read_only"; reason: string }> = {
@@ -320,12 +393,13 @@ export default function ProductApp() {
   }
 
   const dashboard = dashboardState.state === "ready" ? dashboardState.data : null;
+  const consoleMode = isConsoleProductView(view);
 
   return (
-    <div className="product-shell">
+    <div className={`product-shell ${consoleMode ? "console-mode" : ""}`}>
       <Sidebar session={session} activeView={view} onView={setView} onLogout={logout} loggingOut={loggingOut} />
       <main className="product-main">
-        <Header session={session} dashboard={dashboard} onSession={setSession} refreshSession={refreshSession} />
+        <Header session={session} dashboard={dashboard} onSession={setSession} refreshSession={refreshSession} consoleMode={consoleMode} />
         {logoutError ? (
           <div className="product-alert" role="alert">
             <AlertTriangle size={16} />
@@ -708,17 +782,19 @@ function Header({
   session,
   dashboard,
   refreshSession,
+  consoleMode,
 }: {
   session: SessionPayload;
   dashboard: DashboardPayload | null;
   onSession: (session: SessionPayload | null) => void;
   refreshSession: () => Promise<SessionPayload>;
+  consoleMode?: boolean;
 }) {
   return (
     <header className="product-header">
       <div>
-        <h1>{dashboard?.scope.kind === "team" ? dashboard.scope.team?.display_name : "Home"}</h1>
-        <p>{dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
+        <h1>{consoleMode ? "Control Console" : dashboard?.scope.kind === "team" ? dashboard.scope.team?.display_name : "Home"}</h1>
+        <p>{consoleMode ? "Full migrated Mesh console workflows are available inside the production product shell." : dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
       </div>
       <div className="header-actions">
         <TeamSwitcher session={session} refreshSession={refreshSession} />
@@ -758,6 +834,9 @@ function ContentRouter({
   onLogout: () => void;
   loggingOut: boolean;
 }) {
+  if (isConsoleProductView(view)) {
+    return <ConsoleWorkspace view={view} setView={setView} />;
+  }
   if (dashboardState.state !== "ready") {
     return <LoadStatePanel state={dashboardState} />;
   }
@@ -770,6 +849,25 @@ function ContentRouter({
   if (view === "members") return <MembersView session={session} setView={setView} />;
   if (view === "settings") return <SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} />;
   return <CapabilityView view={view} dashboard={dashboard} setView={setView} />;
+}
+
+function ConsoleWorkspace({ view, setView }: { view: ViewKey; setView: (view: ViewKey) => void }) {
+  const workflow = consoleWorkflowForView(view);
+  return (
+    <section className="console-workspace" aria-label="Full Mesh control console">
+      <div className="console-workspace-toolbar">
+        <div>
+          <span>{workflow.label}</span>
+          <strong>{workflow.description}</strong>
+        </div>
+        <div className="console-workspace-actions">
+          <button type="button" onClick={() => setView("home")}>Product Home</button>
+          <button type="button" onClick={() => setView(workflow.productFallback)}>Product View</button>
+        </div>
+      </div>
+      <OperatorConsole initialView={workflow.consoleView} />
+    </section>
+  );
 }
 
 function LoadStatePanel<T>({ state }: { state: LoadState<T> }) {
@@ -1230,7 +1328,19 @@ export function buildDashboardTiles(dashboard: DashboardPayload): DashboardTileM
   const connectors = mesh.connectors || {};
   const connectorRecords = connectors.connectors || connectors.connector_certification || {};
   const praxis = buildPraxisProductModel(dashboard);
+  const consolePayload = {
+    status: "ready",
+    workflows: CONSOLE_WORKFLOW_MATRIX.map((workflow) => workflow.consoleView),
+  };
   const rawTiles = [
+    {
+      title: "Control console",
+      detail: `${CONSOLE_WORKFLOW_MATRIX.length} migrated workflows`,
+      icon: Cpu,
+      view: "console" as ViewKey,
+      apiSection: "meshapp.frontend.control_plane_api_client.v1",
+      payload: consolePayload,
+    },
     {
       title: "Praxis MCP generator",
       detail: `${praxis.certifiedTools} read-only / ${praxis.deniedTools} denied`,
@@ -2127,6 +2237,7 @@ export function runtimeProductPage(view: ViewKey, dashboard: DashboardPayload): 
 }
 
 export function workflowForView(view: ViewKey): OperatorWorkflowKey {
+  if (isConsoleProductView(view)) return workflowForView(consoleWorkflowForView(view).productFallback);
   if (view === "keys" || view === "settings") return "settings";
   if (view === "environments") return "connector";
   if (view === "evaluations") return "launch";

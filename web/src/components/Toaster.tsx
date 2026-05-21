@@ -54,7 +54,7 @@ function Toast({
   onDismiss: (id: string) => void;
 }) {
   const [exiting, setExiting] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const dismiss = useCallback(() => {
     setExiting(true);
@@ -64,7 +64,11 @@ function Toast({
   useEffect(() => {
     const duration = toast.duration ?? (toast.variant === "error" ? 6000 : 4000);
     timerRef.current = setTimeout(dismiss, duration);
-    return () => clearTimeout(timerRef.current);
+    return () => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+    };
   }, [toast.duration, toast.variant, dismiss]);
 
   return (
