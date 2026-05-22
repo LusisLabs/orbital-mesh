@@ -28,6 +28,7 @@ Primary sources:
 - `scripts/verify_threat_model_register.py --json` for owner, decision, expiry, and compensating-control coverage before external staging exposure.
 - `scripts/verify_data_classification_policy.py --json` for data-class owner, retention, redaction, storage-location, deletion-control, and evidence-ref coverage before external staging exposure.
 - `python3 scripts/verify_agentic_operator_source_provenance.py --json` for source-input provenance, Apache-2.0 license, snapshot hash, fork posture, authority-gate adaptation, and no active runtime before any agentic-operator-derived runtime code is admitted.
+- `python3 scripts/verify_trigger_web_source_provenance.py --json` for source-input provenance, Apache-2.0 license, snapshot hash, fork posture, authority-gate adaptation, and no active runtime before any trigger-web-derived runtime code is admitted.
 - `scripts/generate_evaluation_kit_packet.py --output-dir <evaluation-kit-dir> --json` for local sample export package, zip archive, retrieval proof, and formal benchmark command packet generation.
 - `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json` for `mesh.evaluation_kit_packet.v1` verification.
 - `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --json` for benchmark output artifact, scorecard, scenario, pass-rate, unsafe-action, and hash verification.
