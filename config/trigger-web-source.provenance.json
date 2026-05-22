@@ -45,7 +45,9 @@
         "apps/mesh-webapp",
         "internal-packages/mesh-ui"
       ],
-      "imported_paths": []
+      "imported_paths": [
+        "apps/mesh-webapp"
+      ]
     },
     {
       "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/layout",

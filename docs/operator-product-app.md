@@ -82,6 +82,15 @@ NEXT_PUBLIC_MESH_API_URL=http://127.0.0.1:8787 \
 pnpm --dir meshapp/frontend run dev --hostname 127.0.0.1 --port 3000
 ```
 
+The adapted Remix dashboard shell lives at `apps/mesh-webapp` as a non-authoritative migration surface. Use it for Trigger-derived layout, navigation, table, and detail-route work while Mesh contracts, control-plane routes, and old UI parity stay authoritative elsewhere:
+
+```bash
+pnpm --dir apps/mesh-webapp run dev
+pnpm --dir apps/mesh-webapp run lint
+pnpm --dir apps/mesh-webapp run test
+pnpm --dir apps/mesh-webapp run build
+```
+
 Local browser session cookies require the frontend and API to use the same loopback hostname. If the frontend is opened at `http://localhost:3000` while the API base is `http://127.0.0.1:8787`, the browser can reject or withhold the API session cookie and product routes will report `session required`. The product client normalizes loopback defaults to the opened frontend hostname; explicit `?server=` overrides are left unchanged for operator testing.
 
 If `/api/auth/config` succeeds but `/api/auth/me` fails with a backend-unavailable error, the product login screen keeps the degraded session-probe message visible and disables auth actions instead of rendering a normal login form over a broken API. A plain unauthenticated `/api/auth/me` response remains the normal login path.
