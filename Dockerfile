@@ -1,14 +1,17 @@
 FROM node:22-bookworm-slim AS operator-ui
-WORKDIR /repo/meshapp/frontend
+WORKDIR /repo
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 \
   && rm -rf /var/lib/apt/lists/*
-COPY meshapp/frontend/package.json meshapp/frontend/package-lock.json ./
-RUN npm ci
-COPY meshapp/frontend/ ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY meshapp/frontend/package.json ./meshapp/frontend/
+RUN corepack enable \
+  && corepack prepare pnpm@10.24.0 --activate \
+  && pnpm install --filter meshapp --frozen-lockfile
+COPY meshapp/frontend/ ./meshapp/frontend/
 COPY scripts/generate_control_plane_contracts.py /repo/scripts/generate_control_plane_contracts.py
 COPY shared /repo/shared
-RUN npm run build
+RUN cd meshapp/frontend && pnpm run build
 
 FROM node:22-bookworm-slim AS promptfoo
 RUN npm install -g promptfoo@0.121.3 \

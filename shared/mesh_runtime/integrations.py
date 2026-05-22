@@ -27,6 +27,7 @@ from .audit_sink import audit_sink_proof_ready, verify_audit_sink_proof
 from .audit_sink_certification import audit_sink_certification_ready
 from .backup_restore import backup_restore_rehearsal_ready
 from .connector_certification import build_connector_certification_matrix, connector_certification_registry_ready
+from .credential_egress import verify_credential_egress_policy
 from .data_classification import data_classification_policy_ready
 from .deployment_compatibility import deployment_compatibility_registry_ready
 from .design_partner import design_partner_packet_ready
@@ -153,6 +154,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.goose_command,
         runtime_config.gitnexus_sidecar_url,
         runtime_config.readiness_profile,
+        _goose_autodiscovery_disabled(),
         runtime_config.operator_identity_required,
         runtime_config.state_backend,
         runtime_config.database_url,
@@ -178,6 +180,8 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         runtime_config.latentmas_url,
         runtime_config.latentmas_model_name,
         runtime_config.agent_fabric_mode,
+        runtime_config.centaur_endpoint,
+        runtime_config.centaur_credential_egress_policy_path,
         runtime_config.zaxy_enabled,
         runtime_config.zaxy_namespace,
         runtime_config.zaxy_tenant_id,
@@ -209,6 +213,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         goose_future = executor.submit(_command_status, "goose", resolved.goose_command)
         latentmas_future = executor.submit(_latentmas_status, runtime_config)
         deepagents_future = executor.submit(_deepagents_status, runtime_config)
+        centaur_future = executor.submit(_centaur_status, runtime_config)
         zaxy_future = executor.submit(_zaxy_statuses, runtime_config)
         langgraph_future = executor.submit(_langgraph_checkpointing_status, runtime_config)
         promptfoo_status = promptfoo_future.result()
@@ -216,6 +221,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         goose_status = goose_future.result()
         latentmas_status = latentmas_future.result()
         deepagents_status = deepagents_future.result()
+        centaur_status = centaur_future.result()
         zaxy_status, eventloom_status, neo4j_status, zaxy_mcp_status = zaxy_future.result()
         langgraph_status = langgraph_future.result()
     staging_contract_online = _profile_at_least(runtime_config.readiness_profile, "staging")
@@ -274,6 +280,12 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         required_before="pilot",
         posture="sandboxed proposal fabric",
     )
+    centaur_status = _with_certification(
+        centaur_status,
+        "proposal-only" if centaur_status.ready else ("unfinished" if runtime_config.agent_fabric_mode == "centaur" else "disabled"),
+        required_before="pilot",
+        posture="source-input sandbox proposal fabric",
+    )
     zaxy_status = _with_certification(
         zaxy_status,
         "read-only" if zaxy_status.ready else "disabled",
@@ -312,6 +324,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
             "goose": _status_connector_state(goose_status),
             "latentmas": _status_connector_state(latentmas_status),
             "deepagents": _status_connector_state(deepagents_status),
+            "centaur": _status_connector_state(centaur_status),
             "zaxy": _status_connector_state(zaxy_status),
             "eventloom": _status_connector_state(eventloom_status),
             "neo4j_projection": _status_connector_state(neo4j_status),
@@ -335,6 +348,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
             "goose": goose_status,
             "latentmas": latentmas_status,
             "deepagents": deepagents_status,
+            "centaur": centaur_status,
             "zaxy": zaxy_status,
             "eventloom": eventloom_status,
             "neo4j_projection": neo4j_status,
@@ -358,6 +372,7 @@ def build_readiness(runtime_config: RuntimeConfig, force: bool = False) -> Integ
         goose=goose_status,
         latentmas=latentmas_status,
         deepagents=deepagents_status,
+        centaur=centaur_status,
         zaxy=zaxy_status,
         eventloom=eventloom_status,
         neo4j_projection=neo4j_status,
@@ -1115,6 +1130,36 @@ def _deepagents_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
     )
 
 
+def _centaur_status(runtime_config: RuntimeConfig) -> IntegrationStatus:
+    if runtime_config.agent_fabric_mode != "centaur":
+        return IntegrationStatus(
+            name="centaur",
+            ready=False,
+            detail="disabled (MESH_AGENT_FABRIC_MODE is not centaur)",
+        )
+    warnings: list[str] = []
+    if not runtime_config.centaur_endpoint:
+        warnings.append("centaur_endpoint_missing")
+    policy = _load_json_file(runtime_config.centaur_credential_egress_policy_path)
+    verification = verify_credential_egress_policy(policy, require_proxy_runtime=True)
+    if verification["status"] != "pass":
+        warnings.append("credential_egress_policy_not_ready")
+    if not verification["checks"].get("proxy_runtime_live_audit_proven"):
+        warnings.append("credential_egress_proxy_audit_not_ready")
+    ready = bool(runtime_config.centaur_endpoint and verification["status"] == "pass")
+    detail = (
+        f"fabric=centaur endpoint={runtime_config.centaur_endpoint or 'missing'} "
+        f"credential_egress={verification['status']}"
+    )
+    return IntegrationStatus(
+        name="centaur",
+        ready=ready,
+        detail=detail,
+        url=runtime_config.centaur_endpoint,
+        warnings=warnings,
+    )
+
+
 def _zaxy_statuses(runtime_config: RuntimeConfig) -> tuple[IntegrationStatus, IntegrationStatus, IntegrationStatus, IntegrationStatus]:
     status = zaxy_readiness(runtime_config)
     zaxy = IntegrationStatus(
@@ -1265,6 +1310,8 @@ def _resolve_hermes_command(command: str | None) -> str | None:
 def _resolve_goose_command(command: str | None) -> str | None:
     if command and GOOSE_BRIDGE_MODULE in command:
         return command
+    if not command and _goose_autodiscovery_disabled():
+        return None
     discovered = _resolve_vendor_binary(command, "goose")
     if discovered is None:
         return command
@@ -1285,6 +1332,10 @@ def _resolve_vendor_binary(command: str | None, executable_name: str) -> str | N
             return tokens[0]
         return None
     return shutil.which(executable_name)
+
+
+def _goose_autodiscovery_disabled() -> bool:
+    return os.getenv("MESH_DISABLE_GOOSE_AUTODISCOVERY", "").lower() in ("1", "true", "yes")
 
 
 def _build_promptfoo_bridge_command(promptfoo_bin: str) -> str:
@@ -1463,6 +1514,16 @@ def _read_json_url(url: str) -> dict[str, object] | None:
                 return None
             payload = json.loads(response.read().decode("utf-8"))
     except (URLError, ValueError, TimeoutError, OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _load_json_file(path: str | Path | None) -> dict[str, Any] | None:
+    if not path:
+        return None
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
         return None
     return payload if isinstance(payload, dict) else None
 

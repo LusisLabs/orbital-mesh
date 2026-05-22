@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from .control_plane_models import AgentAttempt, AgentTask
+from .control_plane_models import AgentAttempt, AgentAttemptThread, AgentAttemptThreadEvent, AgentTask
 
 
 NATIVE_ORCHESTRATION_PLATFORM_WORKERS = (
@@ -96,8 +96,12 @@ def build_agent_attempt(
     citations: list[dict[str, Any]] | None = None,
     contradictions_detected: list[dict[str, Any]] | None = None,
     memory_actions_requested: list[str] | None = None,
+    thread: AgentAttemptThread | dict[str, Any] | None = None,
 ) -> AgentAttempt:
     now = _timestamp()
+    output_payload = dict(output or {})
+    if thread is not None and "thread" not in output_payload:
+        output_payload["thread"] = thread.to_dict() if isinstance(thread, AgentAttemptThread) else dict(thread)
     return AgentAttempt(
         attempt_id=f"attempt_{task_id}_{agent}_{uuid4().hex[:8]}",
         task_id=task_id,
@@ -112,7 +116,7 @@ def build_agent_attempt(
         test_results=list(test_results or []),
         risk_flags=list(risk_flags or []),
         recommended_action=recommended_action,
-        output=dict(output or {}),
+        output=output_payload,
         observations_proposed=list(observations_proposed or []),
         claims_proposed=list(claims_proposed or []),
         procedures_proposed=list(procedures_proposed or []),
@@ -120,6 +124,93 @@ def build_agent_attempt(
         contradictions_detected=list(contradictions_detected or []),
         memory_actions_requested=list(memory_actions_requested or []),
     )
+
+
+def build_agent_attempt_thread(
+    *,
+    attempt_id: str,
+    task_id: str,
+    run_id: str,
+    agent: str,
+    adapter: str,
+    status: str,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    sandbox_ref: str | None = None,
+    harness: str | None = None,
+    events: list[AgentAttemptThreadEvent] | None = None,
+) -> AgentAttemptThread:
+    created_at = started_at or _timestamp()
+    updated_at = completed_at or created_at
+    thread_id = f"thread_{task_id}_{agent}_{adapter}"
+    thread_events = list(events or [])
+    if not thread_events:
+        thread_events.append(
+            AgentAttemptThreadEvent(
+                event_id=f"{thread_id}_event_1",
+                thread_id=thread_id,
+                sequence=1,
+                event_type="agent_attempt_terminal",
+                recorded_at=updated_at,
+                payload={
+                    "attempt_id": attempt_id,
+                    "agent": agent,
+                    "adapter": adapter,
+                    "status": status,
+                    "authority": "mesh_agent_attempt_projection",
+                },
+                summary={"status": status},
+                status=status,
+            )
+        )
+    return AgentAttemptThread(
+        thread_id=thread_id,
+        run_id=run_id,
+        task_id=task_id,
+        attempt_id=attempt_id,
+        agent=agent,
+        adapter=adapter,
+        status=status,
+        created_at=created_at,
+        updated_at=updated_at,
+        lifecycle=["spawn_or_reuse_runtime", "persist_message", "execute", "stream_or_replay_events", "release"],
+        events=thread_events,
+        sandbox_ref=sandbox_ref,
+        harness=harness,
+        released_at=updated_at if status in {"completed", "failed", "cancelled"} else None,
+        authority={
+            "mesh_control_plane_authoritative": True,
+            "agent_thread_authoritative": False,
+            "policy_approval_actuation_allowed": False,
+        },
+    )
+
+
+def ensure_agent_attempt_thread(attempt: AgentAttempt, *, task: AgentTask) -> AgentAttempt:
+    if isinstance(attempt.output, dict) and isinstance(attempt.output.get("thread"), dict):
+        return attempt
+    output = dict(attempt.output)
+    output["thread"] = build_agent_attempt_thread(
+        attempt_id=attempt.attempt_id,
+        task_id=task.task_id,
+        run_id=task.run_id,
+        agent=attempt.agent,
+        adapter=attempt.adapter,
+        status=attempt.status,
+        started_at=attempt.started_at,
+        completed_at=attempt.completed_at,
+        harness=_harness_for_attempt(attempt),
+    ).to_dict()
+    attempt.output = output
+    return attempt
+
+
+def _harness_for_attempt(attempt: AgentAttempt) -> str:
+    if attempt.adapter == "native_contract":
+        return "mesh-native-contract"
+    if attempt.adapter == "native_orchestration_contract":
+        return "mesh-native-orchestration-contract"
+    return attempt.adapter
 
 
 def _timestamp() -> str:

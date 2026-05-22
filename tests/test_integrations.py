@@ -76,6 +76,7 @@ class IntegrationsTests(unittest.TestCase):
                 patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which),
                 patch("shared.mesh_runtime.integrations.subprocess.run", side_effect=fake_run),
                 patch.dict(os.environ, ollama_env),
+                patch.dict("os.environ", {"MESH_DISABLE_GOOSE_AUTODISCOVERY": "0"}, clear=False),
             ):
                 resolved = resolve_integrations_config(config)
 
@@ -119,7 +120,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertIn("codex", connectors)
         self.assertIn("claudecode", connectors)
         self.assertIn("openclaw", connectors)
-        optional_sidecars = {"zaxy", "eventloom", "neo4j_projection", "zaxy_mcp", "langgraph_checkpointing"}
+        optional_sidecars = {"centaur", "zaxy", "eventloom", "neo4j_projection", "zaxy_mcp", "langgraph_checkpointing"}
         for connector_id, connector in connectors.items():
             if connector_id in optional_sidecars:
                 self.assertEqual(connector["state"], "disabled", connector_id)
@@ -137,11 +138,126 @@ class IntegrationsTests(unittest.TestCase):
         self.assertTrue(readiness["goose"]["ready"])
         self.assertTrue(readiness["latentmas"]["ready"])
         self.assertTrue(readiness["deepagents"]["ready"])
+        self.assertFalse(readiness["centaur"]["ready"])
         self.assertFalse(readiness["zaxy"]["ready"])
         self.assertFalse(readiness["eventloom"]["ready"])
         self.assertFalse(readiness["neo4j_projection"]["ready"])
         self.assertFalse(readiness["zaxy_mcp"]["ready"])
         self.assertFalse(readiness["langgraph_checkpointing"]["ready"])
+
+    def test_centaur_fabric_is_blocked_without_credential_egress_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            readiness = build_readiness(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    vault_path=str(Path(temp_dir) / "vault"),
+                    integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                    agent_fabric_mode="centaur",
+                    centaur_endpoint="http://centaur.local",
+                    feature_flag_credentials_available=False,
+                    incident_credentials_available=False,
+                ),
+                force=True,
+            ).to_dict()
+
+        self.assertFalse(readiness["centaur"]["ready"])
+        self.assertIn("credential_egress_policy_not_ready", readiness["centaur"]["warnings"])
+        self.assertEqual(readiness["connector_certification"]["centaur"]["state"], "unfinished")
+        self.assertIn("centaur_connector_probe_not_ready", readiness["connector_certification"]["centaur"]["blockers"])
+
+    def test_centaur_fabric_stays_blocked_without_proxy_audit_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "centaur-egress.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.credential_egress_policy.v1",
+                        "records": [
+                            {
+                                "secret_name": "CENTAUR_API_KEY",
+                                "allowed_hosts": ["centaur.local"],
+                                "allowed_locations": {"header": ["Authorization"]},
+                                "sandbox_placeholder_only": True,
+                                "egress_audit_event_id": "evt_centaur_egress",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            readiness = build_readiness(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    vault_path=str(Path(temp_dir) / "vault"),
+                    integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                    agent_fabric_mode="centaur",
+                    centaur_endpoint="http://centaur.local",
+                    centaur_credential_egress_policy_path=str(policy_path),
+                    feature_flag_credentials_available=False,
+                    incident_credentials_available=False,
+                ),
+                force=True,
+            ).to_dict()
+
+        self.assertFalse(readiness["centaur"]["ready"])
+        self.assertIn("credential_egress_proxy_audit_not_ready", readiness["centaur"]["warnings"])
+        self.assertEqual(readiness["connector_certification"]["centaur"]["state"], "unfinished")
+
+    def test_centaur_fabric_ready_requires_endpoint_policy_and_proxy_audit_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            policy_path = Path(temp_dir) / "centaur-egress.json"
+            policy_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.credential_egress_policy.v1",
+                        "environment": "local",
+                        "records": [
+                            {
+                                "secret_name": "CENTAUR_API_KEY",
+                                "allowed_hosts": ["centaur.local"],
+                                "allowed_locations": {"header": ["Authorization"]},
+                                "sandbox_placeholder_only": True,
+                                "egress_audit_event_id": "evt_centaur_egress",
+                            }
+                        ],
+                        "proof": {
+                            "proxy_runtime": {
+                                "runtime": "credential-egress-proxy",
+                                "proof_mode": "live_proxy_audit",
+                                "proxy_instance_id": "proxy_centaur_1",
+                                "last_audit_event_id": "evt_centaur_egress",
+                                "allowed_hosts": ["centaur.local"],
+                                "sandbox_placeholder_only": True,
+                                "host_bound_substitution": True,
+                                "sandbox_env": {"CENTAUR_API_KEY": "${secret:CENTAUR_API_KEY}"},
+                            },
+                            "egress_audit_events": [{"event_id": "evt_centaur_egress", "host": "centaur.local"}],
+                            "agent_attempt_outputs": [{"credential_policy": {"sandbox_visible_value": "${secret:CENTAUR_API_KEY}"}}],
+                            "sandbox_logs": ["placeholder credential only"],
+                            "exported_artifacts": [{"credential_policy": "${secret:CENTAUR_API_KEY}"}],
+                            "raw_secret_fixture_values": ["centaur_real_secret"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            readiness = build_readiness(
+                RuntimeConfig(
+                    state_directory=temp_dir,
+                    vault_path=str(Path(temp_dir) / "vault"),
+                    integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+                    agent_fabric_mode="centaur",
+                    centaur_endpoint="http://centaur.local",
+                    centaur_credential_egress_policy_path=str(policy_path),
+                    feature_flag_credentials_available=False,
+                    incident_credentials_available=False,
+                ),
+                force=True,
+            ).to_dict()
+
+        self.assertTrue(readiness["centaur"]["ready"])
+        self.assertEqual(readiness["connector_certification"]["centaur"]["state"], "proposal-only")
+        self.assertEqual(readiness["connector_certification"]["centaur"]["blockers"], [])
 
     def test_zaxy_langgraph_readiness_is_optional_and_degraded_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -235,6 +351,33 @@ class IntegrationsTests(unittest.TestCase):
 
         self.assertIn("services.orchestrator.hermes_bridge", resolved.hermes_command or "")
         self.assertIn("--hermes-command hermes", resolved.hermes_command or "")
+
+    def test_goose_autodiscovery_can_be_disabled_for_hermetic_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = RuntimeConfig(
+                state_directory=temp_dir,
+                integrations_config_path=str(Path(temp_dir) / "integrations.json"),
+            )
+            which_calls: list[str] = []
+
+            def fake_which(name: str) -> str | None:
+                which_calls.append(name)
+                if name == "goose":
+                    raise AssertionError("goose autodiscovery should stay disabled")
+                return None
+
+            with (
+                patch.dict("os.environ", {"MESH_DISABLE_GOOSE_AUTODISCOVERY": "1"}, clear=False),
+                patch("shared.mesh_runtime.integrations.shutil.which", side_effect=fake_which),
+            ):
+                resolved = resolve_integrations_config(config)
+
+        self.assertIsNone(resolved.goose_command)
+        self.assertNotIn("goose", which_calls)
+        with patch.dict("os.environ", {"MESH_DISABLE_GOOSE_AUTODISCOVERY": "1"}, clear=False):
+            env = _command_env(None)
+        self.assertEqual(env["GOOSE_DISABLE_KEYRING"], "1")
+
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_path = Path(temp_dir) / "results.json"
@@ -282,6 +425,7 @@ class IntegrationsTests(unittest.TestCase):
                 patch.dict(
                     "os.environ",
                     {
+                        "MESH_DISABLE_GOOSE_AUTODISCOVERY": "0",
                         "HERMES_INFERENCE_PROVIDER": "auto",
                         "HERMES_MODEL": "MiniMax-M2.5",
                         "LLM_MODEL": "MiniMax-M2.5",
@@ -307,6 +451,7 @@ class IntegrationsTests(unittest.TestCase):
                 patch.dict(
                     "os.environ",
                     {
+                        "MESH_DISABLE_GOOSE_AUTODISCOVERY": "0",
                         "GOOSE_PROVIDER": "ollama",
                         "GOOSE_MODEL": "gemma4:31b-it-q4_K_M",
                         "GOOSE_FALLBACK_PROVIDER": "openai",

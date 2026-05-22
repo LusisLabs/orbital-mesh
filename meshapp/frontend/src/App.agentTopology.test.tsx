@@ -85,7 +85,40 @@ describe("AgentMeshPanel topology", () => {
         },
       },
       lane_routing: {},
-      attempts: [],
+      attempts: [
+        {
+          attempt_id: "attempt_centaur_1",
+          task_id: "task_run_topology_root_cause",
+          run_id: "run_topology",
+          agent: "codex",
+          adapter: "centaur",
+          status: "completed",
+          started_at: "2026-05-06T00:00:00Z",
+          completed_at: "2026-05-06T00:00:01Z",
+          summary: "Centaur sandbox proposed an investigation result.",
+          changed_files: [],
+          test_results: [],
+          risk_flags: [],
+          recommended_action: "human_review",
+          output: {
+            sandbox_request: {
+              credential_policy: { raw_secret_in_sandbox: false },
+            },
+            thread: {
+              thread_id: "thread_centaur_1",
+              harness: "codex",
+              events: [{ event_type: "sandbox_completed", status: "completed", recorded_at: "2026-05-06T00:00:01Z" }],
+              authority: { mesh_control_plane_authoritative: true },
+            },
+          },
+          observations_proposed: [],
+          claims_proposed: [],
+          procedures_proposed: [],
+          citations: [],
+          contradictions_detected: [],
+          memory_actions_requested: [],
+        },
+      ],
       selected_attempt_id: null,
     };
     const run = {
@@ -107,6 +140,10 @@ describe("AgentMeshPanel topology", () => {
     expect(html).toContain("Bounded Action");
     expect(html).toContain("Operator Approval Required");
     expect(html).toContain("own_search_api_pilot");
+    expect(html).toContain("thread_centaur_1");
+    expect(html).toContain("codex");
+    expect(html).toContain("placeholder only");
+    expect(html).toContain("Mesh proposed / Mesh approved");
   });
 
   it("lists orchestration platform lanes with connector certification posture", () => {
@@ -146,6 +183,7 @@ describe("AgentMeshPanel topology", () => {
       goose: integrationStatus("Goose"),
       latentmas: integrationStatus("LatentMAS"),
       deepagents: integrationStatus("DeepAgents"),
+      centaur: integrationStatus("Centaur"),
       zaxy: integrationStatus("Zaxy"),
       eventloom: integrationStatus("Eventloom"),
       neo4j_projection: integrationStatus("Neo4j"),
@@ -159,8 +197,9 @@ describe("AgentMeshPanel topology", () => {
     const connectors = buildAgentConnectors(readiness, []);
 
     expect(connectors.map((connector) => connector.id)).toEqual(
-      expect.arrayContaining(["airflow", "temporal", "dagster", "prefect", "flyte", "luigi", "oozie", "kubernetes", "n8n"]),
+      expect.arrayContaining(["airflow", "temporal", "dagster", "prefect", "flyte", "luigi", "oozie", "kubernetes", "n8n", "centaur"]),
     );
+    expect(connectors.find((connector) => connector.id === "centaur")?.name).toBe("Centaur Sandbox");
     expect(connectors.find((connector) => connector.id === "kubernetes")?.state).toBe("pilot-ready");
     expect(connectors.find((connector) => connector.id === "airflow")?.boundary).toContain("DAG state");
   });

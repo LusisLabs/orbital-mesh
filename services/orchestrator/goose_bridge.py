@@ -213,6 +213,7 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
         cwd=MESH_ROOT,
         check=False,
         text=True,
+        env=_command_env(None),
     )
     return completed.returncode
 
@@ -385,7 +386,10 @@ def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
 
 
 def _command_env(provider: str | None) -> dict[str, str]:
-    return os.environ.copy()
+    env = os.environ.copy()
+    if env.get("MESH_DISABLE_GOOSE_AUTODISCOVERY", "").lower() in ("1", "true", "yes"):
+        env.setdefault("GOOSE_DISABLE_KEYRING", "1")
+    return env
 
 
 def _parse_review_text(text: str) -> dict[str, object]:

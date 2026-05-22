@@ -60,6 +60,35 @@ export interface SteeringCommand {
   payload: Record<string, any>;
 }
 
+export interface AgentAttemptThreadEvent {
+  event_id: string;
+  thread_id: string;
+  sequence: number;
+  event_type: string;
+  recorded_at: string;
+  payload: Record<string, any>;
+  summary?: Record<string, any> | null;
+  status?: string | null;
+}
+
+export interface AgentAttemptThread {
+  thread_id: string;
+  run_id: string;
+  task_id: string;
+  attempt_id: string;
+  agent: string;
+  adapter: string;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  lifecycle: string[];
+  events: AgentAttemptThreadEvent[];
+  sandbox_ref?: string | null;
+  harness?: string | null;
+  released_at?: string | null;
+  authority: Record<string, any>;
+}
+
 export interface AgentAttempt {
   attempt_id: string;
   task_id: string;
@@ -133,6 +162,7 @@ export interface IntegrationReadiness {
   goose: IntegrationStatus;
   latentmas: IntegrationStatus;
   deepagents: IntegrationStatus;
+  centaur: IntegrationStatus;
   zaxy: IntegrationStatus;
   eventloom: IntegrationStatus;
   neo4j_projection: IntegrationStatus;

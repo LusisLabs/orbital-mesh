@@ -4869,7 +4869,7 @@ function buildConfidenceMovement(
 export function buildAgentConnectors(readiness: IntegrationReadiness | null, tasks: AgentTask[]): AgentConnectorSummary[] {
   const attempts = tasks.flatMap((task) => task.attempts ?? []);
   const lastAttempt = (agent: string) => attempts.slice().reverse().find((attempt) => attempt.agent === agent);
-  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents" | "zaxy" | "langgraph_checkpointing") => readiness?.[key] ?? null;
+  const readinessFor = (key: "hermes" | "goose" | "latentmas" | "deepagents" | "centaur" | "zaxy" | "langgraph_checkpointing") => readiness?.[key] ?? null;
   const certification = readiness?.connector_certification ?? {};
   const certFor = (id: string): Record<string, any> => asRecord(certification[id]);
   const fromReadiness = (status: IntegrationReadiness["hermes"] | null): ConnectorState => {
@@ -4895,6 +4895,7 @@ export function buildAgentConnectors(readiness: IntegrationReadiness | null, tas
     { id: "openclaw", name: "OpenClaw", role: "Staging validation lane", adapter: "deepagents/native contract", status: readinessFor("deepagents"), primary: false },
     { id: "latentmas", name: "LatentMAS", role: "Advisory full-inference worker", adapter: "latentmas sidecar", status: readinessFor("latentmas"), primary: false },
     { id: "deepagents", name: "Deep Agents", role: "Sandboxed multi-agent proposal fabric", adapter: "deepagents", status: readinessFor("deepagents"), primary: false },
+    { id: "centaur", name: "Centaur Sandbox", role: "Source-input sandbox proposal fabric", adapter: "centaur", status: readinessFor("centaur"), primary: false },
     { id: "langgraph", name: "LangGraph", role: "Proposal checkpointing", adapter: "langgraph", status: readinessFor("langgraph_checkpointing"), primary: false },
     { id: "zaxy", name: "Zaxy", role: "Memory sidecar", adapter: "eventloom/mcp", status: readinessFor("zaxy"), primary: false },
     { id: "airflow", name: "Apache Airflow", role: "DAG state and scheduled workflow evidence lane", adapter: "native orchestration contract", status: null, primary: false, platform: true },
@@ -5420,6 +5421,11 @@ export function AgentMeshPanel({
                 attempt.output && typeof attempt.output.metrics === "object" && attempt.output.metrics !== null
                   ? (attempt.output.metrics as Record<string, unknown>)
                   : null;
+              const thread = asRecord(attempt.output?.thread);
+              const threadEvents = firstArray(thread.events);
+              const authority = asRecord(thread.authority ?? attempt.output?.authority);
+              const sandboxRequest = asRecord(attempt.output?.sandbox_request);
+              const credentialPolicy = asRecord(sandboxRequest.credential_policy ?? attempt.output?.credential_policy);
               return (
                 <article key={attempt.attempt_id} className={`agent-attempt-card ${selected ? "selected" : ""}`}>
                   <div className="agent-attempt-header">
@@ -5432,6 +5438,11 @@ export function AgentMeshPanel({
                   <div className="context-link-list compact">
                     <ContextLink label="Action" value={humanize(attempt.recommended_action)} />
                     <ContextLink label="Adapter" value={attempt.adapter} />
+                    {thread.thread_id ? <ContextLink label="Thread" value={String(thread.thread_id)} mono /> : null}
+                    {thread.harness ? <ContextLink label="Harness" value={String(thread.harness)} /> : null}
+                    {threadEvents.length > 0 ? <ContextLink label="Events" value={String(threadEvents.length)} /> : null}
+                    {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="placeholder only" /> : null}
+                    {authority.mesh_control_plane_authoritative === true ? <ContextLink label="Authority" value="Mesh proposed / Mesh approved" /> : null}
                     {typeof attempt.output?.confidence === "number" && (
                       <ContextLink label="Confidence" value={`${Math.round(attempt.output.confidence * 100)}%`} />
                     )}
@@ -5453,6 +5464,15 @@ export function AgentMeshPanel({
                   )}
                   {typeof attempt.output?.workspace_path === "string" && attempt.output.workspace_path ? (
                     <ContextLink label="Workspace" value={String(attempt.output.workspace_path)} />
+                  ) : null}
+                  {threadEvents.length > 0 ? (
+                    <pre className="timeline-summary">
+                      {JSON.stringify(threadEvents.slice(0, 5).map((event) => ({
+                        event_type: asRecord(event).event_type,
+                        status: asRecord(event).status,
+                        recorded_at: asRecord(event).recorded_at,
+                      })), null, 2)}
+                    </pre>
                   ) : null}
                   {typeof attempt.output?.diff === "string" && attempt.output.diff.trim() !== "" ? (
                     <pre className="timeline-summary">{String(attempt.output.diff)}</pre>

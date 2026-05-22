@@ -56,6 +56,11 @@ services:
       KUBECONFIG: /root/.kube/config
       MESH_KUBECTL_COMMAND: "${MESH_KUBECTL_COMMAND:-kubectl}"
       MESH_KUBERNETES_ALLOWED_CONTEXTS: "${MESH_KUBERNETES_ALLOWED_CONTEXTS:-k3d-mesh-e2e}"
+      MESH_AGENT_FABRIC_MODE: "${MESH_AGENT_FABRIC_MODE:-native}"
+      MESH_CENTAUR_ENDPOINT: "${MESH_CENTAUR_ENDPOINT:-http://mesh-centaur-adapter:8080}"
+      MESH_CENTAUR_API_KEY_ENV_NAME: "${MESH_CENTAUR_API_KEY_ENV_NAME:-MESH_CENTAUR_ADAPTER_API_KEY}"
+      MESH_CENTAUR_ADAPTER_API_KEY: "${MESH_CENTAUR_ADAPTER_API_KEY:-local-compose-centaur-key}"
+      MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH: "${MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH:-/app/config/centaur-credential-egress.local.json}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -77,7 +82,47 @@ services:
       retries: 3
       start_period: 20s
 
+  mesh-centaur-adapter:
+    profiles:
+      - centaur-sandbox
+    build: .
+    init: true
+    command: ["python3", "-m", "services.orchestrator.centaur_runtime_adapter"]
+    environment:
+      MESH_CENTAUR_ADAPTER_HOST: "0.0.0.0"
+      MESH_CENTAUR_ADAPTER_PORT: "8080"
+      MESH_CENTAUR_ADAPTER_STATE_DIR: /app/.mesh-centaur-adapter
+      MESH_CENTAUR_API_KEY_ENV_NAME: "${MESH_CENTAUR_API_KEY_ENV_NAME:-MESH_CENTAUR_ADAPTER_API_KEY}"
+      MESH_CENTAUR_ADAPTER_API_KEY: "${MESH_CENTAUR_ADAPTER_API_KEY:-local-compose-centaur-key}"
+    volumes:
+      - mesh_centaur_adapter_state:/app/.mesh-centaur-adapter
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  mesh-centaur-credential-proxy:
+    profiles:
+      - centaur-sandbox
+    build: .
+    init: true
+    command: ["python3", "-m", "http.server", "15001", "--bind", "0.0.0.0"]
+    environment:
+      MESH_CREDENTIAL_PLACEHOLDER_MODE: "true"
+      MESH_CREDENTIAL_POLICY_REF: mesh.credential_egress_policy.v1
+      MESH_CREDENTIAL_ALLOWED_HOSTS: "mesh-centaur-adapter,127.0.0.1,localhost"
+      CENTAUR_API_KEY: "$${secret:CENTAUR_API_KEY}"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:15001', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
 volumes:
   hermes_home:
   mesh_runtime_state:
   goose_config:
+  mesh_centaur_adapter_state:

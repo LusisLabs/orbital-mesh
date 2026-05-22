@@ -20,9 +20,19 @@ from .audit_sink_certification import (
     verify_audit_sink_certification,
 )
 from .breakthrough import BreakthroughCriterion, BreakthroughThresholds, breakthrough_threshold_report
+from .centaur_deployment import verify_centaur_kubernetes_profile
 from .config import RuntimeConfig
 from .context_store import ContextStore
 from .corpus_store import CorpusQuery, IncidentCorpusDatabase, project_corpus_row_to_memory, project_database_to_memory
+from .credential_egress import verify_credential_egress_policy
+from .durable_workflows import (
+    FileBackedWorkflowStore,
+    MeshStateWorkflowStore,
+    attach_workflow_event,
+    resume_workflow,
+    schedule_workflow_retry,
+    start_or_replay_workflow,
+)
 from .failure_modes import build_failure_mode_library_packet, failure_mode_library_ready, load_failure_mode_library
 from .infra_graph import GraphEdge, GraphNode, GraphSnapshot, InfraGraph
 from .learning import LearningStore
@@ -40,9 +50,12 @@ from .orchestration_drill import (
     orchestration_topology_drill_ready,
     verify_orchestration_topology_drill,
 )
+from .operator_ingress import build_operator_agent_ingress, build_operator_ingress_agent_task
 from .trust_ladder import TRUST_LEVELS, TrustLadder
 from .control_plane_models import (
     AgentAttempt,
+    AgentAttemptThread,
+    AgentAttemptThreadEvent,
     AgentTask,
     GoalRecord,
     IntegrationReadiness,

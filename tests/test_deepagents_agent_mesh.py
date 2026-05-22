@@ -14,6 +14,7 @@ from services.decision.service import DecisionService
 from services.evaluation.service import EvaluationService
 from services.ingest.service import IngestService
 from services.orchestrator.agent_mesh import AgentMeshService
+from services.orchestrator.centaur_adapter import CentaurAdapter, HttpCentaurClient
 from services.orchestrator.deepagents_adapter import DeepAgentsAdapter
 from services.orchestrator import deepagents_adapter as deepagents_adapter_module
 from services.trigger.service import TriggerService
@@ -144,6 +145,149 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
             )
         for attempt in tasks[0].attempts:
             self.assertEqual(attempt.adapter, "deepagents")
+
+    def test_agent_attempts_include_durable_thread_metadata(self) -> None:
+        task, trigger, decision, evaluation = self._minimal_task_bundle()
+
+        tasks = AgentMeshService(config=self.config).build_tasks(
+            run_id=task.run_id,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+        )
+
+        first_attempt = tasks[0].attempts[0]
+        thread = first_attempt.output["thread"]
+        self.assertEqual(thread["run_id"], task.run_id)
+        self.assertEqual(thread["task_id"], tasks[0].task_id)
+        self.assertEqual(thread["attempt_id"], first_attempt.attempt_id)
+        self.assertEqual(thread["authority"]["mesh_control_plane_authoritative"], True)
+        self.assertEqual(thread["authority"]["agent_thread_authoritative"], False)
+        self.assertIn("stream_or_replay_events", thread["lifecycle"])
+        self.assertEqual(thread["events"][0]["event_type"], "agent_attempt_terminal")
+
+    def test_centaur_fabric_routes_proposal_lanes_through_sandbox_adapter(self) -> None:
+        self.config.agent_fabric_mode = "centaur"
+        self.config.agent_mesh_agents = ("codex",)
+        task, trigger, decision, evaluation = self._minimal_task_bundle()
+        requests: list[dict[str, object]] = []
+
+        class FakeCentaurClient:
+            def run_sandbox(self, request, *, timeout_seconds):
+                requests.append(request)
+                return {
+                    "status": "completed",
+                    "summary": "fake Centaur sandbox produced a bounded proposal.",
+                    "recommended_action": "human_review",
+                    "events": [
+                        {
+                            "event_id": "evt_centaur_spawn",
+                            "event_type": "sandbox_spawned",
+                            "recorded_at": "2026-05-21T00:00:00+00:00",
+                            "status": "running",
+                            "summary": {"harness": request["harness"]},
+                        },
+                        {
+                            "event_id": "evt_centaur_result",
+                            "event_type": "sandbox_completed",
+                            "recorded_at": "2026-05-21T00:00:01+00:00",
+                            "status": "completed",
+                            "summary": {"proposal": "recorded"},
+                        },
+                    ],
+                    "output": {"proposal": "inspect run evidence"},
+                    "citations": [{"source_type": "fake_centaur", "ref": "evt_centaur_result"}],
+                }
+
+        service = AgentMeshService(
+            config=self.config,
+            centaur_adapter=CentaurAdapter(self.config, client=FakeCentaurClient()),
+        )
+        tasks = service.build_tasks(
+            run_id=task.run_id,
+            trigger=trigger,
+            decision=decision,
+            evaluation=evaluation,
+        )
+
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["mode"], "proposal_only")
+        self.assertEqual(requests[0]["harness"], "codex")
+        self.assertEqual(requests[0]["credential_policy"]["raw_secret_in_sandbox"], False)
+        attempt = tasks[0].attempts[0]
+        self.assertEqual(attempt.adapter, "centaur")
+        self.assertEqual(attempt.status, "completed")
+        self.assertEqual(attempt.output["authority"]["centaur_control_plane_authoritative"], False)
+        self.assertEqual(attempt.output["thread"]["events"][1]["event_type"], "sandbox_completed")
+
+    def test_http_centaur_client_uses_real_durable_lifecycle_endpoints(self) -> None:
+        self.config.centaur_endpoint = "http://centaur.test"
+        self.config.centaur_timeout_seconds = 3.0
+        self.config.centaur_api_key_env_name = "TEST_CENTAUR_API_KEY"
+        calls: list[tuple[str, str, dict[str, object] | None]] = []
+        responses = [
+            {
+                "execution_id": "exec_1",
+                "thread_key": "mesh:run:task:codex",
+                "assignment_generation": 1,
+                "status": "queued",
+            },
+            {
+                "execution_id": "exec_1",
+                "thread_key": "mesh:run:task:codex",
+                "assignment_generation": 1,
+                "status": "completed",
+                "terminal_reason": "ok",
+                "result_text": "bounded proposal",
+                "error_text": "",
+            },
+            {"released": True},
+        ]
+
+        class FakeResponse:
+            def __init__(self, payload: dict[str, object]) -> None:
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self) -> bytes:
+                return json.dumps(self.payload).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            body = json.loads(request.data.decode("utf-8")) if request.data else None
+            calls.append((request.get_method(), request.full_url, body))
+            return FakeResponse(responses.pop(0))
+
+        request = {
+            "state_slice": "mesh.agent_sandbox_runtime.v1",
+            "thread_key": "mesh:run:task:codex",
+            "run_id": "run",
+            "task_id": "task",
+            "agent": "codex",
+            "harness": "codex",
+            "authority": {"mesh_control_plane_authoritative": True},
+        }
+        with patch.dict("os.environ", {"TEST_CENTAUR_API_KEY": "secret"}), patch(
+            "urllib.request.urlopen",
+            fake_urlopen,
+        ):
+            result = HttpCentaurClient(self.config).run_sandbox(request, timeout_seconds=3.0)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["summary"], "bounded proposal")
+        self.assertEqual(calls[0][0], "POST")
+        self.assertEqual(calls[0][1], "http://centaur.test/agent/execute")
+        self.assertIn("message", calls[0][2])
+        self.assertEqual(calls[1][0], "GET")
+        self.assertEqual(calls[1][1], "http://centaur.test/agent/executions/exec_1")
+        self.assertEqual(calls[2][0], "POST")
+        self.assertEqual(calls[2][1], "http://centaur.test/agent/threads/mesh%3Arun%3Atask%3Acodex/release")
+        self.assertEqual(result["events"][2]["event_type"], "centaur_thread_released")
+        self.assertEqual(result["output"]["release"]["released"], True)
 
     def test_deepagents_collection_timeout_degrades_lane_without_blocking(self) -> None:
         self.config.agent_fabric_mode = "deepagents"

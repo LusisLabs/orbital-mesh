@@ -122,6 +122,158 @@
       ],
       "type": "object"
     },
+    "AgentAttemptThread": {
+      "additionalProperties": false,
+      "properties": {
+        "adapter": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "attempt_id": {
+          "type": "string"
+        },
+        "authority": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/AgentAttemptThreadEvent"
+          },
+          "type": "array"
+        },
+        "harness": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lifecycle": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "released_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "sandbox_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "thread_id",
+        "run_id",
+        "task_id",
+        "attempt_id",
+        "agent",
+        "adapter",
+        "status",
+        "created_at",
+        "updated_at",
+        "lifecycle",
+        "events",
+        "sandbox_ref",
+        "harness",
+        "released_at",
+        "authority"
+      ],
+      "type": "object"
+    },
+    "AgentAttemptThreadEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "payload": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "recorded_at": {
+          "type": "string"
+        },
+        "sequence": {
+          "type": "integer"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "additionalProperties": {},
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "thread_id",
+        "sequence",
+        "event_type",
+        "recorded_at",
+        "payload",
+        "summary",
+        "status"
+      ],
+      "type": "object"
+    },
     "AgentTask": {
       "additionalProperties": false,
       "properties": {
@@ -300,6 +452,9 @@
           },
           "type": "array"
         },
+        "centaur": {
+          "$ref": "#/$defs/IntegrationStatus"
+        },
         "checked_at": {
           "type": "string"
         },
@@ -380,6 +535,7 @@
         "goose",
         "latentmas",
         "deepagents",
+        "centaur",
         "zaxy",
         "eventloom",
         "neo4j_projection",

@@ -49,6 +49,8 @@ class ToolDefinition:
     budget_cost: float = 1.0
     policy_gate: str | None = None
     citations_kind: str | None = None
+    redaction_status: RedactionStatus = "clean"
+    credential_policy: dict[str, Any] = field(default_factory=dict)
 
     @property
     def qualified_name(self) -> str:
@@ -66,6 +68,8 @@ class ToolDefinition:
             "budget_cost": self.budget_cost,
             "policy_gate": self.policy_gate,
             "citations_kind": self.citations_kind,
+            "redaction_status": self.redaction_status,
+            "credential_policy": dict(self.credential_policy),
         }
 
 

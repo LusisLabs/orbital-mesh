@@ -16,10 +16,16 @@ from shared.mesh_runtime import (
     Trigger,
     resolve_orchestration_topology,
 )
-from shared.mesh_runtime.agent_workers import DEFAULT_AGENT_WORKERS, build_agent_attempt, build_agent_task
+from shared.mesh_runtime.agent_workers import (
+    DEFAULT_AGENT_WORKERS,
+    build_agent_attempt,
+    build_agent_task,
+    ensure_agent_attempt_thread,
+)
 from shared.mesh_runtime.control_plane_models import AgentAttempt, AgentTask
 from shared.mesh_runtime.delivery_context import DELIVERY_LANES, build_delivery_lane_packet
 from shared.mesh_runtime.mesh_state_store import MeshStateStore
+from .centaur_adapter import CentaurAdapter
 from .deepagents_adapter import DeepAgentsAdapter
 from .langgraph_adapter import LangGraphAdapter
 from .latentmas_adapter import LatentMasAdapter
@@ -125,12 +131,14 @@ class AgentMeshService:
         latentmas_adapter: LatentMasAdapter | None = None,
         deepagents_adapter: DeepAgentsAdapter | None = None,
         langgraph_adapter: LangGraphAdapter | None = None,
+        centaur_adapter: CentaurAdapter | None = None,
     ) -> None:
         self.config = config or RuntimeConfig.from_env()
         self.state_store = state_store
         self.latentmas_adapter = latentmas_adapter or LatentMasAdapter(self.config)
         self.deepagents_adapter = deepagents_adapter or DeepAgentsAdapter(self.config)
         self.langgraph_adapter = langgraph_adapter or LangGraphAdapter(self.config)
+        self.centaur_adapter = centaur_adapter or CentaurAdapter(self.config)
 
     def build_tasks(
         self,
@@ -271,7 +279,7 @@ class AgentMeshService:
                     recommended_action="human_review",
                     output={"timeout_seconds": self.config.agent_mesh_task_timeout_seconds},
                 )
-            attempts.append(self._annotate_delivery_packet(attempt, task))
+            attempts.append(self._annotate_delivery_packet(ensure_agent_attempt_thread(attempt, task=task), task))
         return attempts
 
     def _annotate_delivery_packet(self, attempt: AgentAttempt, task: AgentTask) -> AgentAttempt:
@@ -348,6 +356,24 @@ class AgentMeshService:
                         "agent": agent,
                         "adapter": "langgraph",
                         "builder": lambda agent=agent: self.langgraph_adapter.build_lane_attempt(
+                            agent=agent,
+                            task=task,
+                            trigger=trigger,
+                            decision=decision,
+                            evaluation=evaluation,
+                        ),
+                    }
+                )
+            return specs
+        if self.config.agent_fabric_mode == "centaur":
+            for agent in routed_agents:
+                if agent == "latentmas":
+                    continue
+                specs.append(
+                    {
+                        "agent": agent,
+                        "adapter": "centaur",
+                        "builder": lambda agent=agent: self.centaur_adapter.build_lane_attempt(
                             agent=agent,
                             task=task,
                             trigger=trigger,

@@ -248,6 +248,28 @@
       "blockers": []
     },
     {
+      "connector_id": "centaur",
+      "display_name": "Centaur source-input sandbox fabric",
+      "domain": "agent",
+      "state": "proposal-only",
+      "required_before": "pilot",
+      "authority_posture": "source-input sandbox proposal-only fabric",
+      "credential_policy": "placeholder-only credentials behind credential-egress policy",
+      "credential_boundary": {
+        "service_account_ref": null,
+        "credential_mode": "proposal-workspace",
+        "production_actuator_credentials_allowed": false,
+        "repo_write_credentials_allowed": false,
+        "runtime_secret_mount_required": false,
+        "rotation_evidence_ref": null,
+        "break_glass_recording_required": false
+      },
+      "degraded_behavior": "fall back to Mesh-native proposal routing when Centaur endpoint or credential-egress proof is unavailable",
+      "allowed_scopes": ["proposal", "read-only-investigation"],
+      "evidence_refs": ["docs/centaur-source-input.md", "docs/agent-mesh.md"],
+      "blockers": []
+    },
+    {
       "connector_id": "langgraph_checkpointing",
       "display_name": "LangGraph checkpointing",
       "domain": "agent",

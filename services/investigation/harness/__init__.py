@@ -47,6 +47,7 @@ from .native_selector import (
 )
 from .planner import LoopPlanner
 from .registry import RawToolOutput, ToolRegistry, make_call
+from .sandbox_bridge import invoke_sandbox_tool, sandbox_tool_manifest
 
 __all__ = [
     "GenericRulePack",
@@ -67,5 +68,7 @@ __all__ = [
     "ToolRegistry",
     "ToolResult",
     "make_call",
+    "invoke_sandbox_tool",
+    "sandbox_tool_manifest",
     "run_investigation_loop",
 ]

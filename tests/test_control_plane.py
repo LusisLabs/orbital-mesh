@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any, Callable, cast
 from urllib.parse import urlencode
@@ -329,6 +330,13 @@ class ControlPlaneApiTests(unittest.TestCase):
             [attempt["agent"] for attempt in tasks[0]["attempts"]],
             list(DEFAULT_AGENT_WORKERS),
         )
+        first_thread = tasks[0]["attempts"][0]["output"]["thread"]
+        self.assertEqual(first_thread["run_id"], run["run_id"])
+        self.assertEqual(first_thread["task_id"], tasks[0]["task_id"])
+        self.assertEqual(first_thread["authority"]["mesh_control_plane_authoritative"], True)
+        self.assertEqual(first_thread["authority"]["agent_thread_authoritative"], False)
+        self.assertIn("stream_or_replay_events", first_thread["lifecycle"])
+        self.assertEqual(first_thread["events"][0]["event_type"], "agent_attempt_terminal")
         self.assertTrue(tasks[0]["selected_attempt_id"])
 
         api_tasks = self._request("GET", f"/api/runs/{run['run_id']}/agent-tasks")["tasks"]
@@ -337,6 +345,9 @@ class ControlPlaneApiTests(unittest.TestCase):
         agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
         self.assertTrue(agent_events)
         self.assertEqual(agent_events[-1]["integration_name"], "agent_mesh")
+        self.assertEqual(agent_events[-1]["summary"]["attempt_threads"], len(DEFAULT_AGENT_WORKERS))
+        self.assertEqual(len(agent_events[-1]["payload"]["attempt_threads"]), len(DEFAULT_AGENT_WORKERS))
+        self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["thread_id"], first_thread["thread_id"])
 
         agent_note_path = f"Agents/{run['run_id']}.md"
         document = self._request(
@@ -346,6 +357,110 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertIn("Agent Mesh", document["content"])
         self.assertIn("native_contract", document["content"])
         self.assertNotIn("\"agent\": \"evo\"", document["content"])
+
+    def test_centaur_fabric_attempts_are_recorded_in_mesh_run_history(self) -> None:
+        for cfg in (self.server.config, self.server.coordinator.config, self.server.coordinator.agent_mesh.config):
+            cfg.agent_fabric_mode = "centaur"
+            cfg.agent_mesh_agents = ("hermes",)
+            cfg.agent_tasks_mode = "blocking"
+
+        class FakeCentaurAdapter:
+            def build_lane_attempt(self, *, agent: str, task: Any, trigger: Any, decision: Any, evaluation: Any) -> Any:
+                return build_agent_attempt(
+                    task_id=task.task_id,
+                    run_id=task.run_id,
+                    agent=agent,
+                    adapter="centaur",
+                    status="completed",
+                    summary="fake Centaur investigated the Mesh run and returned a proposal.",
+                    risk_flags=[],
+                    recommended_action="human_review",
+                    output={
+                        "authority": {
+                            "mesh_control_plane_authoritative": True,
+                            "centaur_control_plane_authoritative": False,
+                        },
+                        "execution_events": [
+                            {
+                                "event_id": "evt_fake_centaur",
+                                "event_type": "sandbox_completed",
+                                "status": "completed",
+                            }
+                        ],
+                    },
+                )
+
+        self.server.coordinator.agent_mesh.centaur_adapter = FakeCentaurAdapter()
+        run = self._request(
+            "POST",
+            "/api/runs",
+            {
+                "scenario_key": "search_latency_regression",
+                "evaluation_mode": "native",
+                "orchestration_mode": "native",
+                "steering_mode": "interruptible_auto",
+            },
+        )
+        completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+        attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+        self.assertEqual([attempt["adapter"] for attempt in attempts], ["centaur"])
+        self.assertEqual(attempts[0]["output"]["thread"]["events"][0]["event_type"], "agent_attempt_terminal")
+        agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
+        self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["adapter"], "centaur")
+        self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["status"], "completed")
+
+    def test_centaur_http_adapter_investigates_real_mesh_run_without_secret_leak(self) -> None:
+        centaur_server, centaur_thread, centaur_requests = _start_fake_centaur_http_server()
+        centaur_url = f"http://127.0.0.1:{centaur_server.server_address[1]}"
+        try:
+            for cfg in (self.server.config, self.server.coordinator.config, self.server.coordinator.agent_mesh.config):
+                cfg.agent_fabric_mode = "centaur"
+                cfg.agent_mesh_agents = ("hermes",)
+                cfg.agent_tasks_mode = "blocking"
+                cfg.centaur_endpoint = centaur_url
+                cfg.centaur_api_key_env_name = "TEST_CENTAUR_API_KEY"
+                cfg.centaur_timeout_seconds = 2.0
+
+            with patch.dict("os.environ", {"TEST_CENTAUR_API_KEY": "centaur_real_secret"}):
+                run = self._request(
+                    "POST",
+                    "/api/runs",
+                    {
+                        "scenario_key": "search_latency_regression",
+                        "evaluation_mode": "native",
+                        "orchestration_mode": "native",
+                        "steering_mode": "interruptible_auto",
+                    },
+                )
+                completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+
+            attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+            self.assertEqual([attempt["adapter"] for attempt in attempts], ["centaur"])
+            output_text = json.dumps(attempts[0]["output"], sort_keys=True)
+            self.assertIn(run["run_id"], output_text)
+            self.assertIn("local Centaur-shaped endpoint investigated Mesh run", output_text)
+            self.assertNotIn("centaur_real_secret", output_text)
+            self.assertEqual(attempts[0]["output"]["authority"]["centaur_control_plane_authoritative"], False)
+            self.assertEqual(attempts[0]["output"]["thread"]["events"][0]["event_type"], "centaur_execute_enqueued")
+
+            agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
+            self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["adapter"], "centaur")
+            self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["status"], "completed")
+            self.assertEqual(
+                [request["path"] for request in centaur_requests],
+                [
+                    "/agent/execute",
+                    "/agent/executions/exec_mesh_real_run",
+                    f"/agent/threads/mesh%3A{run['run_id']}%3A{attempts[0]['task_id']}%3Ahermes/release",
+                ],
+            )
+            self.assertEqual(centaur_requests[0]["authorization"], "Bearer centaur_real_secret")
+            self.assertEqual(centaur_requests[0]["mesh_authority"], "proposal-only")
+            self.assertIn(run["run_id"], centaur_requests[0]["body"]["message"])
+        finally:
+            centaur_server.shutdown()
+            centaur_server.server_close()
+            centaur_thread.join(timeout=5)
 
     def test_latentmas_unavailable_does_not_block_control_plane_run(self) -> None:
         self.server.config.latentmas_enabled = True
@@ -369,6 +484,55 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.assertEqual(attempts[0]["agent"], "latentmas")
         self.assertEqual(attempts[0]["status"], "failed")
         self.assertEqual(attempts[0]["risk_flags"], ["latentmas_unavailable"])
+        self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
+
+    def test_centaur_fabric_records_proposal_attempts_in_mesh_run_history(self) -> None:
+        for cfg in (self.server.config, self.server.coordinator.config):
+            cfg.agent_fabric_mode = "centaur"
+            cfg.agent_mesh_agents = ("codex",)
+            cfg.centaur_endpoint = "http://centaur.local"
+            cfg.centaur_default_harness = "text"
+            cfg.centaur_allowed_harnesses = ("codex", "text")
+
+        def fake_run_sandbox(_self: Any, request: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
+            self.assertEqual(request["mode"], "proposal_only")
+            self.assertEqual(request["authority"]["centaur_control_plane_authoritative"], False)
+            self.assertEqual(request["credential_policy"]["raw_secret_in_sandbox"], False)
+            return {
+                "status": "completed",
+                "summary": "Centaur-style sandbox inspected Mesh run context and returned a bounded proposal.",
+                "recommended_action": "human_review",
+                "events": [
+                    {
+                        "event_id": "evt_centaur_run_context",
+                        "event_type": "sandbox_context_received",
+                        "recorded_at": "2026-05-21T00:00:00+00:00",
+                        "status": "completed",
+                    }
+                ],
+                "output": {"proposal": "review run evidence"},
+            }
+
+        with patch("services.orchestrator.centaur_adapter.HttpCentaurClient.run_sandbox", fake_run_sandbox):
+            run = self._request(
+                "POST",
+                "/api/runs",
+                {
+                    "scenario_key": "search_latency_regression",
+                    "evaluation_mode": "native",
+                    "orchestration_mode": "native",
+                    "steering_mode": "interruptible_auto",
+                },
+            )
+            completed = self._poll_run(run["run_id"], lambda payload: payload["stage"] == "completed")
+
+        attempts = completed["artifacts"]["agent_tasks"][0]["attempts"]
+        self.assertEqual([attempt["adapter"] for attempt in attempts], ["centaur"])
+        self.assertEqual(attempts[0]["status"], "completed")
+        self.assertEqual(attempts[0]["output"]["authority"]["centaur_control_plane_authoritative"], False)
+        self.assertEqual(attempts[0]["output"]["thread"]["events"][0]["event_type"], "sandbox_context_received")
+        agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
+        self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["adapter"], "centaur")
         self.assertEqual(completed["artifacts"]["execution"]["status"], "succeeded")
 
     def test_slow_deepagents_proposal_lanes_do_not_block_run_execution(self) -> None:
@@ -883,6 +1047,87 @@ class ControlPlaneApiTests(unittest.TestCase):
             if isinstance(children, list):
                 paths.extend(self._flatten_tree(cast(list[dict[str, Any]], children)))
         return paths
+
+
+def _start_fake_centaur_http_server() -> tuple[HTTPServer, threading.Thread, list[dict[str, Any]]]:
+    requests: list[dict[str, Any]] = []
+
+    class FakeCentaurHandler(BaseHTTPRequestHandler):
+        def do_POST(self) -> None:  # noqa: N802 - HTTP handler API
+            body = self._read_json()
+            requests.append(
+                {
+                    "method": "POST",
+                    "path": self.path,
+                    "body": body,
+                    "authorization": self.headers.get("Authorization"),
+                    "mesh_authority": self.headers.get("X-Mesh-Authority"),
+                }
+            )
+            if self.path == "/agent/execute":
+                self._send_json(
+                    {
+                        "execution_id": "exec_mesh_real_run",
+                        "thread_key": body["thread_key"],
+                        "assignment_generation": 1,
+                        "status": "queued",
+                    }
+                )
+                return
+            if self.path.startswith("/agent/threads/") and self.path.endswith("/release"):
+                self._send_json({"released": True})
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+        def do_GET(self) -> None:  # noqa: N802 - HTTP handler API
+            requests.append(
+                {
+                    "method": "GET",
+                    "path": self.path,
+                    "body": None,
+                    "authorization": self.headers.get("Authorization"),
+                    "mesh_authority": self.headers.get("X-Mesh-Authority"),
+                }
+            )
+            if self.path == "/agent/executions/exec_mesh_real_run":
+                self._send_json(
+                    {
+                        "execution_id": "exec_mesh_real_run",
+                        "thread_key": "mesh-real-run-thread",
+                        "assignment_generation": 1,
+                        "status": "completed",
+                        "terminal_reason": "proposal_recorded",
+                        "result_text": "local Centaur-shaped endpoint investigated Mesh run and returned a bounded proposal",
+                        "error_text": "",
+                        "agent_thread_id": "agent_thread_mesh_real_run",
+                    }
+                )
+                return
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+        def log_message(self, _format: str, *_args: Any) -> None:
+            return
+
+        def _read_json(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            if length <= 0:
+                return {}
+            payload = self.rfile.read(length)
+            parsed = json.loads(payload.decode("utf-8"))
+            return parsed if isinstance(parsed, dict) else {}
+
+        def _send_json(self, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), FakeCentaurHandler)
+    thread = threading.Thread(target=server.serve_forever, name="fake-centaur-http", daemon=True)
+    thread.start()
+    return server, thread, requests
 
 
 if __name__ == "__main__":

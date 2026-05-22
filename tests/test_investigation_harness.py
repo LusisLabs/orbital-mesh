@@ -22,8 +22,10 @@ from services.investigation.harness import (
     ToolCall,
     ToolDefinition,
     ToolRegistry,
+    invoke_sandbox_tool,
     make_call,
     run_investigation_loop,
+    sandbox_tool_manifest,
 )
 from services.investigation.harness.critic import _validate_args
 
@@ -74,6 +76,51 @@ class HarnessRegistryTests(unittest.TestCase):
         result = registry.invoke(call)
         self.assertEqual(result.status, "rejected")
         self.assertFalse(result.valid)
+
+    def test_sandbox_manifest_exposes_only_read_only_metadata(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            _ro_def(
+                "lookup_run",
+                "mesh",
+                citations_kind="run_event",
+                credential_policy={"requires_credentials": True, "secret_ref": "GITHUB_TOKEN"},
+            ),
+            lambda args: RawToolOutput(output_summary="ok"),
+        )
+        registry.register(_mut_def("restart", "mesh"), lambda args: RawToolOutput(output_summary="mutated"))
+
+        manifest = sandbox_tool_manifest(registry, domain="mesh")
+
+        self.assertEqual([item["name"] for item in manifest], ["lookup_run"])
+        self.assertEqual(manifest[0]["mutation_class"], "read_only")
+        self.assertEqual(manifest[0]["citations_kind"], "run_event")
+        self.assertEqual(manifest[0]["redaction_status"], "clean")
+        self.assertEqual(manifest[0]["credential_policy"]["raw_secret_in_sandbox"], False)
+
+    def test_sandbox_tool_bridge_rejects_mutation_tools(self) -> None:
+        registry = ToolRegistry()
+        registry.register(_mut_def("restart", "mesh"), lambda args: RawToolOutput(output_summary="mutated"))
+        audit_log: list[dict[str, Any]] = []
+
+        result = invoke_sandbox_tool(registry, domain="mesh", name="restart", audit_log=audit_log)
+
+        self.assertEqual(result.status, "rejected")
+        self.assertFalse(result.valid)
+        self.assertIn("read_only tools only", result.error or "")
+        self.assertEqual(audit_log[0]["decision"], "rejected_mutation")
+        self.assertEqual(audit_log[0]["raw_secret_in_sandbox"], False)
+
+    def test_sandbox_tool_bridge_audits_read_only_calls(self) -> None:
+        registry = ToolRegistry()
+        registry.register(_ro_def("lookup_run", "mesh"), lambda args: RawToolOutput(output_summary="ok"))
+        audit_log: list[dict[str, Any]] = []
+
+        result = invoke_sandbox_tool(registry, domain="mesh", name="lookup_run", audit_log=audit_log)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(audit_log[0]["state_slice"], "mesh.investigation_tool_registry.v1")
+        self.assertEqual(audit_log[0]["decision"], "invoked_read_only")
 
 
 class CriticTests(unittest.TestCase):
@@ -1445,7 +1492,15 @@ class RootRegistryAutoWireTests(unittest.TestCase):
         self.assertIsNotNone(per_run.get("prometheus", "instant"))
 
 
-def _ro_def(name: str, domain: str, *, args_schema: dict[str, Any] | None = None, budget_cost: float = 1.0) -> ToolDefinition:
+def _ro_def(
+    name: str,
+    domain: str,
+    *,
+    args_schema: dict[str, Any] | None = None,
+    budget_cost: float = 1.0,
+    citations_kind: str | None = None,
+    credential_policy: dict[str, Any] | None = None,
+) -> ToolDefinition:
     return ToolDefinition(
         name=name,
         domain=domain,
@@ -1453,6 +1508,8 @@ def _ro_def(name: str, domain: str, *, args_schema: dict[str, Any] | None = None
         args_schema=dict(args_schema or {}),
         mutation_class="read_only",
         budget_cost=budget_cost,
+        citations_kind=citations_kind,
+        credential_policy=dict(credential_policy or {}),
     )
 
 

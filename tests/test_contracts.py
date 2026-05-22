@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 import unittest
 from pathlib import Path
 
@@ -37,6 +38,14 @@ class ContractValidationTests(unittest.TestCase):
         schema = load_schema("connector-certification-matrix.schema.json")
         self.assertEqual(schema["title"], "ConnectorCertificationMatrix")
 
+    def test_credential_egress_policy_schema_is_loadable(self) -> None:
+        schema = load_schema("credential-egress-policy.schema.json")
+        self.assertEqual(schema["title"], "Mesh credential egress policy")
+
+    def test_local_centaur_credential_egress_policy_validates(self) -> None:
+        payload = json.loads(Path("config/centaur-credential-egress.local.json").read_text(encoding="utf-8"))
+        validate_payload("credential-egress-policy.schema.json", payload)
+
     def test_deployment_compatibility_schema_is_loadable(self) -> None:
         schema = load_schema("deployment-compatibility-matrix.schema.json")
         self.assertEqual(schema["title"], "DeploymentCompatibilityMatrix")
@@ -56,6 +65,10 @@ class ContractValidationTests(unittest.TestCase):
     def test_run_admission_schema_is_loadable(self) -> None:
         schema = load_schema("run-admission.schema.json")
         self.assertEqual(schema["title"], "RunAdmission")
+
+    def test_agent_attempt_thread_schema_is_loadable(self) -> None:
+        schema = load_schema("agent-attempt-thread.schema.json")
+        self.assertEqual(schema["title"], "Mesh agent attempt thread")
 
     def test_trigger_schema_is_loadable(self) -> None:
         schema = load_schema("trigger.schema.json")

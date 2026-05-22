@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-attempt-thread.schema.json",
+  "title": "Mesh agent attempt thread",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "thread_id",
+    "run_id",
+    "task_id",
+    "attempt_id",
+    "agent",
+    "adapter",
+    "status",
+    "created_at",
+    "updated_at",
+    "lifecycle",
+    "events",
+    "sandbox_ref",
+    "harness",
+    "released_at",
+    "authority"
+  ],
+  "properties": {
+    "thread_id": { "type": "string" },
+    "run_id": { "type": "string" },
+    "task_id": { "type": "string" },
+    "attempt_id": { "type": "string" },
+    "agent": { "type": "string" },
+    "adapter": { "type": "string" },
+    "status": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" },
+    "lifecycle": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "events": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/AgentAttemptThreadEvent" }
+    },
+    "sandbox_ref": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "harness": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "released_at": {
+      "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "AgentAttemptThreadEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "event_id",
+        "thread_id",
+        "sequence",
+        "event_type",
+        "recorded_at",
+        "payload",
+        "summary",
+        "status"
+      ],
+      "properties": {
+        "event_id": { "type": "string" },
+        "thread_id": { "type": "string" },
+        "sequence": { "type": "integer" },
+        "event_type": { "type": "string" },
+        "recorded_at": { "type": "string" },
+        "payload": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "summary": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true
+            },
+            { "type": "null" }
+          ]
+        },
+        "status": {
+          "anyOf": [{ "type": "string" }, { "type": "null" }]
+        }
+      }
+    }
+  }
+}

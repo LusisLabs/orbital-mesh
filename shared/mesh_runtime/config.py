@@ -238,6 +238,12 @@ class RuntimeConfig:
     agent_tasks_mode: str = "async"
     agent_mesh_agents: tuple[str, ...] = ()
     agent_mesh_task_timeout_seconds: float = 15.0
+    centaur_endpoint: str | None = None
+    centaur_api_key_env_name: str = "CENTAUR_API_KEY"
+    centaur_timeout_seconds: float = 30.0
+    centaur_allowed_harnesses: tuple[str, ...] = ("amp", "claude-code", "codex", "pi-mono", "text")
+    centaur_default_harness: str = "text"
+    centaur_credential_egress_policy_path: str | None = None
     langgraph_enabled: bool = False
     langgraph_checkpointer_url: str | None = None
     langgraph_timeout_seconds: float = 30.0
@@ -771,6 +777,20 @@ class RuntimeConfig:
             agent_tasks_mode=_normalize_agent_tasks_mode(os.getenv("MESH_AGENT_TASKS_MODE", "async")),
             agent_mesh_agents=_csv_env("MESH_AGENT_MESH_AGENTS"),
             agent_mesh_task_timeout_seconds=float(os.getenv("MESH_AGENT_TASK_TIMEOUT_SECONDS", "15")),
+            centaur_endpoint=os.getenv("MESH_CENTAUR_ENDPOINT") or None,
+            centaur_api_key_env_name=os.getenv("MESH_CENTAUR_API_KEY_ENV_NAME", "CENTAUR_API_KEY"),
+            centaur_timeout_seconds=float(os.getenv("MESH_CENTAUR_TIMEOUT_SECONDS", "30")),
+            centaur_allowed_harnesses=_csv_env("MESH_CENTAUR_ALLOWED_HARNESSES")
+            or ("amp", "claude-code", "codex", "pi-mono", "text"),
+            centaur_default_harness=os.getenv("MESH_CENTAUR_DEFAULT_HARNESS", "text"),
+            centaur_credential_egress_policy_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH"),
+                    default="",
+                )
+                if os.getenv("MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH")
+                else None
+            ),
             langgraph_enabled=_env_bool("MESH_LANGGRAPH_ENABLED", default=False),
             langgraph_checkpointer_url=os.getenv("MESH_LANGGRAPH_CHECKPOINTER_URL") or None,
             langgraph_timeout_seconds=max(0.1, float(os.getenv("MESH_LANGGRAPH_TIMEOUT_SECONDS", "30"))),
@@ -936,7 +956,7 @@ def _parse_bare_metal_targets(raw: str | None) -> tuple[dict[str, str], ...]:
 
 def _normalize_agent_fabric_mode(raw: str) -> str:
     mode = (raw or "native").strip().lower()
-    return mode if mode in ("native", "deepagents", "langgraph") else "native"
+    return mode if mode in ("native", "deepagents", "langgraph", "centaur") else "native"
 
 
 def _normalize_agent_tasks_mode(raw: str) -> str:

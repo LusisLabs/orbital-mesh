@@ -41,6 +41,8 @@ MODEL_CLASSES = (
     models.RunEvent,
     models.RunSession,
     models.SteeringCommand,
+    models.AgentAttemptThreadEvent,
+    models.AgentAttemptThread,
     models.AgentAttempt,
     models.AgentTask,
     models.IntegrationStatus,

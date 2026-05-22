@@ -4661,7 +4661,12 @@ class RunCoordinator:
                 "tasks": len(task_payload),
                 "agents": sum(len(task.get("attempts", [])) for task in task_payload),
             }
+            thread_projection = _agent_attempt_thread_projection(task_payload)
+            if thread_projection:
+                summary["attempt_threads"] = len(thread_projection)
             payload: dict[str, Any] = {"tasks": task_payload, "lane_routing": lane_routing}
+            if thread_projection:
+                payload["attempt_threads"] = thread_projection
         except Exception as exc:
             tasks = []
             task_payload = []
@@ -6414,6 +6419,36 @@ def _artifact_agent_tasks(artifacts: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(raw_tasks, list):
             return [item for item in raw_tasks if isinstance(item, dict)]
     return []
+
+
+def _agent_attempt_thread_projection(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    projection: list[dict[str, Any]] = []
+    for task in tasks:
+        attempts = task.get("attempts")
+        if not isinstance(attempts, list):
+            continue
+        for attempt in attempts:
+            if not isinstance(attempt, dict):
+                continue
+            output = attempt.get("output") if isinstance(attempt.get("output"), dict) else {}
+            thread = output.get("thread") if isinstance(output, dict) else None
+            if not isinstance(thread, dict):
+                continue
+            events = thread.get("events") if isinstance(thread.get("events"), list) else []
+            projection.append(
+                {
+                    "task_id": str(task.get("task_id") or attempt.get("task_id") or ""),
+                    "attempt_id": str(attempt.get("attempt_id") or thread.get("attempt_id") or ""),
+                    "agent": str(attempt.get("agent") or thread.get("agent") or ""),
+                    "adapter": str(attempt.get("adapter") or thread.get("adapter") or ""),
+                    "thread_id": str(thread.get("thread_id") or ""),
+                    "status": str(thread.get("status") or attempt.get("status") or ""),
+                    "event_count": len(events),
+                    "lifecycle": list(thread.get("lifecycle") or []),
+                    "authority": thread.get("authority") if isinstance(thread.get("authority"), dict) else {},
+                }
+            )
+    return projection
 
 
 def _dedupe_delivery_nodes(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:

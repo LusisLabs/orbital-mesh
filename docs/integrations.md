@@ -30,6 +30,8 @@
 - `MESH_GOOSE_COMMAND`
 - `MESH_GOOSE_COMMAND_TIMEOUT_SECONDS`
 - `MESH_GOOSE_RUN_TIMEOUT_SECONDS`
+- `MESH_DISABLE_GOOSE_AUTODISCOVERY`
+- `GOOSE_DISABLE_KEYRING`
 - `MESH_HERMES_COMMAND`
 - `MESH_HERMES_COMMAND_TIMEOUT_SECONDS`
 - `MESH_HERMES_RUN_TIMEOUT_SECONDS`
@@ -57,6 +59,10 @@ inspection and never blocks execution.
 - `MESH_ORCHESTRATION_TOPOLOGY_DRILL_PATH`
 
 If `setup_integrations.py` has already written a command into `.mesh-runtime-state/integrations.json`, the runtime uses that saved command unless an explicit environment variable overrides it.
+
+Set `MESH_DISABLE_GOOSE_AUTODISCOVERY=1` for hermetic local or CI tests that must not discover and probe a host-installed Goose binary. Explicit `MESH_GOOSE_COMMAND` values and saved integration commands still take precedence; the flag only disables PATH-based autodiscovery.
+
+Set `GOOSE_DISABLE_KEYRING=1` alongside that test guard when an explicit Goose command is deliberately exercised under tests; this prevents Goose itself from reading macOS Keychain/keyring-backed credentials.
 
 `MESH_AGENT_FABRIC_MODE` is not stored in `.mesh-runtime-state/integrations.json`; it is runtime config only and defaults to `native`.
 

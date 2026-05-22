@@ -155,6 +155,37 @@ class SteeringCommand(JsonModel):
 
 
 @dataclass
+class AgentAttemptThreadEvent(JsonModel):
+    event_id: str
+    thread_id: str
+    sequence: int
+    event_type: str
+    recorded_at: str
+    payload: dict[str, Any] = field(default_factory=dict)
+    summary: dict[str, Any] | None = None
+    status: str | None = None
+
+
+@dataclass
+class AgentAttemptThread(JsonModel):
+    thread_id: str
+    run_id: str
+    task_id: str
+    attempt_id: str
+    agent: str
+    adapter: str
+    status: str
+    created_at: str
+    updated_at: str
+    lifecycle: list[str] = field(default_factory=list)
+    events: list[AgentAttemptThreadEvent] = field(default_factory=list)
+    sandbox_ref: str | None = None
+    harness: str | None = None
+    released_at: str | None = None
+    authority: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class AgentAttempt(JsonModel):
     attempt_id: str
     task_id: str
@@ -231,6 +262,7 @@ class IntegrationReadiness(JsonModel):
     goose: IntegrationStatus
     latentmas: IntegrationStatus
     deepagents: IntegrationStatus
+    centaur: IntegrationStatus
     zaxy: IntegrationStatus
     eventloom: IntegrationStatus
     neo4j_projection: IntegrationStatus
