@@ -85,10 +85,29 @@ describe("mesh.control_plane_proxy", () => {
     );
 
     expect(response.status).toBe(502);
-    expect(await response.json()).toMatchObject({
+    expect(response.headers.get("content-type")).toBe("application/json");
+    const body = await response.json();
+    expect(body).toMatchObject({
       error: "Mesh control plane unavailable",
+      detail: "ECONNREFUSED",
       state_slice: MESH_CONTROL_PLANE_PROXY_STATE_SLICE
     });
+
+    vi.unstubAllGlobals();
+  });
+
+  it("includes error detail for non-Error exceptions", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue("Connection failed"));
+
+    const response = await proxyControlPlaneRequest(
+      new Request("https://mesh.example/resources/mesh/readiness"),
+      "/api/readiness",
+      meshEnv
+    );
+
+    expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.detail).toBe("Connection failed");
 
     vi.unstubAllGlobals();
   });

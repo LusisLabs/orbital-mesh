@@ -171,7 +171,8 @@ services/
   signal_correlator.py, signal_history/, signal_profiles/, simulation/, skills/, trigger/
 shared/mesh_runtime/        # contracts, JSON schemas, state store, vault, infra graph,
                             # reasoning bank, learning store, trust ladder, policies,
-                            # alert store, webhook templates, postgres state, OTel
+                            # alert store, webhook templates, postgres state, OTel,
+                            # trigger_web_provenance (source-input boundary verification)
   schemas/                  # JSON Schema source of truth
 policies/                   # autonomy, metric-actions, protected-scope, reth-node, rollback
 fixtures/                   # signals, decisions, monitoring corpus, webhook templates, codebases
@@ -181,6 +182,9 @@ plugins/mesh-intelligence/  # skills bundle
 latent-mesh/LatentMAS/      # vendored Rust multi-agent subsystem
 deepagents/                 # vendored DeepAgents package (editable install)
 web/                        # React 18 + Vite + TS UI (SSE/REST client)
+apps/mesh-webapp/          # Remix BFF + proxy to control plane
+internal-packages/
+  mesh-contracts/        # generated TypeScript contracts from JSON Schema
 tui.py                      # textual TUI alternative (49k lines)
 migrations/                 # state-store migrations
 scripts/                    # 39 ops/CI/contract-gen scripts
@@ -199,6 +203,8 @@ Dockerfile*                 # main + latentmas-cpu + hermes
 | Core services + runtime | Python 3.11+, `uv` |
 | HTTP API | stdlib `http.server` (ThreadingHTTPServer) — not FastAPI |
 | Web UI | React 18 + Vite + TypeScript, `npm` |
+| Mesh webapp (Remix BFF) | Remix + TypeScript, `pnpm` |
+| Generated contracts | TypeScript (generated), `pnpm` |
 | TUI | textual (`tui.py`) |
 | Schemas / contracts | JSON Schema (source of truth) + Python dataclasses |
 | State | File-backed (default) or Postgres (psycopg3 + pool) |
@@ -219,6 +225,10 @@ TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagen
   --exclude 'deepagents/|latent-mesh/LatentMAS/|services/skills/'
 
 npm --prefix web ci && npm --prefix web run build
+
+# Mesh webapp (Remix BFF)
+pnpm --prefix apps/mesh-webapp install
+pnpm --prefix apps/mesh-webapp build
 
 (cd latent-mesh/LatentMAS && cargo test && cargo clippy)   # only when touching Rust
 ```
