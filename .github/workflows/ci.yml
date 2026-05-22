@@ -45,14 +45,25 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install Darkharness crypto dependency
-        run: python -m pip install "cryptography>=44,<47"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        shell: sh
+      - name: Install dependencies
+        run: |
+          . $HOME/.local/bin/env
+          uv sync --python ${{ matrix.python-version }}
       - name: Run Darkharness packet tests
-        run: python -W ignore::DeprecationWarning -m unittest tests.test_perennial_materialization tests.test_darkharness_packet tests.test_darkharness_policy tests.test_darkharness_export_path tests.test_darkharness_live_verifier -v
+        run: |
+          . $HOME/.local/bin/env
+          uv run python -W ignore::DeprecationWarning -m unittest tests.test_perennial_materialization tests.test_darkharness_packet tests.test_darkharness_policy tests.test_darkharness_export_path tests.test_darkharness_live_verifier -v
       - name: Run unit tests
-        run: python -W ignore::DeprecationWarning -m unittest discover -s tests -v
+        run: |
+          . $HOME/.local/bin/env
+          uv run python -W ignore::DeprecationWarning -m unittest discover -s tests -v
       - name: Smoke-import RuntimeConfig
-        run: python -c "from shared.mesh_runtime import RuntimeConfig; print('RuntimeConfig OK on', RuntimeConfig.from_env().environment)"
+        run: |
+          . $HOME/.local/bin/env
+          uv run python -c "from shared.mesh_runtime import RuntimeConfig; print('RuntimeConfig OK on', RuntimeConfig.from_env().environment)"
 
   breakthrough-proof-replay:
     runs-on: ubuntu-latest
@@ -62,10 +73,19 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        shell: sh
+      - name: Install dependencies
+        run: |
+          . $HOME/.local/bin/env
+          uv sync
       - name: Install ruff
         run: pip install ruff==0.7.4
       - name: Run breakthrough proof replay tests
-        run: python -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session tests.test_pilot_breakthrough_packet -v
+        run: |
+          . $HOME/.local/bin/env
+          uv run python -m unittest tests.test_breakthrough_evidence_bundle tests.test_production_node_breakthrough_session tests.test_compose_chaos_session tests.test_pilot_breakthrough_packet -v
       - name: Lint breakthrough proof surfaces
         run: ruff check scripts/breakthrough_evidence_bundle.py scripts/production_node_breakthrough_session.py scripts/compose_chaos_session.py scripts/generate_pilot_breakthrough_packet.py tests/test_breakthrough_evidence_bundle.py tests/test_production_node_breakthrough_session.py tests/test_compose_chaos_session.py tests/test_pilot_breakthrough_packet.py
       - name: Compile breakthrough proof surfaces
@@ -79,8 +99,17 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        shell: sh
+      - name: Install dependencies
+        run: |
+          . $HOME/.local/bin/env
+          uv sync
       - name: Run small randomized simulation matrix
-        run: python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 45 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
+        run: |
+          . $HOME/.local/bin/env
+          uv run python scripts/run_simulation_matrix.py --iterations 4 --workers 2 --timeout-seconds 45 --randomize --seed 20260424 --output .mesh-runtime-state/simulation-stress/ci-small
 
   web:
     runs-on: ubuntu-latest

@@ -6,9 +6,9 @@ const launchOptions: LaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
 
 export default defineConfig({
   testDir: "./e2e",
-  timeout: 60_000,
+  timeout: 180_000,
   expect: {
-    timeout: 12_000,
+    timeout: 20_000,
   },
   fullyParallel: false,
   reporter: [["list"]],

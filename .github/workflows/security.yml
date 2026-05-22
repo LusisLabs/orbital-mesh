@@ -27,8 +27,17 @@ jobs:
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+        shell: sh
+      - name: Install dependencies
+        run: |
+          . $HOME/.local/bin/env
+          uv sync
       - name: Verify audit controls
-        run: python scripts/verify_security_audit_readiness.py --json
+        run: |
+          . $HOME/.local/bin/env
+          uv run python scripts/verify_security_audit_readiness.py --json
 
   dependency-review:
     if: github.event_name == 'pull_request' && (github.event.repository.private == false || vars.GHAS_DEPENDENCY_REVIEW_ON_PRIVATE == 'true')

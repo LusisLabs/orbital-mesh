@@ -14,6 +14,17 @@ MESH_OPERATOR_HEADER=X-Mesh-Operator
 MESH_OPERATOR_ROLES_HEADER=X-Mesh-Roles
 ```
 
+For the operator UI proxy layer, also configure:
+
+```bash
+MESH_CONTROL_PLANE_URL=https://control-plane.mesh.internal
+MESH_OPERATOR_IDENTITY_HEADER=X-Mesh-Operator
+```
+
+- `MESH_CONTROL_PLANE_URL` — URL of the backend control-plane service (default: `http://127.0.0.1:8000`).
+- `MESH_OPERATOR_IDENTITY_HEADER` — Header name(s) containing operator identity, used by the proxy to extract and propagate identity to backend requests.
+- `NODE_ENV` — Node.js runtime environment for the mesh-webapp (default: `development`; valid values: `development`, `test`, `production`).
+
 `docker-compose.prod.yml` binds the Mesh container to `127.0.0.1` on the host by default through `MESH_PUBLISH_HOST`. Keep that default when the reverse proxy runs on the same host, or set `MESH_PUBLISH_HOST` only to a private interface reachable by the authenticated proxy. Do not set it to `0.0.0.0` for Internet-facing deployments.
 
 The production compose contract also defaults to:

@@ -6,7 +6,7 @@ const nextConfig = {
   distDir: process.env.MESH_NEXT_DIST_DIR || ".next",
   output: "export",
   turbopack: {
-    root: path.resolve(__dirname, "../.."),
+    root: path.join(__dirname, "../.."),
   },
 };
 

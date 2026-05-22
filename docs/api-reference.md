@@ -221,6 +221,109 @@ System-wide event stream — every run's events interleaved, plus engine-level e
 
 ---
 
+## Remix proxy routes
+
+The `apps/mesh-webapp` Remix dashboard shell proxies SSE streams to the frontend through these resource routes:
+
+### `GET /resources/mesh/stream/runs/:runId`
+
+Remix resource route that proxies the backend `/api/stream/runs/:id` SSE stream to the frontend. Used by the operator UI for real-time run event updates.
+
+### `GET /resources/mesh/stream/system`
+
+Remix resource route that proxies the backend `/api/stream/system` SSE stream to the frontend. Used by the operator UI for real-time system-wide event updates.
+
+Both routes forward SSE events from the control-plane API to the browser client using Remix resource stream responses.
+
+### Additional BFF resource routes
+
+The `apps/mesh-webapp` Remix app exposes these additional resource routes for the operator UI:
+
+- `GET /resources/mesh/vault.document.ts` — vault document lookup
+- `GET /resources/mesh/vault.tree.ts` — vault tree/hierarchy view
+- `GET /resources/mesh/approvals.ts` — approval status and actions
+- `GET /resources/mesh/kill-switch.ts` — global kill-switch state
+- `GET /resources/mesh/readiness.ts` — system readiness probe
+- `GET /resources/mesh/connector-certification.ts` — connector certification status
+- `GET /resources/mesh.runs.ts` — list runs
+- `GET /resources/mesh.runs.$runId.ts` — run detail
+- `GET /resources/mesh.runs.$runId.events.ts` — run event stream
+- `GET /resources/mesh.runs.$runId.evidence-graph.ts` — run evidence graph
+- `GET /resources/mesh.runs.$runId.export.ts` — run export
+- `GET /resources/mesh.runs.$runId.export.archive.ts` — run archive export
+- `GET /resources/mesh.runs.$runId.merkle.ts` — run Merkle tree
+- `GET /resources/mesh.runs.$runId.merkle.proof.$eventId.ts` — Merkle proof for event
+- `GET /resources/mesh.runs.$runId.timeline-proof.ts` — timeline proof
+
+### Mesh Control Plane Proxy
+
+The control plane proxy resource routes forward requests between the operator UI and the backend control-plane service. Configure with `MESH_CONTROL_PLANE_URL`.
+
+#### Error Handling
+
+When the control plane is unavailable, proxy routes return HTTP 502 with a JSON error body:
+
+```json
+{"error": "Mesh control plane unavailable", "state_slice": "mesh.control_plane_proxy"}
+```
+
+State slice: `mesh.control_plane_proxy`
+
+The proxy also extracts operator identity from configurable headers (`MESH_OPERATOR_IDENTITY_HEADER`) and propagates them to backend requests.
+
+State slice: `mesh.operator_ui.realtime`
+
+SSE connection state machine for real-time run and system event streams. Proxies backend `/api/stream/runs/:id` and `/api/stream/system` endpoints to the operator UI via Remix resource routes.
+
+State slice: `mesh.operator_ui.run_detail`
+
+Run detail page data including events, evidence graph, RCA, Merkle trees, timeline proofs, and export endpoints. Loaded via routes `resources.mesh.runs.$runId.*`.
+
+State slice: `mesh.operator_ui.overview`
+
+Dashboard overview page data including runs list, approvals status, system readiness, and connector certifications. Loaded via routes `resources.mesh.runs.ts`, `resources.mesh.approvals.ts`, `resources.mesh.readiness.ts`, and `resources.mesh.connector-certification.ts`.
+
+---
+
+## Contract Generation Workflow
+
+Mesh uses JSON Schema files as the source of truth for TypeScript contracts used by the operator UI. Generate TypeScript interfaces from schemas:
+
+```bash
+pnpm --dir internal-packages/mesh-contracts run generate
+```
+
+This reads JSON Schema files from `shared/mesh_runtime/schemas/` and generates TypeScript interfaces in `internal-packages/mesh-contracts/src/generated/`:
+
+| Schema Source | Generated Output |
+|---|---|
+| `shared/mesh_runtime/schemas/control-plane.schema.json` | `src/generated/control-plane.ts` |
+| `shared/mesh_runtime/schemas/operator-product.schema.json` | `src/generated/operator-product.ts` |
+
+To check if generated contracts are outdated:
+
+```bash
+pnpm --dir internal-packages/mesh-contracts run check
+```
+
+This is used in CI to ensure generated TypeScript stays in sync with JSON Schema sources.
+
+### Importing Generated Contracts
+
+```typescript
+import type {
+  MeshControlPlaneContracts,
+  MeshOperatorProductContracts,
+} from "@orbital-mesh/mesh-contracts/generated/control-plane";
+
+// Use the contracted types in your code
+const contracts: MeshOperatorProductContracts = {
+  dashboard_payload: { /* ... */ },
+};
+```
+
+---
+
 ## Scenarios, simulations, benchmarks
 
 ### `GET /api/scenarios`

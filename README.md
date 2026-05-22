@@ -121,6 +121,7 @@ Proposal lanes are selected by the topology resolver and connector certification
 
 ```text
 orbital-mesh/
+├── pnpm-workspace.yaml              # pnpm monorepo configuration
 ├── Dockerfile                       # production image (meshapp operator UI + Python server)
 ├── docker-compose.yml               # persisted state volume + health checks
 ├── docker-compose.stack.yml         # all-in-one local Mesh + sidecars + k3s + smoke stack
@@ -131,6 +132,10 @@ orbital-mesh/
 ├── run_first_slice.py               # synchronous stdin/stdout loop runner
 ├── run_tui.py                       # terminal UI entrypoint
 ├── setup_integrations.py            # bootstrap Promptfoo / Goose / Hermes config
+├── apps/                             # pnpm workspace root for TypeScript apps
+│   └── mesh-webapp/                  # Remix dashboard shell (operator UI)
+├── internal-packages/                # pnpm workspace root for internal packages
+│   └── mesh-contracts/              # TypeScript contract definitions
 ├── mesh_brain/                      # post-training, eval, serving, and model lifecycle plane
 ├── services/
 │   ├── control_plane.py             # long-lived coordinator and steering logic
@@ -205,14 +210,20 @@ The saved commands point at bridge entrypoints inside `orbital-mesh`, not raw ve
 ### 2. Install the operator UI dependencies
 
 ```bash
-cd meshapp/frontend
-npm install
-npm run build
-cd ..
-cd ..
+# pnpm workspace: installs all apps/ and internal-packages/ dependencies
+pnpm install
+
+# Or install only the Remix dashboard shell:
+# pnpm --dir apps/mesh-webapp install
 ```
 
-### 3. Start the local control plane
+### 3. Build the Remix dashboard shell
+
+```bash
+pnpm --dir apps/mesh-webapp run build
+```
+
+### 4. Start the local control plane
 
 ```bash
 python3 run_server.py
@@ -224,7 +235,7 @@ Default server address:
 http://127.0.0.1:8787
 ```
 
-### 4. Open the operator app
+### 6. Open the operator app
 
 Point the browser at the server-hosted operator app:
 
@@ -239,7 +250,7 @@ cd meshapp
 zig build dev
 ```
 
-### 5. Launch a run
+### 7. Launch a run
 
 Use the left rail to:
 
@@ -251,13 +262,15 @@ Use the left rail to:
 
 ## Operator App
 
-The production pilot-serving operator UI is a Next static app under [`meshapp/frontend`](./meshapp/frontend), with a zero-native shell under [`meshapp/`](./meshapp). It carries forward the active Mesh console from [`web/`](./web), including:
+The production pilot-serving operator UI is the Remix app under [`apps/mesh-webapp`](./apps/mesh-webapp), a Trigger-derived dashboard shell configured as a pnpm workspace member. It carries forward the active Mesh console from [`web/`](./web), including:
 
 - a dense operator shell and graph-driven center stage inspired by `mesh-llm`
 - server connection, status, and side-panel patterns tuned for the operator workflow
 - readiness, pilot go/no-go, Mesh Brain, run evidence, connector certification, topology, audit/provenance, and critical action surfaces
 
-`web/` remains the Vite reference surface while the migration is validated. Generated control-plane TypeScript contracts are checked in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`; `scripts/generate_control_plane_contracts.py --types-path <path>` can target one UI contract file when repairing a single surface.
+Generated control-plane TypeScript contracts are in [`internal-packages/mesh-contracts`](./internal-packages/mesh-contracts) and consumed by the Remix app via pnpm workspace references.
+
+The legacy Next app under [`meshapp/frontend`](./meshapp/frontend) and zero-native shell under [`meshapp/`](./meshapp) remain as reference surfaces during the migration.
 
 **Unified canvas** (center stage) composes run flow, Kubernetes context, Merkle, and artifacts on one graph; the graph panel has a **fullscreen** control (top-right) for focused inspection. Below: local control plane with the **Unified** tab active (example scenario `kubernetes_crashloop_patch`).
 
@@ -1028,7 +1041,29 @@ python3 -m unittest discover -s tests
 python3 run_first_slice.py < fixtures/signals/search_latency_regression.json
 ```
 
-### Web
+### pnpm Workspace
+
+```bash
+# Install all workspace dependencies
+pnpm install
+
+# Run development server for the Remix dashboard shell
+pnpm --dir apps/mesh-webapp run dev
+
+# Build the Remix dashboard shell
+pnpm --dir apps/mesh-webapp run build
+
+# Lint TypeScript
+pnpm --dir apps/mesh-webapp run lint
+
+# Run tests
+pnpm --dir apps/mesh-webapp run test
+
+# Build internal packages
+pnpm --dir internal-packages/mesh-contracts run build
+```
+
+### Legacy Web
 
 ```bash
 cd web

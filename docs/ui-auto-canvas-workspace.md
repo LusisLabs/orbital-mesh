@@ -127,3 +127,59 @@ The E2E suite verifies:
 - No new identity provider or session-management implementation; app-level role checks still depend on trusted proxy identity headers.
 - No new backend mutation behavior beyond the existing launch, approval, steering, simulation, kill-switch, watcher, and review routes.
 - No full external dashboard fork.
+
+## Real-Time Connection State Machine
+
+The operator UI uses the `mesh-realtime.ts` client-side state machine library for SSE connection management. Located at `apps/mesh-webapp/app/mesh-realtime.ts`.
+
+State slice: `mesh.operator_ui.realtime`
+
+### Types
+
+```typescript
+type MeshRealtimeConnection = "connecting" | "connected" | "reconnecting" | "stale" | "terminal";
+
+interface MeshRealtimeSnapshot<T> {
+  stateSlice: "mesh.operator_ui.realtime";
+  connection: MeshRealtimeConnection;
+  reconnectAttempts: number;
+  lastEventAt?: string;
+  lastEventType?: string;
+  terminalReason?: string;
+  data?: T;
+}
+
+type MeshRealtimeEvent<T> =
+  | { type: "open"; now: string }
+  | { type: "message"; eventType?: string; data: T; now: string }
+  | { type: "error"; now: string }
+  | { type: "stale"; now: string }
+  | { type: "terminal"; reason: string; now: string };
+```
+
+### Initial Snapshot
+
+- `initialRealtimeSnapshot<T>()` — returns the initial connection state `{stateSlice: "mesh.operator_ui.realtime", connection: "connecting", reconnectAttempts: 0}`. Generic type parameter defaults to `unknown`.
+
+### Reducer Pattern
+
+The `reduceRealtimeSnapshot<T>` reducer manages connection state transitions:
+
+- `open` → transitions to `connected`, resets reconnect attempts.
+- `message` → stores data payload, marks as `connected`.
+- `error` → increments reconnect attempts, marks as `reconnecting`.
+- `stale` → marks connection as stale (no events received within threshold).
+- `terminal` → marks connection as permanently terminated.
+
+### Stream Resource Paths
+
+Utility functions return Remix resource route paths for SSE streams:
+
+- `systemStreamResourcePath()` → `/resources/mesh/stream/system`
+- `runStreamResourcePath(runId)` → `/resources/mesh/stream/runs/:runId`
+
+### Parser Utilities
+
+- `parseRealtimePayload<T>(raw)` — parses SSE data payloads as JSON.
+- `isTerminalRunEvent(payload)` — detects terminal run events (complete, completed, failed, cancelled).
+- `shouldMarkRealtimeStale(lastEventAt, nowMs, staleAfterMs)` — determines staleness based on time since last event.
