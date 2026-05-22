@@ -96,6 +96,7 @@ class RuntimeConfigPathTests(unittest.TestCase):
                 "MESH_LIVEKIT_URL": "wss://livekit.example.test",
                 "MESH_LIVEKIT_API_KEY": "lk-key",
                 "MESH_LIVEKIT_API_SECRET": "lk-secret",
+                "MESH_LIVEKIT_ACCESS_TOKEN": "preminted-browser-token",
                 "MESH_LIVEKIT_TOKEN_TTL_SECONDS": "900",
                 "MESH_LIVEKIT_AGENT_NAME": "Harper-696",
             },
@@ -106,6 +107,7 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertEqual(cfg.livekit_url, "wss://livekit.example.test")
         self.assertEqual(cfg.livekit_api_key, "lk-key")
         self.assertEqual(cfg.livekit_api_secret, "lk-secret")
+        self.assertEqual(cfg.livekit_access_token, "preminted-browser-token")
         self.assertEqual(cfg.livekit_token_ttl_seconds, 900)
         self.assertEqual(cfg.livekit_agent_name, "Harper-696")
 

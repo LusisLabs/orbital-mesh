@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-praxis"
+version = "0.1.0"
+description = "Praxis source ingest, MCP contract generation, certification, and managed dry-run runtime"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = { text = "MIT" }
+authors = [{ name = "Mesh Intelligence Contributors" }]
+
+[project.scripts]
+mesh-praxis = "mesh_praxis.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mesh_praxis = ["schemas/**/*.json"]

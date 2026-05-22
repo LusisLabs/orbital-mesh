@@ -21,6 +21,9 @@ from services.ingest.webhook_service import (
     WebhookIngestError,
 )
 from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime.hardened_arena import load_hardened_arena_profiles
+from shared.mesh_runtime.hardened_arena_catalog import load_hardened_arena_catalog
+from shared.mesh_runtime.hardened_arena_packet import generate_hardened_arena_packet, write_hardened_arena_packet
 from shared.mesh_runtime.operator_identity import (
     CaptchaConfig,
     OAuthProviderConfig,
@@ -76,6 +79,17 @@ def _json_web_token_segment(payload: dict[str, Any]) -> str:
     return base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("=")
 
 
+def _decode_jwt_payload_segment(token: str) -> dict[str, Any]:
+    try:
+        payload = token.split(".")[1]
+        padded = payload + "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        parsed = json.loads(decoded)
+    except Exception:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def _livekit_access_token(
     *,
     api_key: str,
@@ -109,6 +123,20 @@ def _livekit_access_token(
     signing_input = f"{header}.{body}".encode("ascii")
     signature = hmac.new(api_secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
     return f"{header}.{body}.{base64.urlsafe_b64encode(signature).decode('ascii').rstrip('=')}"
+
+
+def _livekit_token_expires_at(token: str) -> str | None:
+    claims = _decode_jwt_payload_segment(token)
+    exp = claims.get("exp")
+    if not isinstance(exp, int):
+        return None
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(exp))
+
+
+def _livekit_configured(config: RuntimeConfig) -> bool:
+    can_mint = bool(config.livekit_url and config.livekit_api_key and config.livekit_api_secret)
+    has_preminted_token = bool(config.livekit_url and config.livekit_access_token)
+    return can_mint or has_preminted_token
 
 
 def _identifier_segment(value: str) -> str:
@@ -254,6 +282,19 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/deployment/compatibility":
             self._send_json(self.server.coordinator.build_deployment_compatibility())
+            return
+        if path == "/api/hardened-arena/profiles":
+            self._handle_hardened_arena_profiles()
+            return
+        if path == "/api/hardened-arena/catalog":
+            self._handle_hardened_arena_catalog()
+            return
+        if path.startswith("/api/hardened-arena/packets/"):
+            packet_id = _safe_segment(path, 3)
+            if packet_id is None:
+                self._send_json({"error": "packet id required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._handle_hardened_arena_packet_get(packet_id)
             return
         if path == "/api/failure-modes":
             self._send_json(self.server.coordinator.build_failure_mode_library())
@@ -667,6 +708,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 return
             self._handle_otlp_metrics(payload)
             return
+        if parsed.path == "/api/hardened-arena/packets":
+            self._handle_hardened_arena_packet_create(payload)
+            return
         if parsed.path == "/api/watch/start":
             try:
                 self._authorize({"admin"})
@@ -986,6 +1030,74 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"deleted": source_id})
             return
         self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+
+    def _hardened_arena_packet_dir(self) -> Path:
+        return Path(self.server.config.state_directory) / "hardened-arena" / "packets"
+
+    def _handle_hardened_arena_profiles(self) -> None:
+        try:
+            self._send_json(load_hardened_arena_profiles())
+        except (OSError, json.JSONDecodeError, SchemaValidationError) as exc:
+            self._send_json(
+                {"error": "hardened arena profiles unavailable", "detail": str(exc)},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+    def _handle_hardened_arena_catalog(self) -> None:
+        try:
+            self._send_json(load_hardened_arena_catalog())
+        except (OSError, json.JSONDecodeError, SchemaValidationError) as exc:
+            self._send_json(
+                {"error": "hardened arena catalog unavailable", "detail": str(exc)},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+    def _handle_hardened_arena_packet_create(self, payload: dict[str, Any]) -> None:
+        try:
+            operator = self._authorize({"launcher", "admin"})
+        except AuthorizationError as exc:
+            self._send_json({"error": str(exc)}, status=exc.status)
+            return
+        profile_id = str(payload.get("profile_id") or payload.get("profile") or "").strip()
+        if not profile_id:
+            self._send_json({"error": "profile_id is required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            packet = generate_hardened_arena_packet(profile_id)
+            packet_dir = self._hardened_arena_packet_dir()
+            packet_path = packet_dir / f"{packet['packet_id']}.json"
+            write_hardened_arena_packet(packet, packet_path)
+        except (KeyError, OSError, ValueError, SchemaValidationError) as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json(
+            {
+                "schema_version": "mesh.hardened_arena.packet_create_response.v1",
+                "packet_id": packet["packet_id"],
+                "packet_path": str(packet_path.relative_to(Path(self.server.config.state_directory))),
+                "operator_id": operator.get("operator_id"),
+                "stored_artifact": True,
+                "live_deployment_allowed": False,
+                "secret_ingestion_allowed": False,
+                "packet": packet,
+            },
+            status=HTTPStatus.CREATED,
+        )
+
+    def _handle_hardened_arena_packet_get(self, packet_id: str) -> None:
+        if "/" in packet_id or ".." in packet_id:
+            self._send_json({"error": "invalid packet id"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        packet_path = self._hardened_arena_packet_dir() / f"{packet_id}.json"
+        if not packet_path.exists():
+            self._send_json({"error": "packet not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        try:
+            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            self._send_json({"error": "packet unavailable", "detail": str(exc)}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json(packet)
 
     def _handle_operator_get(self, parsed) -> None:
         path = parsed.path
@@ -1412,7 +1524,28 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         identity_root = _identifier_segment(str(operator.get("operator_id") or operator.get("user_id") or scope_id))
         identity_nonce = hashlib.sha256(f"{time.time_ns()}:{identity_root}:{scope_id}".encode("utf-8")).hexdigest()[:10]
         identity = f"operator-{identity_root}-{identity_nonce}"
-        configured = bool(config.livekit_url and config.livekit_api_key and config.livekit_api_secret)
+        can_mint_token = bool(config.livekit_url and config.livekit_api_key and config.livekit_api_secret)
+        preminted_token = config.livekit_access_token.strip()
+        preminted_claims = _decode_jwt_payload_segment(preminted_token) if preminted_token else {}
+        preminted_video = preminted_claims.get("video") if isinstance(preminted_claims.get("video"), dict) else {}
+        preminted_exp = preminted_claims.get("exp")
+        preminted_invalid = bool(preminted_token and not can_mint_token and not preminted_claims)
+        preminted_expired = not can_mint_token and isinstance(preminted_exp, int) and preminted_exp <= int(time.time())
+        configured = bool(config.livekit_url and (can_mint_token or preminted_token))
+        if not can_mint_token and preminted_video.get("room"):
+            room = str(preminted_video["room"])
+        if not can_mint_token and preminted_claims.get("sub"):
+            identity = str(preminted_claims["sub"])
+        status = "unconfigured"
+        if configured:
+            if preminted_invalid:
+                status = "invalid_token"
+            elif preminted_expired:
+                status = "expired"
+            elif can_publish:
+                status = "ready"
+            else:
+                status = "permission_required"
         response: dict[str, Any] = {
             "schema_version": "mesh.agent_flow.livekit_session.v1",
             "state_slice": "mesh.agent_flow.livekit_session.v1",
@@ -1421,16 +1554,21 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "name": config.livekit_agent_name or "Harper-696",
                 "source": "Harper-696/src/agent.py",
             },
-            "status": "ready" if configured and can_publish else "permission_required" if configured else "unconfigured",
+            "status": status,
             "livekit_url": config.livekit_url if configured else "",
             "room": room,
             "participant_identity": identity,
             "token": "",
             "token_expires_at": None,
-            "required_env": ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET"],
+            "required_env": [
+                "MESH_LIVEKIT_URL",
+                "MESH_LIVEKIT_API_KEY",
+                "MESH_LIVEKIT_API_SECRET",
+                "MESH_LIVEKIT_ACCESS_TOKEN",
+            ],
             "side_effects_executed": False,
         }
-        if configured and can_publish:
+        if can_mint_token and can_publish:
             ttl = int(config.livekit_token_ttl_seconds)
             response["token"] = _livekit_access_token(
                 api_key=config.livekit_api_key,
@@ -1443,6 +1581,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 can_publish_data=False,
             )
             response["token_expires_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + ttl))
+        elif configured and can_publish and preminted_token and not preminted_invalid and not preminted_expired:
+            response["token"] = preminted_token
+            response["token_expires_at"] = _livekit_token_expires_at(preminted_token)
         return response
 
     def _agent_flow_confirmation(
@@ -1598,7 +1739,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         return evidence
 
     def _agent_flow_lifecycle_tasks(self, *, mesh: dict[str, Any], preview: dict[str, Any]) -> list[dict[str, Any]]:
-        livekit_ready = bool(self.server.config.livekit_url and self.server.config.livekit_api_key and self.server.config.livekit_api_secret)
+        livekit_ready = _livekit_configured(self.server.config)
         runs = mesh.get("runs", {}).get("runs") if isinstance(mesh.get("runs"), dict) else []
         approvals = mesh.get("approvals", {}).get("items") if isinstance(mesh.get("approvals"), dict) else []
         evidence = self._agent_flow_evidence(mesh)
@@ -1990,11 +2131,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "chat_endpoint": "/api/operator/agent-flow/chat",
                 "livekit_endpoint": "/api/operator/agent-flow/livekit-session",
                 "confirmation_endpoint": "/api/operator/agent-flow/confirm-preview",
-                "livekit_configured": bool(
-                    self.server.config.livekit_url
-                    and self.server.config.livekit_api_key
-                    and self.server.config.livekit_api_secret
-                ),
+                "livekit_configured": _livekit_configured(self.server.config),
                 "authority": "draft_only; Mesh-owned endpoints retain mutation authority",
             },
             "readiness": _safe_dashboard_call(coordinator.build_readiness),

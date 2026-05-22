@@ -1,0 +1,482 @@
+{
+  "schema_version": "mesh.hardened_arena.profiles.v1",
+  "generated_from": [
+    "docs/reference-architectures.md",
+    "docs/deployment-compatibility.md",
+    "docs/production-deployment-roadmap.md"
+  ],
+  "profiles": [
+    {
+      "profile_id": "solo_project_default",
+      "display_name": "Solo Project Default",
+      "intended_use": "A one-person project or private lab that needs a compact production-like Mesh arena without live deployment claims.",
+      "lifecycle_state": "recipe",
+      "readiness_posture": "recipe_only",
+      "production_readiness_claim": false,
+      "ai_lane": "proposal_only",
+      "supported_outputs": [
+        "helm_values_intent",
+        "kustomize_intent",
+        "compose_overlay_intent",
+        "rbac_intent",
+        "network_policy_intent",
+        "secret_reference_manifest",
+        "cleanup_manifest"
+      ],
+      "data_boundary": {
+        "classification": "synthetic_or_developer_owned_only",
+        "tenant_boundary": "single operator namespace or local stack scope declared before intent generation",
+        "retention": "delete generated arena data and run exports after review unless the operator explicitly preserves them",
+        "export_policy": "proof packets may be exported only after secret-shaped values are redacted",
+        "raw_secret_policy": "raw secret values are never stored in the profile, packet, intent, or generated artifact"
+      },
+      "components": [
+        {
+          "component_id": "solo_ingress_gateway",
+          "display_name": "Ingress gateway",
+          "component_class": "ingress",
+          "purpose": "Expose health and readiness probes through a reviewable ingress boundary.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images gateway candidate",
+            "dhi_slug": "gateway/solo-ingress-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing"
+            ]
+          },
+          "authority_boundary": "runtime_secret",
+          "credential_class": "runtime_secret_ref",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        },
+        {
+          "component_id": "solo_postgres",
+          "display_name": "PostgreSQL data service",
+          "component_class": "data_store",
+          "purpose": "Provide persistence evidence for local or small-team rehearsals.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images PostgreSQL candidate",
+            "dhi_slug": "postgres/solo-project-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing"
+            ]
+          },
+          "authority_boundary": "mutating_actuator",
+          "credential_class": "mutating_service_account",
+          "mutates_state": true,
+          "rollback_proof_requirements": [
+            "restore_or_recreate_persistence_boundary",
+            "rollback_event_recorded",
+            "cleanup_after_failed_mutation"
+          ]
+        },
+        {
+          "component_id": "solo_observability",
+          "display_name": "Observability and feedback lane",
+          "component_class": "observability",
+          "purpose": "Collect probe feedback without granting autonomous production authority.",
+          "source": {
+            "source_type": "upstream",
+            "display_ref": "Prometheus-compatible recipe component",
+            "dhi_slug": null,
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "non_dhi_source_requires_operator_review"
+            ]
+          },
+          "authority_boundary": "read_only_credential",
+          "credential_class": "read_only",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        }
+      ],
+      "probe_plan": {
+        "required": true,
+        "checks": [
+          "health_endpoint",
+          "readiness_endpoint",
+          "feedback_source",
+          "audit_event",
+          "rollback_plan",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet_binding"
+        ],
+        "failure_modes": [
+          "denied_namespace",
+          "stale_credential",
+          "bad_rollout",
+          "cleanup_failure"
+        ]
+      },
+      "proof_gates": {
+        "required": [
+          "health",
+          "readiness",
+          "feedback",
+          "audit",
+          "rollback",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet"
+        ],
+        "target_validated_allowed": false,
+        "production_ready_allowed": false
+      },
+      "cleanup": {
+        "required": true,
+        "kill_switch_required": true,
+        "steps": [
+          "disable_mesh_watchers_for_arena_scope",
+          "revoke_arena_secret_references",
+          "delete_arena_namespace_or_compose_project",
+          "verify_no_arena_run_exports_remain_past_retention"
+        ],
+        "artifacts_to_remove": [
+          "arena_namespace_or_compose_project",
+          "generated_secret_references",
+          "temporary_probe_data",
+          "review_only_intent_files"
+        ]
+      },
+      "blockers": [
+        "profile_is_recipe_only_until_packet_generated",
+        "target_validation_missing"
+      ]
+    },
+    {
+      "profile_id": "startup_saas_staging",
+      "display_name": "Startup SaaS Staging",
+      "intended_use": "A startup staging arena that rehearses Mesh authority, rollback, audit, and feedback before customer-impacting use.",
+      "lifecycle_state": "recipe",
+      "readiness_posture": "recipe_only",
+      "production_readiness_claim": false,
+      "ai_lane": "proposal_only",
+      "supported_outputs": [
+        "helm_values_intent",
+        "kustomize_intent",
+        "compose_overlay_intent",
+        "rbac_intent",
+        "network_policy_intent",
+        "secret_reference_manifest",
+        "cleanup_manifest"
+      ],
+      "data_boundary": {
+        "classification": "staging_or_synthetic_customer_like_data_only",
+        "tenant_boundary": "dedicated staging tenant and namespace with no production customer data",
+        "retention": "short-lived proof evidence retained only for the staging review window",
+        "export_policy": "run exports require operator review and must identify staging-only data provenance",
+        "raw_secret_policy": "secret references only; no token, password, kubeconfig, or API key material"
+      },
+      "components": [
+        {
+          "component_id": "startup_identity_boundary",
+          "display_name": "OIDC identity boundary",
+          "component_class": "identity",
+          "purpose": "Require named operator identity for generated artifacts and future target proof.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images OIDC candidate",
+            "dhi_slug": "identity/startup-oidc-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing"
+            ]
+          },
+          "authority_boundary": "runtime_secret",
+          "credential_class": "runtime_secret_ref",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        },
+        {
+          "component_id": "startup_rollout_controller",
+          "display_name": "Rollout controller intent",
+          "component_class": "delivery",
+          "purpose": "Prepare approval-gated rollout and rollback rehearsals without live apply.",
+          "source": {
+            "source_type": "upstream",
+            "display_ref": "Argo Rollouts recipe component",
+            "dhi_slug": null,
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "non_dhi_source_requires_operator_review",
+              "chart_values_review_missing"
+            ]
+          },
+          "authority_boundary": "mutating_actuator",
+          "credential_class": "mutating_service_account",
+          "mutates_state": true,
+          "rollback_proof_requirements": [
+            "rollback_plan_declared",
+            "rollback_command_or_controller_action_recorded",
+            "post_rollback_health_and_readiness_observed"
+          ]
+        },
+        {
+          "component_id": "startup_audit_feedback",
+          "display_name": "Audit and feedback stack",
+          "component_class": "observability",
+          "purpose": "Provide audit events, metrics, and run-export evidence for the staging arena.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images observability candidate",
+            "dhi_slug": "observability/startup-feedback-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing"
+            ]
+          },
+          "authority_boundary": "read_only_credential",
+          "credential_class": "read_only",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        }
+      ],
+      "probe_plan": {
+        "required": true,
+        "checks": [
+          "health_endpoint",
+          "readiness_endpoint",
+          "identity_boundary",
+          "feedback_source",
+          "audit_event",
+          "rollback_plan",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet_binding"
+        ],
+        "failure_modes": [
+          "denied_namespace",
+          "stale_credential",
+          "bad_rollout",
+          "dependency_timeout",
+          "backpressure",
+          "degraded_observability"
+        ]
+      },
+      "proof_gates": {
+        "required": [
+          "health",
+          "readiness",
+          "feedback",
+          "audit",
+          "rollback",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet"
+        ],
+        "target_validated_allowed": false,
+        "production_ready_allowed": false
+      },
+      "cleanup": {
+        "required": true,
+        "kill_switch_required": true,
+        "steps": [
+          "disable_staging_arena_mutating_authority",
+          "revoke_staging_secret_references",
+          "delete_staging_arena_namespace",
+          "verify_audit_and_run_export_retention_limits"
+        ],
+        "artifacts_to_remove": [
+          "staging_arena_namespace",
+          "temporary_rollout_objects",
+          "generated_secret_references",
+          "review_only_intent_files"
+        ]
+      },
+      "blockers": [
+        "profile_is_recipe_only_until_packet_generated",
+        "target_validation_missing",
+        "staging_identity_proof_missing"
+      ]
+    },
+    {
+      "profile_id": "enterprise_onprem_rehearsal",
+      "display_name": "Enterprise On-Prem Rehearsal",
+      "intended_use": "An enterprise or on-prem rehearsal arena for offline-adjacent review, strict data boundaries, and proof-packet inspection before deployment planning.",
+      "lifecycle_state": "recipe",
+      "readiness_posture": "recipe_only",
+      "production_readiness_claim": false,
+      "ai_lane": "none",
+      "supported_outputs": [
+        "helm_values_intent",
+        "kustomize_intent",
+        "rbac_intent",
+        "network_policy_intent",
+        "secret_reference_manifest",
+        "cleanup_manifest"
+      ],
+      "data_boundary": {
+        "classification": "customer_controlled_or_synthetic_rehearsal_data_only",
+        "tenant_boundary": "customer-controlled network, registry, namespace, and account boundary declared before any proof run",
+        "retention": "customer-defined retention with deletion proof required before target validation",
+        "export_policy": "release and run-export packets stay inside the declared customer-controlled boundary unless approved",
+        "raw_secret_policy": "customer secret store references only; no raw secret or kubeconfig material in generated artifacts"
+      },
+      "components": [
+        {
+          "component_id": "enterprise_policy_admission",
+          "display_name": "Policy and admission controls",
+          "component_class": "policy_admission",
+          "purpose": "Rehearse image-signing, admission, and policy proof gates without weakening Mesh approval authority.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images policy/admission candidate",
+            "dhi_slug": "policy/enterprise-admission-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing",
+              "customer_registry_mirror_missing"
+            ]
+          },
+          "authority_boundary": "mutating_actuator",
+          "credential_class": "mutating_service_account",
+          "mutates_state": true,
+          "rollback_proof_requirements": [
+            "policy_revert_plan_declared",
+            "admission_change_rollback_observed",
+            "post_rollback_audit_event_recorded"
+          ]
+        },
+        {
+          "component_id": "enterprise_secrets_boundary",
+          "display_name": "External secrets boundary",
+          "component_class": "secrets",
+          "purpose": "Reference customer-controlled secret custody without storing secret values.",
+          "source": {
+            "source_type": "customer_provided",
+            "display_ref": "Customer-approved secret store integration",
+            "dhi_slug": null,
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "customer_secret_store_contract_missing",
+              "target_secret_reference_review_missing"
+            ]
+          },
+          "authority_boundary": "runtime_secret",
+          "credential_class": "runtime_secret_ref",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        },
+        {
+          "component_id": "enterprise_audit_export",
+          "display_name": "Audit and release-packet export",
+          "component_class": "audit",
+          "purpose": "Bind arena proof to customer-controlled audit and release evidence.",
+          "source": {
+            "source_type": "dhi",
+            "display_ref": "Docker Hardened Images audit/export candidate",
+            "dhi_slug": "audit/enterprise-export-placeholder",
+            "digest_ref": null,
+            "sbom_ref": null,
+            "provenance_ref": null,
+            "blockers": [
+              "dhi_digest_pin_missing",
+              "dhi_sbom_ref_missing",
+              "dhi_provenance_ref_missing",
+              "external_audit_sink_proof_missing"
+            ]
+          },
+          "authority_boundary": "read_only_credential",
+          "credential_class": "read_only",
+          "mutates_state": false,
+          "rollback_proof_requirements": []
+        }
+      ],
+      "probe_plan": {
+        "required": true,
+        "checks": [
+          "health_endpoint",
+          "readiness_endpoint",
+          "identity_boundary",
+          "feedback_source",
+          "audit_event",
+          "rollback_plan",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet_binding"
+        ],
+        "failure_modes": [
+          "denied_namespace",
+          "stale_credential",
+          "bad_rollout",
+          "dependency_timeout",
+          "degraded_observability",
+          "backup_failure",
+          "cleanup_failure"
+        ]
+      },
+      "proof_gates": {
+        "required": [
+          "health",
+          "readiness",
+          "feedback",
+          "audit",
+          "rollback",
+          "run_export",
+          "kill_switch",
+          "cleanup",
+          "release_packet"
+        ],
+        "target_validated_allowed": false,
+        "production_ready_allowed": false
+      },
+      "cleanup": {
+        "required": true,
+        "kill_switch_required": true,
+        "steps": [
+          "disable_customer_boundary_mutating_authority",
+          "revoke_customer_secret_references",
+          "delete_rehearsal_namespaces_and_accounts",
+          "produce_customer_controlled_deletion_evidence"
+        ],
+        "artifacts_to_remove": [
+          "rehearsal_namespace",
+          "temporary_service_accounts",
+          "generated_secret_references",
+          "review_only_intent_files"
+        ]
+      },
+      "blockers": [
+        "profile_is_recipe_only_until_packet_generated",
+        "target_validation_missing",
+        "customer_boundary_proof_missing",
+        "external_audit_sink_proof_missing"
+      ]
+    }
+  ]
+}

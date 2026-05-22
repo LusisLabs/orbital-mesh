@@ -1,0 +1,64 @@
+{
+  "title": "HardenedArenaProof",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "proof_id",
+    "generated_at",
+    "profile_id",
+    "target",
+    "packet_ref",
+    "checks",
+    "readiness_posture",
+    "raw_secret_values_present",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.hardened_arena.proof.v1"]},
+    "proof_id": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "profile_id": {"type": "string"},
+    "target": {
+      "type": "object",
+      "required": ["target_id", "target_specific", "base_url", "environment"],
+      "additionalProperties": false,
+      "properties": {
+        "target_id": {"type": "string"},
+        "target_specific": {"type": "boolean"},
+        "base_url": {"type": ["string", "null"]},
+        "environment": {"type": "string"}
+      }
+    },
+    "packet_ref": {"type": ["string", "null"]},
+    "checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["check", "status", "observed", "evidence_ref", "details"],
+        "additionalProperties": false,
+        "properties": {
+          "check": {"type": "string"},
+          "status": {"type": "string", "enum": ["pass", "fail", "blocked"]},
+          "observed": {"type": "boolean"},
+          "evidence_ref": {"type": ["string", "null"]},
+          "details": {"type": "string"}
+        }
+      }
+    },
+    "readiness_posture": {
+      "type": "object",
+      "required": ["status", "target_validated", "target_specific", "statement"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["blocked", "arena_smoke_passed", "target_validated"]},
+        "target_validated": {"type": "boolean"},
+        "target_specific": {"type": "boolean"},
+        "statement": {"type": "string"}
+      }
+    },
+    "raw_secret_values_present": {"type": "boolean"},
+    "blockers": {"type": "array", "items": {"type": "string"}}
+  }
+}

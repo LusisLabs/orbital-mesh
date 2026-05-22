@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/generated-mcp-contract.schema.json",
+  "title": "PraxisGeneratedMcpContract",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract_id",
+    "source_bundle_id",
+    "generated_at",
+    "generator_version",
+    "tool_candidates"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.generated_mcp_contract.v1"]
+    },
+    "contract_id": { "type": "string" },
+    "source_bundle_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "generator_version": { "type": "string" },
+    "tool_candidates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "tool_id",
+          "name",
+          "description",
+          "endpoint",
+          "args_schema",
+          "auth_scope",
+          "mutation_class",
+          "approval_posture",
+          "workflow_hints",
+          "test_plan",
+          "source_evidence_refs",
+          "certification_state",
+          "blockers"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "tool_id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "endpoint": {
+            "type": "object",
+            "required": ["method", "path", "source_packet_id"],
+            "additionalProperties": false,
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]
+              },
+              "path": { "type": "string" },
+              "source_packet_id": { "type": "string" }
+            }
+          },
+          "args_schema": { "type": "object" },
+          "auth_scope": {
+            "type": "object",
+            "required": ["scope_id", "credential_ref", "allowed_scopes", "raw_credentials_present"],
+            "additionalProperties": false,
+            "properties": {
+              "scope_id": { "type": "string" },
+              "credential_ref": { "type": ["string", "null"] },
+              "allowed_scopes": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "raw_credentials_present": {
+                "type": "boolean",
+                "enum": [false]
+              }
+            }
+          },
+          "mutation_class": {
+            "type": "string",
+            "enum": ["read_only", "idempotent_write", "mutation", "destructive_mutation"]
+          },
+          "approval_posture": {
+            "type": "string",
+            "enum": ["denied", "read_only", "approval_required", "staging_candidate"]
+          },
+          "workflow_hints": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "test_plan": {
+            "type": "object",
+            "required": ["fixture_refs", "negative_cases", "requires_live_target"],
+            "additionalProperties": false,
+            "properties": {
+              "fixture_refs": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "negative_cases": {
+                "type": "array",
+                "items": { "type": "string" }
+              },
+              "requires_live_target": {
+                "type": "boolean",
+                "enum": [false]
+              }
+            }
+          },
+          "source_evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string" }
+          },
+          "certification_state": {
+            "type": "string",
+            "enum": ["candidate", "not_certified", "denied", "read_only", "approval_required", "staging_ready"]
+          },
+          "blockers": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

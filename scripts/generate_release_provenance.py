@@ -75,6 +75,9 @@ def main() -> int:
         "--deployment-compatibility-registry",
         default=os.getenv("MESH_DEPLOYMENT_COMPATIBILITY_REGISTRY_PATH") or "config/deployment-compatibility.registry.json",
     )
+    parser.add_argument("--hardened-arena-profile", default=os.getenv("MESH_HARDENED_ARENA_PROFILE") or "")
+    parser.add_argument("--hardened-arena-packet", default=os.getenv("MESH_HARDENED_ARENA_PACKET_PATH") or "")
+    parser.add_argument("--hardened-arena-proof", default=os.getenv("MESH_HARDENED_ARENA_PROOF_PATH") or "")
     parser.add_argument(
         "--base-image-digest",
         action="append",
@@ -97,6 +100,9 @@ def main() -> int:
 def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
     from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
+    from shared.mesh_runtime.hardened_arena import verify_hardened_arena_profiles
+    from shared.mesh_runtime.hardened_arena_packet import verify_hardened_arena_packet
+    from shared.mesh_runtime.hardened_arena_proof import verify_hardened_arena_proof
     from shared.mesh_runtime.policy_lifecycle import build_policy_lifecycle_packet
 
     git = _git_snapshot()
@@ -132,6 +138,9 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
     deployment_compatibility = build_deployment_compatibility_matrix(
         args.deployment_compatibility_registry,
     )
+    hardened_arena_profile_verification = verify_hardened_arena_profiles()
+    hardened_arena_packet = _optional_verification_ref(args.hardened_arena_packet, verify_hardened_arena_packet)
+    hardened_arena_proof = _optional_verification_ref(args.hardened_arena_proof, verify_hardened_arena_proof)
     migrations = _hash_directory("migrations/postgres", "*.sql")
     migration_rehearsal = _migration_rehearsal_record(args.migration_rehearsal, migrations)
     dependency_locks = _hash_paths(DEPENDENCY_LOCKFILES)
@@ -182,6 +191,15 @@ def build_packet(args: argparse.Namespace) -> dict[str, Any]:
         },
         "deployment": {
             "compatibility": deployment_compatibility,
+        },
+        "hardened_arena": {
+            "profile_id": args.hardened_arena_profile or None,
+            "profile_verification": hardened_arena_profile_verification,
+            "packet": hardened_arena_packet,
+            "proof": hardened_arena_proof,
+            "target_validation_upgrade_allowed": hardened_arena_proof.get("readiness_status") == "target_validated"
+            and hardened_arena_proof.get("status") == "pass",
+            "readiness_note": "Hardened arena references are release-packet context only; production readiness is not upgraded without a complete target-specific proof runner packet.",
         },
         "migrations": {
             "directory": "migrations/postgres",
@@ -776,6 +794,38 @@ def _json_artifact_payload(raw_path: str) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _optional_verification_ref(raw_path: str, verifier: Any) -> dict[str, Any]:
+    if not raw_path:
+        return {
+            "path": None,
+            "present": False,
+            "status": "missing",
+            "readiness_status": None,
+            "sha256": None,
+            "blockers": ["artifact_path_missing"],
+        }
+    path = Path(raw_path)
+    resolved = path if path.is_absolute() else REPO_ROOT / path
+    if not resolved.exists() or not resolved.is_file():
+        return {
+            "path": str(path),
+            "present": False,
+            "status": "missing",
+            "readiness_status": None,
+            "sha256": None,
+            "blockers": ["artifact_file_missing"],
+        }
+    verification = verifier(resolved)
+    return {
+        "path": str(path),
+        "present": True,
+        "status": verification.get("status"),
+        "readiness_status": verification.get("readiness_status"),
+        "sha256": _sha256(resolved),
+        "blockers": verification.get("blockers", []),
+    }
 
 
 def _attested_image_digest(payload: dict[str, Any]) -> str:

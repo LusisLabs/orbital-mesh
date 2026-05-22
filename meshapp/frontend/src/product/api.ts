@@ -101,6 +101,61 @@ export type RunDetailResponse = RunLaunchResponse & {
 
 export type ApprovalCommand = "approve" | "resume" | "cancel" | "explain_blockers" | "override_decision";
 
+export type HardenedArenaProfile = {
+  profile_id: string;
+  display_name: string;
+  intended_use: string;
+  lifecycle_state: string;
+  readiness_posture: string;
+  ai_lane: "proposal_only" | "none" | string;
+  supported_outputs: string[];
+  components: Array<Record<string, any>>;
+  proof_gates: { required: string[]; target_validated_allowed: boolean; production_ready_allowed: boolean };
+  cleanup: { required: boolean; kill_switch_required: boolean; steps: string[]; artifacts_to_remove: string[] };
+  blockers: string[];
+};
+
+export type HardenedArenaProfileRegistry = {
+  schema_version: string;
+  profiles: HardenedArenaProfile[];
+};
+
+export type HardenedArenaCatalog = {
+  schema_version: string;
+  claim_status: string;
+  deployment_claim: boolean;
+  production_readiness_claim: boolean;
+  entries: Array<Record<string, any>>;
+};
+
+export type HardenedArenaPacket = {
+  schema_version: string;
+  packet_id: string;
+  selected_profile: { profile_id: string; display_name: string; intended_use: string; lifecycle_state: string; profile_readiness_posture: string };
+  component_graph: Array<Record<string, any>>;
+  authority_boundaries: string[];
+  credential_classes: string[];
+  dhi_catalog_refs: Array<Record<string, any>>;
+  blockers: string[];
+  proof_checklist: Array<{ gate: string; required: boolean; observed: boolean; evidence_ref: string | null }>;
+  mesh_probe_plan: { checks: string[]; required: boolean };
+  failure_mode_curriculum: string[];
+  cleanup_plan: Record<string, any>;
+  data_retention_plan: Record<string, any>;
+  readiness_posture: { status: string; target_validated: boolean; production_ready: boolean; statement: string };
+};
+
+export type HardenedArenaPacketCreateResponse = {
+  schema_version: string;
+  packet_id: string;
+  packet_path: string;
+  operator_id: string;
+  stored_artifact: boolean;
+  live_deployment_allowed: boolean;
+  secret_ingestion_allowed: boolean;
+  packet: HardenedArenaPacket;
+};
+
 export type PraxisSourceInput = {
   source_type: "openapi" | "postman_json" | "sop_markdown" | "redacted_traffic_ref" | string;
   filename?: string;
@@ -333,5 +388,20 @@ export const productApi = {
   exportPraxisP10Proof(requestId: string, teamId?: string | null) {
     const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
     return request<Record<string, any>>(`/api/operator/praxis/runs/${encodeURIComponent(requestId)}/p10-proof${query}`);
+  },
+  hardenedArenaProfiles() {
+    return request<HardenedArenaProfileRegistry>("/api/hardened-arena/profiles");
+  },
+  hardenedArenaCatalog() {
+    return request<HardenedArenaCatalog>("/api/hardened-arena/catalog");
+  },
+  generateHardenedArenaPacket(profileId: string) {
+    return request<HardenedArenaPacketCreateResponse>("/api/hardened-arena/packets", {
+      method: "POST",
+      body: JSON.stringify({ profile_id: profileId }),
+    });
+  },
+  hardenedArenaPacket(packetId: string) {
+    return request<HardenedArenaPacket>(`/api/hardened-arena/packets/${encodeURIComponent(packetId)}`);
   },
 };

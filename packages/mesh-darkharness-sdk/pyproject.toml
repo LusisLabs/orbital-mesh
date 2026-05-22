@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-darkharness-sdk"
+version = "0.1.0"
+description = "Perennial Darkharness packet schemas, signing, and policy verification"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["cryptography>=42.0.0"]
+license = { text = "MIT" }
+authors = [{ name = "Mesh Intelligence Contributors" }]
+
+[project.scripts]
+mesh-darkharness = "mesh_darkharness.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mesh_darkharness = ["schemas/**/*.json"]

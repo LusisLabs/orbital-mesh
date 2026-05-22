@@ -1,0 +1,73 @@
+{
+  "authority": {
+    "acp_grants_runtime_authority": false,
+    "akto_advisory_only": true,
+    "managed_runtime_deployed": false,
+    "mesh_owns_certification": true,
+    "mesh_owns_revocation": true
+  },
+  "certification_binding": {
+    "binding_id": "praxis-certification-binding-demo-001",
+    "connector_id": "praxis-demo-generated-mcp",
+    "sha256": "42534bfc9bdd1e603af3dcfbcbe3d4f459417f0a1c8cb72b59c845b06e4a453b"
+  },
+  "checks": {
+    "certification_binding_bound": true,
+    "dry_run_mcp_readiness_bound": true,
+    "generated_contract_bound": true,
+    "operator_decision_bound": true,
+    "read_only_tool_certified": true,
+    "security_evidence_bound": true,
+    "source_bundle_bound": true,
+    "unsafe_mutation_denied": true
+  },
+  "generated_at": "2026-05-20T05:00:30Z",
+  "generated_contract": {
+    "contract_id": "praxis-generated-contract-demo-001",
+    "sha256": "383abd7e84d5c4940ad6babb4e64e00eb5e4fc15194ffdd7b875b2c5d27d5860",
+    "tool_candidate_count": 2
+  },
+  "mcp_readiness": {
+    "certified_tool_ids": [
+      "tool.listorders"
+    ],
+    "denied_tool_ids": [
+      "tool.cancelorder"
+    ],
+    "dry_run_only": true,
+    "readiness_blockers": [
+      "akto_high_or_critical_finding_open",
+      "connector_certification_missing",
+      "mutation_scope_not_certified",
+      "operator_approval_missing"
+    ],
+    "status": "dry_run_ready"
+  },
+  "operator_decision": {
+    "decision": "approve_read_only_deny_mutation",
+    "decision_refs": [
+      "mesh-approval://praxis-demo/read-only-approved",
+      "mesh-approval://praxis-demo/mutation-denied"
+    ],
+    "evidence_refs": [
+      "praxis-generated-contract-demo-001",
+      "praxis-akto-evidence-demo-001",
+      "praxis-certification-binding-demo-001"
+    ]
+  },
+  "packet_id": "praxis-proof-packet-demo-001",
+  "schema_version": "praxis.e2e_proof_packet.v1",
+  "security_evidence": {
+    "critical_or_high_open_count": 1,
+    "evidence_id": "praxis-akto-evidence-demo-001",
+    "finding_count": 1,
+    "sha256": "bcca5c183923cc4a5381eaf8752dc28618e56dac9785053524b8b85e622c61cd"
+  },
+  "source_bundle": {
+    "bundle_id": "praxis-source-bundle-demo-001",
+    "sha256": "cec55ee02c1c8c6ed20f5ecd6b4dda98c3cc1d2d5d48d5a6c7a909d7dbc32b7a",
+    "source_packet_count": 4
+  },
+  "state_slice": "praxis.e2e-proof-packet.v1",
+  "status": "complete"
+}

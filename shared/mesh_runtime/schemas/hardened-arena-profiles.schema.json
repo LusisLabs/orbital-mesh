@@ -1,0 +1,163 @@
+{
+  "title": "HardenedArenaProfileRegistry",
+  "type": "object",
+  "required": ["schema_version", "generated_from", "profiles"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.hardened_arena.profiles.v1"]
+    },
+    "generated_from": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "profile_id",
+          "display_name",
+          "intended_use",
+          "lifecycle_state",
+          "readiness_posture",
+          "production_readiness_claim",
+          "ai_lane",
+          "supported_outputs",
+          "data_boundary",
+          "components",
+          "probe_plan",
+          "proof_gates",
+          "cleanup",
+          "blockers"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "profile_id": {"type": "string"},
+          "display_name": {"type": "string"},
+          "intended_use": {"type": "string"},
+          "lifecycle_state": {"type": "string", "enum": ["recipe", "profile_verified", "target_validated"]},
+          "readiness_posture": {"type": "string", "enum": ["recipe_only", "profile_verified", "arena_smoke_passed", "target_validated"]},
+          "production_readiness_claim": {"type": "boolean"},
+          "ai_lane": {"type": "string", "enum": ["proposal_only", "none"]},
+          "supported_outputs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "enum": ["helm_values_intent", "kustomize_intent", "compose_overlay_intent", "rbac_intent", "network_policy_intent", "secret_reference_manifest", "cleanup_manifest"]}
+          },
+          "data_boundary": {
+            "type": "object",
+            "required": ["classification", "tenant_boundary", "retention", "export_policy", "raw_secret_policy"],
+            "additionalProperties": false,
+            "properties": {
+              "classification": {"type": "string"},
+              "tenant_boundary": {"type": "string"},
+              "retention": {"type": "string"},
+              "export_policy": {"type": "string"},
+              "raw_secret_policy": {"type": "string"}
+            }
+          },
+          "components": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["component_id", "display_name", "component_class", "purpose", "source", "authority_boundary", "credential_class", "mutates_state", "rollback_proof_requirements"],
+              "additionalProperties": false,
+              "properties": {
+                "component_id": {"type": "string"},
+                "display_name": {"type": "string"},
+                "component_class": {"type": "string"},
+                "purpose": {"type": "string"},
+                "source": {
+                  "type": "object",
+                  "required": ["source_type", "display_ref", "dhi_slug", "digest_ref", "sbom_ref", "provenance_ref", "blockers"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "source_type": {"type": "string", "enum": ["dhi", "upstream", "mesh", "customer_provided"]},
+                    "display_ref": {"type": "string"},
+                    "dhi_slug": {"type": ["string", "null"]},
+                    "digest_ref": {"type": ["string", "null"]},
+                    "sbom_ref": {"type": ["string", "null"]},
+                    "provenance_ref": {"type": ["string", "null"]},
+                    "blockers": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                    }
+                  }
+                },
+                "authority_boundary": {"type": "string", "enum": ["no_credential", "read_only_credential", "runtime_secret", "mutating_actuator", "proposal_only"]},
+                "credential_class": {"type": "string", "enum": ["none", "read_only", "runtime_secret_ref", "mutating_service_account", "proposal_only"]},
+                "mutates_state": {"type": "boolean"},
+                "rollback_proof_requirements": {
+                  "type": "array",
+                  "items": {"type": "string"}
+                }
+              }
+            }
+          },
+          "probe_plan": {
+            "type": "object",
+            "required": ["required", "checks", "failure_modes"],
+            "additionalProperties": false,
+            "properties": {
+              "required": {"type": "boolean"},
+              "checks": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              },
+              "failure_modes": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              }
+            }
+          },
+          "proof_gates": {
+            "type": "object",
+            "required": ["required", "target_validated_allowed", "production_ready_allowed"],
+            "additionalProperties": false,
+            "properties": {
+              "required": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              },
+              "target_validated_allowed": {"type": "boolean"},
+              "production_ready_allowed": {"type": "boolean"}
+            }
+          },
+          "cleanup": {
+            "type": "object",
+            "required": ["required", "kill_switch_required", "steps", "artifacts_to_remove"],
+            "additionalProperties": false,
+            "properties": {
+              "required": {"type": "boolean"},
+              "kill_switch_required": {"type": "boolean"},
+              "steps": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              },
+              "artifacts_to_remove": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string"}
+              }
+            }
+          },
+          "blockers": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

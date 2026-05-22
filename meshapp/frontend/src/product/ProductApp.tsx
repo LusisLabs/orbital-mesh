@@ -49,6 +49,9 @@ import {
   type AgentFlowLiveKitSessionResponse,
   type AgentFlowMutationPreview,
   type DashboardPayload,
+  type HardenedArenaCatalog,
+  type HardenedArenaPacketCreateResponse,
+  type HardenedArenaProfileRegistry,
   type LoadState,
   type PraxisSourceInput,
   type RunAdmissionPacket,
@@ -79,6 +82,7 @@ export type ViewKey =
   | "console-roadmap"
   | "praxis"
   | "agent-flow"
+  | "hardened-arena"
   | "environments"
   | "evaluations"
   | "training"
@@ -98,6 +102,8 @@ type LiveKitAudioTrack = {
   detach?: () => HTMLMediaElement[];
 };
 
+type AgentFlowVoiceStatus = "idle" | "connecting" | "connected" | "unavailable" | "failed";
+
 function clearAgentFlowAudioElements() {
   if (typeof document === "undefined") return;
   document.querySelectorAll<HTMLMediaElement>("[data-agent-flow-audio='harper-696']").forEach((element) => {
@@ -115,11 +121,28 @@ function attachAgentFlowAudioTrack(track: LiveKitAudioTrack) {
   document.body.appendChild(element);
 }
 
-function isLiveKitSessionFresh(session: AgentFlowLiveKitSessionResponse | null): session is AgentFlowLiveKitSessionResponse {
+export function isLiveKitSessionFresh(session: AgentFlowLiveKitSessionResponse | null): session is AgentFlowLiveKitSessionResponse {
   if (!session?.token || !session.livekit_url || session.status !== "ready") return false;
   if (!session.token_expires_at) return true;
   const expiresAt = Date.parse(session.token_expires_at);
   return Number.isFinite(expiresAt) && expiresAt - Date.now() > 60_000;
+}
+
+export function agentFlowVoiceUnavailableMessage(status: string): string {
+  if (status === "permission_required") {
+    return "LiveKit voice publishing requires a launcher, approver, or admin role for mesh.agent_flow.livekit_session.v1.";
+  }
+  if (status === "expired") {
+    return "LiveKit voice token expired for mesh.agent_flow.livekit_session.v1. Rotate MESH_LIVEKIT_ACCESS_TOKEN or configure MESH_LIVEKIT_API_KEY and MESH_LIVEKIT_API_SECRET.";
+  }
+  if (status === "invalid_token") {
+    return "LiveKit voice token is invalid for mesh.agent_flow.livekit_session.v1.";
+  }
+  return "LiveKit is not configured for mesh.agent_flow.livekit_session.v1.";
+}
+
+export function canAttemptHarperVoiceConnection(session: AgentFlowLiveKitSessionResponse | null, voiceStatus: AgentFlowVoiceStatus): boolean {
+  return voiceStatus === "connected" || (voiceStatus !== "connecting" && Boolean(session));
 }
 
 const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: any }[] }[] = [
@@ -129,6 +152,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "home", label: "Home", icon: Home },
       { key: "praxis", label: "Praxis", icon: Sparkles },
       { key: "agent-flow", label: "Agent Flow", icon: Bot },
+      { key: "hardened-arena", label: "Build Arena", icon: ShieldCheck },
       { key: "evaluations", label: "Evaluations", icon: BarChart3 },
       { key: "environments", label: "Connectors", icon: Boxes },
       { key: "gpu", label: "Readiness", icon: Cpu },
@@ -1143,6 +1167,7 @@ function pageMetaForView(view: ViewKey): { title: string; group: string; detail:
     home: "Readiness, next action, recent activity, and blockers before the console.",
     praxis: "Upload sources, certify generated tools, start dry-run, and export proof.",
     "agent-flow": "Chat with Harper-696, then drill into the Mesh lifecycle, agent lanes, proof gaps, and mutation preview path.",
+    "hardened-arena": "Choose a recipe profile, inspect authority boundaries and blockers, then generate a review-only proof packet.",
     evaluations: "Choose a scenario, launch through Mesh admission, and inspect proof.",
     environments: "Filter connector status by domain, state, and blocker evidence.",
     settings: "Choose safe defaults for new runs; deployment and CLI parity stay in Advanced.",
@@ -1201,6 +1226,7 @@ function ContentRouter({
   if (view === "home") return <HomeView dashboard={dashboard} authConfig={authConfig} lens={lens} setView={setView} />;
   if (view === "praxis") return <PraxisView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "agent-flow") return <AgentFlowView dashboard={dashboard} setView={setView} />;
+  if (view === "hardened-arena") return <HardenedArenaView dashboard={dashboard} setView={setView} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
@@ -1253,7 +1279,7 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
   const [chatError, setChatError] = useState("");
   const [chatBusy, setChatBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [voiceStatus, setVoiceStatus] = useState<"idle" | "connecting" | "connected" | "unavailable" | "failed">("idle");
+  const [voiceStatus, setVoiceStatus] = useState<AgentFlowVoiceStatus>("idle");
   const liveKitRoomRef = useRef<{ disconnect: () => void } | null>(null);
   const liveKitConnectGenerationRef = useRef(0);
 
@@ -1373,11 +1399,7 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
     const unavailableStatus = session?.status ?? "";
     if (!isLiveKitSessionFresh(session)) {
       setVoiceStatus("unavailable");
-      setChatError(
-        unavailableStatus === "permission_required"
-          ? "LiveKit voice publishing requires a launcher, approver, or admin role for mesh.agent_flow.livekit_session.v1."
-          : "LiveKit is not configured for mesh.agent_flow.livekit_session.v1.",
-      );
+      setChatError(agentFlowVoiceUnavailableMessage(unavailableStatus));
       return;
     }
     const activeSession = session;
@@ -1495,7 +1517,7 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
           <div className="agent-flow-voice">
             <span>Voice connection</span>
             <strong>{humanize(voiceStatus)}</strong>
-            <button type="button" onClick={voiceStatus === "connected" ? disconnectHarperVoice : connectHarperVoice} disabled={voiceStatus === "connecting" || liveKitSession?.status !== "ready"}>
+            <button type="button" onClick={voiceStatus === "connected" ? disconnectHarperVoice : connectHarperVoice} disabled={!canAttemptHarperVoiceConnection(liveKitSession, voiceStatus)}>
               {voiceStatus === "connected" ? "Disconnect voice" : voiceStatus === "connecting" ? "Connecting" : "Connect voice"}
             </button>
           </div>
@@ -2633,6 +2655,139 @@ export function buildRunPreflightModel(
     readiness: humanize(String(readiness.status || (readiness.ready === true ? "ready" : readiness.ready === false ? "blocked" : "unknown"))),
     blockers: operatorPresent ? readinessBlockers : ["operator_identity_missing", ...readinessBlockers],
   };
+}
+
+export function buildHardenedArenaProfileCards(registry: HardenedArenaProfileRegistry | null) {
+  return (registry?.profiles || []).map((profile) => ({
+    id: profile.profile_id,
+    title: profile.display_name,
+    detail: profile.intended_use,
+    state: profile.lifecycle_state,
+    readiness: profile.readiness_posture,
+    aiLane: profile.ai_lane,
+    blockers: Array.isArray(profile.blockers) ? profile.blockers : [],
+    components: Array.isArray(profile.components) ? profile.components.length : 0,
+    proofGates: profile.proof_gates?.required || [],
+  }));
+}
+
+function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
+  const [arenaState, setArenaState] = useState<LoadState<{ profiles: HardenedArenaProfileRegistry; catalog: HardenedArenaCatalog }>>({ state: "loading" });
+  const [selectedProfileId, setSelectedProfileId] = useState("solo_project_default");
+  const [intendedUse, setIntendedUse] = useState("solo project / startup trial");
+  const [compliancePosture, setCompliancePosture] = useState("baseline with DHI preferred inputs");
+  const [packetState, setPacketState] = useState<LoadState<HardenedArenaPacketCreateResponse>>({ state: "empty", message: "No packet generated yet." });
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([productApi.hardenedArenaProfiles(), productApi.hardenedArenaCatalog()])
+      .then(([profiles, catalog]) => {
+        if (!mounted) return;
+        setArenaState({ state: "ready", data: { profiles, catalog } });
+        if (profiles.profiles?.[0]?.profile_id) setSelectedProfileId((current) => current || profiles.profiles[0].profile_id);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setArenaState(loadStateFromError(error));
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  async function generatePacket() {
+    if (!selectedProfileId || packetState.state === "loading") return;
+    setPacketState({ state: "loading" });
+    try {
+      const response = await productApi.generateHardenedArenaPacket(selectedProfileId);
+      setPacketState({ state: "ready", data: response });
+    } catch (error) {
+      setPacketState(loadStateFromError(error));
+    }
+  }
+
+  if (arenaState.state !== "ready") {
+    return <LoadStatePanel state={arenaState} />;
+  }
+
+  const { profiles, catalog } = arenaState.data;
+  const profileCards = buildHardenedArenaProfileCards(profiles);
+  const selectedProfile = profiles.profiles.find((profile) => profile.profile_id === selectedProfileId) || profiles.profiles[0];
+  const packetCreate = packetState.state === "ready" ? packetState.data : null;
+  const packet = packetCreate?.packet ?? null;
+  const catalogImages = catalog.entries.filter((entry) => entry.type === "image").length;
+  const catalogCharts = catalog.entries.filter((entry) => entry.type === "chart").length;
+  const proofBlocked = packet?.readiness_posture?.target_validated === false;
+
+  return (
+    <div className="content-stack">
+      <Toolbar
+        title="Build Arena"
+        detail="Generate review-only Hardened Production Arena proof packets. This surface does not deploy, install, ingest secrets, or claim production readiness."
+        action="Review readiness"
+        onAction={() => setView("gpu")}
+      />
+      <div className="stat-row">
+        <Stat label="Profiles" value={String(profiles.profiles.length)} detail="Recipe profiles only" />
+        <Stat label="DHI catalog" value={`${catalogImages} images / ${catalogCharts} charts`} detail="Catalog data only, no deployment claim" />
+        <Stat label="Readiness posture" value="Not deployed" detail="Target proof required before validation" />
+      </div>
+      <section className="form-card">
+        <div className="form-grid two">
+          <label>
+            Target profile
+            <select value={selectedProfileId} onChange={(event) => setSelectedProfileId(event.target.value)}>
+              {profiles.profiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.display_name}</option>)}
+            </select>
+          </label>
+          <label>
+            Intended use
+            <select value={intendedUse} onChange={(event) => setIntendedUse(event.target.value)}>
+              <option>solo project / startup trial</option>
+              <option>internal lab rehearsal</option>
+              <option>enterprise on-prem rehearsal</option>
+            </select>
+          </label>
+          <label>
+            Compliance posture
+            <select value={compliancePosture} onChange={(event) => setCompliancePosture(event.target.value)}>
+              <option>baseline with DHI preferred inputs</option>
+              <option>CIS-preferred review</option>
+              <option>FIPS/STIG blockers visible</option>
+              <option>customer-controlled image source</option>
+            </select>
+          </label>
+          <FormRead label="Selected posture" value={`${intendedUse}; ${compliancePosture}`} />
+        </div>
+        <div className="action-row">
+          <button className="primary-button" type="button" onClick={generatePacket} disabled={packetState.state === "loading"}>Generate packet</button>
+          <button type="button" disabled>Prepare intent</button>
+          <span>Intent preparation is review material only; no Deploy production action exists.</span>
+        </div>
+        {packetState.state === "error" || packetState.state === "forbidden" || packetState.state === "unauthorized" ? <EmptyInline text={packetState.message} /> : null}
+      </section>
+      {selectedProfile ? (
+        <div className="capability-grid two">
+          <ReadModelCard title="Component graph" payload={{ components: selectedProfile.components, selected_profile: selectedProfile.profile_id }} />
+          <ReadModelCard title="Authority boundaries" payload={{ authority: selectedProfile.components.map((component: any) => ({ component_id: component.component_id, boundary: component.authority_boundary, credential_class: component.credential_class, mutates_state: component.mutates_state })) }} />
+          <ReadModelCard title="Blockers" payload={{ profile_blockers: selectedProfile.blockers, source_blockers: selectedProfile.components.flatMap((component: any) => component.source?.blockers || []) }} />
+          <ReadModelCard title="Proof checklist" payload={{ gates: selectedProfile.proof_gates.required, target_validated_allowed: selectedProfile.proof_gates.target_validated_allowed }} />
+        </div>
+      ) : null}
+      <CardRows sections={[{ title: "Profile registry", count: profileCards.length, cards: profileCards.map((card) => ({ id: card.id, owner: "Hardened arena", state: card.state, title: card.title, detail: card.detail, blockers: card.blockers, tags: [card.readiness, card.aiLane, `${card.components} components`], version: "mesh.hardened_arena.profiles.v1" })) }]} />
+      {packet ? (
+        <section className="form-card">
+          <h3>Export / review packet</h3>
+          <p>Packet `{packet.packet_id}` is stored for review. It says <strong>{packet.readiness_posture.status}</strong>, not deployed or production-ready.</p>
+          {proofBlocked ? <EmptyInline text="Blocked proof state visible: target_validated remains false until observed target-specific proof exists." /> : null}
+          <div className="capability-grid two">
+            <ReadModelCard title="Generated packet" payload={packet} />
+            <ReadModelCard title="Packet storage" payload={{ packet_path: packetCreate?.packet_path, stored_artifact: packetCreate?.stored_artifact, live_deployment_allowed: packetCreate?.live_deployment_allowed }} />
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
 }
 
 function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
@@ -4013,6 +4168,7 @@ export function workflowForView(view: ViewKey): OperatorWorkflowKey {
   if (isConsoleProductView(view)) return workflowForView(consoleWorkflowForView(view).productFallback);
   if (view === "keys" || view === "settings" || view === "operator-setup") return "settings";
   if (view === "environments") return "connector";
+  if (view === "hardened-arena") return "launch";
   if (view === "evaluations") return "launch";
   if (view === "training" || view === "inference" || view === "gpu" || view === "clusters" || view === "instances") return "readiness";
   return "evidence";

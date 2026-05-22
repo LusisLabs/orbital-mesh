@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/mcp-generation-request.schema.json",
+  "title": "PraxisMcpGenerationRequest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "request_id",
+    "requested_at",
+    "tenant_id",
+    "owner_ref",
+    "requested_by",
+    "source_bundle_refs",
+    "target_agent_platforms",
+    "auth_declarations",
+    "policy"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.mcp_generation_request.v1"]
+    },
+    "request_id": { "type": "string" },
+    "requested_at": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "owner_ref": { "type": "string" },
+    "requested_by": {
+      "type": "object",
+      "required": ["operator_id", "role", "decision_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "operator_id": { "type": "string" },
+        "role": { "type": "string" },
+        "decision_ref": { "type": ["string", "null"] }
+      }
+    },
+    "source_bundle_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "target_agent_platforms": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": ["mcp", "acp", "meshapp_review"]
+      }
+    },
+    "auth_declarations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "auth_id",
+          "auth_type",
+          "credential_ref",
+          "raw_credentials_present",
+          "credential_boundary"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "auth_id": { "type": "string" },
+          "auth_type": {
+            "type": "string",
+            "enum": ["none", "api_key", "oauth2", "bearer_token", "basic", "session_cookie", "mtls"]
+          },
+          "credential_ref": {
+            "type": "object",
+            "required": ["ref_kind", "ref"],
+            "additionalProperties": false,
+            "properties": {
+              "ref_kind": {
+                "type": "string",
+                "enum": ["none", "env_var", "secret_ref", "vault_ref"]
+              },
+              "ref": { "type": ["string", "null"] }
+            }
+          },
+          "raw_credentials_present": {
+            "type": "boolean",
+            "enum": [false]
+          },
+          "credential_boundary": {
+            "type": "string",
+            "enum": ["none", "runtime_secret", "read_only_secret", "proposal_workspace"]
+          }
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "mesh_authority_required",
+        "operator_approval_required_for_mutation",
+        "live_dast_allowed",
+        "persist_raw_source_payloads"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "mesh_authority_required": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "operator_approval_required_for_mutation": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "live_dast_allowed": {
+          "type": "boolean",
+          "enum": [false]
+        },
+        "persist_raw_source_payloads": {
+          "type": "boolean",
+          "enum": [false]
+        }
+      }
+    }
+  }
+}

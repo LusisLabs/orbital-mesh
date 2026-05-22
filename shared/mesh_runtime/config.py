@@ -193,6 +193,7 @@ class RuntimeConfig:
     livekit_url: str = ""
     livekit_api_key: str = ""
     livekit_api_secret: str = ""
+    livekit_access_token: str = ""
     livekit_token_ttl_seconds: int = 600
     livekit_agent_name: str = "Harper-696"
     force_approval_gate: bool = False
@@ -720,6 +721,7 @@ class RuntimeConfig:
             livekit_url=os.getenv("MESH_LIVEKIT_URL", ""),
             livekit_api_key=os.getenv("MESH_LIVEKIT_API_KEY", ""),
             livekit_api_secret=os.getenv("MESH_LIVEKIT_API_SECRET", ""),
+            livekit_access_token=os.getenv("MESH_LIVEKIT_ACCESS_TOKEN", ""),
             livekit_token_ttl_seconds=int(os.getenv("MESH_LIVEKIT_TOKEN_TTL_SECONDS", "600")),
             livekit_agent_name=os.getenv("MESH_LIVEKIT_AGENT_NAME", "Harper-696"),
             force_approval_gate=_env_bool("MESH_FORCE_APPROVAL_GATE", default=False),

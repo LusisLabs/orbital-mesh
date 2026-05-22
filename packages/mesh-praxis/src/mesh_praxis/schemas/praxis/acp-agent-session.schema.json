@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/acp-agent-session.schema.json",
+  "title": "PraxisAcpAgentSession",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "session_id",
+    "created_at",
+    "operator_ref",
+    "source_bundle_id",
+    "generated_contract_refs",
+    "transcript_ref",
+    "permission_requests",
+    "operator_decisions",
+    "authority"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.acp_agent_session.v1"]
+    },
+    "session_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "operator_ref": { "type": "string" },
+    "source_bundle_id": { "type": "string" },
+    "generated_contract_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "transcript_ref": { "type": "string" },
+    "permission_requests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "tool_candidate_id",
+          "requested_scope",
+          "mutation_class",
+          "status",
+          "maps_to_mesh_approval_ref"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "request_id": { "type": "string" },
+          "tool_candidate_id": { "type": "string" },
+          "requested_scope": { "type": "string" },
+          "mutation_class": {
+            "type": "string",
+            "enum": ["read_only", "idempotent_write", "mutation", "destructive_mutation"]
+          },
+          "status": {
+            "type": "string",
+            "enum": ["proposed", "approved", "denied", "deferred"]
+          },
+          "maps_to_mesh_approval_ref": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "operator_decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "request_id",
+          "operator_decision",
+          "mesh_approval_ref",
+          "evidence_refs"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "decision_id": { "type": "string" },
+          "request_id": { "type": "string" },
+          "operator_decision": {
+            "type": "string",
+            "enum": ["approve", "deny", "defer"]
+          },
+          "mesh_approval_ref": { "type": ["string", "null"] },
+          "evidence_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": ["supervised_session_surface", "mesh_approval_required", "grants_runtime_authority"],
+      "additionalProperties": false,
+      "properties": {
+        "supervised_session_surface": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "mesh_approval_required": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "grants_runtime_authority": {
+          "type": "boolean",
+          "enum": [false]
+        }
+      }
+    }
+  }
+}

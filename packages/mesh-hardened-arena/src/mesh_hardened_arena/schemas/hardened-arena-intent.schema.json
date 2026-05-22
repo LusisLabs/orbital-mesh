@@ -1,0 +1,57 @@
+{
+  "title": "HardenedArenaIntentBundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "intent_id",
+    "generated_at",
+    "profile_id",
+    "review_only",
+    "live_deployment_allowed",
+    "secret_values_present",
+    "kubeconfig_material_present",
+    "outputs",
+    "rollback_cleanup_requirements",
+    "blockers"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.hardened_arena.intent.v1"]},
+    "intent_id": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "profile_id": {"type": "string"},
+    "review_only": {"type": "boolean"},
+    "live_deployment_allowed": {"type": "boolean"},
+    "secret_values_present": {"type": "boolean"},
+    "kubeconfig_material_present": {"type": "boolean"},
+    "outputs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["kind", "file_name", "required", "content"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {"type": "string", "enum": ["helm_values_intent", "kustomize_intent", "compose_overlay_intent", "rbac_intent", "network_policy_intent", "secret_reference_manifest", "cleanup_manifest"]},
+          "file_name": {"type": "string"},
+          "required": {"type": "boolean"},
+          "content": {"type": "object"}
+        }
+      }
+    },
+    "rollback_cleanup_requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["component_id", "rollback_intent", "cleanup_intent"],
+        "additionalProperties": false,
+        "properties": {
+          "component_id": {"type": "string"},
+          "rollback_intent": {"type": "array", "items": {"type": "string"}},
+          "cleanup_intent": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "blockers": {"type": "array", "items": {"type": "string"}}
+  }
+}

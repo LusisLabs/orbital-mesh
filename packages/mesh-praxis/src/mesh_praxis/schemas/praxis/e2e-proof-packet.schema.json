@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/e2e-proof-packet.schema.json",
+  "title": "PraxisE2eProofPacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "packet_id",
+    "generated_at",
+    "state_slice",
+    "status",
+    "source_bundle",
+    "generated_contract",
+    "security_evidence",
+    "certification_binding",
+    "mcp_readiness",
+    "operator_decision",
+    "authority",
+    "checks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.e2e_proof_packet.v1"]
+    },
+    "packet_id": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "state_slice": {
+      "type": "string",
+      "enum": ["praxis.e2e-proof-packet.v1"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["complete", "blocked"]
+    },
+    "source_bundle": {
+      "type": "object",
+      "required": ["bundle_id", "sha256", "source_packet_count"],
+      "additionalProperties": false,
+      "properties": {
+        "bundle_id": { "type": "string" },
+        "sha256": { "type": "string" },
+        "source_packet_count": { "type": "integer" }
+      }
+    },
+    "generated_contract": {
+      "type": "object",
+      "required": ["contract_id", "sha256", "tool_candidate_count"],
+      "additionalProperties": false,
+      "properties": {
+        "contract_id": { "type": "string" },
+        "sha256": { "type": "string" },
+        "tool_candidate_count": { "type": "integer" }
+      }
+    },
+    "security_evidence": {
+      "type": "object",
+      "required": ["evidence_id", "sha256", "finding_count", "critical_or_high_open_count"],
+      "additionalProperties": false,
+      "properties": {
+        "evidence_id": { "type": "string" },
+        "sha256": { "type": "string" },
+        "finding_count": { "type": "integer" },
+        "critical_or_high_open_count": { "type": "integer" }
+      }
+    },
+    "certification_binding": {
+      "type": "object",
+      "required": ["binding_id", "sha256", "connector_id"],
+      "additionalProperties": false,
+      "properties": {
+        "binding_id": { "type": "string" },
+        "sha256": { "type": "string" },
+        "connector_id": { "type": "string" }
+      }
+    },
+    "mcp_readiness": {
+      "type": "object",
+      "required": ["status", "dry_run_only", "certified_tool_ids", "denied_tool_ids", "readiness_blockers"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["dry_run_ready", "blocked"]
+        },
+        "dry_run_only": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "certified_tool_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "denied_tool_ids": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "readiness_blockers": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "operator_decision": {
+      "type": "object",
+      "required": ["decision", "decision_refs", "evidence_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["approve_read_only_deny_mutation", "defer", "blocked"]
+        },
+        "decision_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "akto_advisory_only",
+        "acp_grants_runtime_authority",
+        "mesh_owns_certification",
+        "mesh_owns_revocation",
+        "managed_runtime_deployed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "akto_advisory_only": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "acp_grants_runtime_authority": {
+          "type": "boolean",
+          "enum": [false]
+        },
+        "mesh_owns_certification": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "mesh_owns_revocation": {
+          "type": "boolean",
+          "enum": [true]
+        },
+        "managed_runtime_deployed": {
+          "type": "boolean",
+          "enum": [false]
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "source_bundle_bound",
+        "generated_contract_bound",
+        "security_evidence_bound",
+        "certification_binding_bound",
+        "read_only_tool_certified",
+        "unsafe_mutation_denied",
+        "operator_decision_bound",
+        "dry_run_mcp_readiness_bound"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_bundle_bound": { "type": "boolean" },
+        "generated_contract_bound": { "type": "boolean" },
+        "security_evidence_bound": { "type": "boolean" },
+        "certification_binding_bound": { "type": "boolean" },
+        "read_only_tool_certified": { "type": "boolean" },
+        "unsafe_mutation_denied": { "type": "boolean" },
+        "operator_decision_bound": { "type": "boolean" },
+        "dry_run_mcp_readiness_bound": { "type": "boolean" }
+      }
+    }
+  }
+}

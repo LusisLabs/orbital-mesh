@@ -133,6 +133,7 @@ from shared.mesh_runtime.on_call_drill import verify_on_call_drill
 from shared.mesh_runtime.integrations import resolve_integrations_config
 from shared.mesh_runtime.connector_certification import build_connector_certification_matrix
 from shared.mesh_runtime.deployment_compatibility import build_deployment_compatibility_matrix
+from shared.mesh_runtime.hardened_arena import verify_hardened_arena_profiles
 from shared.mesh_runtime.failure_modes import build_failure_mode_library_packet
 from shared.mesh_runtime.approval_queue import build_approval_queue_packet
 from shared.mesh_runtime.watcher_ownership import build_watcher_ownership_packet
@@ -801,6 +802,10 @@ class RunCoordinator:
             ):
                 return self._readiness_cache[1]
         readiness = build_readiness(self.config).to_dict()
+        readiness["hardened_arena"] = verify_hardened_arena_profiles()
+        readiness["hardened_arena"]["readiness_note"] = (
+            "Profile verifier state is exposed for release planning only; target validation still requires a target-specific proof runner packet."
+        )
         with self._readiness_lock:
             self._readiness_cache = (time.monotonic(), readiness)
         return readiness

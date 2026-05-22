@@ -140,9 +140,11 @@ Validation before calling an arena ready:
 python3 scripts/verify_deployment_compatibility.py --json
 MESH_SMOKE_BASE_URL=<arena-url> ./scripts/prod_smoke.sh
 scripts/generate_release_provenance.py --require-complete --json
+python3 scripts/run_hardened_arena_proof.py --evidence <target-specific-evidence.json> --output dist/hardened-arena/<profile>/proof.json
+python3 scripts/verify_hardened_arena_proof.py --proof dist/hardened-arena/<profile>/proof.json --json
 ```
 
-The arena can be sold as setup assistance or used internally as a testing lab only when the generated packet says which parts are observed evidence, which parts are recipe guidance, and which parts remain unimplemented.
+The arena can be sold as setup assistance or used internally as a testing lab only when the generated packet says which parts are observed evidence, which parts are recipe guidance, and which parts remain unimplemented. A `target_validated` proof state is target-specific: it requires a complete `mesh.hardened_arena.proof.v1` packet with observed health, readiness, identity, persistence, feedback, audit, rollback, run export, kill switch, cleanup, and release-packet binding evidence for that exact arena target.
 
 ## Single-VM Private Deployment
 

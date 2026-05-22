@@ -23,6 +23,15 @@ def _decode_jwt_payload(token: str) -> dict:
     return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8"))
 
 
+def _unsigned_jwt(payload: dict) -> str:
+    header = {"alg": "none", "typ": "JWT"}
+    segments = []
+    for value in (header, payload):
+        encoded = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        segments.append(base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("="))
+    return f"{segments[0]}.{segments[1]}.signature"
+
+
 class OperatorAuthHttpTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -346,8 +355,53 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertFalse(unconfigured_livekit["side_effects_executed"])
 
         self.server.config.livekit_url = "wss://livekit.example.test"
+        self.server.config.livekit_access_token = _unsigned_jwt(
+            {
+                "exp": int(time.time()) + 900,
+                "name": "Harper-696",
+                "sub": "preminted-operator",
+                "video": {
+                    "canPublish": True,
+                    "canPublishData": True,
+                    "canSubscribe": True,
+                    "room": "mesh",
+                    "roomJoin": True,
+                },
+            }
+        )
+        preminted_livekit = self._request(
+            "POST",
+            "/api/operator/agent-flow/livekit-session",
+            {"team_id": team_id, "room": "agent-flow-test"},
+            cookie=cookie,
+        )
+        validate_payload("operator-product.schema.json", {"agent_flow_livekit_session_response": preminted_livekit})
+        self.assertEqual(preminted_livekit["status"], "ready")
+        self.assertEqual(preminted_livekit["room"], "mesh")
+        self.assertEqual(preminted_livekit["participant_identity"], "preminted-operator")
+        self.assertEqual(preminted_livekit["token"], self.server.config.livekit_access_token)
+        self.assertTrue(preminted_livekit["token_expires_at"])
+
+        self.server.config.livekit_access_token = _unsigned_jwt(
+            {
+                "exp": int(time.time()) - 1,
+                "sub": "expired-operator",
+                "video": {"room": "mesh", "roomJoin": True},
+            }
+        )
+        expired_livekit = self._request(
+            "POST",
+            "/api/operator/agent-flow/livekit-session",
+            {"team_id": team_id},
+            cookie=cookie,
+        )
+        self.assertEqual(expired_livekit["status"], "expired")
+        self.assertEqual(expired_livekit["token"], "")
+
+        self.server.config.livekit_url = "wss://livekit.example.test"
         self.server.config.livekit_api_key = "lk-public-key"
         self.server.config.livekit_api_secret = "lk-secret-redacted"
+        self.server.config.livekit_access_token = ""
         configured_livekit = self._request(
             "POST",
             "/api/operator/agent-flow/livekit-session",

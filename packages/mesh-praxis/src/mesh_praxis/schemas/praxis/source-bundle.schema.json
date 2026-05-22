@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/praxis/source-bundle.schema.json",
+  "title": "PraxisSourceBundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "bundle_id",
+    "created_at",
+    "tenant_id",
+    "source_packets",
+    "redaction"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["praxis.source_bundle.v1"]
+    },
+    "bundle_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "tenant_id": { "type": "string" },
+    "source_packets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "packet_id",
+          "source_type",
+          "source_ref",
+          "sha256",
+          "citation_refs",
+          "extracted_at",
+          "evidence_gaps",
+          "secret_scan"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "packet_id": { "type": "string" },
+          "source_type": {
+            "type": "string",
+            "enum": [
+              "openapi",
+              "postman_json",
+              "sop_markdown",
+              "redacted_traffic_ref",
+              "source_code_endpoint_list"
+            ]
+          },
+          "source_ref": { "type": "string" },
+          "sha256": { "type": "string" },
+          "citation_refs": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "extracted_at": { "type": "string" },
+          "evidence_gaps": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "secret_scan": {
+            "type": "object",
+            "required": ["status", "raw_credentials_present", "redacted_fields"],
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["pass", "blocked"]
+              },
+              "raw_credentials_present": {
+                "type": "boolean",
+                "enum": [false]
+              },
+              "redacted_fields": {
+                "type": "array",
+                "items": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "required": ["status", "raw_payload_stored", "secret_material_refs"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["redacted", "blocked"]
+        },
+        "raw_payload_stored": {
+          "type": "boolean",
+          "enum": [false]
+        },
+        "secret_material_refs": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  }
+}

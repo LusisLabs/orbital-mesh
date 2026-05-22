@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-centaur-sandbox"
+version = "0.1.0"
+description = "Centaur-style sandbox Kubernetes manifests and credential egress live proof"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = { text = "MIT" }
+authors = [{ name = "Mesh Intelligence Contributors" }]
+
+[project.scripts]
+mesh-centaur-sandbox = "mesh_centaur_sandbox.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

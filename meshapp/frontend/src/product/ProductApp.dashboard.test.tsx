@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   askMesh,
+  agentFlowVoiceUnavailableMessage,
   approvalCommands,
   buildDashboardInsights,
   buildDashboardControlModel,
+  buildHardenedArenaProfileCards,
   buildDashboardTiles,
   buildAgentFabricObservability,
   buildKeysReadinessRows,
@@ -12,11 +14,13 @@ import {
   buildPraxisProductModel,
   buildRunPreflightModel,
   buildRunWorkbenchModel,
+  canAttemptHarperVoiceConnection,
   consoleParityMatrix,
   consoleWorkflowForView,
   dashboardLoadSurfaceState,
   dashboardSectionState,
   evidenceTraceSteps,
+  isLiveKitSessionFresh,
   operatorWorkflowPosture,
   orderDashboardInsights,
   orderDashboardTiles,
@@ -57,6 +61,7 @@ describe("operator workflow posture", () => {
   it("routes product views to the right operator workflow posture", () => {
     expect(workflowForView("evaluations")).toBe("launch");
     expect(workflowForView("environments")).toBe("connector");
+    expect(workflowForView("hardened-arena")).toBe("launch");
     expect(workflowForView("gpu")).toBe("readiness");
     expect(workflowForView("keys")).toBe("settings");
     expect(workflowForView("console-runs")).toBe("launch");
@@ -114,6 +119,41 @@ describe("approval and runtime product pages", () => {
     expect(runtimeProductPage("gpu", dashboard)).toMatchObject({ title: "Readiness" });
     expect(runtimeProductPage("clusters", dashboard)).toMatchObject({ title: "Kill Switch" });
     expect(runtimeProductPage("instances", dashboard)).toMatchObject({ title: "Policy State" });
+  });
+});
+
+describe("hardened arena operator surface", () => {
+  it("summarizes recipe profiles without implying deployment", () => {
+    const cards = buildHardenedArenaProfileCards({
+      schema_version: "mesh.hardened_arena.profiles.v1",
+      profiles: [
+        {
+          profile_id: "solo_project_default",
+          display_name: "Solo Project Default",
+          intended_use: "one-person project proof packet",
+          lifecycle_state: "recipe",
+          readiness_posture: "recipe_only",
+          ai_lane: "proposal_only",
+          supported_outputs: ["helm_values_intent"],
+          components: [{ component_id: "db" }, { component_id: "ingress" }],
+          proof_gates: { required: ["health", "readiness", "rollback"], target_validated_allowed: false, production_ready_allowed: false },
+          cleanup: { required: true, kill_switch_required: true, steps: ["delete namespace"], artifacts_to_remove: ["namespace"] },
+          blockers: ["target_validation_missing"],
+        },
+      ],
+    });
+
+    expect(cards).toEqual([
+      expect.objectContaining({
+        id: "solo_project_default",
+        state: "recipe",
+        readiness: "recipe_only",
+        aiLane: "proposal_only",
+        components: 2,
+        blockers: ["target_validation_missing"],
+      }),
+    ]);
+    expect(cards[0].proofGates).toContain("rollback");
   });
 });
 
@@ -207,6 +247,44 @@ describe("dashboard section state coverage", () => {
       apiSection: "operator_preferences_state",
       state: "empty",
     });
+  });
+});
+
+describe("Agent Flow voice helpers", () => {
+  const readySession = {
+    schema_version: "mesh.agent_flow.livekit_session.v1",
+    state_slice: "mesh.agent_flow.livekit_session.v1",
+    agent: { id: "harper-696", name: "Harper-696", source: "Harper-696/src/agent.py" },
+    status: "ready",
+    livekit_url: "wss://livekit.example.test",
+    room: "mesh",
+    participant_identity: "operator-1",
+    token: "browser-token",
+    token_expires_at: new Date(Date.now() + 120_000).toISOString(),
+    required_env: ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_ACCESS_TOKEN"],
+    side_effects_executed: false,
+  };
+
+  it("recognizes only fresh ready LiveKit sessions as connectable tokens", () => {
+    expect(isLiveKitSessionFresh(readySession)).toBe(true);
+    expect(isLiveKitSessionFresh({ ...readySession, token_expires_at: new Date(Date.now() + 30_000).toISOString() })).toBe(false);
+    expect(isLiveKitSessionFresh({ ...readySession, status: "expired" })).toBe(false);
+    expect(isLiveKitSessionFresh(null)).toBe(false);
+  });
+
+  it("keeps voice retry available for stale or unconfigured session states", () => {
+    expect(canAttemptHarperVoiceConnection({ ...readySession, status: "unconfigured", token: "" }, "idle")).toBe(true);
+    expect(canAttemptHarperVoiceConnection({ ...readySession, status: "expired", token: "" }, "idle")).toBe(true);
+    expect(canAttemptHarperVoiceConnection(null, "idle")).toBe(false);
+    expect(canAttemptHarperVoiceConnection(readySession, "connecting")).toBe(false);
+    expect(canAttemptHarperVoiceConnection(null, "connected")).toBe(true);
+  });
+
+  it("names token, role, and config failures against mesh.agent_flow.livekit_session.v1", () => {
+    expect(agentFlowVoiceUnavailableMessage("permission_required")).toContain("launcher, approver, or admin");
+    expect(agentFlowVoiceUnavailableMessage("expired")).toContain("MESH_LIVEKIT_ACCESS_TOKEN");
+    expect(agentFlowVoiceUnavailableMessage("invalid_token")).toContain("invalid");
+    expect(agentFlowVoiceUnavailableMessage("unconfigured")).toContain("mesh.agent_flow.livekit_session.v1");
   });
 });
 

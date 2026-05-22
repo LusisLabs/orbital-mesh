@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mesh-hardened-arena"
+version = "0.1.0"
+description = "Hardened-image profile, catalog, packet, and review-only intent toolkit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+license = { text = "MIT" }
+authors = [{ name = "Mesh Intelligence Contributors" }]
+
+[project.scripts]
+mesh-hardened-arena = "mesh_hardened_arena.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mesh_hardened_arena = ["schemas/**/*.json"]
