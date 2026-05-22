@@ -70,13 +70,16 @@ function proxiedResponseHeaders(upstreamHeaders: Headers): Headers {
 }
 
 function proxyFailureResponse(error: unknown): Response {
-  return Response.json(
-    {
+  return new Response(
+    JSON.stringify({
       error: "Mesh control plane unavailable",
       detail: error instanceof Error ? error.message : String(error),
       state_slice: MESH_CONTROL_PLANE_PROXY_STATE_SLICE
-    },
-    { status: 502 }
+    }),
+    {
+      status: 502,
+      headers: { "content-type": "application/json" }
+    }
   );
 }
 
