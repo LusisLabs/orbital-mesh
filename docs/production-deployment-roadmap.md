@@ -40,6 +40,7 @@ The first production test must prove:
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
 | Deployment compatibility | `docker-compose.stack.yml`, `docker-compose.prod.yml`, `docs/deployment-compatibility.md`, `docs/reference-architectures.md` | Open by contract. Docker Compose and Kubernetes are validated paths; other container and orchestrator targets are supported, recipes, backlog, or not planned according to evidence. |
 | Agentic operator fork source | `config/agentic-operator-source.provenance.json`, `docs/agentic-operator-core-import-plan.md` | Provenance-recorded source input for future CRD, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. The source tree may be absent from a checkout and must be adapted to Orbital Mesh authority gates before runtime use. |
+| Trigger web fork source | `config/trigger-web-source.provenance.json`, `scripts/verify_trigger_web_source_provenance.py` | Provenance-recorded source input for trigger web topology integration. The source tree must be adapted to Orbital Mesh authority gates before runtime use. |
 
 ## Release Phases
 

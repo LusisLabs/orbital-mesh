@@ -24,6 +24,7 @@ Every architecture keeps the same authority boundary:
 - credential rotation proof: `scripts/verify_credential_rotation.py` for runtime-secret and read-only-secret connectors.
 - data-classification policy: `config/data-classification.policy.json` and `scripts/verify_data_classification_policy.py`.
 - agentic-operator source provenance: `config/agentic-operator-source.provenance.json` and `scripts/verify_agentic_operator_source_provenance.py`.
+- trigger-web source provenance: `config/trigger-web-source.provenance.json` and `scripts/verify_trigger_web_source_provenance.py`.
 - evaluation-kit packet: `scripts/generate_evaluation_kit_packet.py`, `scripts/verify_evaluation_kit_packet.py`, and `shared/mesh_runtime/schemas/evaluation-kit-packet.schema.json`.
 - benchmark output proof: `scripts/verify_benchmark_run_artifacts.py` and `shared/mesh_runtime/schemas/benchmark-run-artifacts-verification.schema.json`.
 

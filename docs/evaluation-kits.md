@@ -18,6 +18,7 @@ Required artifacts:
 - policy lifecycle manifest: `config/policy-lifecycle.manifest.json`;
 - data-classification policy: `config/data-classification.policy.json`;
 - agentic-operator source provenance: `config/agentic-operator-source.provenance.json`;
+- trigger-web-source provenance: `config/trigger-web-source.provenance.json`;
 - sample export and benchmark packet generator: `scripts/generate_evaluation_kit_packet.py`;
 - evaluation-kit packet verifier: `scripts/verify_evaluation_kit_packet.py`;
 - benchmark output verifier: `scripts/verify_benchmark_run_artifacts.py`;
@@ -67,6 +68,7 @@ Enterprise pass criteria:
 - every mutating decision's evaluation includes `stage_results.evidence_sufficiency` and no `evidence sufficiency gate did not pass` blocker before execution;
 - `scripts/verify_data_classification_policy.py --json` passes with signal, log, trace, model-output, audit-proof, training-candidate, operator-identity, and secret-material coverage;
 - `python3 scripts/verify_agentic_operator_source_provenance.py --json` passes and shows the source input is Apache-2.0, snapshot-bound, source-input-only, and not active runtime;
+- `python3 scripts/verify_trigger_web_source_provenance.py --json` passes and shows the source input is Apache-2.0, snapshot-bound, source-input-only, and not active runtime;
 - `scripts/verify_evaluation_kit_packet.py --packet <evaluation-kit-dir>/evaluation-kit-packet.json --json` passes and proves the sample export package, zip archive, retrieval proof, benchmark harness entrypoint, golden scenarios, command, and expected benchmark artifacts are present;
 - `scripts/verify_benchmark_run_artifacts.py --run-dir <benchmark-run-dir> --expected-suite golden --expected-scenario-id feature_flag_latency_disable --expected-scenario-id kubernetes_crashloop_patch --json` passes after the formal benchmark command runs;
 - `GET /api/runs/{run_id}/timeline-proof` returns gapless monotonic sequence checks, parseable `time_unix_nano` values, payload hashes, Merkle root, and a valid latest-event proof;
