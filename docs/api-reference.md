@@ -242,7 +242,6 @@ The `apps/mesh-webapp` Remix app exposes these additional resource routes for th
 - `GET /resources/mesh/vault.document.ts` — vault document lookup
 - `GET /resources/mesh/vault.tree.ts` — vault tree/hierarchy view
 - `GET /resources/mesh/approvals.ts` — approval status and actions
-- `GET /resources/mesh/policy.ts` — policy retrieval
 - `GET /resources/mesh/kill-switch.ts` — global kill-switch state
 - `GET /resources/mesh/readiness.ts` — system readiness probe
 - `GET /resources/mesh/connector-certification.ts` — connector certification status
