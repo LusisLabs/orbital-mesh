@@ -51,6 +51,7 @@ class ToolDefinition:
     citations_kind: str | None = None
     redaction_status: RedactionStatus = "clean"
     credential_policy: dict[str, Any] = field(default_factory=dict)
+    proposal_contract: dict[str, Any] = field(default_factory=dict)
 
     @property
     def qualified_name(self) -> str:
@@ -70,6 +71,7 @@ class ToolDefinition:
             "citations_kind": self.citations_kind,
             "redaction_status": self.redaction_status,
             "credential_policy": dict(self.credential_policy),
+            "proposal_contract": dict(self.proposal_contract),
         }
 
 

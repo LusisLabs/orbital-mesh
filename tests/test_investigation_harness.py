@@ -98,6 +98,21 @@ class HarnessRegistryTests(unittest.TestCase):
         self.assertEqual(manifest[0]["redaction_status"], "clean")
         self.assertEqual(manifest[0]["credential_policy"]["raw_secret_in_sandbox"], False)
 
+    def test_sandbox_manifest_exposes_proposal_only_mutation_tools(self) -> None:
+        registry = ToolRegistry()
+        registry.register(_ro_def("lookup_run", "mesh"), lambda args: RawToolOutput(output_summary="ok"))
+        registry.register(_proposal_def("propose_restart", "mesh"), lambda args: RawToolOutput(output_summary="proposal"))
+        registry.register(_mut_def("restart", "mesh"), lambda args: RawToolOutput(output_summary="mutated"))
+
+        manifest = sandbox_tool_manifest(registry, domain="mesh")
+
+        self.assertEqual([item["name"] for item in manifest], ["lookup_run", "propose_restart"])
+        proposal = manifest[1]
+        self.assertEqual(proposal["mutation_class"], "soft_mutation")
+        self.assertEqual(proposal["sandbox_access"]["proposal_only"], True)
+        self.assertEqual(proposal["sandbox_access"]["side_effects_allowed"], False)
+        self.assertEqual(proposal["proposal_contract"]["returns_proposal"], True)
+
     def test_sandbox_tool_bridge_rejects_mutation_tools(self) -> None:
         registry = ToolRegistry()
         registry.register(_mut_def("restart", "mesh"), lambda args: RawToolOutput(output_summary="mutated"))
@@ -107,9 +122,10 @@ class HarnessRegistryTests(unittest.TestCase):
 
         self.assertEqual(result.status, "rejected")
         self.assertFalse(result.valid)
-        self.assertIn("read_only tools only", result.error or "")
+        self.assertIn("proposal-only output", result.error or "")
         self.assertEqual(audit_log[0]["decision"], "rejected_mutation")
         self.assertEqual(audit_log[0]["raw_secret_in_sandbox"], False)
+        self.assertEqual(audit_log[0]["mutation_allowed"], False)
 
     def test_sandbox_tool_bridge_audits_read_only_calls(self) -> None:
         registry = ToolRegistry()
@@ -121,6 +137,55 @@ class HarnessRegistryTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(audit_log[0]["state_slice"], "mesh.investigation_tool_registry.v1")
         self.assertEqual(audit_log[0]["decision"], "invoked_read_only")
+
+    def test_sandbox_tool_bridge_allows_proposal_only_mutation_output(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            _proposal_def("propose_restart", "mesh"),
+            lambda args: RawToolOutput(
+                output_summary="restart proposal",
+                output={
+                    "side_effects_executed": False,
+                    "proposal": {
+                        "action": "restart",
+                        "requires_mesh_approval": True,
+                    },
+                },
+            ),
+        )
+        audit_log: list[dict[str, Any]] = []
+
+        result = invoke_sandbox_tool(registry, domain="mesh", name="propose_restart", audit_log=audit_log)
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.output["side_effects_executed"], False)
+        self.assertEqual(audit_log[0]["decision"], "invoked_proposal_only")
+        self.assertEqual(audit_log[0]["proposal_only"], True)
+        self.assertEqual(audit_log[0]["mutation_allowed"], False)
+
+    def test_sandbox_tool_bridge_rejects_proposal_tool_with_side_effect_output(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            _proposal_def("propose_restart", "mesh"),
+            lambda args: RawToolOutput(
+                output_summary="bad proposal",
+                output={
+                    "side_effects_executed": True,
+                    "proposal": {
+                        "action": "restart",
+                        "requires_mesh_approval": True,
+                    },
+                },
+            ),
+        )
+        audit_log: list[dict[str, Any]] = []
+
+        result = invoke_sandbox_tool(registry, domain="mesh", name="propose_restart", audit_log=audit_log)
+
+        self.assertEqual(result.status, "rejected")
+        self.assertFalse(result.valid)
+        self.assertIn("proposal contract", result.error or "")
+        self.assertEqual(audit_log[0]["decision"], "rejected_non_proposal_output")
 
 
 class CriticTests(unittest.TestCase):
@@ -1520,6 +1585,21 @@ def _mut_def(name: str, domain: str) -> ToolDefinition:
         description=f"mutating {name}",
         args_schema={},
         mutation_class="hard_mutation",
+    )
+
+
+def _proposal_def(name: str, domain: str) -> ToolDefinition:
+    return ToolDefinition(
+        name=name,
+        domain=domain,
+        description=f"proposal {name}",
+        args_schema={},
+        mutation_class="soft_mutation",
+        proposal_contract={
+            "returns_proposal": True,
+            "executes_side_effects": False,
+            "requires_mesh_approval": True,
+        },
     )
 
 

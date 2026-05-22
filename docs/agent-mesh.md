@@ -50,6 +50,8 @@ LatentMAS can be enabled as a first-class full-inference worker lane. It runs th
 
 Operator ingress uses state slice `mesh.operator_agent_ingress.v1`. Slack and other external operator sources can create Mesh-owned `operator_ingress_investigation` proposal tasks with identity and evidence context, but the ingress record stays non-authoritative: it cannot execute remediation, approve actuation directly, or write memory without Mesh review and role-policy checks.
 
+Sandbox tools use state slice `mesh.investigation_tool_registry.v1`. The sandbox bridge exposes read-only tools and explicit proposal-only mutation tools through internal metadata only. Proposal tools must declare `returns_proposal`, `executes_side_effects=false`, and `requires_mesh_approval`; runtime output is rejected unless it returns a Mesh-approval proposal with `side_effects_executed=false`. Every sandbox tool request records an audit decision, and `mutation_allowed` remains false.
+
 ## Topology-Aware Personalization
 
 Mesh personalizes the agent mesh from domain and infrastructure evidence rather than from a fixed adapter list. The resolver reads the topology profile, then matches run context such as service, signal source, action class, risk tier, tenant, organization domain, team, deployment substrate, namespace, data boundary, ownership boundary, connector certification, readiness, historical outcomes, and trust-ladder state.
