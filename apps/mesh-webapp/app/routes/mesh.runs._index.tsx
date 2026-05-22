@@ -1,36 +1,47 @@
-import { Link } from "@remix-run/react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
+import { Link, useLoaderData } from "@remix-run/react";
 
 import { Badge } from "../components/primitives/Badge";
 import { DataTable } from "../components/primitives/Table";
 import { PageHeader } from "../components/primitives/PageHeader";
+import { loadOverviewDashboard } from "../mesh-dashboard.server";
 
-const runs = [
-  { id: "run_alpha", service: "payments-api", risk: "medium", status: "waiting" },
-  { id: "run_beta", service: "ingress", risk: "low", status: "active" }
-];
+export function loader({ request }: LoaderFunctionArgs) {
+  return loadOverviewDashboard(request);
+}
 
 export default function RunsIndexRoute() {
+  const dashboard = useLoaderData<typeof loader>();
+
   return (
     <section className="page-stack">
-      <PageHeader eyebrow="mesh.operator_dashboard_shell" title="Runs" />
+      <PageHeader eyebrow={dashboard.stateSlice} title="Runs" />
       <DataTable>
         <thead>
           <tr>
             <th>Run</th>
-            <th>Service</th>
-            <th>Risk</th>
+            <th>Scenario</th>
+            <th>Stage</th>
             <th>Status</th>
+            <th>Merkle</th>
           </tr>
         </thead>
         <tbody>
-          {runs.map((run) => (
-            <tr key={run.id}>
-              <td><Link to={`/mesh/runs/${run.id}`}>{run.id}</Link></td>
-              <td>{run.service}</td>
-              <td><Badge tone={run.risk === "medium" ? "warn" : "good"}>{run.risk}</Badge></td>
-              <td>{run.status}</td>
+          {dashboard.runs.data.length > 0 ? (
+            dashboard.runs.data.map((run) => (
+              <tr key={run.run_id}>
+                <td><Link to={`/mesh/runs/${encodeURIComponent(run.run_id)}`}>{run.run_id}</Link></td>
+                <td>{run.scenario_key || "—"}</td>
+                <td>{run.stage || "—"}</td>
+                <td><Badge tone={run.status === "failed" ? "bad" : run.status === "paused" ? "warn" : "neutral"}>{run.status || "unknown"}</Badge></td>
+                <td>{run.latest_merkle_root ? "rooted" : "pending"}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={5}>{dashboard.runs.error ? `${dashboard.runs.state}: ${dashboard.runs.error}` : "No Mesh runs reported."}</td>
             </tr>
-          ))}
+          )}
         </tbody>
       </DataTable>
     </section>

@@ -1,3 +1,4 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -6,6 +7,8 @@ import {
   loadOverviewDashboard,
   MESH_OPERATOR_OVERVIEW_STATE_SLICE
 } from "./mesh-dashboard.server";
+import { loader as approvalsRouteLoader } from "./routes/mesh.approvals";
+import { loader as vaultRouteLoader } from "./routes/mesh.vault";
 
 describe("mesh.operator_ui.overview dashboard loader", () => {
   it("loads overview data through same-origin Mesh resource routes", async () => {
@@ -62,6 +65,44 @@ describe("mesh.operator_ui.overview dashboard loader", () => {
     expect(dashboard.runs.state).toBe("backend-unavailable");
     expect(dashboard.runs.data).toEqual([]);
     expect(dashboard.approvals.data).toEqual([]);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("loads child overview and vault routes through Mesh BFF resources instead of static placeholders", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = input instanceof URL ? input : new URL(input.toString());
+        const path = `${url.pathname}${url.search}`;
+        seen.push(path);
+        if (path === "/resources/mesh/readiness") return Response.json({ status: "ready" });
+        if (path === "/resources/mesh/runs?summary=1") return Response.json({ runs: [{ run_id: "run-1", status: "running" }] });
+        if (path === "/resources/mesh/approvals") return Response.json({ items: [{ queue_id: "approval-1", run_id: "run-1", approval_state: "pending" }] });
+        if (path === "/resources/mesh/kill-switch") return Response.json({ live_execution_enabled: false });
+        if (path === "/resources/mesh/connector-certification") return Response.json({ status: "ready" });
+        if (path === "/resources/mesh/vault/tree") return Response.json({ tree: [{ path: "run-1/summary.json", run_id: "run-1", hash: "leaf" }] });
+        return Response.json({ error: path }, { status: 404 });
+      })
+    );
+
+    const approvals = await approvalsRouteLoader({
+      context: {},
+      params: {},
+      request: new Request("https://mesh.example/mesh/approvals")
+    } as LoaderFunctionArgs);
+    const vault = await vaultRouteLoader({
+      context: {},
+      params: {},
+      request: new Request("https://mesh.example/mesh/vault")
+    } as LoaderFunctionArgs);
+
+    expect(approvals.approvals.data[0].queue_id).toBe("approval-1");
+    expect(vault.stateSlice).toBe("mesh.operator_ui.vault");
+    expect(vault.vaultTree.data[0].path).toBe("run-1/summary.json");
+    expect(seen).toContain("/resources/mesh/approvals");
+    expect(seen).toContain("/resources/mesh/vault/tree");
 
     vi.unstubAllGlobals();
   });
