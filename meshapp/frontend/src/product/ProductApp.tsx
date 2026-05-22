@@ -262,6 +262,20 @@ type RunWorkbenchModel = {
   blockers: string[];
   events: number;
 };
+type AgentFabricAttemptView = {
+  key: string;
+  agent: string;
+  adapter: string;
+  status: string;
+  harness: string;
+  events: number;
+  tools: number;
+  riskFlags: string[];
+  release: string;
+  egress: string;
+  authority: string;
+  output: string;
+};
 type DashboardTileModel = {
   title: string;
   detail: string;
@@ -2909,6 +2923,7 @@ function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
       {proof.status === "ready" ? (
         <>
           <RunWorkbenchSummary model={buildRunWorkbenchModel(proof.payloads)} />
+          <AgentFabricObservability attempts={buildAgentFabricObservability(proof.payloads)} />
           <div className="proof-grid">
             {Object.entries(proof.payloads).map(([key, value]) => (
               <ReadModelCard key={key} title={humanize(key)} payload={value} />
@@ -2916,6 +2931,32 @@ function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
           </div>
         </>
       ) : null}
+    </section>
+  );
+}
+
+function AgentFabricObservability({ attempts }: { attempts: AgentFabricAttemptView[] }) {
+  return (
+    <section className="run-workbench" aria-label="Agent fabric observability">
+      <div className="panel-title"><Network size={15} /><span>meshapp.agent_fabric_observability.v1</span></div>
+      {attempts.length ? (
+        <div className="preflight-grid">
+          {attempts.map((attempt) => (
+            <div key={attempt.key}>
+              <span>{attempt.agent} / {attempt.adapter}</span>
+              <strong>{humanize(attempt.status)}</strong>
+              <small>{attempt.harness} / {attempt.events} event(s) / {attempt.tools} tool call(s)</small>
+              <small>egress: {attempt.egress}</small>
+              <small>release: {attempt.release}</small>
+              <small>authority: {attempt.authority}</small>
+              <small>risk: {attempt.riskFlags.length ? attempt.riskFlags.join(", ") : "none"}</small>
+              <small>proposal: {attempt.output}</small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyInline text="No durable agent attempt threads were projected for this run." />
+      )}
     </section>
   );
 }
@@ -3141,6 +3182,72 @@ export function buildRunWorkbenchModel(payloads: Record<string, any>): RunWorkbe
     agentSummary: agentTasks.length ? `${agentTasks.length} agent task(s) recorded` : "No agent task artifact returned for this run.",
     blockers,
     events: events.length,
+  };
+}
+
+export function buildAgentFabricObservability(payloads: Record<string, any>): AgentFabricAttemptView[] {
+  const detail = payloads.detail?.payload || payloads.detail || {};
+  const eventsPayload = payloads.events?.payload || payloads.events || {};
+  const exportPayload = payloads.exportPackage?.payload || payloads.exportPackage || {};
+  const artifacts = detail.artifacts || exportPayload.artifacts || {};
+  const eventAttempts = collectAttemptThreads(Array.isArray(detail.events) ? detail.events : []);
+  const loadedEventAttempts = collectAttemptThreads(Array.isArray(eventsPayload.events) ? eventsPayload.events : []);
+  const taskAttempts = collectTaskAttemptThreads(Array.isArray(artifacts.agent_tasks) ? artifacts.agent_tasks : []);
+  const byKey = new Map<string, AgentFabricAttemptView>();
+  [...eventAttempts, ...loadedEventAttempts, ...taskAttempts].forEach((attempt) => {
+    byKey.set(attempt.key, attempt);
+  });
+  return Array.from(byKey.values());
+}
+
+function collectAttemptThreads(events: any[]): AgentFabricAttemptView[] {
+  return events.flatMap((event: any) => {
+    const threads = event?.payload?.attempt_threads;
+    return Array.isArray(threads) ? threads.map(agentAttemptViewFromThread).filter(isAgentFabricAttemptView) : [];
+  });
+}
+
+function collectTaskAttemptThreads(tasks: any[]): AgentFabricAttemptView[] {
+  return tasks.flatMap((task: any) => {
+    const attempts = Array.isArray(task?.attempts) ? task.attempts : [];
+    return attempts.map((attempt: any) => {
+      const thread = attempt?.output?.thread;
+      return thread && typeof thread === "object"
+        ? agentAttemptViewFromThread({ ...thread, agent: attempt.agent, adapter: attempt.adapter })
+        : null;
+    }).filter(isAgentFabricAttemptView);
+  });
+}
+
+function isAgentFabricAttemptView(value: AgentFabricAttemptView | null): value is AgentFabricAttemptView {
+  return value !== null;
+}
+
+function agentAttemptViewFromThread(thread: any): AgentFabricAttemptView | null {
+  if (!thread || typeof thread !== "object") return null;
+  const request = thread.request && typeof thread.request === "object" ? thread.request : {};
+  const credentialPolicy = request.credential_policy && typeof request.credential_policy === "object" ? request.credential_policy : {};
+  const release = thread.release_status && typeof thread.release_status === "object" ? thread.release_status : {};
+  const authority = thread.authority && typeof thread.authority === "object" ? thread.authority : {};
+  const output = thread.output && typeof thread.output === "object" ? thread.output : {};
+  const eventCount = Number(thread.event_count ?? (Array.isArray(thread.events) ? thread.events.length : 0));
+  return {
+    key: String(thread.attempt_id || thread.thread_id || `${thread.agent || "agent"}:${thread.adapter || "adapter"}`),
+    agent: String(thread.agent || "agent"),
+    adapter: String(thread.adapter || "adapter"),
+    status: String(thread.status || "unknown"),
+    harness: String(thread.harness || request.harness || "default"),
+    events: Number.isFinite(eventCount) ? eventCount : 0,
+    tools: Array.isArray(thread.tool_calls) ? thread.tool_calls.length : 0,
+    riskFlags: Array.isArray(thread.risk_flags) ? thread.risk_flags.map(String) : [],
+    release: release.released === true ? "released" : release.released === false ? "not released" : "not reported",
+    egress: credentialPolicy.sandbox_receives_placeholder_only === true && credentialPolicy.raw_secret_in_sandbox === false
+      ? "placeholder-only"
+      : "not proven",
+    authority: authority.mesh_control_plane_authoritative === true && authority.agent_thread_authoritative === false
+      ? "Mesh approves and executes"
+      : "authority not proven",
+    output: String(output.summary || output.result_text || output.execution_id || "proposal metadata recorded"),
   };
 }
 

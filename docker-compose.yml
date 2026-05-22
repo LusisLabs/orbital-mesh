@@ -108,14 +108,18 @@ services:
       - centaur-sandbox
     build: .
     init: true
-    command: ["python3", "-m", "http.server", "15001", "--bind", "0.0.0.0"]
+    command: ["python3", "-m", "services.orchestrator.credential_egress_proxy"]
     environment:
+      MESH_CREDENTIAL_EGRESS_POLICY_PATH: /app/config/centaur-credential-egress.local.json
+      MESH_CREDENTIAL_EGRESS_PROXY_HOST: "0.0.0.0"
+      MESH_CREDENTIAL_EGRESS_PROXY_PORT: "15001"
+      MESH_CREDENTIAL_EGRESS_PROXY_INSTANCE_ID: local-compose-centaur-proxy
       MESH_CREDENTIAL_PLACEHOLDER_MODE: "true"
       MESH_CREDENTIAL_POLICY_REF: mesh.credential_egress_policy.v1
       MESH_CREDENTIAL_ALLOWED_HOSTS: "mesh-centaur-adapter,127.0.0.1,localhost"
       CENTAUR_API_KEY: "$${secret:CENTAUR_API_KEY}"
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:15001', timeout=4)"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:15001/health/ready', timeout=4)"]
       interval: 10s
       timeout: 5s
       retries: 3

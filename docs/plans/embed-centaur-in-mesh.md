@@ -265,15 +265,17 @@ Implemented:
 - source-input provenance and exclusion record;
 - durable agent attempt thread contract and run-event projection;
 - fake, mocked HTTP, and loopback HTTP Centaur adapter paths that return only `AgentAttempt` proposals;
+- Mesh-owned Centaur-compatible runtime adapter implementing `POST /agent/execute`, `GET /agent/executions/:id`, and `POST /agent/threads/:thread/release`;
 - Mesh run-history proof for a Centaur-compatible loopback HTTP execution with no raw secret in `AgentAttempt.output`;
-- read-only sandbox tool bridge with mutation-class enforcement;
+- read-only sandbox tool bridge with mutation-class enforcement and per-call audit records;
 - credential egress proof contract, local env-specific proxy/audit policy, raw-secret leak checks for sandbox env/logs/outputs/exports, and Centaur readiness blocker that requires proxy runtime proof;
 - file-backed and MeshState-backed workflow checkpoint/replay with Mesh run event attachment;
 - operator ingress records projected to Mesh-owned proposal tasks without direct actuation;
 - product UI attempt/thread observability;
-- disabled-by-default Kubernetes deployment profile with default-deny namespace policy and credential proxy sidecar pattern.
+- opt-in local compose profile for adapter plus credential proxy proof;
+- disabled-by-default Kubernetes deployment profile with local/preview/prod overlays, default-deny namespace policy, per-sandbox labels, cleanup policy, and credential proxy sidecar pattern.
 
 Proof status:
-- local end-to-end Mesh proof uses a real loopback HTTP server that implements Centaur's durable lifecycle endpoints; it proves the Mesh integration path without requiring a target Centaur Kubernetes cluster;
+- local end-to-end Mesh proof uses real loopback HTTP servers and the Mesh-owned runtime adapter endpoints; it proves the Mesh integration path without requiring a target Centaur Kubernetes cluster;
 - target-cluster Centaur execution remains gated by deployment-specific namespace, credential proxy sidecar, and live egress audit proofs;
 - workflow state can persist through the selected Mesh state backend via `MeshStateWorkflowStore`; Postgres deployments inherit that path through `PostgresStateStore` without workflows owning remediation.

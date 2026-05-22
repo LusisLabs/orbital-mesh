@@ -6,6 +6,7 @@ import {
   buildDashboardInsights,
   buildDashboardControlModel,
   buildDashboardTiles,
+  buildAgentFabricObservability,
   buildKeysReadinessRows,
   buildOperatorSetupModel,
   buildPraxisProductModel,
@@ -287,6 +288,55 @@ describe("run workbench and keys readiness", () => {
     expect(model.nextAction).toContain("Approve");
     expect(model.agentSummary).toBe("1 agent task(s) recorded");
     expect(model.events).toBe(1);
+  });
+
+  it("projects durable agent attempt threads without granting execution authority", () => {
+    const attempts = buildAgentFabricObservability({
+      events: {
+        payload: {
+          events: [
+            {
+              event_type: "agent_task_recorded",
+              payload: {
+                attempt_threads: [
+                  {
+                    attempt_id: "attempt-1",
+                    agent: "hermes",
+                    adapter: "centaur",
+                    status: "completed",
+                    event_count: 3,
+                    request: {
+                      harness: "codex",
+                      credential_policy: {
+                        raw_secret_in_sandbox: false,
+                        sandbox_receives_placeholder_only: true,
+                      },
+                    },
+                    tool_calls: [{ name: "lookup_run" }],
+                    risk_flags: [],
+                    release_status: { released: true },
+                    authority: {
+                      mesh_control_plane_authoritative: true,
+                      agent_thread_authoritative: false,
+                    },
+                    output: { result_text: "proposal only" },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      adapter: "centaur",
+      egress: "placeholder-only",
+      authority: "Mesh approves and executes",
+      release: "released",
+      tools: 1,
+    });
   });
 
   it("summarizes auth, model route, agent fabric, and connector readiness without secret values", () => {

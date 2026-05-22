@@ -7,8 +7,11 @@ This profile extracts deployment patterns from Centaur without copying Centaur's
 ## Local Compose
 
 - Default: disabled.
-- Allowed: fake Centaur adapter for local contract tests.
-- Blocked: live sandbox execution unless `mesh.credential_egress_policy.v1` passes and a namespace/network policy proof is attached.
+- Opt-in profile: `centaur-sandbox`.
+- Adapter service: `mesh-centaur-adapter`, running `services.orchestrator.centaur_runtime_adapter`.
+- Credential proxy proof service: `mesh-centaur-credential-proxy`, placeholder-only by environment contract.
+- Required local proof: `docker compose --profile centaur-sandbox config --quiet` and `MESH_AGENT_FABRIC_MODE=centaur pnpm run test:focused`.
+- Blocked: target-cluster sandbox execution unless `mesh.credential_egress_policy.v1` passes with runtime proxy/audit proof and a namespace/network policy proof is attached.
 
 ## Kubernetes
 
@@ -55,6 +58,7 @@ Deployment-specific checks:
 
 ```bash
 docker compose config --quiet
+docker compose --profile centaur-sandbox config --quiet
 ```
 
 No target-cluster live execution claim is valid until Kubernetes manifests are rendered for that environment and the credential-egress proof passes there.
