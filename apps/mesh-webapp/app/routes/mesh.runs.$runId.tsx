@@ -9,7 +9,11 @@ import { loadRunDetailWorkspace, type RunEventPreview } from "../mesh-runs.serve
 import type { DashboardSection } from "../mesh-dashboard.server";
 
 export function loader({ params, request }: LoaderFunctionArgs) {
-  return loadRunDetailWorkspace(request, params.runId || "unknown");
+  const runId = params.runId;
+  if (!runId) {
+    throw new Response("Missing Mesh run id for mesh.operator_ui.run_detail", { status: 400 });
+  }
+  return loadRunDetailWorkspace(request, runId);
 }
 
 export default function RunDetailRoute() {

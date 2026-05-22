@@ -1,8 +1,31 @@
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { describe, expect, it, vi } from "vitest";
 
 import { loadRunDetailWorkspace, loadRunsWorkspace, MESH_RUN_DETAIL_STATE_SLICE } from "./mesh-runs.server";
+import { loader as loadRunDetailRoute } from "./routes/mesh.runs.$runId";
 
 describe("mesh.operator_ui.run_detail loaders", () => {
+  it("rejects a missing route run id before contacting Mesh resources", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await loadRunDetailRoute({
+        context: {},
+        params: {},
+        request: new Request("https://mesh.example/mesh/runs")
+      } as LoaderFunctionArgs);
+      throw new Error("Expected missing run id to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Response);
+      expect((error as Response).status).toBe(400);
+      expect(await (error as Response).text()).toContain("mesh.operator_ui.run_detail");
+    }
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("loads the runs index through the Mesh runs resource route", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       const url = input instanceof URL ? input : new URL(input.toString());
