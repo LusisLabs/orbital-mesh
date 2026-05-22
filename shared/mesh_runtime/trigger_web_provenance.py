@@ -81,11 +81,18 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
     missing_import_value = _missing_text(source_entries, "import_value")
     missing_fork_posture = _missing_text(source_entries, "fork_posture")
     missing_adaptation = _missing_text(source_entries, "orbital_mesh_adaptation")
-    copied_paths = sorted(
+    imported_paths = sorted(
         imported_path
         for entry in source_entries
         for imported_path in entry.get("imported_paths", [])
         if str(imported_path).strip()
+    )
+    disallowed_imported_paths = sorted(
+        imported_path
+        for entry in source_entries
+        for imported_path in entry.get("imported_paths", [])
+        if str(imported_path).strip()
+        and str(imported_path).strip() not in set(str(path) for path in entry.get("allowed_imported_paths", []))
     )
     missing_allowed_imports = sorted(
         str(entry.get("path"))
@@ -129,8 +136,8 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
         errors.append("orbital_mesh_adaptation_missing")
     if missing_allowed_imports:
         errors.append("allowed_imported_paths_missing")
-    if copied_paths:
-        errors.append("imported_paths_present_before_mesh_adaptation")
+    if disallowed_imported_paths:
+        errors.append("imported_paths_outside_allowed_targets")
     if provenance and provenance.get("active_runtime") is not False:
         errors.append("active_runtime_enabled")
     if provenance and provenance.get("wholesale_copy_allowed") is not False:
@@ -166,7 +173,8 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
         "missing_fork_posture": missing_fork_posture,
         "missing_adaptation": missing_adaptation,
         "missing_allowed_imports": missing_allowed_imports,
-        "copied_paths": copied_paths,
+        "imported_paths": imported_paths,
+        "disallowed_imported_paths": disallowed_imported_paths,
         "missing_gates": missing_gates,
         "missing_forbidden_imports": missing_forbidden_imports,
         "errors": errors,

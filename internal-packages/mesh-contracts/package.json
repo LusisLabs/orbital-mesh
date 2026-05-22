@@ -1,0 +1,22 @@
+{
+  "name": "@orbital-mesh/mesh-contracts",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": "./src/index.ts",
+    "./generated/control-plane": "./src/generated/control-plane.ts",
+    "./generated/operator-product": "./src/generated/operator-product.ts"
+  },
+  "scripts": {
+    "contracts:generate": "node scripts/generate-contracts.mjs",
+    "contracts:check": "node scripts/generate-contracts.mjs --check",
+    "lint": "pnpm run contracts:check && pnpm run typecheck",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4",
+    "typescript": "^5.8.3"
+  }
+}
