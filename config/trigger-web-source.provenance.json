@@ -1,0 +1,107 @@
+{
+  "version": "mesh.trigger_web_source_provenance.v1",
+  "generated_at": "2026-05-22T00:00:00Z",
+  "source_name": "lusistrigger.dev",
+  "source_root": "/Users/shaan.s.patel/Desktop/lusistrigger.dev",
+  "source_commit": "c80b85e2cffccd227ae73a2f6c82158ccc54261d",
+  "source_commit_status": "local_checkout_head",
+  "remotes": {
+    "origin": "https://github.com/LusisLabs/lusistrigger.dev.git",
+    "upstream": "https://github.com/triggerdotdev/trigger.dev.git"
+  },
+  "license": "Apache-2.0",
+  "license_path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/LICENSE",
+  "runtime_posture": "source-input-only",
+  "active_runtime": false,
+  "wholesale_copy_allowed": false,
+  "comparative_claims_allowed": false,
+  "required_authority_gates": [
+    "mesh.runtime_state",
+    "mesh.contracts",
+    "mesh.policy",
+    "mesh.approvals",
+    "mesh.evidence",
+    "mesh.merkle",
+    "mesh.vault",
+    "mesh.operator_ui"
+  ],
+  "forbidden_imports": [
+    "trigger_database_authority",
+    "trigger_prisma_models",
+    "trigger_clickhouse_runtime",
+    "trigger_run_engine_authority",
+    "trigger_billing_runtime",
+    "trigger_org_auth_authority",
+    "trigger_deployment_runtime",
+    "trigger_sdk_internals"
+  ],
+  "source_paths": [
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp",
+      "import_value": "Remix dashboard shell, route architecture, layout/navigation/table/detail/realtime UI patterns, component primitives, env parsing pattern, and server entry pattern when adapted.",
+      "fork_posture": "operator-ui-substrate-only",
+      "orbital_mesh_adaptation": "Rename to apps/mesh-webapp, strip Trigger-specific authority routes, proxy through Mesh control-plane BFF routes, and keep Mesh schemas as contract source.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp",
+        "internal-packages/mesh-ui"
+      ],
+      "imported_paths": [
+        "apps/mesh-webapp"
+      ]
+    },
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/layout",
+      "import_value": "Dashboard layout primitives.",
+      "fork_posture": "ui-pattern-reference",
+      "orbital_mesh_adaptation": "Use only after names, nav, auth assumptions, and data ownership are Mesh-native.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp/app/components/layout",
+        "internal-packages/mesh-ui"
+      ],
+      "imported_paths": []
+    },
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/navigation",
+      "import_value": "Navigation primitives and route composition patterns.",
+      "fork_posture": "ui-pattern-reference",
+      "orbital_mesh_adaptation": "Map routes to /mesh, /mesh/runs, /mesh/runs/:runId, /mesh/approvals, and /mesh/vault.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp/app/components/navigation",
+        "internal-packages/mesh-ui"
+      ],
+      "imported_paths": []
+    },
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/primitives",
+      "import_value": "Reusable component primitives.",
+      "fork_posture": "adapted-ui-primitive-seed",
+      "orbital_mesh_adaptation": "Extract only when reuse pays off and dependency graph stays independent from Trigger backend packages.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp/app/components/primitives",
+        "internal-packages/mesh-ui"
+      ],
+      "imported_paths": []
+    },
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/routes/storybook.table",
+      "import_value": "Table/filter presentation reference.",
+      "fork_posture": "pattern-reference-only",
+      "orbital_mesh_adaptation": "Port patterns, not Trigger data models.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp"
+      ],
+      "imported_paths": []
+    },
+    {
+      "path": "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/routes/_app.orgs.$organizationSlug.projects.$projectParam.env.$envParam.runs",
+      "import_value": "Run list/detail route conventions and realtime UI reference.",
+      "fork_posture": "route-pattern-reference-only",
+      "orbital_mesh_adaptation": "Replace org/project/env hierarchy with Mesh-native run and approval resources.",
+      "allowed_imported_paths": [
+        "apps/mesh-webapp/app/routes/mesh.runs._index",
+        "apps/mesh-webapp/app/routes/mesh.runs.$runId"
+      ],
+      "imported_paths": []
+    }
+  ]
+}

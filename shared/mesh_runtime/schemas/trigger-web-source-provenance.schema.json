@@ -1,0 +1,135 @@
+{
+  "type": "object",
+  "required": [
+    "version",
+    "generated_at",
+    "source_name",
+    "source_root",
+    "source_commit",
+    "source_commit_status",
+    "remotes",
+    "license",
+    "license_path",
+    "runtime_posture",
+    "active_runtime",
+    "wholesale_copy_allowed",
+    "comparative_claims_allowed",
+    "required_authority_gates",
+    "forbidden_imports",
+    "source_paths"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "enum": ["mesh.trigger_web_source_provenance.v1"]
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "source_name": {
+      "type": "string",
+      "enum": ["lusistrigger.dev"]
+    },
+    "source_root": {
+      "type": "string"
+    },
+    "source_commit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_commit_status": {
+      "type": "string",
+      "enum": ["local_checkout_head", "recorded"]
+    },
+    "remotes": {
+      "type": "object",
+      "required": ["origin", "upstream"],
+      "additionalProperties": false,
+      "properties": {
+        "origin": {
+          "type": "string"
+        },
+        "upstream": {
+          "type": "string"
+        }
+      }
+    },
+    "license": {
+      "type": "string",
+      "enum": ["Apache-2.0"]
+    },
+    "license_path": {
+      "type": "string"
+    },
+    "runtime_posture": {
+      "type": "string",
+      "enum": ["source-input-only"]
+    },
+    "active_runtime": {
+      "type": "boolean"
+    },
+    "wholesale_copy_allowed": {
+      "type": "boolean"
+    },
+    "comparative_claims_allowed": {
+      "type": "boolean"
+    },
+    "required_authority_gates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "forbidden_imports": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "source_paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "import_value",
+          "fork_posture",
+          "orbital_mesh_adaptation",
+          "allowed_imported_paths",
+          "imported_paths"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "import_value": {
+            "type": "string"
+          },
+          "fork_posture": {
+            "type": "string"
+          },
+          "orbital_mesh_adaptation": {
+            "type": "string"
+          },
+          "allowed_imported_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "imported_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

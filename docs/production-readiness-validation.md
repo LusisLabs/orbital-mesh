@@ -24,6 +24,8 @@ Latest imported hydrogen-mesh audit:
 | Strict mypy | <code>TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools PYTHONPATH=. uvx --with-editable . --with deepagents --with mypy mypy --strict --exclude 'deepagents/&#124;latent-mesh/LatentMAS/&#124;services/skills/'</code> | PASS, SCOPED | Reran on 2026-05-08 with isolated cache/tool dirs; output: `Success: no issues found in 1 source file`. This is strict mypy under the current `pyproject.toml` scope, not whole-repo type proof. |
 | Web lint/contracts | `npm run lint` | PASS | Reran on 2026-05-08; root lint invoked `npm --prefix web run lint`, contracts check and `tsc --noEmit` exited `0`. npm emitted only the existing `store-dir` config warnings. |
 | Web unit tests | `npm --prefix web test` | PASS | Reran on 2026-05-04; `2` files passed, `14` tests passed. |
+| WebApp lint/typecheck | `pnpm --dir apps/mesh-webapp run lint` | NEW | Validates TypeScript via `tsc --noEmit` in the mesh-webapp Remix workspace. |
+| WebApp unit tests | `pnpm --dir apps/mesh-webapp test` | NEW | Runs vitest unit tests in the mesh-webapp Remix workspace. |
 | Web build | `npm --prefix web run build` | PASS WITH WARNING | Reran on 2026-05-04; build exited `0`. Vite reported `dist/assets/index-DGcNkvvo.js` at `620.11 kB`, above the 500 kB warning threshold. |
 | UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
@@ -147,7 +149,7 @@ service container and succeeded.
 - Commit fixtures under `fixtures/` only when deterministic and required by
   tests or docs.
 - Commit generated web contracts only when backend schema changes require
-  them, and run `npm --prefix web run contracts:check` through the web lint or
+  them, and run `pnpm --dir web run contracts:check` through the web lint or
   build gate before PR.
 
 ## Release Blockers To Track

@@ -1,0 +1,35 @@
+{
+  "name": "mesh-webapp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "sideEffects": false,
+  "scripts": {
+    "build": "remix build",
+    "dev": "remix dev",
+    "lint": "pnpm run typecheck",
+    "start": "remix-serve ./build/index.js",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@remix-run/node": "2.17.4",
+    "@remix-run/react": "2.17.4",
+    "@remix-run/serve": "2.17.4",
+    "clsx": "^2.1.1",
+    "isbot": "^5.1.31",
+    "lucide-react": "^0.562.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@remix-run/dev": "2.17.4",
+    "@types/node": "^25.6.2",
+    "@types/react": "^18.3.27",
+    "@types/react-dom": "^18.3.7",
+    "typescript": "^5.8.3",
+    "vite": "^6.4.1",
+    "vitest": "^4.1.5"
+  }
+}
