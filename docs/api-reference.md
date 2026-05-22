@@ -221,6 +221,22 @@ System-wide event stream — every run's events interleaved, plus engine-level e
 
 ---
 
+## Remix proxy routes
+
+The `apps/mesh-webapp` Remix dashboard shell proxies SSE streams to the frontend through these resource routes:
+
+### `GET /resources/mesh/stream/runs/:runId`
+
+Remix resource route that proxies the backend `/api/stream/runs/:id` SSE stream to the frontend. Used by the operator UI for real-time run event updates.
+
+### `GET /resources/mesh/stream/system`
+
+Remix resource route that proxies the backend `/api/stream/system` SSE stream to the frontend. Used by the operator UI for real-time system-wide event updates.
+
+Both routes forward SSE events from the control-plane API to the browser client using Remix resource stream responses.
+
+---
+
 ## Scenarios, simulations, benchmarks
 
 ### `GET /api/scenarios`

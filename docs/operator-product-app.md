@@ -13,6 +13,10 @@ State slices:
 - `mesh.operator-preferences.v1`: scoped operator setup preferences for agent fabric, preferred agents, model defaults, approval posture, pause points, target defaults, and run templates.
 - `meshapp.run-preflight.v1`: product launch preflight read model over operator identity, preferences, topology, connector scopes, readiness, and target lock posture.
 - `meshapp.run-workbench.v1`: product run review model over Mesh run detail, events, evidence, decisions, agent tasks, timeline proof, and export endpoints.
+- `mesh.operator_ui.realtime`: SSE connection state machine for real-time run and system event streams.
+- `mesh.operator_ui.run_detail`: Run detail page data (events, evidence, RCA, Merkle, timeline proof, export).
+- `mesh.operator_ui.overview`: Dashboard overview page data (runs, approvals, readiness, connectors).
+- `mesh.control_plane_proxy`: Proxy read model over Mesh control-plane APIs.
 - `ui-product-shell`: `meshapp/frontend` production product shell.
 
 ## Auth Modes
