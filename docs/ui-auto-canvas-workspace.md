@@ -157,6 +157,10 @@ type MeshRealtimeEvent<T> =
   | { type: "terminal"; reason: string; now: string };
 ```
 
+### Initial Snapshot
+
+- `initialRealtimeSnapshot<T>()` — returns the initial connection state `{stateSlice: "mesh.operator_ui.realtime", connection: "connecting", reconnectAttempts: 0}`. Generic type parameter defaults to `unknown`.
+
 ### Reducer Pattern
 
 The `reduceRealtimeSnapshot<T>` reducer manages connection state transitions:
