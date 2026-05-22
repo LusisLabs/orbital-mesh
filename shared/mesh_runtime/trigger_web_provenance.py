@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,12 +15,12 @@ TRIGGER_WEB_SOURCE_PROVENANCE_VERSION = "mesh.trigger_web_source_provenance.v1"
 TRIGGER_WEB_SOURCE_VERIFICATION_VERSION = "mesh.trigger_web_source_provenance_verification.v1"
 REQUIRED_SOURCE_PATHS = frozenset(
     {
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp",
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/layout",
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/navigation",
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/primitives",
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/routes/storybook.table",
-        "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/routes/_app.orgs.$organizationSlug.projects.$projectParam.env.$envParam.runs",
+        "apps/webapp",
+        "apps/webapp/app/components/layout",
+        "apps/webapp/app/components/navigation",
+        "apps/webapp/app/components/primitives",
+        "apps/webapp/app/routes/storybook.table",
+        "apps/webapp/app/routes/_app.orgs.$organizationSlug.projects.$projectParam.env.$envParam.runs",
     }
 )
 REQUIRED_AUTHORITY_GATES = frozenset(
@@ -72,12 +73,14 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
     else:
         source_entries = [entry for entry in provenance.get("source_paths", []) if isinstance(entry, dict)]
 
-    source_paths = [str(entry.get("path") or "") for entry in source_entries]
+    source_root = _resolve_source_root(str(provenance.get("source_root") or "")) if provenance else None
+    source_paths = [_normalize_source_path(str(entry.get("path") or ""), source_root) for entry in source_entries]
     duplicate_paths = sorted({item for item in source_paths if source_paths.count(item) > 1})
     missing_source_paths = sorted(REQUIRED_SOURCE_PATHS - set(source_paths))
-    source_root = _resolve_path(str(provenance.get("source_root") or "")) if provenance else None
     source_root_available = bool(source_root and source_root.exists())
-    missing_existing_paths = sorted(path for path in source_paths if source_root_available and not _resolve_path(path).exists())
+    missing_existing_paths = sorted(
+        path for path in source_paths if source_root_available and not _resolve_source_path(path, source_root).exists()
+    )
     missing_import_value = _missing_text(source_entries, "import_value")
     missing_fork_posture = _missing_text(source_entries, "fork_posture")
     missing_adaptation = _missing_text(source_entries, "orbital_mesh_adaptation")
@@ -101,7 +104,7 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
     )
     missing_gates = sorted(REQUIRED_AUTHORITY_GATES - set(provenance.get("required_authority_gates", []) if provenance else []))
     missing_forbidden_imports = sorted(FORBIDDEN_IMPORTS - set(provenance.get("forbidden_imports", []) if provenance else []))
-    license_path = _resolve_path(str(provenance.get("license_path") or "")) if provenance else None
+    license_path = _resolve_source_path(str(provenance.get("license_path") or ""), source_root) if provenance else None
     license_valid = bool(
         provenance
         and provenance.get("license") == "Apache-2.0"
@@ -187,6 +190,30 @@ def trigger_web_source_provenance_ready(path: str | Path | None) -> bool:
 
 def _missing_text(entries: list[dict[str, Any]], field: str) -> list[str]:
     return sorted(str(entry.get("path")) for entry in entries if not str(entry.get(field) or "").strip())
+
+
+def _resolve_source_root(configured_source_root: str) -> Path:
+    override = os.environ.get("MESH_TRIGGER_WEB_SOURCE_ROOT", "").strip()
+    return _resolve_path(override or configured_source_root)
+
+
+def _normalize_source_path(path: str, source_root: Path | None) -> str:
+    candidate = Path(path)
+    if candidate.is_absolute() and source_root:
+        try:
+            return candidate.resolve().relative_to(source_root.resolve()).as_posix()
+        except ValueError:
+            return candidate.as_posix()
+    return candidate.as_posix().lstrip("./")
+
+
+def _resolve_source_path(path: str, source_root: Path | None) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    if source_root:
+        return (source_root / candidate).resolve()
+    return _resolve_path(candidate)
 
 
 def _resolve_path(path: str | Path | None) -> Path:

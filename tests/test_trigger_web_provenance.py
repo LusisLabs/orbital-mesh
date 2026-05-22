@@ -15,7 +15,7 @@ class TriggerWebSourceProvenanceTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["provenance_version"], "mesh.trigger_web_source_provenance.v1")
-        self.assertEqual(result["source_commit_status"], "local_checkout_head")
+        self.assertEqual(result["source_commit_status"], "recorded")
         self.assertEqual(result["imported_paths"], ["apps/mesh-webapp"])
         self.assertTrue(result["license_valid"])
         self.assertTrue(result["remotes_valid"])
@@ -43,7 +43,7 @@ class TriggerWebSourceProvenanceTests(unittest.TestCase):
             payload["source_paths"] = [
                 entry
                 for entry in payload["source_paths"]
-                if entry["path"] != "/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/primitives"
+                if entry["path"] != "apps/webapp/app/components/primitives"
             ]
             path.write_text(json.dumps(payload), encoding="utf-8")
             result = verify_trigger_web_source_provenance(path)
@@ -52,7 +52,7 @@ class TriggerWebSourceProvenanceTests(unittest.TestCase):
         self.assertIn("required_source_paths_missing", result["errors"])
         self.assertEqual(
             result["missing_source_paths"],
-            ["/Users/shaan.s.patel/Desktop/lusistrigger.dev/apps/webapp/app/components/primitives"],
+            ["apps/webapp/app/components/primitives"],
         )
 
     def test_imported_path_outside_allowed_targets_fails(self) -> None:

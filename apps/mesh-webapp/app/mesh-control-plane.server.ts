@@ -113,3 +113,13 @@ export async function proxyControlPlaneRequest(
 export function encodeControlPlaneSegment(segment: string): string {
   return encodeURIComponent(segment);
 }
+
+export function requireControlPlaneSegment(segment: string | undefined, label: string): string {
+  if (!segment || !segment.trim()) {
+    throw new Response(`Missing Mesh ${label}`, {
+      status: 400,
+      headers: { "content-type": "text/plain; charset=utf-8" }
+    });
+  }
+  return encodeControlPlaneSegment(segment);
+}

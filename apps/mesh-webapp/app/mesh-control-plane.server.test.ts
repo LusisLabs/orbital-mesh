@@ -4,7 +4,8 @@ import {
   buildControlPlaneUrl,
   forwardedControlPlaneHeaders,
   MESH_CONTROL_PLANE_PROXY_STATE_SLICE,
-  proxyControlPlaneRequest
+  proxyControlPlaneRequest,
+  requireControlPlaneSegment
 } from "./mesh-control-plane.server";
 
 const meshEnv = {
@@ -43,6 +44,18 @@ describe("mesh.control_plane_proxy", () => {
     expect(headers.get("x-mesh-operator")).toBe("alice");
     expect(headers.get("x-mesh-roles")).toBe("viewer,approver");
     expect(headers.get("x-mesh-operator-identity")).toBe("signed-operator-context");
+  });
+
+  it("rejects missing Mesh route segments before proxying to the control plane", async () => {
+    expect(requireControlPlaneSegment("run/encoded", "run id")).toBe("run%2Fencoded");
+    try {
+      requireControlPlaneSegment("", "run id");
+      throw new Error("Expected missing run id to be rejected");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Response);
+      expect((error as Response).status).toBe(400);
+      expect(await (error as Response).text()).toContain("Missing Mesh run id");
+    }
   });
 
   it("proxies non-browser Mesh API calls through the Remix server", async () => {
