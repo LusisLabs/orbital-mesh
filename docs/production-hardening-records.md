@@ -38,6 +38,8 @@ Implemented in this slice:
 - release-cut guard for active image names, API markers, docs, compose pilot defaults, provenance markers, authenticated ingress markers, and smoke paths.
 - OpenSSF-oriented security audit baseline: private vulnerability reporting policy, CODEOWNERS for critical paths, Dependabot coverage, pinned GitHub Actions, weekly security audit workflow, dependency review, secret scanning, lockfile vulnerability scanning, npm audit, CodeQL where supported, OpenSSF Scorecard where supported, and `scripts/verify_security_audit_readiness.py`.
 - Mesh-wide orchestration topology profile, resolver, and drill verifier: `config/orchestration-topology.profile.json`, `shared/mesh_runtime/orchestration_topology.py`, `shared/mesh_runtime/orchestration_drill.py`, readiness exposure, run-level `lane_routing`, agent-task topology artifacts, and `mesh.orchestration_topology_drill.v1` proof generation and verification.
+- New operator UI state slices: `mesh.operator_ui.realtime`, `mesh.operator_ui.run_detail`, `mesh.operator_ui.overview`, `mesh.control_plane_proxy`, and `MESH_CONTROL_PLANE_PROXY_STATE_SLICE` for the Trigger-derived Remix dashboard shell.
+- Trigger web source provenance verification system via `scripts/verify_trigger_web_source_provenance.py` and `config/trigger-web-source-provenance.json`.
 
 Deferred from the immediate list:
 

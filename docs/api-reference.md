@@ -256,6 +256,22 @@ The `apps/mesh-webapp` Remix app exposes these additional resource routes for th
 - `GET /resources/mesh.runs.$runId.merkle.proof.$eventId.ts` — Merkle proof for event
 - `GET /resources/mesh.runs.$runId.timeline-proof.ts` — timeline proof
 
+### Mesh Control Plane Proxy
+
+The control plane proxy resource routes forward requests between the operator UI and the backend control-plane service. Configure with `MESH_CONTROL_PLANE_URL`.
+
+#### Error Handling
+
+When the control plane is unavailable, proxy routes return HTTP 502 with a JSON error body:
+
+```json
+{"error": "Mesh control plane unavailable", "state_slice": "mesh.control_plane_proxy"}
+```
+
+State slice: `mesh.control_plane_proxy`
+
+The proxy also extracts operator identity from configurable headers (`MESH_OPERATOR_IDENTITY_HEADER`) and propagates them to backend requests.
+
 ---
 
 ## Scenarios, simulations, benchmarks
