@@ -31,6 +31,8 @@ This is a single-context repo for skill consumption; use root operating docs plu
 |------|--------|
 | Core services & runtime | Python 3.x, `uv` |
 | Web UI | TypeScript, Vite/Next, `pnpm` |
+| Mesh webapp (Remix BFF) | TypeScript, Remix, `pnpm` |
+| Generated contracts | TypeScript, `pnpm` under `internal-packages/mesh-contracts` |
 | LatentMAS (vendored path) | Rust, `cargo` under `latent-mesh/LatentMAS/` |
 
 ## Commands (validation gates)
@@ -52,6 +54,15 @@ Web build (from repo root):
 ```bash
 pnpm --dir web install
 pnpm --dir web run build
+
+# Mesh webapp (Remix BFF)
+pnpm --dir apps/mesh-webapp install
+pnpm --dir apps/mesh-webapp run dev
+pnpm --dir apps/mesh-webapp run build
+
+# Generated contracts (internal package)
+pnpm --dir internal-packages/mesh-contracts install
+pnpm --dir internal-packages/mesh-contracts run generate
 ```
 
 Rust (when touching LatentMAS):

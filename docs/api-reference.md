@@ -2,6 +2,8 @@
 
 The control plane speaks JSON over HTTP plus Server-Sent Events for streaming. No authentication is enforced by default — Mesh is designed to run on `127.0.0.1` behind your operator's network. When exposing publicly, front it with TLS termination + auth (the OTLP receiver supports a static bearer token; see `MESH_OTEL_RECEIVER_TOKEN`).
 
+Requests can be sent directly to the control plane at `http://127.0.0.1:8787` or via the Mesh webapp BFF at `http://127.0.0.1:3000` (Remix proxy under `apps/mesh-webapp/` that forwards to the control plane).
+
 Default base URL: `http://127.0.0.1:8787`.
 
 All routes return `application/json` unless noted (SSE streams use `text/event-stream`). All POST bodies are JSON. Errors use HTTP status + `{"error": "...", "detail": "..."}`.

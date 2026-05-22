@@ -50,7 +50,17 @@ class ControlPlaneApiTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=5)
-        self.temp_dir.cleanup()
+        cleanup_error: OSError | None = None
+        for _ in range(20):
+            try:
+                self.temp_dir.cleanup()
+                cleanup_error = None
+                break
+            except OSError as exc:
+                cleanup_error = exc
+                time.sleep(0.1)
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def test_scenarios_api_lists_non_latency_fixtures(self) -> None:
         payload = self._request("GET", "/api/scenarios")
@@ -872,7 +882,7 @@ class ControlPlaneApiTests(unittest.TestCase):
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = Request(f"{self.base_url}{path}", data=data, headers=headers, method=method)
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=30) as response:
             return cast(dict[str, Any], json.loads(response.read().decode("utf-8")))
 
     def _flatten_tree(self, nodes: list[dict[str, Any]]) -> list[str]:

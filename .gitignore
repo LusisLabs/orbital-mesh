@@ -64,6 +64,8 @@ lusisOS-main/
 e2e-reports/
 web/test-results/
 web/playwright-report/
+apps/mesh-webapp/.cache/
+apps/mesh-webapp/public/build/
 meshapp/frontend/out/
 meshapp/.zig-cache/
 meshapp/zig-out/

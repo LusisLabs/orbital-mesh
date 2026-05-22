@@ -46,3 +46,4 @@ External-facing claims should map to one of:
 - Investigation harness: `docs/investigation-harness.md`
 - Production-like local E2E: `docs/production-live-runbook.md`
 - UI workspace model: `docs/ui-auto-canvas-workspace.md`
+- Mesh webapp (Remix BFF): `apps/mesh-webapp/` (migration surface, not yet production-authoritative)
