@@ -314,6 +314,7 @@ Praxis product posture:
 - State slice: `meshapp.praxis-product-home.v1` renders Praxis on the signed-in Home dashboard and as a dedicated product-native `Praxis` view.
 - State slice: `praxis.managed-dry-run-runtime.v1` is exposed through `/api/operator/dashboard` under `mesh.praxis` and product-native `/api/operator/praxis/*` controls.
 - The product path binds source bundle -> generated MCP contract -> Akto evidence -> Mesh certification binding -> proof packet -> dry-run MCP readiness.
+- Docker Dynamic MCP is modeled as a session-only dry-run bridge for catalog discovery and gateway-managed credentials; dynamic servers are not profile-persisted, `code-mode` stays blocked, and Docker does not grant production runtime authority.
 - `Start dry-run MCP endpoint` and `Revoke generated connector` are visible as bounded pilot controls. Managed pilot runtime deployment stays blocked until production-like proof, live target ownership, and credential rotation evidence exist.
 - The UI can show certified read-only tools and denied mutation tools; it cannot promote advisory Akto evidence, ACP permission prompts, or generated MCP candidates into production authority.
 

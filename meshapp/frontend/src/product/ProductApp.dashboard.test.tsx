@@ -438,6 +438,18 @@ describe("Praxis product dashboard model", () => {
             status: "dry_run_ready",
             managed_runtime_deployed: false,
             mcp_endpoint_ref: "mcp-dry-run://praxis-demo-generated-mcp",
+            docker_dynamic_mcp_bridge: {
+              status: "ready",
+              gateway_ref: "docker-mcp-gateway://current-session",
+              session_only: true,
+              profile_persisted: false,
+              management_tools: [
+                { name: "mcp-find" },
+                { name: "mcp-add" },
+                { name: "mcp-config-set" },
+                { name: "mcp-remove" },
+              ],
+            },
             controls: [
               { control_id: "start_dry_run", label: "Start dry-run MCP endpoint", state: "ready", requires_mesh_approval: false },
               { control_id: "deploy_managed_runtime", label: "Deploy managed pilot runtime", state: "blocked", requires_mesh_approval: true, reason: "proof required" },
@@ -455,6 +467,10 @@ describe("Praxis product dashboard model", () => {
       certifiedTools: "1",
       deniedTools: "1",
       runtimeStatus: "dry run ready",
+      dockerDynamicMcpStatus: "ready",
+      dockerDynamicMcpGateway: "docker-mcp-gateway://current-session",
+      dockerDynamicMcpToolCount: "4",
+      dockerDynamicMcpSession: "session-only, not profile-persisted",
       managedRuntime: false,
       blockerCount: 1,
     });

@@ -1,0 +1,9 @@
+state_slice=lusis-mesh.file_runtime_state
+source_host=mesh-test
+source_ip=46.224.205.119
+created_at_utc=20260522T030002Z
+current_release=/opt/lusis-mesh-webapp/releases/20260521T234639Z-e10c7ae8b0ce
+source_state_directory=/opt/lusis-mesh-webapp/shared/state
+source_release_runtime_state=/opt/lusis-mesh-webapp/releases/20260521T234639Z-e10c7ae8b0ce/.mesh-runtime-state
+copy_directory=/opt/lusis-mesh-webapp/exports/mesh-original-database-20260522T030002Z
+archive=/opt/lusis-mesh-webapp/exports/mesh-original-database-20260522T030002Z.tar.gz

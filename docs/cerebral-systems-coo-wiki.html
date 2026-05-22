@@ -1,0 +1,1213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cerebral Systems COO Wiki</title>
+<style>
+  :root {
+    --bg: #f7f4ef;
+    --surface: #fffdfa;
+    --surface-2: #f0ebe3;
+    --surface-3: #e7dfd4;
+    --ink: #1f2523;
+    --muted: #68716d;
+    --line: rgba(31, 37, 35, 0.12);
+    --line-strong: rgba(31, 37, 35, 0.22);
+    --accent: #0f766e;
+    --accent-2: #9a3412;
+    --accent-3: #b45309;
+    --accent-soft: rgba(15, 118, 110, 0.1);
+    --warn-soft: rgba(180, 83, 9, 0.12);
+    --danger-soft: rgba(154, 52, 18, 0.1);
+    --ok: #047857;
+    --radius: 8px;
+    --shadow: 0 24px 70px rgba(65, 55, 43, 0.12);
+    --font-sans: "Aptos", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+    --font-mono: "SF Mono", "JetBrains Mono", "Azeret Mono", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171a18;
+      --surface: #202521;
+      --surface-2: #2a302b;
+      --surface-3: #343b35;
+      --ink: #f2efe8;
+      --muted: #a9b0a9;
+      --line: rgba(242, 239, 232, 0.11);
+      --line-strong: rgba(242, 239, 232, 0.22);
+      --accent: #5eead4;
+      --accent-2: #fb923c;
+      --accent-3: #fbbf24;
+      --accent-soft: rgba(94, 234, 212, 0.11);
+      --warn-soft: rgba(251, 191, 36, 0.13);
+      --danger-soft: rgba(251, 146, 60, 0.12);
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.26);
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background:
+      radial-gradient(circle at 16% 10%, var(--accent-soft), transparent 32rem),
+      radial-gradient(circle at 82% 26%, var(--warn-soft), transparent 30rem),
+      linear-gradient(135deg, rgba(31, 37, 35, 0.035) 25%, transparent 25%) 0 0 / 28px 28px,
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+  }
+
+  .wrap {
+    width: min(1480px, calc(100% - 36px));
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 38px;
+    padding: 28px 0 72px;
+  }
+
+  .toc {
+    position: sticky;
+    top: 22px;
+    align-self: start;
+    max-height: calc(100dvh - 44px);
+    overflow-y: auto;
+    padding: 14px 0;
+  }
+
+  .toc-title {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    margin-bottom: 10px;
+  }
+
+  .toc a {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    text-decoration: none;
+    padding: 7px 9px;
+    border-left: 2px solid transparent;
+    border-radius: 5px;
+  }
+
+  .toc a:hover,
+  .toc a.active {
+    color: var(--ink);
+    background: var(--surface-2);
+    border-left-color: var(--accent);
+  }
+
+  main { min-width: 0; }
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1.65fr) minmax(280px, 0.8fr);
+    gap: 20px;
+    align-items: stretch;
+    margin-bottom: 20px;
+  }
+
+  .hero-panel {
+    background: color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%);
+    border: 1px solid color-mix(in srgb, var(--line) 65%, var(--accent) 35%);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: clamp(24px, 4vw, 44px);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-panel::after {
+    content: "";
+    position: absolute;
+    inset: auto -18% -44% 48%;
+    height: 220px;
+    background: radial-gradient(circle, var(--accent-soft), transparent 72%);
+    pointer-events: none;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent-2);
+    margin: 0 0 16px;
+  }
+
+  h1 {
+    font-size: clamp(34px, 6vw, 74px);
+    line-height: 0.94;
+    letter-spacing: -0.04em;
+    margin: 0;
+    max-width: 850px;
+  }
+
+  .lede {
+    color: var(--muted);
+    font-size: clamp(16px, 1.8vw, 20px);
+    max-width: 760px;
+    margin: 22px 0 0;
+  }
+
+  .hero-side {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px;
+    display: grid;
+    gap: 14px;
+  }
+
+  .metric {
+    border-top: 1px solid var(--line);
+    padding-top: 13px;
+  }
+
+  .metric:first-child {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  .metric b {
+    display: block;
+    font-size: 24px;
+    letter-spacing: -0.03em;
+  }
+
+  .metric span {
+    display: block;
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 2px;
+  }
+
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 18px 0 28px;
+  }
+
+  button,
+  .button {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    border-radius: 7px;
+    padding: 10px 13px;
+    font: 700 12px var(--font-mono);
+    letter-spacing: 0.02em;
+    cursor: pointer;
+    text-decoration: none;
+    transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+  }
+
+  button:hover,
+  .button:hover {
+    border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong));
+    background: var(--surface-2);
+  }
+
+  button:active,
+  .button:active {
+    transform: translateY(1px) scale(0.99);
+  }
+
+  section {
+    scroll-margin-top: 24px;
+    margin: 26px 0;
+  }
+
+  .section-head {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+
+  .section-kicker {
+    font: 700 11px var(--font-mono);
+    color: var(--accent-2);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+
+  h2 {
+    font-size: clamp(24px, 3vw, 40px);
+    letter-spacing: -0.035em;
+    line-height: 1;
+    margin: 0;
+  }
+
+  h3 {
+    margin: 0 0 10px;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+  }
+
+  p {
+    margin: 0 0 12px;
+  }
+
+  .muted { color: var(--muted); }
+
+  .grid {
+    display: grid;
+    gap: 14px;
+  }
+
+  .grid.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .grid.three { grid-template-columns: 1.2fr 0.9fr 0.9fr; }
+  .grid.asym { grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.7fr); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .card.focus {
+    background: color-mix(in srgb, var(--surface) 86%, var(--accent-soft) 14%);
+    border-color: color-mix(in srgb, var(--line) 65%, var(--accent) 35%);
+  }
+
+  .card.warn {
+    background: color-mix(in srgb, var(--surface) 86%, var(--warn-soft) 14%);
+    border-color: color-mix(in srgb, var(--line) 70%, var(--accent-3) 30%);
+  }
+
+  .card.danger {
+    background: color-mix(in srgb, var(--surface) 86%, var(--danger-soft) 14%);
+    border-color: color-mix(in srgb, var(--line) 70%, var(--accent-2) 30%);
+  }
+
+  .tagline {
+    font: 700 11px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    margin-bottom: 8px;
+  }
+
+  .checklist {
+    display: grid;
+    gap: 8px;
+  }
+
+  .check {
+    display: grid;
+    grid-template-columns: 22px 1fr;
+    gap: 9px;
+    align-items: start;
+    padding: 8px 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .check:first-child { border-top: 0; }
+
+  input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    margin-top: 3px;
+    accent-color: var(--accent);
+  }
+
+  .check label {
+    cursor: pointer;
+  }
+
+  .check small {
+    display: block;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .done label {
+    text-decoration: line-through;
+    color: var(--muted);
+  }
+
+  .pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 6px 9px;
+    font: 700 11px var(--font-mono);
+    color: var(--muted);
+    background: color-mix(in srgb, var(--surface) 75%, var(--surface-2));
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    min-width: 780px;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  th,
+  td {
+    text-align: left;
+    vertical-align: top;
+    padding: 12px 13px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  th {
+    position: sticky;
+    top: 0;
+    background: var(--surface-2);
+    color: var(--muted);
+    font: 700 10px var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  tr:last-child td { border-bottom: 0; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.94em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1px 5px;
+  }
+
+  .note {
+    border-left: 3px solid var(--accent);
+    padding: 10px 0 10px 14px;
+    color: var(--muted);
+  }
+
+  .timeline {
+    display: grid;
+    gap: 12px;
+  }
+
+  .time-block {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 16px;
+    padding: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+
+  .time-label {
+    font: 700 12px var(--font-mono);
+    color: var(--accent-2);
+  }
+
+  details {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+  }
+
+  summary {
+    cursor: pointer;
+    font-weight: 800;
+  }
+
+  .source-list {
+    display: grid;
+    gap: 7px;
+    margin-top: 10px;
+    font-size: 13px;
+  }
+
+  .handoff {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    padding: 18px;
+    font-size: 15px;
+  }
+
+  .print-only { display: none; }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .card,
+  .time-block,
+  .hero-panel,
+  .hero-side,
+  details {
+    animation: fadeUp 360ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      transition-duration: 1ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  @media (max-width: 1080px) {
+    .wrap {
+      width: min(100% - 24px, 960px);
+      grid-template-columns: 1fr;
+      gap: 0;
+      padding-top: 0;
+    }
+
+    .toc {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+      max-height: none;
+      margin: 0 -12px 18px;
+      padding: 10px 12px;
+      background: color-mix(in srgb, var(--bg) 88%, var(--surface));
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toc-title { display: none; }
+
+    .toc a {
+      white-space: nowrap;
+      border-left: 0;
+      border-bottom: 2px solid transparent;
+    }
+
+    .toc a.active {
+      border-left: 0;
+      border-bottom-color: var(--accent);
+    }
+
+    .hero,
+    .grid.two,
+    .grid.three,
+    .grid.asym {
+      grid-template-columns: 1fr;
+    }
+
+    section { scroll-margin-top: 66px; }
+  }
+
+  @media (max-width: 680px) {
+    .section-head,
+    .time-block {
+      grid-template-columns: 1fr;
+    }
+
+    .hero-panel,
+    .hero-side,
+    .card {
+      padding: 16px;
+    }
+  }
+
+  @media print {
+    body {
+      background: #ffffff;
+      color: #111111;
+    }
+
+    .wrap {
+      display: block;
+      width: auto;
+      padding: 0;
+    }
+
+    .toc,
+    .toolbar {
+      display: none;
+    }
+
+    .hero {
+      display: block;
+    }
+
+    .hero-panel,
+    .hero-side,
+    .card,
+    .time-block,
+    details {
+      box-shadow: none;
+      break-inside: avoid;
+    }
+
+    .print-only { display: block; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav class="toc" id="toc" aria-label="Page sections">
+    <div class="toc-title">COO Wiki</div>
+    <a href="#mission">Mission</a>
+    <a href="#weekend">Weekend Sprint</a>
+    <a href="#company-map">Company Map</a>
+    <a href="#legal">Legal And Tax</a>
+    <a href="#data-room">Data Room</a>
+    <a href="#finance">Finance</a>
+    <a href="#brand">Brand Claims</a>
+    <a href="#pilot">Pilot Motion</a>
+    <a href="#security">Security Packet</a>
+    <a href="#ops">Operating Rhythm</a>
+    <a href="#tools">Internal Tools</a>
+    <a href="#handoff">Team Handoff</a>
+    <a href="#sources">Sources</a>
+  </nav>
+
+  <main>
+    <header class="hero" id="mission">
+      <div class="hero-panel">
+        <p class="eyebrow">Cerebral Systems COO Operating Wiki</p>
+        <h1>Make the company clean, legible, customer-ready, and proof-driven.</h1>
+        <p class="lede">
+          This is the working control surface for forming the operating base of Cerebral Systems, keeping product claims tied to proof, and preparing the first controlled remediation pilot.
+        </p>
+      </div>
+      <aside class="hero-side" aria-label="Immediate targets">
+        <div class="metric">
+          <b>Weekend</b>
+          <span>Corporate binder, finance baseline, compliance calendar, pilot package.</span>
+        </div>
+        <div class="metric">
+          <b>30 days</b>
+          <span>Data room, contract stack, security packet, design-partner pipeline.</span>
+        </div>
+        <div class="metric">
+          <b>90 days</b>
+          <span>One paid pilot signed with explicit success criteria and evidence packet.</span>
+        </div>
+      </aside>
+    </header>
+
+    <div class="toolbar" aria-label="Wiki actions">
+      <button type="button" id="printButton">Print Or Save PDF</button>
+      <button type="button" id="resetChecks">Reset Checklist State</button>
+      <a class="button" href="#handoff">Team Handoff</a>
+      <a class="button" href="#tools">Internal Tools Roadmap</a>
+    </div>
+
+    <section id="weekend">
+      <div class="section-head">
+        <div class="section-kicker">01</div>
+        <h2>Weekend Sprint</h2>
+      </div>
+      <div class="timeline">
+        <div class="time-block">
+          <div class="time-label">Friday Night</div>
+          <div>
+            <h3>Build the operating room</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="fr-01"><label for="fr-01">Create the master folder: <code>Cerebral Systems Operating Room</code>.<small>Use this as the source folder for team context and future dashboards.</small></label></div>
+              <div class="check"><input type="checkbox" id="fr-02"><label for="fr-02">Create folders for corporate, tax, banking, equity, IP, finance, legal, security, product proof, sales pilots, investor diligence, hiring, and compliance calendar.</label></div>
+              <div class="check"><input type="checkbox" id="fr-03"><label for="fr-03">Write the one-page company map: parent company, legal contracting entity, product names, public brand, and entity-boundary rule.</label></div>
+              <div class="check"><input type="checkbox" id="fr-04"><label for="fr-04">Collect every formation document already produced by counsel, Stripe Atlas, Clerky, Firstbase, LegalZoom, or state portals.</label></div>
+              <div class="check"><input type="checkbox" id="fr-05"><label for="fr-05">Create the missing-docs tracker with owner, status, deadline, and notes.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Saturday Morning</div>
+          <div>
+            <h3>Legal, tax, equity, and IP</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="sa-01"><label for="sa-01">Confirm entity formation is complete before applying for an EIN.</label></div>
+              <div class="check"><input type="checkbox" id="sa-02"><label for="sa-02">Apply for EIN through the IRS if not already done, then save the confirmation letter.</label></div>
+              <div class="check"><input type="checkbox" id="sa-03"><label for="sa-03">Determine whether founder stock was issued and whether any 83(b) election deadline is still open.</label></div>
+              <div class="check"><input type="checkbox" id="sa-04"><label for="sa-04">Build the baseline cap table: authorized shares, issued shares, vesting, option pool, advisor grants, SAFEs, notes, unissued reserve, fully diluted ownership.</label></div>
+              <div class="check"><input type="checkbox" id="sa-05"><label for="sa-05">List all founders, contractors, advisors, repos, product assets, pre-formation code, and missing IP assignments.</label></div>
+              <div class="check"><input type="checkbox" id="sa-06"><label for="sa-06">Queue founder, contractor, advisor, and pre-formation IP assignment documents for counsel review or signature.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Saturday Afternoon</div>
+          <div>
+            <h3>Banking, finance, and compliance</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="sb-01"><label for="sb-01">Open the business bank account or assemble required bank documents.</label></div>
+              <div class="check"><input type="checkbox" id="sb-02"><label for="sb-02">Choose the finance stack: bank, card or spend tool, bookkeeping, payroll, cap table, accountant, counsel.</label></div>
+              <div class="check"><input type="checkbox" id="sb-03"><label for="sb-03">Create the monthly finance dashboard fields: cash, burn, runway, revenue, AP, AR, contractor spend, cloud spend, legal spend.</label></div>
+              <div class="check"><input type="checkbox" id="sb-04"><label for="sb-04">Build the vendor inventory with owner, monthly cost, login owner, payment method, renewal date, and cancellation risk.</label></div>
+              <div class="check"><input type="checkbox" id="sb-05"><label for="sb-05">Create the compliance calendar with state filings, franchise tax, registered agent, tax returns, payroll, insurance, board consents, and BOI monitoring.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Saturday Evening</div>
+          <div>
+            <h3>Brand and claim discipline</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="sc-01"><label for="sc-01">Run USPTO, domain, GitHub, LinkedIn, social handle, OpenCorporates, and general search checks for <code>Cerebral Systems</code>.</label></div>
+              <div class="check"><input type="checkbox" id="sc-02"><label for="sc-02">Run the same checks for <code>Cerebral Praxis</code> and every product mark under active consideration.</label></div>
+              <div class="check"><input type="checkbox" id="sc-03"><label for="sc-03">Create the brand risk tracker with domain status, trademark conflicts, similar companies, risk level, and decision.</label></div>
+              <div class="check"><input type="checkbox" id="sc-04"><label for="sc-04">Lock public claim rules: bounded, policy-guided, operator-steerable, evidence-first, self-hosted/private deployment.</label></div>
+              <div class="check"><input type="checkbox" id="sc-05"><label for="sc-05">Ban unsupported claims: autonomous production operator, observability replacement, mature SaaS, broad self-healing AI.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Sunday Morning</div>
+          <div>
+            <h3>Pilot package</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="su-01"><label for="su-01">Define one 90-day design-partner pilot with one environment, one low-blast-radius service, one allowed action, one denied action, and required approval gate.</label></div>
+              <div class="check"><input type="checkbox" id="su-02"><label for="su-02">Pick a fixed pilot price: for example <code>$15k</code>, <code>$25k</code>, or <code>$30k</code>.</label></div>
+              <div class="check"><input type="checkbox" id="su-03"><label for="su-03">Write pilot success criteria: launch, inspect, block unsafe action, approve safe action, record audit trail, export run packet, customer signs review.</label></div>
+              <div class="check"><input type="checkbox" id="su-04"><label for="su-04">Draft one-page pilot brief, architecture brief, security boundary brief, demo script, pricing sheet, success rubric, and SOW outline.</label></div>
+              <div class="check"><input type="checkbox" id="su-05"><label for="su-05">Build a 25-account target list with contact, role, intro path, pain hypothesis, fit reason, status, and next action.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Sunday Afternoon</div>
+          <div>
+            <h3>Contracts and security packet</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="sd-01"><label for="sd-01">Create counsel checklist: mutual NDA, MSA, pilot SOW, DPA, security appendix, support terms, data terms, contractor agreement, advisor agreement, founder IP assignment.</label></div>
+              <div class="check"><input type="checkbox" id="sd-02"><label for="sd-02">Draft security packet outline: deployment, data collected, data not collected, secrets, access control, audit logging, backup, incident response, subprocessors, customer duties, limitations.</label></div>
+              <div class="check"><input type="checkbox" id="sd-03"><label for="sd-03">Draft incident response skeleton: contact, severity, owner, customer notification, key rotation, rollback, evidence retention.</label></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="time-block">
+          <div class="time-label">Sunday Evening</div>
+          <div>
+            <h3>Operating cadence</h3>
+            <div class="checklist">
+              <div class="check"><input type="checkbox" id="se-01"><label for="se-01">Create weekly exec review template: cash, runway, product proof, customer pipeline, legal, compliance, hiring, risks, decisions.</label></div>
+              <div class="check"><input type="checkbox" id="se-02"><label for="se-02">Create risk register: risk, severity, owner, mitigation, deadline, status.</label></div>
+              <div class="check"><input type="checkbox" id="se-03"><label for="se-03">Create decision log: date, decision, options, owner, follow-up.</label></div>
+              <div class="check"><input type="checkbox" id="se-04"><label for="se-04">Define leadership split: CEO vision/fundraising/key relationships; COO operating system/customer delivery/finance/legal/compliance/hiring/vendor control; technical owner product proof/architecture/release quality.</label></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="company-map">
+      <div class="section-head">
+        <div class="section-kicker">02</div>
+        <h2>Company Map</h2>
+      </div>
+      <div class="grid asym">
+        <div class="card focus">
+          <h3>Operating truth</h3>
+          <p>Cerebral Systems is the parent and legal contracting entity. Product names are product lines, not separate legal entities, unless tax, liability, fundraising, IP, or counsel creates a reason.</p>
+          <div class="pill-row">
+            <span class="pill">Parent: Cerebral Systems</span>
+            <span class="pill">Product: Cerebral Praxis</span>
+            <span class="pill">Product family: Mesh</span>
+            <span class="pill">Claim boundary: proof-driven</span>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Map checklist</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="cm-01"><label for="cm-01">Exact legal name confirmed.</label></div>
+            <div class="check"><input type="checkbox" id="cm-02"><label for="cm-02">State and entity type confirmed.</label></div>
+            <div class="check"><input type="checkbox" id="cm-03"><label for="cm-03">Product names listed separately from legal entity.</label></div>
+            <div class="check"><input type="checkbox" id="cm-04"><label for="cm-04">Contracting name, billing name, and public brand aligned.</label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="legal">
+      <div class="section-head">
+        <div class="section-kicker">03</div>
+        <h2>Legal And Tax Control List</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>Formation and binder</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="lg-01"><label for="lg-01">Certificate of incorporation or formation saved.</label></div>
+            <div class="check"><input type="checkbox" id="lg-02"><label for="lg-02">Bylaws or operating agreement saved.</label></div>
+            <div class="check"><input type="checkbox" id="lg-03"><label for="lg-03">Initial board consent saved.</label></div>
+            <div class="check"><input type="checkbox" id="lg-04"><label for="lg-04">Registered agent info saved.</label></div>
+            <div class="check"><input type="checkbox" id="lg-05"><label for="lg-05">Founder stock paperwork saved.</label></div>
+            <div class="check"><input type="checkbox" id="lg-06"><label for="lg-06">Board consent approving bank account, equity, and officers prepared if needed.</label></div>
+          </div>
+        </div>
+        <div class="card warn">
+          <h3>Hard timing</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="lt-01"><label for="lt-01">EIN obtained only after entity formation is complete.</label></div>
+            <div class="check"><input type="checkbox" id="lt-02"><label for="lt-02">83(b) reviewed for every restricted stock recipient within the 30-day transfer window.</label></div>
+            <div class="check"><input type="checkbox" id="lt-03"><label for="lt-03">Delaware March 1 franchise tax and annual report calendared if Delaware C-corp.</label></div>
+            <div class="check"><input type="checkbox" id="lt-04"><label for="lt-04">Foreign qualification reviewed for any state where the company transacts intrastate business.</label></div>
+            <div class="check"><input type="checkbox" id="lt-05"><label for="lt-05">BOI rule monitoring added; current FinCEN posture exempts U.S.-created domestic entities.</label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="data-room">
+      <div class="section-head">
+        <div class="section-kicker">04</div>
+        <h2>Operating Data Room</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Folder</th>
+              <th>Purpose</th>
+              <th>Minimum Contents</th>
+              <th>Owner</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>01 Corporate</td><td>Entity truth</td><td>Formation docs, bylaws, consents, registered agent, company map</td><td>COO</td></tr>
+            <tr><td>02 Tax EIN Banking</td><td>Financial identity</td><td>EIN letter, bank docs, account approvals, tax registrations</td><td>COO / Accountant</td></tr>
+            <tr><td>03 Equity Cap Table</td><td>Ownership truth</td><td>Cap table export, stock agreements, vesting, 83(b) proof, SAFEs/notes</td><td>COO / Counsel</td></tr>
+            <tr><td>04 IP Assignments</td><td>Asset ownership</td><td>Founder, contractor, advisor, pre-formation IP assignment documents</td><td>COO / Counsel</td></tr>
+            <tr><td>05 Finance</td><td>Cash control</td><td>Budget, burn, runway, vendor inventory, monthly close docs</td><td>COO</td></tr>
+            <tr><td>06 Legal Contracts</td><td>Commercial execution</td><td>NDA, MSA, SOW, DPA, security appendix, support terms</td><td>COO / Counsel</td></tr>
+            <tr><td>07 Security Compliance</td><td>Buyer trust</td><td>Security FAQ, data map, access control, incident response, subprocessors</td><td>COO / Technical Owner</td></tr>
+            <tr><td>08 Product Proof</td><td>Evidence base</td><td>Run exports, readiness reports, demo script, pilot go/no-go, screenshots</td><td>Technical Owner</td></tr>
+            <tr><td>09 Sales Pilots</td><td>Revenue motion</td><td>Target list, CRM export, pilot brief, pricing, success rubric, notes</td><td>CEO / COO</td></tr>
+            <tr><td>10 Investor Diligence</td><td>Fundraising readiness</td><td>Deck, data room index, cap table, customer proof, roadmap, financial model</td><td>CEO / COO</td></tr>
+            <tr><td>11 Hiring People</td><td>Team scale</td><td>Role plan, comp bands, offers, contractor docs, onboarding, offboarding</td><td>COO</td></tr>
+            <tr><td>12 Compliance Calendar</td><td>Deadlines</td><td>Annual filings, tax dates, renewals, payroll, insurance, board cadence</td><td>COO</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="finance">
+      <div class="section-head">
+        <div class="section-kicker">05</div>
+        <h2>Finance And Vendor Operating System</h2>
+      </div>
+      <div class="grid three">
+        <div class="card focus">
+          <h3>Monthly finance dashboard</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="fn-01"><label for="fn-01">Cash balance.</label></div>
+            <div class="check"><input type="checkbox" id="fn-02"><label for="fn-02">Monthly burn.</label></div>
+            <div class="check"><input type="checkbox" id="fn-03"><label for="fn-03">Runway.</label></div>
+            <div class="check"><input type="checkbox" id="fn-04"><label for="fn-04">Revenue and signed pipeline.</label></div>
+            <div class="check"><input type="checkbox" id="fn-05"><label for="fn-05">AP, AR, contractor, cloud, legal, and accounting spend.</label></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Stack decisions</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="fs-01"><label for="fs-01">Bank selected.</label></div>
+            <div class="check"><input type="checkbox" id="fs-02"><label for="fs-02">Card or spend tool selected.</label></div>
+            <div class="check"><input type="checkbox" id="fs-03"><label for="fs-03">Bookkeeping selected.</label></div>
+            <div class="check"><input type="checkbox" id="fs-04"><label for="fs-04">Payroll provider selected.</label></div>
+            <div class="check"><input type="checkbox" id="fs-05"><label for="fs-05">Cap table tool selected.</label></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Vendor inventory fields</h3>
+          <p class="muted">Tool, purpose, owner, monthly cost, login owner, payment method, renewal date, cancellation risk, security sensitivity.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="brand">
+      <div class="section-head">
+        <div class="section-kicker">06</div>
+        <h2>Brand And Claim Boundaries</h2>
+      </div>
+      <div class="grid two">
+        <div class="card focus">
+          <div class="tagline">Allowed language</div>
+          <h3>Use this until proof expands</h3>
+          <div class="pill-row">
+            <span class="pill">Bounded remediation control plane</span>
+            <span class="pill">Policy-guided</span>
+            <span class="pill">Operator-steerable</span>
+            <span class="pill">Evidence-first</span>
+            <span class="pill">Self-hosted</span>
+            <span class="pill">Private deployment</span>
+            <span class="pill">Controlled action after detection</span>
+          </div>
+        </div>
+        <div class="card danger">
+          <div class="tagline">Do not say</div>
+          <h3>Unsupported claims</h3>
+          <div class="pill-row">
+            <span class="pill">Autonomous production operator</span>
+            <span class="pill">Observability replacement</span>
+            <span class="pill">Mature multi-tenant SaaS</span>
+            <span class="pill">Broad self-healing AI</span>
+            <span class="pill">Production-complete connectors</span>
+            <span class="pill">Generic automation engine</span>
+          </div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Clearance tracker</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Name</th><th>Domain</th><th>USPTO</th><th>Similar Companies</th><th>Risk</th><th>Decision</th></tr></thead>
+            <tbody>
+              <tr><td>Cerebral Systems</td><td>Open task</td><td>Open task</td><td>Open task</td><td>Unknown</td><td>Hold pending search</td></tr>
+              <tr><td>Cerebral Praxis</td><td>Open task</td><td>Open task</td><td>Open task</td><td>Unknown</td><td>Hold pending search</td></tr>
+              <tr><td>Mesh</td><td>Open task</td><td>Open task</td><td>Known crowded term</td><td>Medium</td><td>Use as product family until counsel clears</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="pilot">
+      <div class="section-head">
+        <div class="section-kicker">07</div>
+        <h2>Design-Partner Pilot Motion</h2>
+      </div>
+      <div class="grid asym">
+        <div class="card focus">
+          <h3>90-day pilot definition</h3>
+          <p>Sell a controlled remediation pilot, not a broad autonomy platform. The first pilot should prove one allowed action, one denied action, operator approval, rollback metadata, live feedback, and a reviewable run export inside a customer-controlled environment.</p>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="pl-01"><label for="pl-01">One production or staging environment named.</label></div>
+            <div class="check"><input type="checkbox" id="pl-02"><label for="pl-02">One low-blast-radius service named.</label></div>
+            <div class="check"><input type="checkbox" id="pl-03"><label for="pl-03">One allowed remediation action named.</label></div>
+            <div class="check"><input type="checkbox" id="pl-04"><label for="pl-04">One denied or escalated action named.</label></div>
+            <div class="check"><input type="checkbox" id="pl-05"><label for="pl-05">Approval gate required by default.</label></div>
+            <div class="check"><input type="checkbox" id="pl-06"><label for="pl-06">Export packet and customer review required.</label></div>
+          </div>
+        </div>
+        <div class="card warn">
+          <h3>Pricing hypothesis</h3>
+          <p class="muted">Pick one fixed number. Do not leave the pilot price fuzzy when talking to buyers.</p>
+          <div class="pill-row">
+            <span class="pill">$15k pilot</span>
+            <span class="pill">$25k pilot</span>
+            <span class="pill">$30k pilot</span>
+          </div>
+          <p class="note" style="margin-top:14px">Credit toward annual contract only if the pilot converts.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Target account tracker fields</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Company</th><th>Buyer</th><th>Intro Path</th><th>Pain Hypothesis</th><th>Fit Reason</th><th>Status</th><th>Next Action</th></tr></thead>
+            <tbody>
+              <tr><td>Account 01</td><td>VP Eng / Platform / SRE</td><td>Warm intro</td><td>Risky repeated remediation</td><td>Has existing observability and approval burden</td><td>Research</td><td>Find path</td></tr>
+              <tr><td>Account 02</td><td>CTO</td><td>Founder network</td><td>Small platform team</td><td>Low-blast-radius service available</td><td>Research</td><td>Draft note</td></tr>
+              <tr><td>Account 03</td><td>Head of Infrastructure</td><td>Investor/advisor</td><td>Audit-heavy operations</td><td>Private deployment need</td><td>Research</td><td>Map stakeholders</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="security">
+      <div class="section-head">
+        <div class="section-kicker">08</div>
+        <h2>Security And Compliance Packet</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>Packet sections</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="sp-01"><label for="sp-01">What Cerebral Systems does.</label></div>
+            <div class="check"><input type="checkbox" id="sp-02"><label for="sp-02">Deployment model.</label></div>
+            <div class="check"><input type="checkbox" id="sp-03"><label for="sp-03">Data collected and data not collected.</label></div>
+            <div class="check"><input type="checkbox" id="sp-04"><label for="sp-04">Secrets handling.</label></div>
+            <div class="check"><input type="checkbox" id="sp-05"><label for="sp-05">Access control.</label></div>
+            <div class="check"><input type="checkbox" id="sp-06"><label for="sp-06">Audit logging.</label></div>
+            <div class="check"><input type="checkbox" id="sp-07"><label for="sp-07">Backup and restore posture.</label></div>
+            <div class="check"><input type="checkbox" id="sp-08"><label for="sp-08">Incident response.</label></div>
+            <div class="check"><input type="checkbox" id="sp-09"><label for="sp-09">Subprocessors and customer responsibilities.</label></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Incident response skeleton</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="ir-01"><label for="ir-01">Security contact.</label></div>
+            <div class="check"><input type="checkbox" id="ir-02"><label for="ir-02">Severity levels.</label></div>
+            <div class="check"><input type="checkbox" id="ir-03"><label for="ir-03">Response owner.</label></div>
+            <div class="check"><input type="checkbox" id="ir-04"><label for="ir-04">Customer notification rule.</label></div>
+            <div class="check"><input type="checkbox" id="ir-05"><label for="ir-05">Key rotation process.</label></div>
+            <div class="check"><input type="checkbox" id="ir-06"><label for="ir-06">Service rollback process.</label></div>
+            <div class="check"><input type="checkbox" id="ir-07"><label for="ir-07">Evidence retention process.</label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="ops">
+      <div class="section-head">
+        <div class="section-kicker">09</div>
+        <h2>Operating Rhythm</h2>
+      </div>
+      <div class="grid three">
+        <div class="card">
+          <h3>Weekly exec review</h3>
+          <p class="muted">Cash, runway, product proof, customer pipeline, legal, compliance, hiring, risks, decisions needed.</p>
+        </div>
+        <div class="card">
+          <h3>Risk register</h3>
+          <p class="muted">Risk, severity, owner, mitigation, deadline, status. Review weekly until company hygiene stabilizes.</p>
+        </div>
+        <div class="card">
+          <h3>Decision log</h3>
+          <p class="muted">Date, decision, options considered, owner, follow-up. This prevents context loss as the team expands.</p>
+        </div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3>Role split</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Role</th><th>Owns</th><th>Does Not Own Alone</th></tr></thead>
+            <tbody>
+              <tr><td>CEO</td><td>Vision, fundraising, key relationships, category narrative.</td><td>Back-office execution, compliance operations, vendor control.</td></tr>
+              <tr><td>COO</td><td>Operating system, customer delivery, finance, legal, compliance, hiring process, vendor control.</td><td>Technical authority, architecture, unchecked product claims.</td></tr>
+              <tr><td>Technical owner</td><td>Product proof, architecture, release quality, runtime boundaries, evidence packets.</td><td>Commercial claims or legal commitments without COO/CEO review.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="tools">
+      <div class="section-head">
+        <div class="section-kicker">10</div>
+        <h2>Internal Tools And Dashboards To Build Next</h2>
+      </div>
+      <div class="grid two">
+        <div class="card focus">
+          <h3>First dashboard suite</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="tl-01"><label for="tl-01">Company ops dashboard: entity status, open legal docs, compliance deadlines, owner view.</label></div>
+            <div class="check"><input type="checkbox" id="tl-02"><label for="tl-02">Finance dashboard: cash, burn, runway, vendors, budget owners, monthly close checklist.</label></div>
+            <div class="check"><input type="checkbox" id="tl-03"><label for="tl-03">Pilot CRM: accounts, contacts, fit score, stage, next action, pilot documents.</label></div>
+            <div class="check"><input type="checkbox" id="tl-04"><label for="tl-04">Data room index: document status, owner, missing items, last reviewed date.</label></div>
+            <div class="check"><input type="checkbox" id="tl-05"><label for="tl-05">Product proof tracker: demo path, run exports, readiness snapshots, proof gaps, claim status.</label></div>
+            <div class="check"><input type="checkbox" id="tl-06"><label for="tl-06">Security packet generator: reusable answers for customer diligence.</label></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Style to reuse</h3>
+          <p class="muted">Dense, operator-grade, printable, section-indexed, with local progress state. No marketing layout. No generic SaaS hero. Every dashboard should make the next action obvious and preserve the evidence trail.</p>
+          <div class="pill-row">
+            <span class="pill">Sticky section nav</span>
+            <span class="pill">Persistent checklists</span>
+            <span class="pill">Owner columns</span>
+            <span class="pill">Deadline fields</span>
+            <span class="pill">Proof status</span>
+            <span class="pill">Print/PDF mode</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="handoff">
+      <div class="section-head">
+        <div class="section-kicker">11</div>
+        <h2>Team Handoff</h2>
+      </div>
+      <div class="handoff">
+        <h3>Message to team</h3>
+        <p>Cerebral Systems is being organized as the legal and operating parent for the product work. This weekend priority is not brand polish. It is company hygiene: formation records, EIN, bank readiness, cap table, IP ownership, compliance calendar, first pilot package, security packet, and a proof-driven claim boundary.</p>
+        <p>The commercial motion starts with controlled remediation pilots. We are not selling broad autonomous production control. We are selling a bounded, policy-guided, operator-steerable remediation control plane with evidence, approval, audit trail, and run export.</p>
+        <p>Each team member should own a concrete surface: corporate docs, finance stack, IP cleanup, product proof, security packet, pilot pipeline, or customer collateral. No loose claims, no unowned documents, no undocumented commitments.</p>
+      </div>
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>Immediate owner assignments</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Surface</th><th>Owner</th><th>Weekend Output</th></tr></thead>
+              <tbody>
+                <tr><td>Corporate binder</td><td>COO</td><td>Complete folder, missing-doc tracker.</td></tr>
+                <tr><td>Finance baseline</td><td>COO</td><td>Banking status, vendor inventory, monthly dashboard.</td></tr>
+                <tr><td>Legal contracts</td><td>COO / Counsel</td><td>Contract checklist and counsel packet.</td></tr>
+                <tr><td>Product proof</td><td>Technical owner</td><td>Demo path, proof packet list, current proof gaps.</td></tr>
+                <tr><td>Pilot pipeline</td><td>CEO / COO</td><td>25 accounts, pilot brief, pricing, success rubric.</td></tr>
+                <tr><td>Security packet</td><td>COO / Technical owner</td><td>Security outline and incident response skeleton.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="card warn">
+          <h3>Weekend done criteria</h3>
+          <div class="checklist">
+            <div class="check"><input type="checkbox" id="wd-01"><label for="wd-01">Company map complete.</label></div>
+            <div class="check"><input type="checkbox" id="wd-02"><label for="wd-02">Corporate binder organized.</label></div>
+            <div class="check"><input type="checkbox" id="wd-03"><label for="wd-03">EIN obtained or blocked only by formation status.</label></div>
+            <div class="check"><input type="checkbox" id="wd-04"><label for="wd-04">Bank account opened or ready to open.</label></div>
+            <div class="check"><input type="checkbox" id="wd-05"><label for="wd-05">83(b) status known for every founder.</label></div>
+            <div class="check"><input type="checkbox" id="wd-06"><label for="wd-06">Cap table baseline created.</label></div>
+            <div class="check"><input type="checkbox" id="wd-07"><label for="wd-07">IP assignment gaps listed.</label></div>
+            <div class="check"><input type="checkbox" id="wd-08"><label for="wd-08">Compliance calendar created.</label></div>
+            <div class="check"><input type="checkbox" id="wd-09"><label for="wd-09">Pilot package drafted.</label></div>
+            <div class="check"><input type="checkbox" id="wd-10"><label for="wd-10">Security packet outline drafted.</label></div>
+            <div class="check"><input type="checkbox" id="wd-11"><label for="wd-11">Weekly COO operating cadence created.</label></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="section-head">
+        <div class="section-kicker">12</div>
+        <h2>External Sources And Live Checks</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>Official references</h3>
+          <div class="source-list">
+            <a href="https://www.irs.gov/businesses/small-businesses-self-employed/get-an-employer-identification-number">IRS EIN guidance</a>
+            <a href="https://www.fincen.gov/boi">FinCEN BOI reporting</a>
+            <a href="https://www.sba.gov/business-guide/launch-your-business">SBA launch checklist</a>
+            <a href="https://www.irs.gov/irb/2012-28_IRB">IRS 83(b) 30-day rule reference</a>
+            <a href="https://corp.delaware.gov/paytaxes/">Delaware annual report and franchise tax</a>
+            <a href="https://www.sos.ca.gov/business-programs/business-entities/faqs">California foreign registration FAQ</a>
+            <a href="https://www.uspto.gov/trademarks/search">USPTO trademark search</a>
+            <a href="https://www.sec.gov/files/startup-securities-building-blocks.pdf">SEC startup securities overview</a>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Refresh rules</h3>
+          <p class="muted">Before filing, fundraising, issuing securities, making tax elections, or relying on state compliance status, refresh the official source and use counsel or tax support. BOI status, state requirements, and filing fees are drift-prone.</p>
+          <p class="note">This wiki is an operating checklist, not legal, tax, or securities advice.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+  (function () {
+    const storageKey = "cerebral-systems-coo-wiki-checks-v1";
+    const checks = Array.from(document.querySelectorAll('input[type="checkbox"]'));
+    const saved = JSON.parse(localStorage.getItem(storageKey) || "{}");
+
+    function updateRow(input) {
+      const row = input.closest(".check");
+      if (!row) return;
+      row.classList.toggle("done", input.checked);
+    }
+
+    checks.forEach((input) => {
+      if (Object.prototype.hasOwnProperty.call(saved, input.id)) {
+        input.checked = Boolean(saved[input.id]);
+      }
+      updateRow(input);
+      input.addEventListener("change", () => {
+        saved[input.id] = input.checked;
+        localStorage.setItem(storageKey, JSON.stringify(saved));
+        updateRow(input);
+      });
+    });
+
+    const reset = document.getElementById("resetChecks");
+    if (reset) {
+      reset.addEventListener("click", () => {
+        if (!confirm("Reset all checklist progress for this browser?")) return;
+        localStorage.removeItem(storageKey);
+        checks.forEach((input) => {
+          input.checked = false;
+          updateRow(input);
+        });
+      });
+    }
+
+    const printButton = document.getElementById("printButton");
+    if (printButton) {
+      printButton.addEventListener("click", () => window.print());
+    }
+  })();
+
+  (function () {
+    const toc = document.getElementById("toc");
+    if (!toc) return;
+    const links = Array.from(toc.querySelectorAll("a"));
+    const sections = links.map((link) => {
+      const id = link.getAttribute("href").slice(1);
+      return { id, link, el: document.getElementById(id) };
+    }).filter((item) => item.el);
+
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        links.forEach((link) => link.classList.remove("active"));
+        const match = sections.find((item) => item.el === entry.target);
+        if (match) {
+          match.link.classList.add("active");
+          if (window.innerWidth <= 1080) {
+            match.link.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+          }
+        }
+      });
+    }, { rootMargin: "-12% 0px -78% 0px" });
+
+    sections.forEach((item) => observer.observe(item.el));
+
+    links.forEach((link) => {
+      link.addEventListener("click", (event) => {
+        event.preventDefault();
+        const id = link.getAttribute("href").slice(1);
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        history.replaceState(null, "", "#" + id);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

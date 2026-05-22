@@ -224,11 +224,30 @@ class OperatorAuthHttpTests(unittest.TestCase):
         running, _ = self._request(
             "POST",
             "/api/operator/praxis/generation-requests/praxis-request-http-001/dry-run/start",
-            {"team_id": team_id},
+            {
+                "team_id": team_id,
+                "docker_dynamic_mcp_bridge": {
+                    "gateway_ref": "docker-mcp-gateway://praxis-http-test",
+                    "allowed_server_ids": ["praxis-http-generated-mcp"],
+                    "session_only": True,
+                    "profile_persisted": False,
+                    "code_mode_enabled": False,
+                },
+            },
             cookie=cookie,
             include_cookie=True,
         )
         self.assertEqual(running["dry_run_runtime"]["status"], "running")
+        self.assertEqual(running["dry_run_runtime"]["docker_dynamic_mcp_bridge"]["gateway_ref"], "docker-mcp-gateway://praxis-http-test")
+
+        mcp_tools, _ = self._request(
+            "POST",
+            "/api/operator/praxis/generation-requests/praxis-request-http-001/mcp",
+            {"team_id": team_id, "jsonrpc": "2.0", "id": "tools-list", "method": "tools/list"},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        self.assertEqual([tool["name"] for tool in mcp_tools["result"]["tools"]], ["tool.listorders"])
 
         call, _ = self._request(
             "POST",

@@ -43,6 +43,7 @@ The proof must show ECS health and readiness, proxy identity handling, Postgres 
 | BuildKit | image build | supported | Preferred modern build path when it emits standard OCI-compatible images. |
 | Buildah | image build | recipe | Compatible when output image and labels match the release packet contract. |
 | Kaniko | image build | recipe | CI build option only; deployment still depends on the resulting image digest and provenance. |
+| Docker Hardened Images / DHI charts | supply-chain component source | recipe | Preferred input class for hardened arena profiles when the chosen component exists and the deployer can provide digest pins, SBOM/provenance/attestation refs, reviewed chart values, and target smoke evidence. Not a deployment target and not a whole-system compliance claim. |
 
 ## Orchestration And Platform Matrix
 
@@ -80,6 +81,7 @@ All deployment targets must preserve the same authority contract:
 - `/api/health`, `/api/readiness`, `/api/pilot/go-no-go`, `/api/failure-modes`, `/api/watchers/ownership`, `/metrics`, run export, and release packet visibility;
 - signed or hash-addressed release evidence for image, policy, migration, and connector state;
 - agentic-operator source provenance with Apache-2.0 license verification, source snapshot hash, source-input-only posture, and authority-gate adaptation requirements before any CRD, controller, Helm, MCP, LiteLLM, Argo, or CLI fork enters runtime;
+- hardened-image or hardened-chart selection recorded as supply-chain evidence only, with digest pins, SBOM/provenance/attestation refs, reviewed chart values, and no promotion from image-level hardening to system-level compliance without target proof;
 - external audit-sink append-only proof before expansion or compliance reliance;
 - operator-visible degraded state when a target cannot provide required identity, persistence, feedback, or audit guarantees.
 
@@ -98,5 +100,6 @@ Active validation anchors:
 1. Keep Docker Compose validated for local and single-VM proof.
 2. Keep Kubernetes validated for the first production pilot path.
 3. Add ECS/Fargate as the first validated non-Kubernetes production target.
-4. Add Podman, OpenShift, K3s, and managed container recipes only after the base contracts are stable.
-5. Move a recipe to validated only when it has a maintained smoke path and release evidence.
+4. Define the hardened production-arena profile registry and generator as a recipe layer over the validated Docker Compose and Kubernetes contracts.
+5. Add Podman, OpenShift, K3s, and managed container recipes only after the base contracts are stable.
+6. Move a recipe to validated only when it has a maintained smoke path and release evidence.

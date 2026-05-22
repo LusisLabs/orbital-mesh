@@ -1,0 +1,9 @@
+state_slice=opt_mesh.file_runtime_state
+source_host=mesh-test
+source_ip=46.224.205.119
+created_at_utc=20260522T031653Z
+source_root=/opt/mesh
+source_state_directory=/opt/mesh/.mesh-runtime-state
+copy_directory=/opt/mesh/exports/mesh-opt-mesh-database-20260522T031653Z
+archive=/opt/mesh/exports/mesh-opt-mesh-database-20260522T031653Z.tar.gz
+sqlite_inventory_file=/opt/mesh/exports/mesh-opt-mesh-database-20260522T031653Z/database-file-inventory.txt

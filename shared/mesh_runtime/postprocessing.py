@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import RuntimeConfig
 from .control_plane_models import GoalRecord, MerkleSnapshot, RunEvent, RunSession
+from .goose_credentials import goose_subprocess_env
 from .integrations import resolve_integrations_config
 from .merkle import branch_hash, build_merkle_proof
 
@@ -390,7 +391,7 @@ class VaultAiPostprocessor:
         return tokens[index + 1]
 
     def _command_env(self, provider: str | None) -> dict[str, str]:
-        return os.environ.copy()
+        return goose_subprocess_env()
 
     def _assistant_text(self, payload: dict[str, Any]) -> str:
         messages = payload.get("messages", [])

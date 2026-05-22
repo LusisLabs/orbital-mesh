@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from shared.mesh_runtime.goose_credentials import goose_subprocess_env
+
 if TYPE_CHECKING:
     from shared.mesh_runtime.config import RuntimeConfig
     from shared.mesh_runtime.context_store import ContextStore
@@ -180,6 +182,7 @@ class EscalationReasoner:
                 text=True,
                 check=False,
                 timeout=self.config.llm_escalation_timeout_seconds,
+                env=goose_subprocess_env(),
             )
         except (OSError, subprocess.TimeoutExpired):
             return None

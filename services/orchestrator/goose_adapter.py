@@ -12,6 +12,7 @@ from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, Inci
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
+from shared.mesh_runtime.goose_credentials import goose_subprocess_env
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
@@ -243,6 +244,7 @@ class GooseCliAdapter(GooseAdapter):
                 cwd=MESH_ROOT,
                 check=False,
                 timeout=self.timeout_seconds,
+                env=goose_subprocess_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             return {"error": f"goose subprocess failed: {exc}"}

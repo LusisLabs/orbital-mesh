@@ -26,6 +26,7 @@ Every architecture keeps the same authority boundary:
 - agentic-operator source provenance: `config/agentic-operator-source.provenance.json` and `scripts/verify_agentic_operator_source_provenance.py`.
 - evaluation-kit packet: `scripts/generate_evaluation_kit_packet.py`, `scripts/verify_evaluation_kit_packet.py`, and `shared/mesh_runtime/schemas/evaluation-kit-packet.schema.json`.
 - benchmark output proof: `scripts/verify_benchmark_run_artifacts.py` and `shared/mesh_runtime/schemas/benchmark-run-artifacts-verification.schema.json`.
+- hardened production-arena posture: deployment-profile registry and generator are roadmap items until implemented; use this document as the current architecture contract, not as runtime proof.
 
 Required production defaults:
 
@@ -50,6 +51,7 @@ Compatibility posture:
 - K3s, OpenShift, Rancher-managed Kubernetes, managed Kubernetes, Cloud Run, Azure Container Apps, Fly.io, Railway, and Render are recipes until target-specific release evidence exists.
 - ECS/Fargate is the first non-Kubernetes production target candidate for validation.
 - ECS/Fargate promotion requires `scripts/verify_ecs_fargate_promotion.py --proof <ecs-fargate-promotion-proof.json> --json` with health, readiness, ingress identity, Postgres persistence, feedback, audit, rollback, release provenance, image digest, scoped task roles, scoped secret refs, and no raw secret material.
+- Docker Hardened Images and DHI charts are supply-chain component sources, not deployment targets. Use them only with digest pins, SBOM/provenance/attestation refs, reviewed chart values, and the same Mesh runtime proof gates as any other image or chart.
 - Swarm, Mesos/Marathon, Windows Containers, and direct runc/containerd integration are not active roadmap targets.
 - The provenance-recorded `agentic-operator-core-main/` source input is future material for Kubernetes operator, CRD, Helm, Argo, MCP, LiteLLM, metering, and network-policy patterns. It is not active runtime until a source tree is available and forked through Orbital Mesh authority gates.
 
@@ -79,6 +81,68 @@ Posture:
 - proves the live Kubernetes loop in a disposable k3s environment;
 - proves app-level operator identity headers through stack smoke defaults;
 - does not prove external TLS, SSO, cloud IAM, or production network isolation.
+
+## Hardened Production Arena
+
+Use when Mesh needs a realistic target system to probe before enterprise on-prem work, or when a small team wants a production-like stack assembled for them instead of hand-building every component.
+
+Current status:
+
+- architecture contract only;
+- no checked-in generator, deployment-profile registry, or validated arena package yet;
+- no whole-system compliance claim from image or chart selection alone.
+- the Docker Hardened Images catalog should be ingested as data when the builder is implemented; do not paste a full provider catalog into static docs.
+
+Target profile inputs:
+
+- owner and tenant boundary;
+- intended substrate: local k3s, private VM, Kubernetes cluster, private VPC, or offline-adjacent lab;
+- application shape: API service, data service, AI/model-serving lane, workflow system, or mixed platform stack;
+- compliance posture: baseline, CIS-preferred, FIPS-required, STIG-required, or customer-controlled image source;
+- allowed Mesh probes, failure injections, live actions, cleanup scope, data retention, and export policy.
+
+Candidate component classes:
+
+- ingress and API gateway: APISIX, Kong, Envoy-compatible rate limiting, or a customer-approved ingress controller;
+- identity and access: Dex, Keycloak, OAuth2 Proxy, or existing SSO/OIDC/SAML boundary;
+- certificate and trust management: cert-manager, trust-manager, SPIFFE/SPIRE, and private CA integrations;
+- secrets and key custody: External Secrets Operator, Vault, OpenBao, Sealed Secrets, or cloud key-vault integrations;
+- policy and admission: Kyverno, Gatekeeper, Open Policy Agent, Connaisseur, or equivalent image-signing and admission controls;
+- storage and data: PostgreSQL, Redis/Valkey, ClickHouse, OpenSearch, Cassandra, or only the minimal backing services needed for the declared target;
+- observability and feedback: Prometheus, Grafana, Loki, Tempo, Alloy, kube-state-metrics, Vector, Fluentd, OpenSearch Dashboards, Trivy Operator, Kubescape, Polaris, and Goldilocks where they match the target profile;
+- backup and recovery: Velero plus storage-provider plugins or a customer-provided backup system;
+- GitOps and workflow: Argo CD, Argo Rollouts, Argo Workflows, Airflow, Jenkins, KEDA, or customer-controlled delivery systems;
+- Kubernetes operations: Calico, Cilium, CSI drivers, VPA, metrics-server, cloud load-balancer controllers, pod identity agents, and node termination handlers where the substrate requires them;
+- registries and image assurance: Harbor, Zot, Trivy, Grype, Syft, Notation, Gitleaks, TruffleHog, and admission verification tools;
+- diagnostics and synthetic targets: network multitools, WireMock, WordPress, or deliberately vulnerable/non-critical services only when the arena profile marks them as disposable probes;
+- AI and evaluation lanes: LiteLLM, MLflow, Langfuse, KServe, or Kubeflow Pipelines only as proposal, evaluation, or model-lifecycle lanes unless separately certified.
+
+Catalog import fields:
+
+- provider, slug, display name, image or chart type, upstream project, version family, OS family, architecture, compliance labels, tool list, chart dependencies, last-pushed timestamp, image digest or chart digest, SBOM ref, provenance ref, vulnerability-scan ref, FIPS/STIG attestation refs when applicable, and access requirement;
+- Mesh classification: required, optional, probe-only, customer-provided, excluded, or proposal-lane-only;
+- authority boundary: no credential, read-only credential, runtime secret, mutating actuator, or proposal-only;
+- proof status: unobserved, pulled, configured, smoke-passed, readiness-passed, feedback-proven, rollback-proven, or release-packet-bound.
+
+Blueprint output contract:
+
+- component graph with purpose, authority boundary, required credentials, namespace/account, and owner;
+- pinned image and chart refs, preferably by digest, with SBOM, provenance, vulnerability scan, and compliance-attestation refs where available;
+- Helm values, Compose overlays, RBAC, network policies, secret references, ingress, storage, and backup configuration;
+- Mesh watcher, webhook, OTel, Prometheus, and Kubernetes probe plan;
+- failure-mode curriculum covering denied namespace, stale credential, bad rollout, dependency timeout, backpressure, degraded observability, backup failure, and cleanup failure;
+- readiness proof checklist for health, identity, persistence, feedback, audit, rollback, release packet, run export, and kill switch;
+- teardown and data-retention plan.
+
+Validation before calling an arena ready:
+
+```bash
+python3 scripts/verify_deployment_compatibility.py --json
+MESH_SMOKE_BASE_URL=<arena-url> ./scripts/prod_smoke.sh
+scripts/generate_release_provenance.py --require-complete --json
+```
+
+The arena can be sold as setup assistance or used internally as a testing lab only when the generated packet says which parts are observed evidence, which parts are recipe guidance, and which parts remain unimplemented.
 
 ## Single-VM Private Deployment
 

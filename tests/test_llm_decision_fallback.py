@@ -328,6 +328,7 @@ class DecisionIntegrationTests(unittest.TestCase):
             decision = service.decide(trigger)
         self.assertEqual(decision.decision_type, "scale_deployment")
         self.assertEqual(decision.execution_plan["action"], "scale_deployment")
+        self.assertEqual(fake_run.call_args.kwargs["env"]["GOOSE_DISABLE_KEYRING"], "1")
         # The decision carries the LLM risk flags in its evidence list so
         # operators can see where the proposal came from.
         evidence = decision.reasoning["evidence"]

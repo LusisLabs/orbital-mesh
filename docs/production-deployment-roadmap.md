@@ -14,6 +14,7 @@ The first production test must prove:
 - production integrations are classified honestly as ready, proposal-only, safety-default, or unfinished adapter;
 - deployment compatibility is classified honestly as validated, supported, recipe, or not planned;
 - forked Kubernetes operator work from the provenance-recorded `agentic-operator-core-main/` source input is imported through contract, provenance, and validation gates, not copied wholesale;
+- operators can assemble a hardened production-arena environment from a declared target profile without confusing image-level hardening with whole-system production readiness;
 - state, events, artifacts, Merkle proofs, and feedback survive restart and can be reviewed after the fact.
 
 ## Current Integrated Surface
@@ -39,6 +40,7 @@ The first production test must prove:
 | Persistence | `.mesh-runtime-state`, Postgres-backed stores, optional HelixDB memory projection | JSON state is replay-friendly; Postgres persistence is required before multi-operator production reliance. HelixDB is a graph-vector projection for verified memory, not canonical run-state proof. |
 | Audit and proofs | vault mirror, run events, Merkle proofs | Core launch requirement. External compliance sink remains an integration gap. |
 | Deployment compatibility | `docker-compose.stack.yml`, `docker-compose.prod.yml`, `docs/deployment-compatibility.md`, `docs/reference-architectures.md` | Open by contract. Docker Compose and Kubernetes are validated paths; other container and orchestrator targets are supported, recipes, backlog, or not planned according to evidence. |
+| Hardened production arena | `docs/reference-architectures.md`, `docs/deployment-compatibility.md`, future deployment-profile registry | Roadmap capability for spinning up a user-shaped production-like system that Mesh can probe, evaluate, and learn from. Hardened images, Helm charts, SBOMs, and attestations are supply-chain inputs; target smoke, readiness, feedback, audit, rollback, and release packets still decide readiness. |
 | Agentic operator fork source | `config/agentic-operator-source.provenance.json`, `docs/agentic-operator-core-import-plan.md` | Provenance-recorded source input for future CRD, tenant isolation, Argo scheduling, Helm packaging, MCP, LiteLLM routing, metering, and network-policy patterns. The source tree may be absent from a checkout and must be adapted to Orbital Mesh authority gates before runtime use. |
 
 ## Release Phases
@@ -111,6 +113,7 @@ Required features:
 - kill-switch controls for watchers, live execution, namespaces, action classes, and forced approval gate;
 - enterprise evaluation kit: one-command stack, sample run export, architecture brief, security boundary brief, benchmark methodology, and 30-day pilot success rubric;
 - reference architectures for private cloud, Kubernetes platform teams, GPU/AI infrastructure, regulated enterprise, and air-gapped or VPC-only deployments;
+- hardened production-arena blueprint that chooses ingress, identity, secrets, policy, storage, observability, backup, and optional AI lanes from the user's target profile, then emits a Mesh probe plan and proof requirements;
 - startup and developer evaluation path: five-minute local demo, thirty-minute staging path, free sample fixtures, small-team runbook, and no-procurement trial artifact;
 - documented rollback for the Mesh service itself.
 
@@ -229,6 +232,7 @@ Exit gates:
 | Pilot SLO and error budget | production pilot | Initial contract exists in `docs/pilot-slo-error-budget.md` with hard stops, latency objectives, reliability budget, measurement sources, and review cadence; deployment-specific ingress, Prometheus, audit-sink, signed-release, and load evidence remain. |
 | Enterprise evaluation kit | private staging | `docs/evaluation-kits.md`, `scripts/generate_evaluation_kit_packet.py`, `scripts/verify_evaluation_kit_packet.py`, and `scripts/verify_benchmark_run_artifacts.py` now emit and verify `mesh.evaluation_kit_packet.v1` with a sample run export package, zip archive, retrieval proof, formal golden-suite benchmark command packet, and completed benchmark output artifact proof. Target-environment exports and durable benchmark publication remain deployment-specific evidence. |
 | Reference architectures | private staging | Initial active-path packet exists in `docs/reference-architectures.md` for local stack, single-VM private deployment, Kubernetes platform teams, private cloud/VPC-only, GPU/AI infrastructure, regulated enterprise, and air-gapped/offline-adjacent shapes; Helm, Terraform, marketplace, and ingress-controller-specific packages remain. |
+| Hardened production arena builder | private staging | Needed. Should produce a declared deployment profile, component graph, image/chart source refs, digest pins, SBOM/provenance/attestation refs, RBAC and network boundaries, secret policy, Mesh probe curriculum, failure-mode pack, cleanup path, and readiness proof checklist. Docker Hardened Images and charts can be preferred supply-chain inputs when available, but the full catalog should be imported as machine-readable registry data rather than copied into prose. The arena is not validated until Mesh observes target health, readiness, feedback, audit, rollback, and release-packet evidence. |
 | Startup and developer evaluation path | private staging | Five-minute and thirty-minute paths are documented in `docs/evaluation-kits.md`; `scripts/generate_evaluation_kit_packet.py` creates the local sample export artifact and benchmark handoff packet. Target-environment sample exports remain deployment-specific. |
 | Community and open-source motion | private staging | Governance and community/commercial boundaries are documented in `docs/community-governance.md`; issue templates and example catalog remain. |
 | Cloud and ecosystem marketplaces | production expansion | Need packaging for Docker, Helm, Terraform, Kubernetes, and major cloud marketplace listings once production controls are real. |
@@ -255,15 +259,16 @@ Exit gates:
 
 ## Production Test Environments
 
-Use three lanes, not one shared environment:
+Use four lanes, not one shared environment:
 
 | Lane | Purpose | Mutations allowed |
 | --- | --- | --- |
 | Local stack | fast full-system proof with disposable k3s | Yes, inside compose-only namespace. |
+| Hardened production arena | user-shaped production-like system for Mesh probing, one-person projects, startup trials, and enterprise rehearsal | Yes, only inside the declared arena environment, namespaces, accounts, and cleanup scope. |
 | Private staging | real integrations and real operators without customer impact | Approval-gated staging actions only. |
 | Production pilot | narrow real-user environment | Approval-gated actions on approved services only. |
 
-The production pilot must start in recommendation/approval mode. Autonomy is earned per action class, not enabled globally.
+The hardened arena is a testing and service-delivery surface, not a shortcut to production claims. The production pilot must start in recommendation/approval mode. Autonomy is earned per action class, not enabled globally.
 
 ## Product Quality Priorities
 
@@ -280,6 +285,7 @@ These features make the product harder to dismiss because they expose proof inst
 | 7 | Trust ladder UI | Autonomy must be earned per action and service, with the current ceiling visible to operators. |
 | 8 | Run export package | Teams need portable postmortem evidence for reviews, audits, and vendor/customer conversations. |
 | 9 | Kill-switch panel | Operators need immediate authority to stop watchers, live execution, namespaces, action classes, and autonomy. |
+| 10 | Hardened arena builder | Practitioners should be able to spin up a realistic system, let Mesh probe it, and leave with proof packets instead of a hand-built demo environment. |
 
 Do not add product surfaces that obscure the core loop. Every new screen or API must reinforce one of three jobs: prove what happened, constrain what can happen next, or help an operator make a bounded decision.
 
@@ -303,6 +309,7 @@ Required artifacts:
 - a five-minute flagship demo path that starts from a real signal and ends with evidence, decision, approval, execution, feedback, and export;
 - a design-partner pilot brief with scope, success metrics, timeline, staffing, support, rollback, data handling, and proof artifacts;
 - reference deployments for local compose, single VM, Kubernetes, private VPC, and air-gapped/offline-adjacent operation;
+- hardened production-arena blueprints for single-person projects, startup SaaS, platform teams, AI infrastructure, and regulated/VPC-only evaluation;
 - a deployment compatibility matrix that prevents Docker-alternative and Kubernetes-alternative names from becoming false support claims;
 - a fork-in plan for the provenance-recorded `agentic-operator-core-main/` source input that converts Kubernetes-agent-runtime assets into Orbital Mesh authority contracts;
 - an OpenAPI or equivalent API contract bundle for platform teams that want to inspect integrations before running the stack;
@@ -318,7 +325,7 @@ Do not treat "enterprise" as one market. The product has to enter through multip
 | Segment | First buyer or user | First value | Required packaging |
 | --- | --- | --- | --- |
 | Individual SRE / platform engineer | Practitioner | Reproduce a production-like failure and inspect the evidence graph locally. | Community image, sample fixtures, five-minute demo, run export. |
-| Startup engineering team | Founder, CTO, infra lead | Add an approval-gated remediation control plane before hiring a full SRE team. | Startup/team tier, simple deployment, Slack/PagerDuty/GitHub path, opinionated defaults. |
+| One-person project / startup engineering team | Founder, CTO, infra lead | Spin up a hardened default stack and add an approval-gated remediation control plane before hiring a full SRE team. | Startup/team tier, simple deployment, hardened arena defaults, Slack/PagerDuty/GitHub path, opinionated cleanup and proof export. |
 | AI-native startup | AI infra lead | Keep expensive model-serving and agentic workflows bounded, observable, and reviewable. | GPU/AI reference architecture, model-serving lane, capacity and cost telemetry. |
 | Open-source / cloud-native community | Maintainer, contributor | Transparent policy and evidence model that can be inspected, extended, and trusted. | Public examples, contribution guide, plugin surface, roadmap, issue templates. |
 | Mid-market SaaS | VP Engineering, platform lead | Standardize incident response and rollback discipline across teams. | SSO-ready deployment, audit export, connector matrix, run export, support path. |
@@ -356,6 +363,7 @@ This is the extra layer that prevents the roadmap from failing under ordinary pr
 | Security | Threat model every ingress, secret, sandbox, file export, and actuator. Red-team prompt injection and tool-confusion paths as authority attacks, not only model-quality bugs. |
 | Privacy | Classify and redact production logs, prompts, traces, model outputs, vault notes, and exported bundles before retention or training reuse. |
 | Supply chain | Pin and attest build inputs. Record SBOM, vulnerability scan, image digest, dependency lock, policy hashes, and migration version in every release packet. |
+| Hardened component catalog | Treat hardened images and charts as preferred ingredients, not as proof of system compliance. Pin by digest, bind SBOM/provenance/attestation refs, verify chart values, and still require runtime smoke, readiness, feedback, audit, rollback, and release-packet evidence. |
 | Deployment compatibility | Keep the runtime contract at the OCI image, env/secret, network, persistence, ingress, readiness, audit, and release-packet layer. Do not add target-specific shortcuts that bypass authority gates. |
 | Forked operator substrate | Preserve source provenance and license notices. Fork CRDs, controllers, Helm, Argo, MCP, LiteLLM, metering, and network policy only after each piece is renamed, threat-modeled, and wired through Orbital Mesh authority checks. |
 | Recovery | Rehearse restore, key rotation, kill switch, watcher pause, bad-policy rollback, corrupted event replay, and state-store failover before pilot expansion. |
@@ -390,6 +398,7 @@ Most agent systems optimize for broader autonomy. Mesh optimizes for accountable
 - No autonomous action without allowlists, policy pass, evaluation pass, rollback metadata, and trust-ladder evidence.
 - No production claim for an adapter classified as unfinished in `docs/integrations.md`.
 - No validated deployment claim for a runtime, orchestrator, or managed platform without target-specific health, readiness, persistence, feedback, audit, rollback, and release-packet evidence.
+- No hardened-image or hardened-chart claim may be promoted into whole-system compliance without deployment-specific proof.
 - No imported `agentic-operator-core-main/` code in the active runtime without source availability, source provenance, license preservation, renamed contracts, authority-gate adaptation, and focused tests.
 - No public kagent or competitor claim from the NineVigil source material until independently verified.
 - No broad blast-radius pilot. Start with one environment, one namespace, one service class, and approval gates.
@@ -418,9 +427,10 @@ This list is current-work guidance. Items already implemented stay here only as 
 14. Keep kill-switch controls available before any production pilot and rehearse them in the target environment.
 15. Package the enterprise evaluation kit and reference architectures from actual working paths, including `mesh.evaluation_kit_packet.v1` sample export and benchmark handoff evidence.
 16. Keep the deployment compatibility matrix honest: Docker Compose and Kubernetes are validated paths; OCI/container runtime compatibility is supported by contract; non-core platforms remain recipes or not planned until proven.
-17. Package the provenance-recorded agentic-operator fork-in plan and import the first contract slice only after source availability, provenance, rename, authority-gate, and test requirements are explicit.
-18. Keep the startup/developer evaluation path reproducible with a five-minute demo, thirty-minute staging guide, and generated sample exported run packet.
-19. Keep community/open-source contribution and governance docs aligned with the commercial boundary.
-20. Complete target design-partner packets with pilot scope, success metrics, data handling, rollback, and support model.
-21. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
-22. Write the pilot go/no-go record from observed evidence, not intent.
+17. Define the hardened production-arena builder as a deployment-profile registry plus generator before adding runtime controls; each profile must name component choices, authority boundaries, proof requirements, cleanup, and what Mesh is allowed to probe.
+18. Package the provenance-recorded agentic-operator fork-in plan and import the first contract slice only after source availability, provenance, rename, authority-gate, and test requirements are explicit.
+19. Keep the startup/developer evaluation path reproducible with a five-minute demo, thirty-minute staging guide, and generated sample exported run packet.
+20. Keep community/open-source contribution and governance docs aligned with the commercial boundary.
+21. Complete target design-partner packets with pilot scope, success metrics, data handling, rollback, and support model.
+22. Run the all-in-one compose smoke, web e2e, prod smoke, and selected Python suites on the final staged diff.
+23. Write the pilot go/no-go record from observed evidence, not intent.

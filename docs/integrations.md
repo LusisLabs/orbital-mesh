@@ -62,7 +62,7 @@ If `setup_integrations.py` has already written a command into `.mesh-runtime-sta
 
 Set `MESH_DISABLE_GOOSE_AUTODISCOVERY=1` for hermetic local or CI tests that must not discover and probe a host-installed Goose binary. Explicit `MESH_GOOSE_COMMAND` values and saved integration commands still take precedence; the flag only disables PATH-based autodiscovery.
 
-Set `GOOSE_DISABLE_KEYRING=1` alongside that test guard when an explicit Goose command is deliberately exercised under tests; this prevents Goose itself from reading macOS Keychain/keyring-backed credentials.
+Mesh sets `GOOSE_DISABLE_KEYRING=1` on every repo-owned Goose subprocess path, including readiness probes, Goose bridge runs, LLM fallback, escalation reasoning, and vault postprocessing. Keep that variable set for any manual Goose command launched from this checkout so Goose cannot read macOS Keychain/keyring-backed credentials.
 
 `MESH_AGENT_FABRIC_MODE` is not stored in `.mesh-runtime-state/integrations.json`; it is runtime config only and defaults to `native`.
 

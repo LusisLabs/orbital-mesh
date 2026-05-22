@@ -118,6 +118,7 @@ class TestEscalationReasoner(unittest.TestCase):
         self.assertEqual(result.suggested_action, "restart_deployment")
         self.assertAlmostEqual(result.confidence, 0.82)
         self.assertEqual(len(result.reasoning_chain), 2)
+        self.assertEqual(mock_run.call_args.kwargs["env"]["GOOSE_DISABLE_KEYRING"], "1")
 
     @patch("services.decision.llm_reasoning.subprocess.run")
     def test_rejects_disallowed_action(self, mock_run):

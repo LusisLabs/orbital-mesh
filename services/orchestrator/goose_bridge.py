@@ -11,6 +11,7 @@ from pathlib import Path
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision, log_runtime_event
+from shared.mesh_runtime.goose_credentials import goose_subprocess_env
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
@@ -386,10 +387,7 @@ def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
 
 
 def _command_env(provider: str | None) -> dict[str, str]:
-    env = os.environ.copy()
-    if env.get("MESH_DISABLE_GOOSE_AUTODISCOVERY", "").lower() in ("1", "true", "yes"):
-        env.setdefault("GOOSE_DISABLE_KEYRING", "1")
-    return env
+    return goose_subprocess_env()
 
 
 def _parse_review_text(text: str) -> dict[str, object]:

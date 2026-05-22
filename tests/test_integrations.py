@@ -14,7 +14,9 @@ from services.orchestrator.goose_adapter import GooseCliAdapter
 from services.orchestrator.goose_bridge import _command_env, _parse_review_text, _profile_timeout_seconds, _run_goose_prompt
 from services.orchestrator.hermes_bridge import _hermes_chat_timeout_seconds
 from shared.mesh_runtime import RuntimeConfig, resolve_integrations_config
+from shared.mesh_runtime.goose_credentials import goose_subprocess_env
 from shared.mesh_runtime.integrations import build_readiness
+from shared.mesh_runtime.postprocessing import VaultAiPostprocessor
 
 
 class IntegrationsTests(unittest.TestCase):
@@ -378,6 +380,20 @@ class IntegrationsTests(unittest.TestCase):
             env = _command_env(None)
         self.assertEqual(env["GOOSE_DISABLE_KEYRING"], "1")
 
+    def test_goose_subprocess_env_always_disables_keyring(self) -> None:
+        env = goose_subprocess_env({"GOOSE_DISABLE_KEYRING": "0", "OTHER": "value"})
+
+        self.assertEqual(env["GOOSE_DISABLE_KEYRING"], "1")
+        self.assertEqual(env["OTHER"], "value")
+
+    def test_vault_postprocessor_goose_env_disables_keyring(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            postprocessor = VaultAiPostprocessor(temp_dir, RuntimeConfig(state_directory=temp_dir))
+
+            env = postprocessor._command_env("openai")
+
+        self.assertEqual(env["GOOSE_DISABLE_KEYRING"], "1")
+
     def test_promptfoo_output_parser_supports_current_results_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             results_path = Path(temp_dir) / "results.json"
@@ -547,7 +563,7 @@ class IntegrationsTests(unittest.TestCase):
         self.assertEqual(calls[1][calls[1].index("--provider") + 1], "openai")
 
     def test_goose_cli_adapter_uses_configured_timeout_budget(self) -> None:
-        observed: dict[str, int | float | None] = {"timeout": None}
+        observed: dict[str, object] = {"timeout": None}
 
         def fake_run(
             args: list[str],
@@ -557,8 +573,10 @@ class IntegrationsTests(unittest.TestCase):
             cwd: Path | str | None = None,
             check: bool = False,
             timeout: int | float | None = None,
+            env: dict[str, str] | None = None,
         ) -> subprocess.CompletedProcess[str]:
             observed["timeout"] = timeout
+            observed["keyring"] = (env or {}).get("GOOSE_DISABLE_KEYRING")
             return subprocess.CompletedProcess(
                 args=args,
                 returncode=0,
@@ -571,6 +589,7 @@ class IntegrationsTests(unittest.TestCase):
             result = adapter._invoke({"mode": "execute", "decision": {}, "idempotency_key": "k"})
 
         self.assertEqual(observed["timeout"], 180)
+        self.assertEqual(observed["keyring"], "1")
         self.assertEqual(result["status"], "succeeded")
 
     def test_goose_bridge_run_timeout_env_overrides_provider_timeouts(self) -> None:

@@ -24,9 +24,27 @@ PRAXIS_CERTIFICATION_BINDING_VERSION = "praxis.certification_binding.v1"
 PRAXIS_E2E_PROOF_PACKET_VERSION = "praxis.e2e_proof_packet.v1"
 PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION = "praxis.managed_dry_run_runtime.v1"
 PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE = "praxis.managed-dry-run-runtime.v1"
+PRAXIS_DOCKER_DYNAMIC_MCP_BRIDGE_VERSION = "praxis.docker_dynamic_mcp_bridge.v1"
+DOCKER_DYNAMIC_MCP_DOC_URL = "https://docs.docker.com/ai/mcp-catalog-and-toolkit/dynamic-mcp/"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RAW_SECRET_KEY_RE = re.compile(r"(api[_-]?key|authorization|bearer|client[_-]?secret|cookie|kubeconfig|password|private[_-]?key|token)", re.IGNORECASE)
 _SECRET_VALUE_RE = re.compile(r"(Bearer\s+(?!REDACTED)[A-Za-z0-9._~+/=-]{12,}|sk-[A-Za-z0-9]{12,})")
+_DOCKER_DYNAMIC_MCP_MANAGEMENT_TOOLS = (
+    "mcp-find",
+    "mcp-add",
+    "mcp-config-set",
+    "mcp-remove",
+    "mcp-exec",
+    "code-mode",
+)
+_DOCKER_DYNAMIC_MCP_ALLOWED_TOOLS = ("mcp-find",)
+_DOCKER_DYNAMIC_MCP_BLOCKED_TOOLS = (
+    "mcp-add",
+    "mcp-config-set",
+    "mcp-remove",
+    "mcp-exec",
+    "code-mode",
+)
 
 
 def build_praxis_source_bundle(
@@ -442,6 +460,10 @@ def build_praxis_product_dashboard() -> dict[str, Any]:
             "mcp_endpoint_ref": "mcp-dry-run://praxis-demo-generated-mcp",
             "credential_boundary": "runtime-secret://praxis/generated-mcp",
             "revocation_ref": certification_binding["revocation"]["revocation_ref"],
+            "docker_dynamic_mcp_bridge": _docker_dynamic_mcp_bridge(
+                runtime_status="running",
+                connector_id=certification_binding["connector_id"],
+            ),
             "controls": [
                 {
                     "control_id": "start_dry_run",
@@ -487,11 +509,12 @@ class PraxisManagedRuntimeStore:
     def list_records(self, *, scope: dict[str, str] | None = None) -> dict[str, Any]:
         with LockedJsonFile(self.path) as payload:
             store = _managed_runtime_store(payload)
-            records = [
-                _record_copy(record)
-                for record in store["records"].values()
-                if _record_in_scope(record, scope)
-            ]
+            records = []
+            for record in store["records"].values():
+                if not _record_in_scope(record, scope):
+                    continue
+                _ensure_docker_dynamic_mcp_bridge(record)
+                records.append(_record_copy(record))
         records.sort(key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""), reverse=True)
         return {
             "schema_version": PRAXIS_MANAGED_DRY_RUN_RUNTIME_VERSION,
@@ -505,16 +528,18 @@ class PraxisManagedRuntimeStore:
             record = store["records"].get(request_id)
             if not record or not _record_in_scope(record, scope):
                 return None
+            _ensure_docker_dynamic_mcp_bridge(record)
             return _record_copy(record)
 
     def build_product_dashboard(self, *, scope: dict[str, str] | None = None) -> dict[str, Any]:
         with LockedJsonFile(self.path) as payload:
             store = _managed_runtime_store(payload)
-            records = [
-                _record_copy(record)
-                for record in store["records"].values()
-                if _record_in_scope(record, scope)
-            ]
+            records = []
+            for record in store["records"].values():
+                if not _record_in_scope(record, scope):
+                    continue
+                _ensure_docker_dynamic_mcp_bridge(record)
+                records.append(_record_copy(record))
         records.sort(key=lambda record: str(record.get("updated_at") or record.get("created_at") or ""), reverse=True)
         latest = records[0] if records else None
         if latest is None:
@@ -689,9 +714,20 @@ class PraxisManagedRuntimeStore:
             certified = _certified_tool_ids(binding)
             if not certified:
                 raise ValueError("at least one read-only certified tool is required before dry-run start")
+            bridge_payload = payload.get("docker_dynamic_mcp_bridge")
+            if bridge_payload is not None and not isinstance(bridge_payload, dict):
+                raise ValueError("docker_dynamic_mcp_bridge must be an object")
             runtime = _dry_run_runtime_for_binding(binding, status="running")
             runtime["started_at"] = _timestamp()
             runtime["mcp_endpoint_ref"] = str(payload.get("mcp_endpoint_ref") or f"mcp-dry-run://{binding['connector_id']}")
+            if payload.get("docker_dynamic_mcp_gateway_ref"):
+                runtime["docker_dynamic_mcp_bridge"]["gateway_ref"] = str(payload["docker_dynamic_mcp_gateway_ref"])
+            if isinstance(bridge_payload, dict):
+                runtime["docker_dynamic_mcp_bridge"] = _validated_docker_dynamic_mcp_bridge_payload(
+                    bridge_payload,
+                    runtime_status="running",
+                    connector_id=str(binding["connector_id"]),
+                )
             record["dry_run_runtime"] = runtime
             record["status"] = "dry_run_running"
             _append_praxis_event(
@@ -854,6 +890,12 @@ class PraxisManagedRuntimeStore:
             if not isinstance(binding, dict):
                 raise ValueError("certification binding is required before revocation")
             runtime = dict(record.get("dry_run_runtime") or _dry_run_runtime_for_binding(binding, status="dry_run_ready"))
+            existing_bridge = runtime.get("docker_dynamic_mcp_bridge") if isinstance(runtime.get("docker_dynamic_mcp_bridge"), dict) else {}
+            revoked_bridge = _docker_dynamic_mcp_bridge(runtime_status="revoked", connector_id=str(binding["connector_id"]))
+            if existing_bridge.get("gateway_ref"):
+                revoked_bridge["gateway_ref"] = existing_bridge["gateway_ref"]
+            if existing_bridge.get("catalog_ref"):
+                revoked_bridge["catalog_ref"] = existing_bridge["catalog_ref"]
             runtime.update(
                 {
                     "status": "revoked",
@@ -861,6 +903,7 @@ class PraxisManagedRuntimeStore:
                     "revocation_reason": str(payload.get("reason") or "operator_revocation"),
                     "mcp_endpoint_ref": None,
                     "managed_runtime_deployed": False,
+                    "docker_dynamic_mcp_bridge": revoked_bridge,
                     "controls": _dry_run_controls(status="revoked", connector_id=str(binding["connector_id"])),
                 }
             )
@@ -930,6 +973,7 @@ class PraxisManagedRuntimeStore:
                 raise KeyError(request_id)
             mutate(record)
             record["updated_at"] = _timestamp()
+            _ensure_docker_dynamic_mcp_bridge(record)
             _refresh_p10_proof(record)
             return _record_copy(record)
 
@@ -1230,6 +1274,7 @@ def _refresh_p10_proof(record: dict[str, Any]) -> None:
     events = record.get("audit_events") or []
     event_types = {event.get("event_type") for event in events if isinstance(event, dict)}
     runtime = record.get("dry_run_runtime") if isinstance(record.get("dry_run_runtime"), dict) else {}
+    bridge = runtime.get("docker_dynamic_mcp_bridge") if isinstance(runtime.get("docker_dynamic_mcp_bridge"), dict) else {}
     checks = {
         "source_upload_bound": isinstance(record.get("source_bundle"), dict),
         "generated_tools_bound": bool((record.get("generated_contract") or {}).get("tool_candidates")),
@@ -1239,6 +1284,11 @@ def _refresh_p10_proof(record: dict[str, Any]) -> None:
         "tool_call_audit_event_bound": "praxis.dry_run_tool_called" in event_types,
         "revocation_bound": "praxis.generated_connector_revoked" in event_types,
         "managed_runtime_deploy_blocked": runtime.get("managed_runtime_deployed") is False,
+        "docker_dynamic_mcp_bridge_bound": _docker_dynamic_mcp_bridge_is_bound(bridge),
+        "dynamic_servers_session_scoped": bridge.get("session_only") is True,
+        "dynamic_profile_persistence_blocked": bridge.get("profile_persisted") is False,
+        "docker_code_mode_blocked": bridge.get("code_mode_enabled") is False and "code-mode" in set(bridge.get("blocked_management_tools") or []),
+        "bridge_catalog_allowlist_bound": bool(bridge.get("allowed_server_ids")),
     }
     record["p10_proof_packet"] = {
         "schema_version": "praxis.managed_dry_run_proof_packet.v1",
@@ -1276,6 +1326,7 @@ def _initial_dry_run_runtime() -> dict[str, Any]:
         "certified_tool_ids": [],
         "denied_tool_ids": [],
         "approval_required_tool_ids": [],
+        "docker_dynamic_mcp_bridge": _docker_dynamic_mcp_bridge(runtime_status="not_started", connector_id=None),
         "controls": _dry_run_controls(status="not_started", connector_id=None),
     }
 
@@ -1294,8 +1345,130 @@ def _dry_run_runtime_for_binding(certification_binding: dict[str, Any], *, statu
         "certified_tool_ids": _certified_tool_ids(certification_binding),
         "denied_tool_ids": _denied_tool_ids(certification_binding),
         "approval_required_tool_ids": _approval_required_tool_ids(certification_binding),
+        "docker_dynamic_mcp_bridge": _docker_dynamic_mcp_bridge(runtime_status=status, connector_id=connector_id),
         "controls": _dry_run_controls(status=status, connector_id=connector_id),
     }
+
+
+def _docker_dynamic_mcp_bridge(*, runtime_status: str, connector_id: str | None) -> dict[str, Any]:
+    bridge_status = "not_started"
+    if runtime_status == "dry_run_ready":
+        bridge_status = "ready"
+    elif runtime_status == "running":
+        bridge_status = "active"
+    elif runtime_status == "revoked":
+        bridge_status = "revoked"
+    allowed_server_ids = [connector_id] if connector_id else []
+    return {
+        "schema_version": PRAXIS_DOCKER_DYNAMIC_MCP_BRIDGE_VERSION,
+        "state_slice": PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE,
+        "status": bridge_status,
+        "provider": "docker_mcp_toolkit",
+        "catalog": "docker_mcp_catalog",
+        "catalog_ref": "docker-mcp-catalog://default",
+        "documentation_ref": DOCKER_DYNAMIC_MCP_DOC_URL,
+        "gateway_ref": "docker-mcp-gateway://current-session",
+        "session_only": True,
+        "profile_persisted": False,
+        "connector_ref": connector_id,
+        "allowed_server_ids": allowed_server_ids,
+        "allowed_management_tools": list(_DOCKER_DYNAMIC_MCP_ALLOWED_TOOLS),
+        "blocked_management_tools": list(_DOCKER_DYNAMIC_MCP_BLOCKED_TOOLS),
+        "code_mode_enabled": False,
+        "credentials_boundary": "docker-mcp-gateway://credentials",
+        "side_effects_executed": False,
+        "management_tools": [
+            {
+                "name": tool_name,
+                "scope": "session_management" if tool_name != "code-mode" else "sandboxed_composition",
+                "enabled": tool_name in _DOCKER_DYNAMIC_MCP_ALLOWED_TOOLS,
+            }
+            for tool_name in _DOCKER_DYNAMIC_MCP_MANAGEMENT_TOOLS
+        ],
+        "prerequisites": [
+            "Docker Desktop 4.50 or later",
+            "Docker MCP Toolkit enabled",
+            "MCP client connected to the Docker MCP Gateway",
+            "dynamic-tools feature enabled",
+        ],
+        "security": {
+            "catalog_servers_built_signed_maintained_by_docker": True,
+            "servers_run_in_isolated_containers": True,
+            "restricted_container_resources": True,
+            "gateway_managed_credentials": True,
+            "code_mode_isolated_sandbox": True,
+        },
+        "authority": {
+            "mesh_owns_certification": True,
+            "mesh_owns_revocation": True,
+            "docker_dynamic_mcp_grants_runtime_authority": False,
+            "dynamically_added_servers_are_candidates_until_certified": True,
+        },
+    }
+
+
+def _validated_docker_dynamic_mcp_bridge_payload(
+    payload: dict[str, Any],
+    *,
+    runtime_status: str,
+    connector_id: str,
+) -> dict[str, Any]:
+    bridge = _docker_dynamic_mcp_bridge(runtime_status=runtime_status, connector_id=connector_id)
+    if payload.get("session_only") is False:
+        raise ValueError("Docker Dynamic MCP bridge must be session scoped")
+    if payload.get("profile_persisted") is True or payload.get("persists_to_profile") is True:
+        raise ValueError("Docker Dynamic MCP bridge must not persist dynamic servers to a profile")
+    if payload.get("code_mode_enabled") is True:
+        raise ValueError("Docker Dynamic MCP code-mode is blocked for Praxis dry-run runtime")
+    if payload.get("gateway_ref"):
+        gateway_ref = str(payload["gateway_ref"])
+        if not gateway_ref.startswith("docker-mcp-gateway://"):
+            raise ValueError("docker_dynamic_mcp_bridge.gateway_ref must use docker-mcp-gateway://")
+        bridge["gateway_ref"] = gateway_ref
+    if payload.get("catalog_ref"):
+        catalog_ref = str(payload["catalog_ref"])
+        if not catalog_ref.startswith("docker-mcp-catalog://"):
+            raise ValueError("docker_dynamic_mcp_bridge.catalog_ref must use docker-mcp-catalog://")
+        bridge["catalog_ref"] = catalog_ref
+    if "allowed_server_ids" in payload:
+        allowed = payload["allowed_server_ids"]
+        if not isinstance(allowed, list) or any(not isinstance(item, str) or not item for item in allowed):
+            raise ValueError("docker_dynamic_mcp_bridge.allowed_server_ids must be a list of strings")
+        if connector_id not in set(allowed):
+            raise ValueError("Docker Dynamic MCP bridge must allowlist the generated connector id")
+        bridge["allowed_server_ids"] = sorted(set(allowed))
+    return bridge
+
+
+def _ensure_docker_dynamic_mcp_bridge(record: dict[str, Any]) -> None:
+    runtime = record.get("dry_run_runtime")
+    if not isinstance(runtime, dict):
+        return
+    bridge = runtime.get("docker_dynamic_mcp_bridge")
+    if isinstance(bridge, dict) and _docker_dynamic_mcp_bridge_is_bound(bridge):
+        return
+    runtime["docker_dynamic_mcp_bridge"] = _docker_dynamic_mcp_bridge(
+        runtime_status=str(runtime.get("status") or "not_started"),
+        connector_id=runtime.get("connector_id") if runtime.get("connector_id") else None,
+    )
+
+
+def _docker_dynamic_mcp_bridge_is_bound(bridge: dict[str, Any]) -> bool:
+    authority = bridge.get("authority") if isinstance(bridge.get("authority"), dict) else {}
+    tools = bridge.get("management_tools") if isinstance(bridge.get("management_tools"), list) else []
+    tool_names = {str(tool.get("name")) for tool in tools if isinstance(tool, dict)}
+    blocked = set(bridge.get("blocked_management_tools") if isinstance(bridge.get("blocked_management_tools"), list) else [])
+    return (
+        bridge.get("schema_version") == PRAXIS_DOCKER_DYNAMIC_MCP_BRIDGE_VERSION
+        and bridge.get("state_slice") == PRAXIS_MANAGED_DRY_RUN_RUNTIME_STATE_SLICE
+        and bridge.get("provider") == "docker_mcp_toolkit"
+        and bridge.get("session_only") is True
+        and bridge.get("profile_persisted") is False
+        and bridge.get("code_mode_enabled") is False
+        and set(_DOCKER_DYNAMIC_MCP_MANAGEMENT_TOOLS).issubset(tool_names)
+        and set(_DOCKER_DYNAMIC_MCP_BLOCKED_TOOLS).issubset(blocked)
+        and authority.get("docker_dynamic_mcp_grants_runtime_authority") is False
+    )
 
 
 def _dry_run_controls(*, status: str, connector_id: str | None) -> list[dict[str, Any]]:

@@ -67,6 +67,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from shared.mesh_runtime import RuntimeConfig
+from shared.mesh_runtime.goose_credentials import goose_subprocess_env
 from shared.mesh_runtime.metric_action_rules import RuleMatch
 
 
@@ -217,6 +218,7 @@ class LlmActionProposer:
                 text=True,
                 check=False,
                 timeout=self.config.llm_decision_fallback_timeout_seconds,
+                env=goose_subprocess_env(),
             )
         except subprocess.TimeoutExpired as exc:
             raise _GooseInvocationError("llm_timeout", f"goose run timed out: {exc}") from exc

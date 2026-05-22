@@ -336,6 +336,10 @@ type PraxisProductModel = {
   certifiedTools: string;
   deniedTools: string;
   mcpEndpoint: string;
+  dockerDynamicMcpStatus: string;
+  dockerDynamicMcpGateway: string;
+  dockerDynamicMcpToolCount: string;
+  dockerDynamicMcpSession: string;
   runtimeStatus: string;
   managedRuntime: boolean;
   blockerCount: number;
@@ -1740,13 +1744,14 @@ function PraxisHomeModule({ model, setView }: { model: PraxisProductModel; setVi
       <div className="praxis-home-copy">
         <span>Praxis Agent-Tool Mesh</span>
         <h2>Generate MCP tools, certify scopes, then expose only the dry-run pilot runtime Mesh admits.</h2>
-        <p>OpenAPI, SOP, traffic refs, Akto evidence, ACP supervision, certification, revocation, and proof packet are bound into one product path.</p>
+        <p>OpenAPI, SOP, traffic refs, Akto evidence, ACP supervision, Docker Dynamic MCP session discovery, certification, revocation, and proof packet are bound into one product path.</p>
       </div>
       <div className="praxis-home-grid">
         <PraxisStat label="Live runs" value={model.runCount} detail={model.requestId ? `latest ${model.requestId}` : "team-scoped runtime state"} />
         <PraxisStat label="Proof packet" value={model.proofStatus} detail={model.status} />
         <PraxisStat label="Sources" value={model.sourcePackets} detail="redacted source packets" />
         <PraxisStat label="Tools" value={model.toolCandidates} detail={`${model.certifiedTools} certified / ${model.deniedTools} denied`} />
+        <PraxisStat label="Docker Dynamic MCP" value={model.dockerDynamicMcpStatus} detail={model.dockerDynamicMcpSession} />
         <PraxisStat label="Runtime" value={model.runtimeStatus} detail={model.managedRuntime ? "managed runtime deployed" : "dry-run only"} />
       </div>
       <div className="praxis-home-actions">
@@ -1933,7 +1938,7 @@ function PraxisView({
     <div className="content-stack">
       <Toolbar
         title="Praxis MCP Generator"
-        detail="Generate candidate MCP tools from source packets, import Akto evidence, bind Mesh certification, and keep pilot runtime dry-run until production proof exists."
+        detail="Generate candidate MCP tools from source packets, import Akto evidence, bind Mesh certification, and expose Docker Dynamic MCP as a session-only dry-run bridge."
         action="Back Home"
         onAction={() => setView("home")}
       />
@@ -1995,6 +2000,11 @@ function PraxisView({
           <span>Dry-run endpoint</span>
           <strong>{model.mcpEndpoint}</strong>
           <small>Agents can only use certified tool scopes.</small>
+        </div>
+        <div className="praxis-stage">
+          <span>Docker Dynamic MCP</span>
+          <strong>{model.dockerDynamicMcpGateway}</strong>
+          <small>{model.dockerDynamicMcpToolCount} management tool(s); {model.dockerDynamicMcpSession}.</small>
         </div>
       </section>
       <section className="praxis-lanes" aria-label="Praxis product lanes">
@@ -2069,6 +2079,7 @@ function PraxisJourney({ model, sourcePackets, securityFindings }: { model: Prax
     { label: "Candidate Tools", value: `${model.toolCandidates} candidate(s)`, detail: "Generated MCP tools stay candidates until Mesh certification." },
     { label: "Security Evidence", value: `${securityFindings} finding(s)`, detail: "Akto evidence is advisory and cannot grant authority." },
     { label: "Certification", value: `${model.certifiedTools}/${model.deniedTools}`, detail: "Read-only scopes can be admitted; unsafe mutations stay denied." },
+    { label: "Docker Dynamic MCP", value: model.dockerDynamicMcpStatus, detail: "Gateway discovery is session-scoped; Praxis keeps generated tools dry-run only." },
     { label: "Dry-run MCP", value: model.runtimeStatus, detail: "Calls are audited and side effects stay disabled." },
     { label: "Operator Decision", value: model.proofStatus, detail: "Approval evidence is bound into proof, not inferred from UI state." },
     { label: "Proof Packet", value: model.proofStatus, detail: "P10 export binds source, tools, evidence, certification, runtime, and revocation." },
@@ -2237,7 +2248,7 @@ export function buildDashboardTiles(dashboard: DashboardPayload): DashboardTileM
     },
     {
       title: "Praxis MCP generator",
-      detail: `${praxis.certifiedTools} read-only / ${praxis.deniedTools} denied`,
+      detail: `Docker Dynamic MCP dry-run: ${praxis.certifiedTools} read-only / ${praxis.deniedTools} denied`,
       icon: Sparkles,
       view: "praxis" as ViewKey,
       apiSection: "mesh.praxis",
@@ -2426,6 +2437,8 @@ export function buildPraxisProductModel(dashboard: DashboardPayload): PraxisProd
   const proof = praxis.p10_proof_packet || praxis.proof_packet || {};
   const readiness = proof.mcp_readiness || {};
   const runtime = praxis.pilot_runtime || {};
+  const dockerBridge = runtime.docker_dynamic_mcp_bridge || {};
+  const dockerManagementTools = Array.isArray(dockerBridge.management_tools) ? dockerBridge.management_tools : [];
   const tools = Array.isArray(praxis.generated_contract?.tools) ? praxis.generated_contract.tools : [];
   const controls = Array.isArray(runtime.controls) ? runtime.controls : [];
   const blockers = Array.isArray(readiness.readiness_blockers) ? readiness.readiness_blockers : [];
@@ -2441,6 +2454,10 @@ export function buildPraxisProductModel(dashboard: DashboardPayload): PraxisProd
     certifiedTools: String(summary.certified_read_only_tools ?? readiness.certified_tool_ids?.length ?? 0),
     deniedTools: String(summary.denied_tools ?? readiness.denied_tool_ids?.length ?? 0),
     mcpEndpoint: String(runtime.mcp_endpoint_ref || "mcp-dry-run://unavailable"),
+    dockerDynamicMcpStatus: humanize(String(dockerBridge.status || "not_started")),
+    dockerDynamicMcpGateway: String(dockerBridge.gateway_ref || "docker-mcp-gateway://current-session"),
+    dockerDynamicMcpToolCount: String(dockerManagementTools.length),
+    dockerDynamicMcpSession: dockerBridge.session_only === true && dockerBridge.profile_persisted === false ? "session-only, not profile-persisted" : "profile posture unavailable",
     runtimeStatus: humanize(String(runtime.status || readiness.status || "blocked")),
     managedRuntime: Boolean(runtime.managed_runtime_deployed),
     blockerCount: blockers.length,

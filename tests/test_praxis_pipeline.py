@@ -284,12 +284,29 @@ class PraxisManagedDryRunRuntimeTests(unittest.TestCase):
 
             record = store.start_dry_run_endpoint(
                 "praxis-request-runtime-001",
-                {},
+                {
+                    "docker_dynamic_mcp_bridge": {
+                        "gateway_ref": "docker-mcp-gateway://praxis-runtime-test",
+                        "allowed_server_ids": ["praxis-runtime-generated-mcp"],
+                        "session_only": True,
+                        "profile_persisted": False,
+                        "code_mode_enabled": False,
+                    }
+                },
                 operator=operator,
                 scope=scope,
             )
             self.assertEqual(record["dry_run_runtime"]["status"], "running")
             self.assertEqual(record["dry_run_runtime"]["mcp_endpoint_ref"], "mcp-dry-run://praxis-runtime-generated-mcp")
+            bridge = record["dry_run_runtime"]["docker_dynamic_mcp_bridge"]
+            self.assertEqual(bridge["schema_version"], "praxis.docker_dynamic_mcp_bridge.v1")
+            self.assertEqual(bridge["gateway_ref"], "docker-mcp-gateway://praxis-runtime-test")
+            self.assertEqual(bridge["allowed_server_ids"], ["praxis-runtime-generated-mcp"])
+            self.assertEqual(bridge["allowed_management_tools"], ["mcp-find"])
+            self.assertIn("mcp-add", bridge["blocked_management_tools"])
+            self.assertFalse(bridge["code_mode_enabled"])
+            self.assertFalse(bridge["profile_persisted"])
+            self.assertTrue(bridge["session_only"])
 
             allowed_call = store.call_dry_run_tool(
                 "praxis-request-runtime-001",
@@ -318,11 +335,135 @@ class PraxisManagedDryRunRuntimeTests(unittest.TestCase):
             self.assertEqual(record["dry_run_runtime"]["status"], "revoked")
             self.assertEqual(record["p10_proof_packet"]["status"], "complete")
             self.assertTrue(record["p10_proof_packet"]["checks"]["revocation_bound"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["docker_dynamic_mcp_bridge_bound"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["dynamic_servers_session_scoped"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["dynamic_profile_persistence_blocked"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["docker_code_mode_blocked"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["bridge_catalog_allowlist_bound"])
 
             dashboard = store.build_product_dashboard(scope=scope)
             self.assertEqual(dashboard["state_slice"], "praxis.managed-dry-run-runtime.v1")
             self.assertEqual(dashboard["summary"]["runs"], 1)
             self.assertEqual(dashboard["pilot_runtime"]["status"], "revoked")
+            self.assertEqual(dashboard["pilot_runtime"]["docker_dynamic_mcp_bridge"]["status"], "revoked")
+
+    def test_managed_runtime_rejects_unsafe_docker_dynamic_mcp_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = PraxisManagedRuntimeStore(Path(tmp_dir) / "praxis" / "managed-dry-run-runtime.json")
+            scope = {"kind": "team", "id": "team_demo", "scope_id": "team:team_demo"}
+            operator = {"operator_id": "operator@example.com", "roles": ["admin"], "user_id": "usr_demo", "team_id": "team_demo"}
+
+            store.create_generation_request(
+                {
+                    "request_id": "praxis-request-bridge-policy-001",
+                    "sources": [
+                        {"source_type": "openapi", "source_ref": "fixtures/praxis/demo-openapi.redacted.json"},
+                        {"source_type": "postman_json", "source_ref": "fixtures/praxis/demo-postman.redacted.json"},
+                        {"source_type": "sop_markdown", "source_ref": "fixtures/praxis/demo-sop.redacted.md"},
+                        {"source_type": "redacted_traffic_ref", "source_ref": "fixtures/praxis/demo-traffic-ref.redacted.json"},
+                    ],
+                },
+                operator=operator,
+                scope=scope,
+            )
+            store.import_akto_evidence(
+                "praxis-request-bridge-policy-001",
+                {"evidence_id": "praxis-akto-bridge-policy-001", "akto_result_path": "fixtures/praxis/demo-akto-results.json"},
+                operator=operator,
+                scope=scope,
+            )
+            store.build_certification_binding(
+                "praxis-request-bridge-policy-001",
+                {
+                    "binding_id": "praxis-binding-bridge-policy-001",
+                    "connector_id": "praxis-bridge-policy-generated-mcp",
+                    "acp_session_id": "praxis-acp-bridge-policy-001",
+                },
+                operator=operator,
+                scope=scope,
+            )
+
+            with self.assertRaises(ValueError):
+                store.start_dry_run_endpoint(
+                    "praxis-request-bridge-policy-001",
+                    {
+                        "docker_dynamic_mcp_bridge": {
+                            "allowed_server_ids": ["praxis-bridge-policy-generated-mcp"],
+                            "session_only": True,
+                            "profile_persisted": False,
+                            "code_mode_enabled": True,
+                        }
+                    },
+                    operator=operator,
+                    scope=scope,
+                )
+
+    def test_mcp_json_rpc_lists_and_calls_only_certified_read_only_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            store = PraxisManagedRuntimeStore(Path(tmp_dir) / "praxis" / "managed-dry-run-runtime.json")
+            scope = {"kind": "team", "id": "team_demo", "scope_id": "team:team_demo"}
+            operator = {"operator_id": "operator@example.com", "roles": ["admin"], "user_id": "usr_demo", "team_id": "team_demo"}
+
+            store.create_generation_request(
+                {
+                    "request_id": "praxis-request-mcp-rpc-001",
+                    "sources": [
+                        {"source_type": "openapi", "source_ref": "fixtures/praxis/demo-openapi.redacted.json"},
+                        {"source_type": "postman_json", "source_ref": "fixtures/praxis/demo-postman.redacted.json"},
+                        {"source_type": "sop_markdown", "source_ref": "fixtures/praxis/demo-sop.redacted.md"},
+                        {"source_type": "redacted_traffic_ref", "source_ref": "fixtures/praxis/demo-traffic-ref.redacted.json"},
+                    ],
+                },
+                operator=operator,
+                scope=scope,
+            )
+            store.import_akto_evidence(
+                "praxis-request-mcp-rpc-001",
+                {"evidence_id": "praxis-akto-mcp-rpc-001", "akto_result_path": "fixtures/praxis/demo-akto-results.json"},
+                operator=operator,
+                scope=scope,
+            )
+            store.build_certification_binding(
+                "praxis-request-mcp-rpc-001",
+                {
+                    "binding_id": "praxis-binding-mcp-rpc-001",
+                    "connector_id": "praxis-mcp-rpc-generated-mcp",
+                    "acp_session_id": "praxis-acp-mcp-rpc-001",
+                },
+                operator=operator,
+                scope=scope,
+            )
+            store.start_dry_run_endpoint("praxis-request-mcp-rpc-001", {}, operator=operator, scope=scope)
+
+            initialized = store.mcp_json_rpc(
+                "praxis-request-mcp-rpc-001",
+                {"jsonrpc": "2.0", "id": "init", "method": "initialize"},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual(initialized["result"]["serverInfo"]["name"], "praxis-managed-dry-run-runtime")
+
+            listed = store.mcp_json_rpc(
+                "praxis-request-mcp-rpc-001",
+                {"jsonrpc": "2.0", "id": "list", "method": "tools/list"},
+                operator=operator,
+                scope=scope,
+            )
+            self.assertEqual([tool["name"] for tool in listed["result"]["tools"]], ["tool.listorders"])
+
+            called = store.mcp_json_rpc(
+                "praxis-request-mcp-rpc-001",
+                {
+                    "jsonrpc": "2.0",
+                    "id": "call",
+                    "method": "tools/call",
+                    "params": {"name": "tool.listorders", "arguments": {"dry_run_reason": "unit test"}},
+                },
+                operator=operator,
+                scope=scope,
+            )
+            self.assertFalse(called["result"]["isError"])
+            self.assertIn('"side_effects_executed": false', called["result"]["content"][0]["text"])
 
     def test_managed_runtime_rejects_raw_secret_source_uploads(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
