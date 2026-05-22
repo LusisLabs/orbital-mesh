@@ -197,6 +197,21 @@ flowchart LR
 
 ## Main Layers
 
+### pnpm Workspace
+
+The project uses a pnpm workspace with two roots:
+
+- `apps/mesh-webapp/` — the Remix dashboard shell (operator UI), a Trigger-derived non-authoritative migration surface
+- `internal-packages/mesh-contracts/` — TypeScript contract definitions shared across UI and control plane
+
+Commands:
+
+```bash
+pnpm --dir apps/mesh-webapp run dev   # development server
+pnpm --dir apps/mesh-webapp run build  # production build
+pnpm --dir internal-packages/mesh-contracts run build
+```
+
 ### Production boundary
 
 - Runtime entrypoints are `run_server.py` / `control_plane_server.py` for the HTTP API and static web app, `run_tui.py` for the local TUI, `run_first_slice.py` for direct pipeline execution, and the Docker image `CMD` which runs `setup_integrations.py` before `run_server.py`.
