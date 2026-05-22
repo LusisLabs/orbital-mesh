@@ -1,7 +1,22 @@
+/**
+ * Data loaders for the Mesh dashboard overview page.
+ *
+ * Provides functions for loading dashboard sections (runs, approvals, readiness, etc.)
+ * and helper utilities for forwarding headers and classifying response state.
+ *
+ * @module
+ */
+
+/** State slice identifier for dashboard overview state. */
 export const MESH_OPERATOR_OVERVIEW_STATE_SLICE = "mesh.operator_ui.overview";
 
+/** Possible states for a dashboard section. */
 type SectionState = "ready" | "empty" | "blocked" | "unauthorized" | "backend-unavailable" | "degraded";
 
+/**
+ * Wrapper for section data with loading state.
+ * @template T - Type of underlying data payload.
+ */
 export interface DashboardSection<T> {
   state: SectionState;
   data: T;
@@ -9,6 +24,7 @@ export interface DashboardSection<T> {
   statusCode?: number;
 }
 
+/** Summary of a run shown on the overview page. */
 export interface OverviewRun {
   run_id: string;
   scenario_key?: string | null;
@@ -19,6 +35,7 @@ export interface OverviewRun {
   updated_at?: string | null;
 }
 
+/** Approval entry for the overview page. */
 export interface OverviewApproval {
   queue_id?: string;
   run_id?: string;
@@ -28,6 +45,7 @@ export interface OverviewApproval {
   final_recommendation?: string | null;
 }
 
+/** Aggregated data for the overview dashboard page. */
 export interface OverviewDashboardData {
   stateSlice: typeof MESH_OPERATOR_OVERVIEW_STATE_SLICE;
   loadedAt: string;
@@ -48,6 +66,10 @@ const MESH_FORWARD_HEADERS = new Set([
   "x-mesh-operator-identity"
 ]);
 
+/**
+ * Loads all sections for the dashboard overview page.
+ * @param request - Incoming HTTP request with headers for forwarding.
+ */
 export async function loadOverviewDashboard(request: Request): Promise<OverviewDashboardData> {
   const [readiness, runs, approvals, killSwitch, connectorCertification] = await Promise.all([
     loadMeshResource<Record<string, unknown>>(request, "/resources/mesh/readiness", EMPTY_RECORD, dashboardRecordState),
@@ -83,6 +105,14 @@ export async function loadOverviewDashboard(request: Request): Promise<OverviewD
   };
 }
 
+/**
+ * Loads a single Mesh resource and classifies its loading state.
+ * @template T - Expected payload type.
+ * @param request - Incoming request for header forwarding.
+ * @param path - Resource path to fetch.
+ * @param fallback - Default data if load fails.
+ * @param classify - Function to determine section state from payload.
+ */
 export async function loadMeshResource<T>(
   request: Request,
   path: string,
@@ -112,6 +142,7 @@ export async function loadMeshResource<T>(
   }
 }
 
+/** Extracts and forwards headers relevant to Mesh dashboard resources. */
 export function forwardedDashboardHeaders(request: Request): Headers {
   const headers = new Headers();
   for (const [name, value] of request.headers.entries()) {
@@ -123,6 +154,7 @@ export function forwardedDashboardHeaders(request: Request): Headers {
   return headers;
 }
 
+/** Classifies a generic payload record into a section state. */
 export function dashboardRecordState(payload: Record<string, unknown>): SectionState {
   if (Array.isArray(payload.blockers) && payload.blockers.length > 0) return "blocked";
   if (payload.status === "blocked") return "blocked";

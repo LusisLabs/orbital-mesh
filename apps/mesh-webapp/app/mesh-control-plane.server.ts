@@ -1,5 +1,15 @@
+/**
+ * Utilities for proxying requests to the Mesh control plane.
+ *
+ * Provides request building, header forwarding, and proxy functions
+ * for communicating with the upstream control plane API.
+ *
+ * @module
+ */
+
 import { env, type MeshWebEnvironment } from "./env.server";
 
+/** State slice identifier for control plane proxy state. */
 export const MESH_CONTROL_PLANE_PROXY_STATE_SLICE = "mesh.control_plane_proxy";
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -20,6 +30,7 @@ const DEFAULT_OPERATOR_HEADER_NAMES = [
   "x-mesh-tenant"
 ];
 
+/** Builds the upstream URL by combining API path with control plane base URL. */
 export function buildControlPlaneUrl(
   apiPath: string,
   requestUrl: string,
@@ -31,11 +42,13 @@ export function buildControlPlaneUrl(
   return upstream;
 }
 
+/** Gets configured operator identity header name, if set. */
 function configuredOperatorHeaderNames(meshEnv: Pick<MeshWebEnvironment, "MESH_OPERATOR_IDENTITY_HEADER">): string[] {
   const configured = meshEnv.MESH_OPERATOR_IDENTITY_HEADER?.trim();
   return configured ? [configured.toLowerCase()] : [];
 }
 
+/** Extracts and forwards relevant headers from incoming request (public API). */
 export function forwardedControlPlaneHeaders(
   request: Request,
   meshEnv: Pick<MeshWebEnvironment, "MESH_OPERATOR_IDENTITY_HEADER"> = env
@@ -83,6 +96,7 @@ function proxyFailureResponse(error: unknown): Response {
   );
 }
 
+/** Proxies an incoming request to the Mesh control plane and returns the upstream response. */
 export async function proxyControlPlaneRequest(
   request: Request,
   apiPath: string,
