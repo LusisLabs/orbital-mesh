@@ -17,6 +17,7 @@
   },
   "devDependencies": {
     "json-schema-to-typescript": "^15.0.4",
+    "minimatch": "^10.0.0",
     "typescript": "^5.8.3"
   }
 }
