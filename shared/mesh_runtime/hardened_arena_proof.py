@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .hardened_arena_packet import HARDENED_ARENA_PACKET_SCHEMA, verify_hardened_arena_packet
 from .schema_validation import SchemaValidationError, validate_payload
 
 
@@ -15,6 +16,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 HARDENED_ARENA_PROOF_SCHEMA = "hardened-arena-proof.schema.json"
 HARDENED_ARENA_PROOF_VERSION = "mesh.hardened_arena.proof.v1"
 HARDENED_ARENA_PROOF_VERIFICATION_VERSION = "mesh.hardened_arena.proof_verification.v1"
+TARGET_PROOF_RESOLVES_PACKET_BLOCKERS = frozenset({"target_validation_missing"})
+
 REQUIRED_PROOF_CHECKS = frozenset(
     {
         "health_endpoint",
@@ -46,11 +49,15 @@ def run_hardened_arena_proof(
     packet_ref = evidence.get("packet_ref")
     target_specific = target.get("target_specific") is True
     request_target_validated = evidence.get("request_target_validated") is True
+    if request_target_validated and not target_specific:
+        blockers.append("target_validated_requires_target_specific_proof")
+    if request_target_validated:
+        blockers.extend(_target_validated_packet_ref_blockers(packet_ref, expected_profile_id=str(evidence.get("profile_id") or "")))
     all_observed = not blockers
     if request_target_validated and all_observed and target_specific and packet_ref:
         status = "target_validated"
         target_validated = True
-        statement = "Target-specific proof packet completed all required hardened arena checks."
+        statement = "Target-specific proof packet completed all required hardened arena checks and references a verified complete arena packet."
     elif all_observed:
         status = "arena_smoke_passed"
         target_validated = False
@@ -59,10 +66,6 @@ def run_hardened_arena_proof(
         status = "blocked"
         target_validated = False
         statement = "Hardened arena proof is incomplete or unobserved and cannot validate the target."
-    if request_target_validated and not target_specific:
-        blockers.append("target_validated_requires_target_specific_proof")
-    if request_target_validated and not packet_ref:
-        blockers.append("target_validated_requires_packet_ref")
     proof = {
         "schema_version": HARDENED_ARENA_PROOF_VERSION,
         "proof_id": _proof_id(str(evidence.get("profile_id") or "unknown"), str(target.get("target_id") or "unknown"), checked_at),
@@ -180,6 +183,57 @@ def _blockers_for_checks(checks: list[dict[str, Any]]) -> list[str]:
     return blockers
 
 
+def _target_validated_packet_ref_blockers(packet_ref: object, *, expected_profile_id: str) -> list[str]:
+    if not packet_ref:
+        return ["target_validated_requires_packet_ref"]
+    packet_path = _resolve_path(str(packet_ref))
+    try:
+        packet_result = verify_hardened_arena_packet(packet_path)
+        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        validate_payload(HARDENED_ARENA_PACKET_SCHEMA, packet)
+    except Exception as exc:  # pragma: no cover - verifier is expected to fail closed, but keep proof runner closed too.
+        return [
+            f"target_validated_packet_ref_invalid:{type(exc).__name__}",
+            "target_validated_requires_complete_proof_packet",
+        ]
+    blockers = []
+    if packet_result.get("status") != "pass":
+        blockers.append("target_validated_requires_complete_proof_packet")
+    blockers.extend(str(blocker) for blocker in packet_result.get("blockers", []))
+    packet_profile_id = str(packet.get("selected_profile", {}).get("profile_id") or packet_result.get("profile_id") or "")
+    if not packet_profile_id:
+        blockers.append("target_validated_packet_ref_profile_missing")
+    elif packet_profile_id != expected_profile_id:
+        blockers.append("target_validated_packet_ref_profile_mismatch")
+    if packet_result.get("readiness_status") == "target_validated":
+        blockers.append("target_validated_packet_ref_must_not_preclaim_target_validation")
+    required_sections = (
+        "selected_profile",
+        "component_graph",
+        "authority_boundaries",
+        "credential_classes",
+        "dhi_catalog_refs",
+        "proof_checklist",
+        "mesh_probe_plan",
+        "failure_mode_curriculum",
+        "cleanup_plan",
+        "data_retention_plan",
+        "readiness_posture",
+    )
+    for section in required_sections:
+        if not packet.get(section):
+            blockers.append(f"target_validated_packet_ref_section_missing:{section}")
+    posture = packet.get("readiness_posture") if isinstance(packet.get("readiness_posture"), dict) else {}
+    if posture.get("target_validated") is not False or posture.get("production_ready") is not False:
+        blockers.append("target_validated_packet_ref_overclaims_readiness")
+    packet_blockers = [str(blocker) for blocker in packet.get("blockers", [])]
+    unresolved_packet_blockers = sorted(set(packet_blockers) - TARGET_PROOF_RESOLVES_PACKET_BLOCKERS)
+    if unresolved_packet_blockers:
+        blockers.append("target_validated_packet_ref_has_unresolved_blockers")
+        blockers.extend(f"target_validated_packet_ref_unresolved_blocker:{blocker}" for blocker in unresolved_packet_blockers)
+    return blockers
+
+
 def _proof_blockers(proof: dict[str, Any]) -> list[str]:
     blockers = list(proof.get("blockers", []))
     if proof.get("raw_secret_values_present") is not False:
@@ -193,8 +247,12 @@ def _proof_blockers(proof: dict[str, Any]) -> list[str]:
         target = proof.get("target") if isinstance(proof.get("target"), dict) else {}
         if target.get("target_specific") is not True or posture.get("target_specific") is not True:
             blockers.append("target_validated_requires_target_specific_proof")
-        if not proof.get("packet_ref"):
-            blockers.append("target_validated_requires_packet_ref")
+        blockers.extend(
+            _target_validated_packet_ref_blockers(
+                proof.get("packet_ref"),
+                expected_profile_id=str(proof.get("profile_id") or ""),
+            )
+        )
         if blockers:
             blockers.append("target_validated_requires_complete_proof_packet")
     return blockers

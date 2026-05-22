@@ -5,12 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mesh-hardened-arena"
 version = "0.1.0"
-description = "Hardened-image profile, catalog, packet, and review-only intent toolkit"
+description = "Hardened Arena supply-chain profile, packet, intent, and proof toolkit"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 license = { text = "MIT" }
 authors = [{ name = "Mesh Intelligence Contributors" }]
+keywords = ["hardened-images", "supply-chain", "deployment", "mesh"]
+[project.urls]
+Homepage = "https://github.com/LusisLabs/mesh-hardened-arena"
+Repository = "https://github.com/LusisLabs/mesh-hardened-arena"
 
 [project.scripts]
 mesh-hardened-arena = "mesh_hardened_arena.cli:main"

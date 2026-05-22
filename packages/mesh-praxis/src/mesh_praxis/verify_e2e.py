@@ -172,6 +172,22 @@ def build_proof_packet() -> dict[str, Any]:
     return build_praxis_demo_proof_packet()
 
 
+def verify_contracts() -> dict[str, Any]:
+    try:
+        result = _verify_p1_contracts()
+        return {"status": "pass", "summary": "P1 contracts valid", **result}
+    except (OSError, json.JSONDecodeError, SchemaValidationError, AssertionError) as exc:
+        return {"status": "fail", "summary": "P1 contracts invalid", "error": str(exc), "blockers": ["p1_contracts_failed"]}
+
+
+def verify_managed_runtime_demo() -> dict[str, Any]:
+    try:
+        result = _verify_managed_runtime_chain()
+        return {"status": "pass", "summary": "managed runtime chain", **result}
+    except (SchemaValidationError, ValueError, OSError) as exc:
+        return {"status": "fail", "summary": "managed runtime chain failed", "error": str(exc), "blockers": ["managed_runtime_chain_failed"]}
+
+
 def verify_package_e2e() -> dict[str, Any]:
     checks: dict[str, Any] = {}
     blockers: list[str] = []
@@ -207,4 +223,4 @@ def verify_package_e2e() -> dict[str, Any]:
         checks["managed_runtime_chain"] = {"status": "fail", "error": str(exc)}
         blockers.append("managed_runtime_chain_failed")
 
-    return {"status": "pass" if not blockers else "fail", "checks": checks, "blockers": blockers}
+    return {"status": "pass" if not blockers else "fail", "summary": "verify-e2e", "checks": checks, "blockers": blockers}

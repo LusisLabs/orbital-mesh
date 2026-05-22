@@ -12,7 +12,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Redis Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -46,7 +46,7 @@
         "CIS"
       ],
       "display_name": "DHI Build",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -85,7 +85,7 @@
         "STIG"
       ],
       "display_name": "Caddy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -121,7 +121,7 @@
         "CIS"
       ],
       "display_name": "PyTorch",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -159,7 +159,7 @@
         "CIS"
       ],
       "display_name": "Dart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -193,7 +193,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Traefik Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -224,7 +224,7 @@
       ],
       "compliance_labels": [],
       "display_name": "HAProxy Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -260,7 +260,7 @@
         "STIG"
       ],
       "display_name": "PHP",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -301,7 +301,7 @@
         "STIG"
       ],
       "display_name": "Tomcat",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -340,7 +340,7 @@
         "STIG"
       ],
       "display_name": "HAProxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -378,7 +378,7 @@
         "STIG"
       ],
       "display_name": "Traefik",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -416,7 +416,7 @@
         "STIG Monitoring & observability"
       ],
       "display_name": "Redis",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -456,7 +456,7 @@
         "FIPS"
       ],
       "display_name": "Access Log Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -494,7 +494,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Alertmanager",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -532,7 +532,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus AlertManager Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -568,7 +568,7 @@
         "STIG"
       ],
       "display_name": "Grafana Alloy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -602,7 +602,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Alloy Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -636,7 +636,7 @@
         "CIS"
       ],
       "display_name": "APISIX",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -671,7 +671,7 @@
       ],
       "compliance_labels": [],
       "display_name": "APISIX Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -707,7 +707,7 @@
         "STIG"
       ],
       "display_name": "Azure Metrics Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -745,7 +745,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Blackbox Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -780,7 +780,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus Blackbox Exporter Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -816,7 +816,7 @@
         "STIG"
       ],
       "display_name": "cert-manager-startupapicheck",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -854,7 +854,7 @@
         "STIG"
       ],
       "display_name": "Cilium Clustermesh API Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -892,7 +892,7 @@
         "STIG"
       ],
       "display_name": "ClickHouse Metrics Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -928,7 +928,7 @@
         "CIS"
       ],
       "display_name": "ClickHouse Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -966,7 +966,7 @@
         "STIG"
       ],
       "display_name": "Descheduler",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1004,7 +1004,7 @@
         "STIG"
       ],
       "display_name": "Envoy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1042,7 +1042,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Fairwinds VPA Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1078,7 +1078,7 @@
         "STIG"
       ],
       "display_name": "Filebeat",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1116,7 +1116,7 @@
         "STIG"
       ],
       "display_name": "Fluent Bit",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1151,7 +1151,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Fluent Bit Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1187,7 +1187,7 @@
         "STIG"
       ],
       "display_name": "Grafana",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1225,7 +1225,7 @@
         "STIG"
       ],
       "display_name": "Grafana Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1259,7 +1259,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Agent Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1295,7 +1295,7 @@
         "STIG"
       ],
       "display_name": "Grafana Agent Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1330,7 +1330,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Agent Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1366,7 +1366,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1402,7 +1402,7 @@
         "STIG"
       ],
       "display_name": "Grafana Image Renderer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1440,7 +1440,7 @@
         "STIG"
       ],
       "display_name": "Grafana Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1473,7 +1473,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1509,7 +1509,7 @@
         "STIG"
       ],
       "display_name": "Grafana Rollout Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1542,7 +1542,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Rollout Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1578,7 +1578,7 @@
         "STIG"
       ],
       "display_name": "Harbor Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1616,7 +1616,7 @@
         "STIG"
       ],
       "display_name": "Harbor Portal",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1654,7 +1654,7 @@
         "STIG"
       ],
       "display_name": "Cilium Hubble Relay",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1694,7 +1694,7 @@
         "STIG"
       ],
       "display_name": "Cilium Hubble UI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1730,7 +1730,7 @@
         "CIS"
       ],
       "display_name": "InfluxDB",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1763,7 +1763,7 @@
       "chart_dependencies": [],
       "compliance_labels": [],
       "display_name": "Istio Base Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -1799,7 +1799,7 @@
         "STIG"
       ],
       "display_name": "Istio Pilot",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1837,7 +1837,7 @@
         "STIG"
       ],
       "display_name": "Istioctl",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1875,7 +1875,7 @@
         "STIG"
       ],
       "display_name": "JMX Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1913,7 +1913,7 @@
         "STIG"
       ],
       "display_name": "k8ssandra-system-logger",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1951,7 +1951,7 @@
         "STIG"
       ],
       "display_name": "Kafka Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -1989,7 +1989,7 @@
         "STIG"
       ],
       "display_name": "Kapacitor",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2035,7 +2035,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kube Prometheus Stack Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2067,7 +2067,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kube State Metrics Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2103,7 +2103,7 @@
         "STIG"
       ],
       "display_name": "Kubernetes Cluster Autoscaler",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2136,7 +2136,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kubernetes Cluster Autoscaler Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2172,7 +2172,7 @@
         "STIG"
       ],
       "display_name": "Langfuse",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2208,7 +2208,7 @@
         "CIS"
       ],
       "display_name": "Logstash",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2246,7 +2246,7 @@
         "STIG"
       ],
       "display_name": "Grafana Loki",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2284,7 +2284,7 @@
         "STIG"
       ],
       "display_name": "Grafana Loki Canary",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2326,7 +2326,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Loki Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2362,7 +2362,7 @@
         "STIG"
       ],
       "display_name": "Grafana Loki Helm Test",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2400,7 +2400,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Memcached Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2438,7 +2438,7 @@
         "STIG"
       ],
       "display_name": "Metrics Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -2472,7 +2472,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Metrics Server Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2506,7 +2506,7 @@
         "CIS"
       ],
       "display_name": "MongoDB Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2544,7 +2544,7 @@
         "STIG"
       ],
       "display_name": "MySQL Server Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2582,7 +2582,7 @@
         "STIG"
       ],
       "display_name": "NATS Server Config Reloader",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2618,7 +2618,7 @@
         "CIS"
       ],
       "display_name": "Netdata",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2656,7 +2656,7 @@
         "STIG"
       ],
       "display_name": "Netdata Agent SD",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -2693,7 +2693,7 @@
         "CIS"
       ],
       "display_name": "Nginx Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2731,7 +2731,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Node Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -2766,7 +2766,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus Node Exporter Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2802,7 +2802,7 @@
         "STIG"
       ],
       "display_name": "OpenCost",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2838,7 +2838,7 @@
       ],
       "compliance_labels": [],
       "display_name": "OpenCost Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2874,7 +2874,7 @@
         "STIG"
       ],
       "display_name": "OpenCost UI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2912,7 +2912,7 @@
         "STIG"
       ],
       "display_name": "OpenSearch",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -2946,7 +2946,7 @@
       ],
       "compliance_labels": [],
       "display_name": "OpenSearch Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -2982,7 +2982,7 @@
         "STIG"
       ],
       "display_name": "OpenSearch Dashboards",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3015,7 +3015,7 @@
       ],
       "compliance_labels": [],
       "display_name": "OpenSearch Dashboards Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3051,7 +3051,7 @@
         "STIG"
       ],
       "display_name": "OpenTelemetry Go Autoinstrumentation",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3089,7 +3089,7 @@
         "STIG"
       ],
       "display_name": "OpenTelemetry Collector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3122,7 +3122,7 @@
       ],
       "compliance_labels": [],
       "display_name": "OpenTelemetry Collector Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3158,7 +3158,7 @@
         "STIG"
       ],
       "display_name": "OpenTelemetry Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3194,7 +3194,7 @@
       ],
       "compliance_labels": [],
       "display_name": "OpenTelemetry Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3230,7 +3230,7 @@
         "STIG"
       ],
       "display_name": "OpenTelemetry Target Allocator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3268,7 +3268,7 @@
         "STIG"
       ],
       "display_name": "PostgreSQL Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3306,7 +3306,7 @@
         "STIG"
       ],
       "display_name": "Prometheus",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3344,7 +3344,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Adapter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3377,7 +3377,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus Adapter Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3413,7 +3413,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3449,7 +3449,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Config Reloader",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -3488,7 +3488,7 @@
         "STIG"
       ],
       "display_name": "Prometheus NATS Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3521,7 +3521,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus NATS Exporter Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3557,7 +3557,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3595,7 +3595,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Operator Admission Webhook",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3633,7 +3633,7 @@
         "STIG"
       ],
       "display_name": "StatsD Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3671,7 +3671,7 @@
         "STIG"
       ],
       "display_name": "Promtail",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3705,7 +3705,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Promtail Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3741,7 +3741,7 @@
         "STIG"
       ],
       "display_name": "Prometheus Pushgateway",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -3775,7 +3775,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Prometheus Pushgateway Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3811,7 +3811,7 @@
         "STIG"
       ],
       "display_name": "Pyroscope",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3844,7 +3844,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Pyroscope Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -3880,7 +3880,7 @@
         "STIG"
       ],
       "display_name": "Redis Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3918,7 +3918,7 @@
         "STIG"
       ],
       "display_name": "Telegraf",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3956,7 +3956,7 @@
         "STIG"
       ],
       "display_name": "Grafana Tempo",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -3990,7 +3990,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana Tempo Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4026,7 +4026,7 @@
         "STIG"
       ],
       "display_name": "Tempo Query",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4064,7 +4064,7 @@
         "STIG"
       ],
       "display_name": "Temporal Admin Tools",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4101,7 +4101,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Temporal Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4137,7 +4137,7 @@
         "STIG"
       ],
       "display_name": "Temporal Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4177,7 +4177,7 @@
         "STIG"
       ],
       "display_name": "Temporal UI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4213,7 +4213,7 @@
         "CIS"
       ],
       "display_name": "Thanos",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4247,7 +4247,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Thanos Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4281,7 +4281,7 @@
         "CIS"
       ],
       "display_name": "Uptime Kuma",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4319,7 +4319,7 @@
         "STIG"
       ],
       "display_name": "Vault CSI Provider",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4357,7 +4357,7 @@
         "STIG"
       ],
       "display_name": "Vault K8s",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4393,7 +4393,7 @@
         "CIS"
       ],
       "display_name": "Vector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4427,7 +4427,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Vector Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4459,7 +4459,7 @@
       ],
       "compliance_labels": [],
       "display_name": "VictoriaMetrics Alerts Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4493,7 +4493,7 @@
       ],
       "compliance_labels": [],
       "display_name": "VictoriaMetrics Cluster Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -4529,7 +4529,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMAgent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4567,7 +4567,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMAlert",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4605,7 +4605,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMAuth",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4643,7 +4643,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMInsert",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4681,7 +4681,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMSelect",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4719,7 +4719,7 @@
         "STIG"
       ],
       "display_name": "VictoriaMetrics VMStorage",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4757,7 +4757,7 @@
         "STIG"
       ],
       "display_name": "Vertical Pod Autoscaler Admission Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4795,7 +4795,7 @@
         "STIG"
       ],
       "display_name": "Vertical Pod Autoscaler Recommender",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4833,7 +4833,7 @@
         "STIG"
       ],
       "display_name": "Vertical Pod Autoscaler Updater",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4871,7 +4871,7 @@
         "STIG Message queues"
       ],
       "display_name": "X.509 Certificate Exporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4907,7 +4907,7 @@
         "CIS"
       ],
       "display_name": "ActiveMQ Artemis",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4943,7 +4943,7 @@
         "CIS"
       ],
       "display_name": "Eclipse Mosquitto",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -4983,7 +4983,7 @@
         "STIG"
       ],
       "display_name": "Kafka",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5021,7 +5021,7 @@
         "STIG"
       ],
       "display_name": "NATS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5059,7 +5059,7 @@
         "STIG"
       ],
       "display_name": "RabbitMQ",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5097,7 +5097,7 @@
         "STIG"
       ],
       "display_name": "Strimzi Kafka",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5135,7 +5135,7 @@
         "STIG"
       ],
       "display_name": "Strimzi Kafka Bridge",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5169,7 +5169,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Strimzi Kafka Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -5205,7 +5205,7 @@
         "STIG"
       ],
       "display_name": "Strimzi Operator for Kafka",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5243,7 +5243,7 @@
         "STIG"
       ],
       "display_name": "Valkey",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5277,7 +5277,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Valkey Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -5313,7 +5313,7 @@
         "STIG"
       ],
       "display_name": "API Declarative CLI (ADC)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5351,7 +5351,7 @@
         "STIG"
       ],
       "display_name": "Airflow",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5389,7 +5389,7 @@
         "STIG"
       ],
       "display_name": "amazon-k8s-cni",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5429,7 +5429,7 @@
         "STIG"
       ],
       "display_name": "Argo Events",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5469,7 +5469,7 @@
         "STIG"
       ],
       "display_name": "Argo Rollouts",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5503,7 +5503,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Argo Rollouts Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -5539,7 +5539,7 @@
         "STIG"
       ],
       "display_name": "Argo Workflow Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5577,7 +5577,7 @@
         "STIG"
       ],
       "display_name": "Argo CD",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5617,7 +5617,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Argo CD Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -5653,7 +5653,7 @@
         "STIG"
       ],
       "display_name": "Argo CD Image Updater",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5686,7 +5686,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Argo CD Image Updater Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -5722,7 +5722,7 @@
         "STIG"
       ],
       "display_name": "Argo CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5760,7 +5760,7 @@
         "STIG"
       ],
       "display_name": "Argo executor",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5798,7 +5798,7 @@
         "STIG"
       ],
       "display_name": "AWS EBS CSI Driver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5836,7 +5836,7 @@
         "STIG"
       ],
       "display_name": "AWS EFS CSI Driver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5874,7 +5874,7 @@
         "STIG"
       ],
       "display_name": "AWS EKS Pod Identity Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5912,7 +5912,7 @@
         "STIG"
       ],
       "display_name": "AWS Load Balancer Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5950,7 +5950,7 @@
         "STIG"
       ],
       "display_name": "AWS Mountpoint S3 CSI Driver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -5988,7 +5988,7 @@
         "STIG"
       ],
       "display_name": "AWS Node Termination Handler",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6026,7 +6026,7 @@
         "STIG"
       ],
       "display_name": "AWS Private CA Issuer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6064,7 +6064,7 @@
         "STIG"
       ],
       "display_name": "Azure Key Vault Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6102,7 +6102,7 @@
         "STIG"
       ],
       "display_name": "cert-manager-controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6140,7 +6140,7 @@
         "STIG"
       ],
       "display_name": "cert-manager-istio-csr",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6173,7 +6173,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Crossplane Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -6209,7 +6209,7 @@
         "STIG"
       ],
       "display_name": "dapr-daprd",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6247,7 +6247,7 @@
         "STIG"
       ],
       "display_name": "Dapr Injector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6285,7 +6285,7 @@
         "STIG"
       ],
       "display_name": "Dapr Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6323,7 +6323,7 @@
         "STIG"
       ],
       "display_name": "Dapr Placement Service",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6361,7 +6361,7 @@
         "STIG"
       ],
       "display_name": "Dapr Scheduler",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6399,7 +6399,7 @@
         "STIG"
       ],
       "display_name": "Dapr Sentry",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6437,7 +6437,7 @@
         "STIG"
       ],
       "display_name": "Distribution Registry",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6473,7 +6473,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Elastic Cloud on Kubernetes (ECK) Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -6509,7 +6509,7 @@
         "STIG"
       ],
       "display_name": "FleetConfig Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6549,7 +6549,7 @@
         "STIG"
       ],
       "display_name": "Flux CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6587,7 +6587,7 @@
         "STIG"
       ],
       "display_name": "Helm Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6625,7 +6625,7 @@
         "STIG"
       ],
       "display_name": "Image Automation Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6663,7 +6663,7 @@
         "STIG"
       ],
       "display_name": "Image Reflector Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6701,7 +6701,7 @@
         "STIG"
       ],
       "display_name": "Kustomize Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6739,7 +6739,7 @@
         "STIG"
       ],
       "display_name": "Notification Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6777,7 +6777,7 @@
         "STIG"
       ],
       "display_name": "Source Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6815,7 +6815,7 @@
         "STIG"
       ],
       "display_name": "Source Watcher",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6853,7 +6853,7 @@
         "STIG"
       ],
       "display_name": "Gatekeeper",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6891,7 +6891,7 @@
         "STIG"
       ],
       "display_name": "GitLab Webservice",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6929,7 +6929,7 @@
         "STIG"
       ],
       "display_name": "Harbor Core",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -6967,7 +6967,7 @@
         "STIG"
       ],
       "display_name": "Istio Install CNI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7005,7 +7005,7 @@
         "STIG"
       ],
       "display_name": "Jenkins",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7043,7 +7043,7 @@
         "STIG"
       ],
       "display_name": "Jenkins Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7081,7 +7081,7 @@
         "STIG"
       ],
       "display_name": "Jenkins Inbound Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7121,7 +7121,7 @@
         "STIG"
       ],
       "display_name": "k8s-sidecar",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -7160,7 +7160,7 @@
         "STIG"
       ],
       "display_name": "karpenter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7193,7 +7193,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Karpenter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -7229,7 +7229,7 @@
         "STIG"
       ],
       "display_name": "KEDA",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7267,7 +7267,7 @@
         "STIG"
       ],
       "display_name": "KEDA Admission Webhooks",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7302,7 +7302,7 @@
       ],
       "compliance_labels": [],
       "display_name": "KEDA Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -7338,7 +7338,7 @@
         "STIG"
       ],
       "display_name": "KEDA Metrics API Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7376,7 +7376,7 @@
         "STIG"
       ],
       "display_name": "Klipper Helm",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7416,7 +7416,7 @@
         "STIG"
       ],
       "display_name": "Kubectl Argo Rollouts Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7454,7 +7454,7 @@
         "STIG"
       ],
       "display_name": "Kured",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7487,7 +7487,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kured Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -7521,7 +7521,7 @@
         "CIS"
       ],
       "display_name": "Apache NiFi",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7561,7 +7561,7 @@
         "STIG"
       ],
       "display_name": "notation",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -7600,7 +7600,7 @@
         "STIG"
       ],
       "display_name": "Open Cluster Management Addon Manager",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7638,7 +7638,7 @@
         "STIG"
       ],
       "display_name": "Placement",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7676,7 +7676,7 @@
         "STIG"
       ],
       "display_name": "Open Cluster Management Work",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7712,7 +7712,7 @@
         "CIS"
       ],
       "display_name": "SonarQube",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7750,7 +7750,7 @@
         "STIG"
       ],
       "display_name": "Unleash",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7788,7 +7788,7 @@
         "STIG"
       ],
       "display_name": "Velero",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7824,7 +7824,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Velero Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -7858,7 +7858,7 @@
         "CIS"
       ],
       "display_name": "Velero Plugin for AWS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7894,7 +7894,7 @@
         "CIS"
       ],
       "display_name": "Velero Plugin for GCP",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7930,7 +7930,7 @@
         "CIS"
       ],
       "display_name": "Velero Plugin for Azure",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -7968,7 +7968,7 @@
         "STIG"
       ],
       "display_name": "Virt API",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8006,7 +8006,7 @@
         "STIG"
       ],
       "display_name": "Virt Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8044,7 +8044,7 @@
         "STIG"
       ],
       "display_name": "Virt Export Proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8082,7 +8082,7 @@
         "STIG"
       ],
       "display_name": "Virt Export Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8120,7 +8120,7 @@
         "STIG"
       ],
       "display_name": "Virt Handler",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8158,7 +8158,7 @@
         "STIG"
       ],
       "display_name": "Virt Launcher",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8196,7 +8196,7 @@
         "STIG"
       ],
       "display_name": "Virt Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8234,7 +8234,7 @@
         "STIG"
       ],
       "display_name": "Apache Druid",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8272,7 +8272,7 @@
         "STIG"
       ],
       "display_name": "JupyterHub",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8312,7 +8312,7 @@
         "STIG"
       ],
       "display_name": "JupyterHub K8s Hub",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8350,7 +8350,7 @@
         "STIG"
       ],
       "display_name": "MLflow",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8386,7 +8386,7 @@
         "CIS Developer tools"
       ],
       "display_name": "Apache Superset",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8424,7 +8424,7 @@
         "STIG"
       ],
       "display_name": "Alpine Base",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine"
       ],
@@ -8462,7 +8462,7 @@
         "STIG"
       ],
       "display_name": "AWS CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8498,7 +8498,7 @@
         "CIS"
       ],
       "display_name": "Azul Platform Prime",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8533,7 +8533,7 @@
         "CIS"
       ],
       "display_name": "Azure Functions (Node.js)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8568,7 +8568,7 @@
         "CIS"
       ],
       "display_name": "Azure Functions (Python)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8604,7 +8604,7 @@
         "CIS"
       ],
       "display_name": "Azure Service Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8637,7 +8637,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Azure Service Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -8673,7 +8673,7 @@
         "STIG"
       ],
       "display_name": "Bash",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -8712,7 +8712,7 @@
         "STIG"
       ],
       "display_name": "BATS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -8753,7 +8753,7 @@
         "STIG"
       ],
       "display_name": "Moby Buildkit",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8793,7 +8793,7 @@
         "STIG"
       ],
       "display_name": "BusyBox",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -8832,7 +8832,7 @@
         "STIG"
       ],
       "display_name": "Cilium Certgen",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8870,7 +8870,7 @@
         "STIG"
       ],
       "display_name": "Composer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -8909,7 +8909,7 @@
         "STIG"
       ],
       "display_name": "configmap-reload",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -8946,7 +8946,7 @@
         "CIS"
       ],
       "display_name": "Upstash Context7 MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -8984,7 +8984,7 @@
         "STIG"
       ],
       "display_name": "Cosign",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9023,7 +9023,7 @@
         "STIG"
       ],
       "display_name": "Crane",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9062,7 +9062,7 @@
         "STIG"
       ],
       "display_name": "Crossplane",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9100,7 +9100,7 @@
         "STIG"
       ],
       "display_name": "CSI Node Driver Registrar",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9138,7 +9138,7 @@
         "STIG"
       ],
       "display_name": "curl",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9177,7 +9177,7 @@
         "STIG"
       ],
       "display_name": "Debian Base",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9215,7 +9215,7 @@
         "STIG"
       ],
       "display_name": "Delve",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9254,7 +9254,7 @@
         "STIG"
       ],
       "display_name": "Docker",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9294,7 +9294,7 @@
         "STIG"
       ],
       "display_name": "ExternalDNS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9328,7 +9328,7 @@
       ],
       "compliance_labels": [],
       "display_name": "External DNS Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -9362,7 +9362,7 @@
         "CIS"
       ],
       "display_name": "Fetch MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9398,7 +9398,7 @@
         "CIS"
       ],
       "display_name": "Filesystem MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9434,7 +9434,7 @@
         "CIS"
       ],
       "display_name": "Firecrawl MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9470,7 +9470,7 @@
         "CIS"
       ],
       "display_name": "Flyway",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9508,7 +9508,7 @@
         "STIG"
       ],
       "display_name": "Git",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -9545,7 +9545,7 @@
         "CIS"
       ],
       "display_name": "Git MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9581,7 +9581,7 @@
         "CIS"
       ],
       "display_name": "GitHub MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9619,7 +9619,7 @@
         "STIG"
       ],
       "display_name": "Jsonnet",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9657,7 +9657,7 @@
         "STIG"
       ],
       "display_name": "Goldilocks",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9692,7 +9692,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Goldilocks Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -9726,7 +9726,7 @@
         "CIS"
       ],
       "display_name": "Grafana MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9764,7 +9764,7 @@
         "STIG"
       ],
       "display_name": "Helm",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9802,7 +9802,7 @@
         "STIG"
       ],
       "display_name": "Homepage",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9835,7 +9835,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Homepage Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -9871,7 +9871,7 @@
         "STIG"
       ],
       "display_name": "HTTP Echo",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9907,7 +9907,7 @@
         "CIS"
       ],
       "display_name": "Docker Hub MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9945,7 +9945,7 @@
         "STIG"
       ],
       "display_name": "k6",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -9981,7 +9981,7 @@
         "CIS"
       ],
       "display_name": "k6-operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10015,7 +10015,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Grafana k6-operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -10051,7 +10051,7 @@
         "STIG"
       ],
       "display_name": "K8ssandra Cass Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10089,7 +10089,7 @@
         "STIG"
       ],
       "display_name": "k8ssandra-client",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10129,7 +10129,7 @@
         "STIG"
       ],
       "display_name": "Keycloak",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10163,7 +10163,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Keycloak Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -10197,7 +10197,7 @@
         "CIS"
       ],
       "display_name": "Kubernetes API Server (kube-apiserver)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10233,7 +10233,7 @@
         "CIS"
       ],
       "display_name": "Kubernetes Controller Manager (kube-controller-manager)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10269,7 +10269,7 @@
         "CIS"
       ],
       "display_name": "Kubernetes Proxy (kube-proxy)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10305,7 +10305,7 @@
         "CIS"
       ],
       "display_name": "Kubernetes Scheduler (kube-scheduler)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10343,7 +10343,7 @@
         "STIG"
       ],
       "display_name": "Kube Webhook Certgen",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -10382,7 +10382,7 @@
         "STIG"
       ],
       "display_name": "kubectl",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -10423,7 +10423,7 @@
         "STIG"
       ],
       "display_name": "Kubernetes Autoscaler Addon Resizer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10461,7 +10461,7 @@
         "STIG"
       ],
       "display_name": "Kustomize",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10497,7 +10497,7 @@
         "CIS"
       ],
       "display_name": "Liquibase",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10533,7 +10533,7 @@
         "CIS"
       ],
       "display_name": "LocalStack",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -10570,7 +10570,7 @@
         "CIS"
       ],
       "display_name": "Memory MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10606,7 +10606,7 @@
         "CIS"
       ],
       "display_name": "MongoDB MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10644,7 +10644,7 @@
         "STIG"
       ],
       "display_name": "NATS Box",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10684,7 +10684,7 @@
         "STIG"
       ],
       "display_name": "NATS CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10720,7 +10720,7 @@
         "CIS"
       ],
       "display_name": "OpenResty",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10760,7 +10760,7 @@
         "STIG"
       ],
       "display_name": "OpenSCAP",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10800,7 +10800,7 @@
         "STIG"
       ],
       "display_name": "ORAS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -10839,7 +10839,7 @@
         "STIG"
       ],
       "display_name": "regctl",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -10878,7 +10878,7 @@
         "STIG"
       ],
       "display_name": "Registration Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10916,7 +10916,7 @@
         "STIG"
       ],
       "display_name": "Docker Scout CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10954,7 +10954,7 @@
         "STIG"
       ],
       "display_name": "Docker Scout SBOM Indexer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -10990,7 +10990,7 @@
         "CIS"
       ],
       "display_name": "ShellCheck",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11026,7 +11026,7 @@
         "CIS"
       ],
       "display_name": "Reloader",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11059,7 +11059,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Reloader Helm Chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -11095,7 +11095,7 @@
         "STIG"
       ],
       "display_name": "Static",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -11132,7 +11132,7 @@
         "CIS"
       ],
       "display_name": "Terraform",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11168,7 +11168,7 @@
         "CIS"
       ],
       "display_name": "Time MCP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11206,7 +11206,7 @@
         "STIG"
       ],
       "display_name": "Trivy Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11241,7 +11241,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Trivy Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -11275,7 +11275,7 @@
         "CIS"
       ],
       "display_name": "WBITT Network Multitool",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine"
       ],
@@ -11313,7 +11313,7 @@
         "CIS"
       ],
       "display_name": "WireMock",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11351,7 +11351,7 @@
         "STIG"
       ],
       "display_name": "Zot",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11385,7 +11385,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Zot Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -11421,7 +11421,7 @@
         "STIG"
       ],
       "display_name": "amazon-k8s-cni-init",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11459,7 +11459,7 @@
         "STIG"
       ],
       "display_name": "APISIX Ingress Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11493,7 +11493,7 @@
       ],
       "compliance_labels": [],
       "display_name": "APISIX Ingress Controller Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -11529,7 +11529,7 @@
         "STIG"
       ],
       "display_name": "AWS Network Policy Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11567,7 +11567,7 @@
         "STIG"
       ],
       "display_name": "AWS SigV4 Proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11605,7 +11605,7 @@
         "STIG"
       ],
       "display_name": "Calico CNI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11643,7 +11643,7 @@
         "STIG"
       ],
       "display_name": "Calico Kube Controllers",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11681,7 +11681,7 @@
         "STIG"
       ],
       "display_name": "Calico Node",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11717,7 +11717,7 @@
         "CIS"
       ],
       "display_name": "Cilium Envoy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11755,7 +11755,7 @@
         "STIG"
       ],
       "display_name": "Cilium Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11795,7 +11795,7 @@
         "STIG"
       ],
       "display_name": "Cilium Operator AWS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11835,7 +11835,7 @@
         "STIG"
       ],
       "display_name": "Cilium Operator Azure",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11873,7 +11873,7 @@
         "STIG"
       ],
       "display_name": "Cilium Operator Generic",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11913,7 +11913,7 @@
         "STIG"
       ],
       "display_name": "Cilium startup script",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11951,7 +11951,7 @@
         "STIG"
       ],
       "display_name": "Configurable HTTP Proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -11989,7 +11989,7 @@
         "STIG"
       ],
       "display_name": "Contour",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12027,7 +12027,7 @@
         "STIG"
       ],
       "display_name": "CoreDNS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12063,7 +12063,7 @@
         "CIS"
       ],
       "display_name": "Emissary-Ingress",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12103,7 +12103,7 @@
         "STIG"
       ],
       "display_name": "Envoy Gateway",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12138,7 +12138,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Envoy Gateway Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12174,7 +12174,7 @@
         "STIG"
       ],
       "display_name": "Envoy Rate Limit Service",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12210,7 +12210,7 @@
         "CIS"
       ],
       "display_name": "etcd",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12250,7 +12250,7 @@
         "STIG"
       ],
       "display_name": "FRRouting",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12288,7 +12288,7 @@
         "STIG"
       ],
       "display_name": "hyperledger-fabric-ca",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12324,7 +12324,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Istio Discovery (istiod) Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12355,7 +12355,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Istio Egress Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12386,7 +12386,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Istio Ingress Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12422,7 +12422,7 @@
         "STIG"
       ],
       "display_name": "Istio Proxy v2",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12460,7 +12460,7 @@
         "STIG"
       ],
       "display_name": "Klipper Service Load Balancer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12498,7 +12498,7 @@
         "STIG"
       ],
       "display_name": "Kong",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12538,7 +12538,7 @@
         "STIG"
       ],
       "display_name": "ktls-utils",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12576,7 +12576,7 @@
         "STIG"
       ],
       "display_name": "kube-vip",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12609,7 +12609,7 @@
       ],
       "compliance_labels": [],
       "display_name": "kube-vip Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12645,7 +12645,7 @@
         "STIG"
       ],
       "display_name": "MetalLB Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12683,7 +12683,7 @@
         "STIG"
       ],
       "display_name": "MetalLB Speaker",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12723,7 +12723,7 @@
         "STIG"
       ],
       "display_name": "Multus Dynamic Networks Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12761,7 +12761,7 @@
         "STIG"
       ],
       "display_name": "NGINX Ingress Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12794,7 +12794,7 @@
       ],
       "compliance_labels": [],
       "display_name": "NGINX Ingress Controller Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -12830,7 +12830,7 @@
         "STIG"
       ],
       "display_name": "socat",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -12867,7 +12867,7 @@
         "CIS"
       ],
       "display_name": "Tailscale",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12905,7 +12905,7 @@
         "STIG"
       ],
       "display_name": "Tigera Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12941,7 +12941,7 @@
         "CIS"
       ],
       "display_name": "Varnish Cache",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -12981,7 +12981,7 @@
         "STIG"
       ],
       "display_name": "wait-for-it",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13019,7 +13019,7 @@
         "STIG"
       ],
       "display_name": "Istio Ztunnel",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13052,7 +13052,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Istio Ztunnel Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -13088,7 +13088,7 @@
         "STIG"
       ],
       "display_name": "Amazon Corretto",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13129,7 +13129,7 @@
         "STIG"
       ],
       "display_name": "ASP.NET Core",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13166,7 +13166,7 @@
         "CIS"
       ],
       "display_name": "Bun",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13205,7 +13205,7 @@
         "STIG"
       ],
       "display_name": "Clojure",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13242,7 +13242,7 @@
         "CIS"
       ],
       "display_name": "Deno",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13280,7 +13280,7 @@
         "STIG"
       ],
       "display_name": ".NET",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13319,7 +13319,7 @@
         "STIG"
       ],
       "display_name": "Eclipse Temurin",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13360,7 +13360,7 @@
         "STIG"
       ],
       "display_name": "Erlang/OTP",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13399,7 +13399,7 @@
         "STIG"
       ],
       "display_name": "Go (golang)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13438,7 +13438,7 @@
         "CIS"
       ],
       "display_name": "Gradle",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13475,7 +13475,7 @@
         "CIS"
       ],
       "display_name": "Hyperledger Fabric Orderer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13511,7 +13511,7 @@
         "CIS"
       ],
       "display_name": "Hyperledger Fabric Tools",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13549,7 +13549,7 @@
         "CIS"
       ],
       "display_name": "JRuby",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13586,7 +13586,7 @@
         "CIS"
       ],
       "display_name": "Maven",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13625,7 +13625,7 @@
         "STIG"
       ],
       "display_name": "Node.js",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13666,7 +13666,7 @@
         "STIG"
       ],
       "display_name": "Perl",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13707,7 +13707,7 @@
         "STIG"
       ],
       "display_name": "Python",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13748,7 +13748,7 @@
         "STIG"
       ],
       "display_name": "Ruby",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13785,7 +13785,7 @@
         "CIS"
       ],
       "display_name": "Rust",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -13826,7 +13826,7 @@
         "STIG"
       ],
       "display_name": "SapMachine",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13864,7 +13864,7 @@
         "CIS Web servers"
       ],
       "display_name": "uv",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13902,7 +13902,7 @@
         "CIS"
       ],
       "display_name": "Apigee Edge Microgateway",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13940,7 +13940,7 @@
         "STIG"
       ],
       "display_name": "Apache HTTP Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -13980,7 +13980,7 @@
         "STIG"
       ],
       "display_name": "Nginx",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -14019,7 +14019,7 @@
         "STIG"
       ],
       "display_name": "External Secrets Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14054,7 +14054,7 @@
       ],
       "compliance_labels": [],
       "display_name": "External Secrets Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -14090,7 +14090,7 @@
         "STIG"
       ],
       "display_name": "Harbor Job Service",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14128,7 +14128,7 @@
         "STIG"
       ],
       "display_name": "Harbor Registry",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14166,7 +14166,7 @@
         "STIG"
       ],
       "display_name": "Harbor Registry Control",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14202,7 +14202,7 @@
         "CIS"
       ],
       "display_name": "Cilium Hubble Proto",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14240,7 +14240,7 @@
         "STIG"
       ],
       "display_name": "Hubble UI Backend",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14280,7 +14280,7 @@
         "STIG"
       ],
       "display_name": "Vault",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14317,7 +14317,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Vault Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -14351,7 +14351,7 @@
         "CIS"
       ],
       "display_name": "cert-manager-acmesolver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14389,7 +14389,7 @@
         "STIG"
       ],
       "display_name": "cert-manager-cainjector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14426,7 +14426,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Cert-Manager Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -14462,7 +14462,7 @@
         "STIG"
       ],
       "display_name": "cert-manager-webhook",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14500,7 +14500,7 @@
         "STIG"
       ],
       "display_name": "clamav",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14540,7 +14540,7 @@
         "STIG"
       ],
       "display_name": "Connaisseur",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14578,7 +14578,7 @@
         "STIG"
       ],
       "display_name": "Dex",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14611,7 +14611,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Dex Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -14647,7 +14647,7 @@
         "STIG"
       ],
       "display_name": "Gatekeeper CRDs",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14685,7 +14685,7 @@
         "STIG"
       ],
       "display_name": "Gitleaks",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14723,7 +14723,7 @@
         "STIG"
       ],
       "display_name": "Grype",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -14762,7 +14762,7 @@
         "STIG"
       ],
       "display_name": "Harbor Trivy Adapter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14800,7 +14800,7 @@
         "STIG"
       ],
       "display_name": "kube-mgmt",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14838,7 +14838,7 @@
         "STIG"
       ],
       "display_name": "kube-rbac-proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -14877,7 +14877,7 @@
         "STIG"
       ],
       "display_name": "Kubescape CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14915,7 +14915,7 @@
         "STIG"
       ],
       "display_name": "Kyverno",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14953,7 +14953,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Background Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -14994,7 +14994,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kyverno Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -15030,7 +15030,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Cleanup Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15068,7 +15068,7 @@
         "STIG"
       ],
       "display_name": "Kyverno CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15106,7 +15106,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Init",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15142,7 +15142,7 @@
         "CIS"
       ],
       "display_name": "Kyverno Policy Reporter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15177,7 +15177,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kyverno Policy Reporter Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -15211,7 +15211,7 @@
         "CIS"
       ],
       "display_name": "Kyverno Policy Reporter UI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15249,7 +15249,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Readiness Checker",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15287,7 +15287,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Reports Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15325,7 +15325,7 @@
         "STIG"
       ],
       "display_name": "Kyverno Reports Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15359,7 +15359,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Kyverno Reports Server Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -15395,7 +15395,7 @@
         "STIG"
       ],
       "display_name": "node-collector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15433,7 +15433,7 @@
         "STIG"
       ],
       "display_name": "OAuth2 Proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15471,7 +15471,7 @@
         "STIG"
       ],
       "display_name": "Open Policy Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15507,7 +15507,7 @@
         "CIS"
       ],
       "display_name": "OpenBao",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15543,7 +15543,7 @@
         "CIS"
       ],
       "display_name": "OpenFGA",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15579,7 +15579,7 @@
         "CIS"
       ],
       "display_name": "Pinniped CLI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15617,7 +15617,7 @@
         "STIG"
       ],
       "display_name": "Polaris",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15650,7 +15650,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Sealed Secrets Controller Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -15684,7 +15684,7 @@
         "CIS"
       ],
       "display_name": "Sealed Secrets Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15720,7 +15720,7 @@
         "CIS"
       ],
       "display_name": "Sealed Secrets Kubeseal",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15758,7 +15758,7 @@
         "STIG"
       ],
       "display_name": "SPIFFE Helper",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15796,7 +15796,7 @@
         "STIG"
       ],
       "display_name": "SPIFFE SPIRE Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15834,7 +15834,7 @@
         "STIG"
       ],
       "display_name": "SPIFFE SPIRE Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -15872,7 +15872,7 @@
         "STIG"
       ],
       "display_name": "Syft",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -15911,7 +15911,7 @@
         "STIG"
       ],
       "display_name": "Trivy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -15950,7 +15950,7 @@
         "STIG"
       ],
       "display_name": "TruffleHog",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -15989,7 +15989,7 @@
         "STIG"
       ],
       "display_name": "trust-manager",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16027,7 +16027,7 @@
         "STIG"
       ],
       "display_name": "Trust Manager Package",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16065,7 +16065,7 @@
         "STIG"
       ],
       "display_name": "Cass Config Builder",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16103,7 +16103,7 @@
         "STIG"
       ],
       "display_name": "Cassandra",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16143,7 +16143,7 @@
         "STIG"
       ],
       "display_name": "Cassandra Reaper",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16181,7 +16181,7 @@
         "STIG"
       ],
       "display_name": "CDI API Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16219,7 +16219,7 @@
         "STIG"
       ],
       "display_name": "CDI Cloner",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16257,7 +16257,7 @@
         "STIG"
       ],
       "display_name": "CDI Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16295,7 +16295,7 @@
         "STIG"
       ],
       "display_name": "CDI Importer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16333,7 +16333,7 @@
         "STIG"
       ],
       "display_name": "CDI Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16371,7 +16371,7 @@
         "STIG"
       ],
       "display_name": "CDI Upload Proxy",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16409,7 +16409,7 @@
         "STIG"
       ],
       "display_name": "CDI Upload Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16447,7 +16447,7 @@
         "STIG"
       ],
       "display_name": "Ceph (Rook)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16485,7 +16485,7 @@
         "STIG"
       ],
       "display_name": "Ceph CSI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16523,7 +16523,7 @@
         "CIS"
       ],
       "display_name": "ClickHouse Keeper",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16559,7 +16559,7 @@
       ],
       "compliance_labels": [],
       "display_name": "ClickHouse Operator Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -16593,7 +16593,7 @@
         "CIS"
       ],
       "display_name": "ClickHouse",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16631,7 +16631,7 @@
         "STIG"
       ],
       "display_name": "CloudNativePG",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16666,7 +16666,7 @@
       ],
       "compliance_labels": [],
       "display_name": "CloudNativePG Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -16702,7 +16702,7 @@
         "STIG"
       ],
       "display_name": "CloudnativePG Ba Plugin",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16740,7 +16740,7 @@
         "STIG"
       ],
       "display_name": "CloudNativePG Barman Cloud Plugin Sidecar",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16778,7 +16778,7 @@
         "STIG"
       ],
       "display_name": "CouchDB",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16816,7 +16816,7 @@
         "STIG"
       ],
       "display_name": "CSI Attacher",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16854,7 +16854,7 @@
         "STIG"
       ],
       "display_name": "CSI External Health Monitor Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16892,7 +16892,7 @@
         "STIG"
       ],
       "display_name": "CSI Hostpath Plugin",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16930,7 +16930,7 @@
         "STIG"
       ],
       "display_name": "CSI Provisioner",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -16968,7 +16968,7 @@
         "STIG"
       ],
       "display_name": "CSI Resizer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17006,7 +17006,7 @@
         "STIG"
       ],
       "display_name": "CSI Snapshotter",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17044,7 +17044,7 @@
         "STIG"
       ],
       "display_name": "drbd-reactor",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17082,7 +17082,7 @@
         "STIG"
       ],
       "display_name": "drbd-shutdown-guard",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17120,7 +17120,7 @@
         "STIG"
       ],
       "display_name": "drbd-utils",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17158,7 +17158,7 @@
         "STIG"
       ],
       "display_name": "DRBD 9",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17196,7 +17196,7 @@
         "STIG"
       ],
       "display_name": "ECK Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17234,7 +17234,7 @@
         "STIG"
       ],
       "display_name": "Elasticsearch",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17270,7 +17270,7 @@
         "CIS"
       ],
       "display_name": "Fluentd",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17306,7 +17306,7 @@
         "CIS"
       ],
       "display_name": "Grist",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17344,7 +17344,7 @@
         "STIG"
       ],
       "display_name": "Harbor DB",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17382,7 +17382,7 @@
         "CIS"
       ],
       "display_name": "Harbor Redis",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17420,7 +17420,7 @@
         "STIG"
       ],
       "display_name": "Hyperledger Fabric Peer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17458,7 +17458,7 @@
         "STIG"
       ],
       "display_name": "K8ssandra Medusa",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17496,7 +17496,7 @@
         "STIG"
       ],
       "display_name": "K8ssandra Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17532,7 +17532,7 @@
         "CIS"
       ],
       "display_name": "Kibana",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17570,7 +17570,7 @@
         "STIG"
       ],
       "display_name": "kube-state-metrics",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17608,7 +17608,7 @@
         "STIG"
       ],
       "display_name": "Linstor Affinity Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17646,7 +17646,7 @@
         "STIG"
       ],
       "display_name": "LINSTOR GUI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17684,7 +17684,7 @@
         "STIG"
       ],
       "display_name": "CSI Livenessprobe",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17722,7 +17722,7 @@
         "STIG"
       ],
       "display_name": "Local Path Provisioner",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17760,7 +17760,7 @@
         "STIG"
       ],
       "display_name": "MariaDB",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17796,7 +17796,7 @@
         "CIS"
       ],
       "display_name": "Memcached",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -17834,7 +17834,7 @@
         "STIG"
       ],
       "display_name": "MongoDB",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17870,7 +17870,7 @@
         "CIS"
       ],
       "display_name": "MongoDB Controllers for Kubernetes (MCK)",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17908,7 +17908,7 @@
         "STIG"
       ],
       "display_name": "MySQL",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17946,7 +17946,7 @@
         "STIG"
       ],
       "display_name": "MySQL Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -17982,7 +17982,7 @@
         "CIS"
       ],
       "display_name": "Neo4j",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18018,7 +18018,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Neo4j",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -18054,7 +18054,7 @@
         "STIG"
       ],
       "display_name": "Nessie",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18092,7 +18092,7 @@
         "STIG"
       ],
       "display_name": "Object Storage Sidecar",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18130,7 +18130,7 @@
         "STIG"
       ],
       "display_name": "OpenEBS LVM LocalPV Driver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18168,7 +18168,7 @@
         "STIG"
       ],
       "display_name": "Percona XtraBackup",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18206,7 +18206,7 @@
         "STIG"
       ],
       "display_name": "PgBouncer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18242,7 +18242,7 @@
         "CIS"
       ],
       "display_name": "pgvector",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18280,7 +18280,7 @@
         "STIG"
       ],
       "display_name": "Piraeus CSI",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18320,7 +18320,7 @@
         "STIG"
       ],
       "display_name": "Piraeus CSI NFS Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18358,7 +18358,7 @@
         "STIG"
       ],
       "display_name": "Piraeus HA Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18391,7 +18391,7 @@
       ],
       "compliance_labels": [],
       "display_name": "Piraeus HA Controller Helm chart",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [],
       "proof_placeholders": {
         "attestation_refs": [],
@@ -18427,7 +18427,7 @@
         "STIG"
       ],
       "display_name": "Piraeus Operator",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18466,7 +18466,7 @@
         "FIPS"
       ],
       "display_name": "Piraeus Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18506,7 +18506,7 @@
         "STIG"
       ],
       "display_name": "PostgreSQL",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -18547,7 +18547,7 @@
         "STIG"
       ],
       "display_name": "Rook Ceph",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18587,7 +18587,7 @@
         "STIG"
       ],
       "display_name": "SeaweedFS",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18625,7 +18625,7 @@
         "STIG"
       ],
       "display_name": "SeaweedFS COSI Driver",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18663,7 +18663,7 @@
         "STIG"
       ],
       "display_name": "Snapshot Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18701,7 +18701,7 @@
         "STIG"
       ],
       "display_name": "Apache Spark",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18739,7 +18739,7 @@
         "STIG"
       ],
       "display_name": "Stargate",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18777,7 +18777,7 @@
         "STIG"
       ],
       "display_name": "Trino",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18815,7 +18815,7 @@
         "STIG"
       ],
       "display_name": "VersityGW",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18851,7 +18851,7 @@
         "CIS Internet of things"
       ],
       "display_name": "Zookeeper",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18889,7 +18889,7 @@
         "STIG"
       ],
       "display_name": "K8s Device Plugin",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18927,7 +18927,7 @@
         "CIS"
       ],
       "display_name": "KServe Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18963,7 +18963,7 @@
         "CIS"
       ],
       "display_name": "KServe Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -18999,7 +18999,7 @@
         "CIS"
       ],
       "display_name": "KServe LocalModel Controller",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19035,7 +19035,7 @@
         "CIS"
       ],
       "display_name": "KServe LocalModelNode Agent",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19071,7 +19071,7 @@
         "CIS"
       ],
       "display_name": "KServe Router",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19107,7 +19107,7 @@
         "CIS"
       ],
       "display_name": "KServe Storage Initializer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19143,7 +19143,7 @@
         "CIS"
       ],
       "display_name": "Kubeflow Pipelines - API Server",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19179,7 +19179,7 @@
         "CIS"
       ],
       "display_name": "Kubeflow Pipelines - Frontend",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19214,7 +19214,7 @@
         "CIS"
       ],
       "display_name": "Kubeflow Pipelines - Metadata Writer",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19250,7 +19250,7 @@
         "CIS"
       ],
       "display_name": "LiteLLM",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19286,7 +19286,7 @@
         "CIS Operating systems"
       ],
       "display_name": "Tensorflow Serving",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19324,7 +19324,7 @@
         "STIG"
       ],
       "display_name": "kubernetes-pause",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19362,7 +19362,7 @@
         "STIG"
       ],
       "display_name": "MediaWiki",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Debian"
       ],
@@ -19402,7 +19402,7 @@
         "STIG Web analytics"
       ],
       "display_name": "WordPress",
-      "imported_at": "2026-05-22T19:15:19Z",
+      "imported_at": "2026-05-22T19:51:29Z",
       "os": [
         "Alpine",
         "Debian"
@@ -19432,7 +19432,7 @@
       "version_family": null
     }
   ],
-  "imported_at": "2026-05-22T19:15:19Z",
+  "imported_at": "2026-05-22T19:51:29Z",
   "production_readiness_claim": false,
   "provider": "docker_hardened_images",
   "schema_version": "mesh.hardened_arena.catalog.v1",

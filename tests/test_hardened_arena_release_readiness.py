@@ -59,6 +59,7 @@ class HardenedArenaReleaseReadinessTests(unittest.TestCase):
             proof_path = tmp_path / "proof.json"
             evidence_path = tmp_path / "proof-evidence.json"
             packet = generate_hardened_arena_packet("solo_project_default", generated_at="2026-05-22T00:00:00Z")
+            packet["blockers"] = ["target_validation_missing"]
             write_hardened_arena_packet(packet, packet_path)
             evidence_path.write_text(json.dumps(_complete_target_evidence(str(packet_path))), encoding="utf-8")
             proof = run_hardened_arena_proof(evidence_path, generated_at="2026-05-22T00:00:00Z")

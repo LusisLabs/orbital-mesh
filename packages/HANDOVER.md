@@ -42,6 +42,13 @@ Mesh integration anchors:
 ## Handover checklist
 
 1. Run `python3 scripts/verify_handover_packages.py` — all four must pass.
-2. Copy the target `packages/<name>/` directory to the destination repo or artifact store.
-3. Read the package `HANDOVER.md` for integration boundaries and env requirements.
+2. Export standalone git repos for external handoff:
+
+```bash
+python3 scripts/export_handover_repos.py
+```
+
+Default output: `../mesh-handover/` (sibling to this repo), with one git repo per package plus a manifest repo root.
+
+3. Read each exported repo's `HANDOVER.md` for integration boundaries and env requirements.
 4. For Darkharness production export, deploy Mesh control plane and run `scripts/verify_darkharness_live_packet.py`.

@@ -10,6 +10,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+from shared.mesh_runtime.hardened_arena_packet import generate_hardened_arena_packet, write_hardened_arena_packet
 from shared.mesh_runtime.hardened_arena_proof import (
     REQUIRED_PROOF_CHECKS,
     output_path_is_generated,
@@ -36,14 +37,56 @@ class HardenedArenaProofTests(unittest.TestCase):
         validate_payload("hardened-arena-proof.schema.json", proof)
 
     def test_target_validated_requires_target_specific_packet_ref_and_complete_checks(self) -> None:
+        packet_path = _write_valid_packet()
         with _ProofServer() as server:
             evidence = _complete_evidence(server.base_url)
+            evidence["packet_ref"] = str(packet_path)
             evidence["request_target_validated"] = True
             proof = run_hardened_arena_proof(_write_evidence(evidence), generated_at="2026-05-22T00:00:00Z")
+        packet_path.unlink(missing_ok=True)
 
         self.assertEqual(proof["readiness_posture"]["status"], "target_validated")
         self.assertTrue(proof["readiness_posture"]["target_validated"])
         self.assertTrue(proof["readiness_posture"]["target_specific"])
+
+    def test_target_validated_rejects_profile_mismatched_packet_ref(self) -> None:
+        packet_path = _write_valid_packet("solo_project_default")
+        with _ProofServer() as server:
+            evidence = _complete_evidence(server.base_url)
+            evidence["profile_id"] = "enterprise_onprem_rehearsal"
+            evidence["packet_ref"] = str(packet_path)
+            evidence["request_target_validated"] = True
+            proof = run_hardened_arena_proof(_write_evidence(evidence), generated_at="2026-05-22T00:00:00Z")
+        packet_path.unlink(missing_ok=True)
+
+        self.assertEqual(proof["profile_id"], "enterprise_onprem_rehearsal")
+        self.assertEqual(proof["readiness_posture"]["status"], "blocked")
+        self.assertFalse(proof["readiness_posture"]["target_validated"])
+        self.assertIn("target_validated_packet_ref_profile_mismatch", proof["blockers"])
+
+    def test_target_validated_rejects_missing_or_invalid_packet_ref(self) -> None:
+        with _ProofServer() as server:
+            evidence = _complete_evidence(server.base_url)
+            evidence["packet_ref"] = "not/a/real/complete/packet.json"
+            evidence["request_target_validated"] = True
+            proof = run_hardened_arena_proof(_write_evidence(evidence), generated_at="2026-05-22T00:00:00Z")
+
+        self.assertEqual(proof["readiness_posture"]["status"], "blocked")
+        self.assertFalse(proof["readiness_posture"]["target_validated"])
+        self.assertIn("target_validated_requires_complete_proof_packet", proof["blockers"])
+
+    def test_target_validated_rejects_packet_with_unresolved_blockers(self) -> None:
+        packet_path = _write_unresolved_blocker_packet("solo_project_default")
+        with _ProofServer() as server:
+            evidence = _complete_evidence(server.base_url)
+            evidence["packet_ref"] = str(packet_path)
+            evidence["request_target_validated"] = True
+            proof = run_hardened_arena_proof(_write_evidence(evidence), generated_at="2026-05-22T00:00:00Z")
+        packet_path.unlink(missing_ok=True)
+
+        self.assertEqual(proof["readiness_posture"]["status"], "blocked")
+        self.assertFalse(proof["readiness_posture"]["target_validated"])
+        self.assertIn("target_validated_packet_ref_has_unresolved_blockers", proof["blockers"])
 
     def test_incomplete_evidence_blocks_smoke_status(self) -> None:
         with _ProofServer() as server:
@@ -170,6 +213,27 @@ def _complete_evidence(base_url: str) -> dict:
     }
 
 
+def _write_valid_packet(profile_id: str = "solo_project_default") -> Path:
+    directory = Path("dist/hardened-arena/test")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"valid-{profile_id}-packet.json"
+    packet = generate_hardened_arena_packet(profile_id, generated_at="2026-05-22T00:00:00Z")
+    packet["blockers"] = ["target_validation_missing"]
+    write_hardened_arena_packet(packet, path)
+    return path
+
+
+def _write_unresolved_blocker_packet(profile_id: str = "solo_project_default") -> Path:
+    directory = Path("dist/hardened-arena/test")
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"unresolved-{profile_id}-packet.json"
+    write_hardened_arena_packet(
+        generate_hardened_arena_packet(profile_id, generated_at="2026-05-22T00:00:00Z"),
+        path,
+    )
+    return path
+
+
 def _write_evidence(payload: dict) -> Path:
     directory = Path("dist/hardened-arena/test/evidence")
     directory.mkdir(parents=True, exist_ok=True)
@@ -203,6 +267,7 @@ class _ProofServer:
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         self.server.shutdown()
+        self.server.server_close()
         self.thread.join(timeout=2)
         shutil.rmtree(Path("dist/hardened-arena/test/evidence"), ignore_errors=True)
 

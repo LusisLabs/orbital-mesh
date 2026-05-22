@@ -22,7 +22,7 @@ PACKAGES = [
 def _run(package_name: str, module_name: str, *, json_output: bool, extra_args: list[str] | None = None) -> dict[str, object]:
     package_dir = REPO_ROOT / "packages" / package_name
     src_dir = package_dir / "src"
-    args = [sys.executable, "-m", f"{module_name}.cli", "verify-e2e"]
+    args = [sys.executable, "-m", module_name, "verify-e2e"]
     args.extend(extra_args or [])
     if json_output:
         args.append("--json")

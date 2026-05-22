@@ -179,10 +179,12 @@ def copy_handover_assets() -> None:
                 shutil.copy2(src, package_root / name)
         src_dir = asset_dir / "src"
         if src_dir.exists():
-            for name in ("cli.py", "verify_e2e.py"):
-                src = src_dir / name
-                if src.exists():
-                    shutil.copy2(src, module_dir / name)
+            for src in src_dir.glob("*.py"):
+                shutil.copy2(src, module_dir / src.name)
+        for name in ("Makefile",):
+            src = asset_dir / name
+            if src.exists():
+                shutil.copy2(src, package_root / name)
 
 
 def bootstrap_centaur() -> None:

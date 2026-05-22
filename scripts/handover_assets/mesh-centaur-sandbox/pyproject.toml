@@ -5,12 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mesh-centaur-sandbox"
 version = "0.1.0"
-description = "Centaur-style sandbox Kubernetes manifests and credential egress live proof"
+description = "Centaur-style proposal sandbox K8s manifests and live proof helpers"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = []
 license = { text = "MIT" }
 authors = [{ name = "Mesh Intelligence Contributors" }]
+keywords = ["centaur", "sandbox", "kubernetes", "credential-egress", "mesh"]
+[project.urls]
+Homepage = "https://github.com/LusisLabs/mesh-centaur-sandbox"
+Repository = "https://github.com/LusisLabs/mesh-centaur-sandbox"
 
 [project.scripts]
 mesh-centaur-sandbox = "mesh_centaur_sandbox.cli:main"

@@ -50,6 +50,7 @@ def verify_package_e2e(*, output_dir: Path | None = None) -> dict[str, Any]:
 
     return {
         "status": "pass" if not blockers else "fail",
+        "summary": "verify-e2e",
         "profiles": profiles,
         "catalog": catalog,
         "packet": packet_verify,

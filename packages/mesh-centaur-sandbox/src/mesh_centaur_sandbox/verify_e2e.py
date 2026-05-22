@@ -14,7 +14,52 @@ from mesh_centaur_sandbox.centaur_deployment import (
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST_PATH = PACKAGE_ROOT / "manifests" / "centaur-sandbox-runtime.k8s.yaml"
+MANIFESTS_DIR = PACKAGE_ROOT / "manifests"
+MANIFEST_PATH = MANIFESTS_DIR / "centaur-sandbox-runtime.k8s.yaml"
+
+
+def list_manifests() -> dict[str, Any]:
+    manifests = sorted(p.name for p in MANIFESTS_DIR.glob("*") if p.is_file())
+    return {"status": "pass", "summary": "bundled manifests", "manifests": manifests}
+
+
+def verify_live_with_fake_cluster(*, manifest_path: Path | None = None) -> dict[str, Any]:
+    target = manifest_path or MANIFEST_PATH
+    with tempfile.TemporaryDirectory() as tmp:
+        kubectl = _write_fake_centaur_kubectl(Path(tmp), fail=False)
+        proxy_server, proxy_thread = _start_fake_credential_proxy()
+        try:
+            live = verify_centaur_kubernetes_live_proof(
+                manifest_path=str(target),
+                kubectl_command=kubectl,
+                credential_proxy_url=f"http://127.0.0.1:{proxy_server.server_port}",
+                timeout_seconds=2,
+            )
+        finally:
+            proxy_server.shutdown()
+            proxy_thread.join(timeout=2)
+            proxy_server.server_close()
+    live["summary"] = "verify live (fake cluster)"
+    return live
+
+
+def verify_package_e2e() -> dict[str, Any]:
+    blockers: list[str] = []
+    profile = verify_centaur_kubernetes_profile(str(MANIFEST_PATH))
+    if profile.get("status") != "pass":
+        blockers.append("static_profile_failed")
+
+    live = verify_live_with_fake_cluster(manifest_path=MANIFEST_PATH)
+    if live.get("status") != "pass":
+        blockers.extend(live.get("blockers", []))
+
+    return {
+        "status": "pass" if not blockers else "fail",
+        "summary": "verify-e2e",
+        "static_profile": profile,
+        "live_proof": live,
+        "blockers": blockers,
+    }
 
 
 def _write_fake_centaur_kubectl(path: Path, *, fail: bool) -> str:
@@ -146,35 +191,3 @@ def _start_fake_credential_proxy(*, raw_secret_event: bool = False) -> tuple[HTT
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, thread
-
-
-def verify_package_e2e() -> dict[str, Any]:
-    blockers: list[str] = []
-    profile = verify_centaur_kubernetes_profile(str(MANIFEST_PATH))
-    if profile.get("status") != "pass":
-        blockers.append("static_profile_failed")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        kubectl = _write_fake_centaur_kubectl(Path(tmp), fail=False)
-        proxy_server, proxy_thread = _start_fake_credential_proxy()
-        try:
-            live = verify_centaur_kubernetes_live_proof(
-                manifest_path=str(MANIFEST_PATH),
-                kubectl_command=kubectl,
-                credential_proxy_url=f"http://127.0.0.1:{proxy_server.server_port}",
-                timeout_seconds=2,
-            )
-        finally:
-            proxy_server.shutdown()
-            proxy_thread.join(timeout=2)
-            proxy_server.server_close()
-
-    if live.get("status") != "pass":
-        blockers.append("live_proof_failed")
-
-    return {
-        "status": "pass" if not blockers else "fail",
-        "static_profile": profile,
-        "live_proof": live,
-        "blockers": blockers,
-    }
