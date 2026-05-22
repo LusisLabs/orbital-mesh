@@ -118,6 +118,8 @@ def main() -> int:
             web.stop()
             api.stop()
             shutil.rmtree(REPO_ROOT / "meshapp" / "frontend" / next_dist_dir, ignore_errors=True)
+            shutil.rmtree(REPO_ROOT / "meshapp" / "frontend" / ".next", ignore_errors=True)
+            shutil.rmtree(REPO_ROOT / "meshapp" / "frontend" / ".next-ui-audit", ignore_errors=True)
             for path, contents in next_generated_snapshots.items():
                 path.write_text(contents, encoding="utf-8")
 

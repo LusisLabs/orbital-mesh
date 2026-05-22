@@ -4,9 +4,9 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 
 ## Source-Of-Truth Hierarchy
 
-1. Current code and config win over prose: `control_plane_server.py`, `services/`, `shared/mesh_runtime/`, `mesh_brain/`, `meshapp/`, `web/`, `scripts/`, `config/`, `policies/`, and `docker-compose*.yml`.
+1. Current code and config win over prose: `control_plane_server.py`, `services/`, `shared/mesh_runtime/`, `mesh_brain/`, `apps/`, `internal-packages/`, `meshapp/`, `web/`, `scripts/`, `config/`, `policies/`, and `docker-compose*.yml`.
 2. Contracts win over inferred shapes: JSON Schemas in `shared/mesh_runtime/schemas/` plus Python dataclasses and validators in `shared/mesh_runtime/contracts.py` and related modules.
-3. Generated UI contracts must match backend contracts in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`. Use `npm run lint`, `npm --prefix web run contracts:check`, or `npm --prefix meshapp/frontend run contracts:check`; use `scripts/generate_control_plane_contracts.py --types-path <path>` only when intentionally checking or updating one UI surface.
+3. Generated UI contracts must match backend contracts in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`. `internal-packages/mesh-contracts` generates package-local TypeScript from `shared/mesh_runtime/schemas/` for new workspace consumers. Use `pnpm run lint`, `pnpm --dir web run contracts:check`, `pnpm --dir meshapp/frontend run contracts:check`, or `pnpm --dir internal-packages/mesh-contracts run contracts:check`; use `scripts/generate_control_plane_contracts.py --types-path <path>` only when intentionally checking or updating one UI surface.
 4. Roadmap and evidence docs are evidence indexes, not truth by themselves: `docs/production-deployment-roadmap.md`, `docs/production-hardening-records.md`, and `docs/production-readiness-validation.md`.
 5. Historical docs and archived trees are provenance only unless the task explicitly revives them.
 6. External product, competitor, market, or certification claims require independent verification and explicit evidence.
@@ -17,10 +17,10 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Runtime loop and services: `services/runtime.py`, `services/pipeline.py`, `services/ingest/`, `services/trigger/`, `services/evidence/`, `services/investigation/`, `services/decision/`, `services/evaluation/`, `services/orchestrator/`, `services/actuators/`, `services/feedback/`, `services/observer/`, and watchers.
 - Runtime contracts and persistence: `shared/mesh_runtime/`, with `shared/mesh_runtime/schemas/` as schema source.
 - Model lifecycle plane: `mesh_brain/`.
-- Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `web/` remains the Vite reference surface during migration.
+- Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `apps/mesh-webapp` is the Trigger-derived Remix dashboard shell with working Mesh resource routes (`/resources/mesh/runs/$runId/steer`, `/resources/mesh/kill-switch`, `/resources/mesh/approvals`, `/resources/mesh/readiness`, `/resources/mesh/connector-certification`) and operator action handlers. `web/` remains the Vite reference surface during migration until parity is proven.
 - Branding system: `web/branding/` owns the brand guide, mark, and reusable CSS tokens; map those tokens into an explicit UI state slice instead of rewriting unrelated app styles in broad patches.
 - Deployment and validation: `docker-compose.stack.yml`, `docker-compose.prod.yml`, `scripts/`, `config/`, and `policies/`.
-- Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, and the `agentic-operator-core-main/` provenance record.
+- Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, the `agentic-operator-core-main/` provenance record, and the `lusistrigger.dev` provenance record.
 - Archived UI: `docs/history/gpui/`.
 
 ## Product And Authority Invariants
@@ -28,6 +28,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Mesh owns policy, evaluation, approval, audit, execution, promotion, run events, and proof continuity.
 - External agents, orchestrators, evaluators, model runtimes, and imported source trees are advisory, proposal, review, or source-input lanes unless current code, connector certification, credentials boundary, and tests prove bounded authority.
 - `agentic-operator-core-main/` is source input only when present. The tracked provenance record remains source-input-only until forked through license, renamed contracts, authority gates, and tests.
+- `/Users/shaan.s.patel/Desktop/lusistrigger.dev` is source input only. `config/trigger-web-source.provenance.json` allows controlled imports from `apps/webapp` into `apps/mesh-webapp` or `internal-packages/mesh-ui` only after Mesh route, contract, and authority ownership are explicit.
 - Promptfoo is a compatibility mode name and advisory integration lane. Mesh-native evaluation decides pass/fail.
 - Hermes is first-class for explanation and interaction. In `auto` orchestration mode the adapter prefers Hermes when ready, then Goose, then native fallback. Hermes does not replace Mesh authority.
 - Postgres is the compose production default and required for multi-operator production reliance. File-backed state remains supported and is the library default.
@@ -35,7 +36,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Local smoke evidence is not production proof.
 - Synthetic, fixture, local-only, or `--allow-dirty` release evidence is not pilot-signing proof.
 - Raw secrets, kubeconfigs, tokens, API keys, SSH keys, and service account credentials must not enter run artifacts, docs examples, or committed fixtures.
-- `meshapp/` is the active production pilot-serving operator surface. `web/` is the browser/Vite reference surface during migration. GPUI is archived unless explicitly revived.
+- `meshapp/` is the active production pilot-serving operator surface. `apps/mesh-webapp` implements Mesh control-plane routes and operator action handlers for steering, kill-switch, approvals, readiness, and connector certification. `web/` is the browser/Vite reference surface during migration. GPUI is archived unless explicitly revived.
 
 ## Validation Commands By Change Type
 
@@ -144,4 +145,5 @@ Run focused Python tests only when the change touches executable behavior, gener
 - `deepagents/`: vendored dependency path used by `pyproject.toml`; do not refactor or modernize it during first-party cleanup.
 - `latent-mesh/LatentMAS/`: vendored Rust/Python source input; run Rust validation only when touching it.
 - `agentic-operator-core-main/`: source input only when present; absence is represented by provenance checks rather than active runtime failure. Use `config/agentic-operator-source.provenance.json` and `python3 scripts/verify_agentic_operator_source_provenance.py --json` before any fork work.
+- `lusistrigger.dev`: source input only at `/Users/shaan.s.patel/Desktop/lusistrigger.dev`; `config/trigger-web-source.provenance.json` records remotes, allowed imported paths, forbidden backend imports, `active_runtime: false`, and `wholesale_copy_allowed: false`.
 - Archived `docs/history/gpui/`: provenance only. Do not treat it as active UI code.
