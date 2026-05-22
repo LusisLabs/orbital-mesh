@@ -17,7 +17,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Runtime loop and services: `services/runtime.py`, `services/pipeline.py`, `services/ingest/`, `services/trigger/`, `services/evidence/`, `services/investigation/`, `services/decision/`, `services/evaluation/`, `services/orchestrator/`, `services/actuators/`, `services/feedback/`, `services/observer/`, and watchers.
 - Runtime contracts and persistence: `shared/mesh_runtime/`, with `shared/mesh_runtime/schemas/` as schema source.
 - Model lifecycle plane: `mesh_brain/`.
-- Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `apps/mesh-webapp` is the Trigger-derived Remix dashboard shell after adaptation, but not the active production-serving surface until Mesh BFF routes, dashboard parity, and validation are complete. `web/` remains the Vite reference surface during migration until parity is proven.
+- Operator UI: `meshapp/` for the production pilot-serving app and zero-native shell, especially `meshapp/frontend/src/App.tsx`, `meshapp/frontend/src/api.ts`, `meshapp/frontend/src/types.ts`, `meshapp/frontend/src/lib/`, and `meshapp/src/`. `apps/mesh-webapp` is the Trigger-derived Remix dashboard shell with working Mesh resource routes (`/resources/mesh/runs/$runId/steer`, `/resources/mesh/kill-switch`, `/resources/mesh/approvals`, `/resources/mesh/readiness`, `/resources/mesh/connector-certification`) and operator action handlers. `web/` remains the Vite reference surface during migration until parity is proven.
 - Branding system: `web/branding/` owns the brand guide, mark, and reusable CSS tokens; map those tokens into an explicit UI state slice instead of rewriting unrelated app styles in broad patches.
 - Deployment and validation: `docker-compose.stack.yml`, `docker-compose.prod.yml`, `scripts/`, `config/`, and `policies/`.
 - Vendored/source-input by default: `deepagents/`, `latent-mesh/LatentMAS/`, the `agentic-operator-core-main/` provenance record, and the `lusistrigger.dev` provenance record.
@@ -36,7 +36,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - Local smoke evidence is not production proof.
 - Synthetic, fixture, local-only, or `--allow-dirty` release evidence is not pilot-signing proof.
 - Raw secrets, kubeconfigs, tokens, API keys, SSH keys, and service account credentials must not enter run artifacts, docs examples, or committed fixtures.
-- `meshapp/` is the active production pilot-serving operator surface. `apps/mesh-webapp` is not active runtime until adapted through Mesh control-plane routes and validation. `web/` is the browser/Vite reference surface during migration. GPUI is archived unless explicitly revived.
+- `meshapp/` is the active production pilot-serving operator surface. `apps/mesh-webapp` implements Mesh control-plane routes and operator action handlers for steering, kill-switch, approvals, readiness, and connector certification. `web/` is the browser/Vite reference surface during migration. GPUI is archived unless explicitly revived.
 
 ## Validation Commands By Change Type
 

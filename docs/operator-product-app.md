@@ -11,6 +11,9 @@ State slices:
 - `mesh.agent_flow.mutation_preview.v1`: draft-only mutation preview and confirmation record.
 - `mesh-settings-control`: validated UI/CLI settings stored in operator identity state.
 - `mesh.operator-preferences.v1`: scoped operator setup preferences for agent fabric, preferred agents, model defaults, approval posture, pause points, target defaults, and run templates.
+- `mesh.control_plane_proxy`: error reporting from Mesh control-plane proxy.
+- `mesh.operator_actions`: steering, kill-switch, and run launch mutations.
+- `mesh.operator_ui.overview`: dashboard aggregation from Mesh-owned endpoints.
 - `meshapp.run-preflight.v1`: product launch preflight read model over operator identity, preferences, topology, connector scopes, readiness, and target lock posture.
 - `meshapp.run-workbench.v1`: product run review model over Mesh run detail, events, evidence, decisions, agent tasks, timeline proof, and export endpoints.
 - `ui-product-shell`: `meshapp/frontend` production product shell.
@@ -82,7 +85,7 @@ NEXT_PUBLIC_MESH_API_URL=http://127.0.0.1:8787 \
 pnpm --dir meshapp/frontend run dev --hostname 127.0.0.1 --port 3000
 ```
 
-The adapted Remix dashboard shell lives at `apps/mesh-webapp` as a non-authoritative migration surface. Use it for Trigger-derived layout, navigation, table, and detail-route work while Mesh contracts, control-plane routes, and old UI parity stay authoritative elsewhere:
+The adapted Remix dashboard shell lives at `apps/mesh-webapp` as a migration surface with working Mesh resource route proxies for steering, kill-switch, approvals, readiness, and connector certification. Use it for Trigger-derived layout, navigation, table, and detail-route work while Mesh contracts and old UI parity stay authoritative:
 
 ```bash
 pnpm --dir apps/mesh-webapp run dev

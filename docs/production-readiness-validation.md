@@ -25,6 +25,11 @@ Latest imported hydrogen-mesh audit:
 | Web lint/contracts | `npm run lint` | PASS | Reran on 2026-05-08; root lint invoked `npm --prefix web run lint`, contracts check and `tsc --noEmit` exited `0`. npm emitted only the existing `store-dir` config warnings. |
 | Mesh webapp lint/typecheck | `pnpm --dir apps/mesh-webapp run lint` | PASS | Added for the Trigger-derived Remix dashboard shell. This validates TypeScript with `tsc --noEmit`; it is not production parity proof by itself. |
 | Mesh webapp unit tests | `pnpm --dir apps/mesh-webapp run test` | PASS | Added for the Trigger-derived Remix dashboard shell. This runs Vitest unit coverage for env parsing and server helpers; it is not browser parity proof by itself. |
+
+Mesh webapp development requires:
+
+- `MESH_CONTROL_PLANE_URL`: Base URL for the Mesh control-plane API (e.g., `http://127.0.0.1:8787`).
+- `MESH_OPERATOR_IDENTITY_HEADER`: Header value for proxy-header auth mode when developing with operator actions.
 | Web unit tests | `npm --prefix web test` | PASS | Reran on 2026-05-04; `2` files passed, `14` tests passed. |
 | Web build | `npm --prefix web run build` | PASS WITH WARNING | Reran on 2026-05-04; build exited `0`. Vite reported `dist/assets/index-DGcNkvvo.js` at `620.11 kB`, above the 500 kB warning threshold. |
 | UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
