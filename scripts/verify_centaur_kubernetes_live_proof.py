@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -19,6 +20,7 @@ def main() -> int:
     parser.add_argument("--manifest", default="config/centaur-sandbox-runtime.k8s.yaml")
     parser.add_argument("--namespace", default="mesh-centaur-sandboxes")
     parser.add_argument("--kubectl-command", default="kubectl")
+    parser.add_argument("--credential-proxy-url", default=os.getenv("MESH_CENTAUR_CREDENTIAL_PROXY_URL", ""))
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--output", default="")
     parser.add_argument("--allow-blocked", action="store_true")
@@ -31,6 +33,7 @@ def main() -> int:
         manifest_path=args.manifest,
         namespace=args.namespace,
         kubectl_command=args.kubectl_command,
+        credential_proxy_url=args.credential_proxy_url,
         timeout_seconds=args.timeout_seconds,
     )
     body = json.dumps(proof, indent=2, sort_keys=True)

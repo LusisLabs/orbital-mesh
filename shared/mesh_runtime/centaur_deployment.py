@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import subprocess
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 CENTAUR_DEPLOYMENT_PROFILE_VERSION = "mesh.centaur_deployment_profile.v1"
@@ -15,6 +17,7 @@ def verify_centaur_kubernetes_live_proof(
     manifest_path: str | Path = "config/centaur-sandbox-runtime.k8s.yaml",
     namespace: str = "mesh-centaur-sandboxes",
     kubectl_command: str = "kubectl",
+    credential_proxy_url: str = "",
     timeout_seconds: float = 10.0,
 ) -> dict[str, Any]:
     manifest_result = verify_centaur_kubernetes_profile(manifest_path)
@@ -24,6 +27,7 @@ def verify_centaur_kubernetes_live_proof(
         "namespace": namespace,
         "manifest_path": str(manifest_path),
         "kubectl_command": kubectl_command,
+        "credential_proxy_url": credential_proxy_url,
         "status": "blocked",
         "checks": {
             "static_manifest_profile_passed": manifest_result.get("status") == "pass",
@@ -135,9 +139,106 @@ def verify_centaur_kubernetes_live_proof(
         if not proof["checks"][key]:
             proof["blockers"].append(f"{key}_failed")
 
+    proxy_live_proof = _verify_live_credential_proxy(
+        credential_proxy_url=credential_proxy_url,
+        timeout_seconds=timeout_seconds,
+    )
+    proof["credential_proxy_live_proof"] = proxy_live_proof
+    proof["checks"]["credential_proxy_live_ready"] = proxy_live_proof["checks"]["credential_proxy_live_ready"]
+    proof["checks"]["credential_proxy_audit_event_observed"] = proxy_live_proof["checks"][
+        "credential_proxy_audit_event_observed"
+    ]
+    proof["checks"]["credential_proxy_audit_redacted"] = proxy_live_proof["checks"][
+        "credential_proxy_audit_redacted"
+    ]
+    proof["blockers"].extend(proxy_live_proof["blockers"])
+
     proof["blockers"] = sorted(set(proof["blockers"]))
     proof["status"] = "pass" if proof["checks"] and all(proof["checks"].values()) else "blocked"
     return proof
+
+
+def _verify_live_credential_proxy(*, credential_proxy_url: str, timeout_seconds: float) -> dict[str, Any]:
+    proof = {
+        "status": "blocked",
+        "checks": {
+            "credential_proxy_live_ready": False,
+            "credential_proxy_audit_event_observed": False,
+            "credential_proxy_audit_redacted": False,
+        },
+        "blockers": [],
+        "readiness_status": "",
+        "last_audit_event_id": "",
+        "event_count": 0,
+    }
+    base_url = credential_proxy_url.rstrip("/")
+    if not base_url:
+        proof["blockers"].append("credential_proxy_url_missing")
+        return proof
+
+    ready_payload = _fetch_json(base_url + "/health/ready", timeout_seconds=timeout_seconds)
+    proof["readiness_status"] = str(ready_payload.get("status") or "")
+    proof["last_audit_event_id"] = str(ready_payload.get("last_audit_event_id") or "")
+    proof["checks"]["credential_proxy_live_ready"] = ready_payload.get("status") == "ok"
+
+    events_payload = _fetch_json(base_url + "/audit/events", timeout_seconds=timeout_seconds)
+    events = events_payload.get("events") if isinstance(events_payload.get("events"), list) else []
+    proof["event_count"] = len(events)
+    proof["checks"]["credential_proxy_audit_event_observed"] = any(
+        isinstance(event, dict)
+        and event.get("state_slice") == "mesh.credential_egress_policy.v1"
+        and bool(event.get("event_id"))
+        for event in events
+    )
+    proof["checks"]["credential_proxy_audit_redacted"] = _credential_proxy_events_are_redacted(events)
+
+    for key, value in proof["checks"].items():
+        if not value:
+            proof["blockers"].append(f"{key}_failed")
+    proof["status"] = "pass" if all(proof["checks"].values()) else "blocked"
+    return proof
+
+
+def _fetch_json(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+    request = Request(url, headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+            payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, OSError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _credential_proxy_events_are_redacted(events: list[Any]) -> bool:
+    if not events:
+        return False
+    forbidden_keys = {
+        "raw_secret",
+        "raw_secret_value",
+        "credential_value",
+        "secret_value",
+        "token",
+        "api_key",
+        "authorization",
+    }
+    for event in events:
+        if not isinstance(event, dict):
+            return False
+        for key, value in event.items():
+            lowered = str(key).lower()
+            if lowered in forbidden_keys:
+                return False
+            if isinstance(value, str) and _looks_like_raw_secret(value):
+                return False
+    return True
+
+
+def _looks_like_raw_secret(value: str) -> bool:
+    lowered = value.lower()
+    if "${secret:" in value:
+        return False
+    secret_markers = ("bearer ", "ghp_", "github_pat_", "sk-", "xoxb-", "aws_secret_access_key")
+    return any(marker in lowered for marker in secret_markers)
 
 
 def verify_centaur_kubernetes_profile(path: str | Path) -> dict[str, Any]:

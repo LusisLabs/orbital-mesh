@@ -274,7 +274,7 @@ Implemented:
 - product UI attempt/thread observability;
 - opt-in local compose profile for adapter plus credential proxy proof;
 - disabled-by-default Kubernetes deployment profile with local/preview/prod overlays, default-deny namespace policy, adapter-to-proxy-only egress policy, per-sandbox labels, cleanup policy, and separate credential proxy service pattern.
-- structured live Kubernetes proof gate via `pnpm run verify:centaur-k8s-live`, which blocks unless the target cluster exposes the namespace, adapter deployment, credential proxy deployment/service, and NetworkPolicy evidence.
+- structured live Kubernetes proof gate via `pnpm run verify:centaur-k8s-live`, which blocks unless the target cluster exposes the namespace, adapter deployment, credential proxy deployment/service, NetworkPolicy evidence, a reachable credential proxy readiness endpoint, and redacted proxy audit events.
 
 Proof status:
 - local end-to-end Mesh proof uses real loopback HTTP servers and the Mesh-owned runtime adapter endpoints; it proves the Mesh integration path without requiring a target Centaur Kubernetes cluster;

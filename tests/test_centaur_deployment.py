@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
 from pathlib import Path
 import tempfile
+import threading
 import textwrap
 import unittest
 
@@ -55,13 +58,26 @@ class CentaurDeploymentProfileTests(unittest.TestCase):
     def test_live_kubernetes_proof_passes_with_observed_proxy_gated_resources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             kubectl = _write_fake_centaur_kubectl(Path(tmp), fail=False)
-            result = verify_centaur_kubernetes_live_proof(kubectl_command=kubectl, timeout_seconds=2)
+            proxy_server, proxy_thread = _start_fake_credential_proxy()
+            try:
+                result = verify_centaur_kubernetes_live_proof(
+                    kubectl_command=kubectl,
+                    credential_proxy_url=f"http://127.0.0.1:{proxy_server.server_port}",
+                    timeout_seconds=2,
+                )
+            finally:
+                proxy_server.shutdown()
+                proxy_thread.join(timeout=2)
+                proxy_server.server_close()
 
         self.assertEqual(result["status"], "pass")
         self.assertEqual(result["checks"]["client_dry_run_apply"], True)
         self.assertEqual(result["checks"]["adapter_points_to_credential_proxy"], True)
         self.assertEqual(result["checks"]["proxy_placeholder_mode"], True)
         self.assertEqual(result["checks"]["live_policy_allows_adapter_to_proxy_only"], True)
+        self.assertEqual(result["checks"]["credential_proxy_live_ready"], True)
+        self.assertEqual(result["checks"]["credential_proxy_audit_event_observed"], True)
+        self.assertEqual(result["checks"]["credential_proxy_audit_redacted"], True)
         self.assertEqual(result["blockers"], [])
 
     def test_live_kubernetes_proof_blocks_when_cluster_resources_are_unreachable(self) -> None:
@@ -72,6 +88,25 @@ class CentaurDeploymentProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "blocked")
         self.assertIn("namespace_reachable_failed", result["blockers"])
         self.assertIn("adapter_points_to_credential_proxy_failed", result["blockers"])
+        self.assertIn("credential_proxy_url_missing", result["blockers"])
+
+    def test_live_kubernetes_proof_blocks_when_proxy_audit_contains_secret_material(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            kubectl = _write_fake_centaur_kubectl(Path(tmp), fail=False)
+            proxy_server, proxy_thread = _start_fake_credential_proxy(raw_secret_event=True)
+            try:
+                result = verify_centaur_kubernetes_live_proof(
+                    kubectl_command=kubectl,
+                    credential_proxy_url=f"http://127.0.0.1:{proxy_server.server_port}",
+                    timeout_seconds=2,
+                )
+            finally:
+                proxy_server.shutdown()
+                proxy_thread.join(timeout=2)
+                proxy_server.server_close()
+
+        self.assertEqual(result["status"], "blocked")
+        self.assertIn("credential_proxy_audit_redacted_failed", result["blockers"])
 
 
 def _write_fake_centaur_kubectl(path: Path, *, fail: bool) -> str:
@@ -161,6 +196,48 @@ def _write_fake_centaur_kubectl(path: Path, *, fail: bool) -> str:
     )
     script.chmod(0o755)
     return str(script)
+
+
+def _start_fake_credential_proxy(*, raw_secret_event: bool = False) -> tuple[HTTPServer, threading.Thread]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path == "/health/ready":
+                self._send_json(
+                    {
+                        "status": "ok",
+                        "state_slice": "mesh.credential_egress_policy.v1",
+                        "last_audit_event_id": "evt_proxy_1",
+                    }
+                )
+                return
+            if self.path == "/audit/events":
+                event = {
+                    "event_id": "evt_proxy_1",
+                    "state_slice": "mesh.credential_egress_policy.v1",
+                    "status": "proxy_policy_loaded",
+                    "host": "api.github.com",
+                }
+                if raw_secret_event:
+                    event["token"] = "ghp_rawsecret"
+                self._send_json({"events": [event], "state_slice": "mesh.credential_egress_policy.v1"})
+                return
+            self.send_error(404)
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+        def _send_json(self, payload: dict[str, object]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
 
 
 if __name__ == "__main__":

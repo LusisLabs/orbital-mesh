@@ -33,6 +33,7 @@ Required patterns before enabling a real sandbox runtime:
 - Optional warm pool.
 - Separate credential proxy deployment and service; the adapter reaches credentials only through `MESH_CREDENTIAL_EGRESS_PROXY_URL`.
 - Health endpoint for adapter readiness.
+- Reachable credential proxy readiness and `/audit/events` endpoints; at least one redacted `mesh.credential_egress_policy.v1` audit event is required before the live proof can pass.
 
 ## Preview And Production
 
@@ -60,7 +61,8 @@ Deployment-specific checks:
 ```bash
 docker compose config --quiet
 docker compose --profile centaur-sandbox config --quiet
+pnpm run verify:centaur-k8s-live -- --credential-proxy-url http://<reachable-proxy>:15001
 pnpm run verify:centaur-k8s-live -- --allow-blocked
 ```
 
-No target-cluster live execution claim is valid until `pnpm run verify:centaur-k8s-live` returns `status=pass` against that cluster. `--allow-blocked` is for recording a structured blocked proof only.
+No target-cluster live execution claim is valid until `pnpm run verify:centaur-k8s-live` returns `status=pass` against that cluster with a reachable credential proxy URL. `--allow-blocked` is for recording a structured blocked proof only.
