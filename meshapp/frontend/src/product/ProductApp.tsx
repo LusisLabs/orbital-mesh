@@ -270,6 +270,8 @@ type AgentFabricAttemptView = {
   harness: string;
   events: number;
   tools: number;
+  changedFiles: number;
+  tests: number;
   riskFlags: string[];
   release: string;
   egress: string;
@@ -2946,6 +2948,7 @@ function AgentFabricObservability({ attempts }: { attempts: AgentFabricAttemptVi
               <span>{attempt.agent} / {attempt.adapter}</span>
               <strong>{humanize(attempt.status)}</strong>
               <small>{attempt.harness} / {attempt.events} event(s) / {attempt.tools} tool call(s)</small>
+              <small>{attempt.changedFiles} changed file(s) / {attempt.tests} test result(s)</small>
               <small>egress: {attempt.egress}</small>
               <small>release: {attempt.release}</small>
               <small>authority: {attempt.authority}</small>
@@ -3239,6 +3242,8 @@ function agentAttemptViewFromThread(thread: any): AgentFabricAttemptView | null 
     harness: String(thread.harness || request.harness || "default"),
     events: Number.isFinite(eventCount) ? eventCount : 0,
     tools: Array.isArray(thread.tool_calls) ? thread.tool_calls.length : 0,
+    changedFiles: Array.isArray(thread.changed_files) ? thread.changed_files.length : 0,
+    tests: Array.isArray(thread.test_results) ? thread.test_results.length : 0,
     riskFlags: Array.isArray(thread.risk_flags) ? thread.risk_flags.map(String) : [],
     release: release.released === true ? "released" : release.released === false ? "not released" : "not reported",
     egress: credentialPolicy.sandbox_receives_placeholder_only === true && credentialPolicy.raw_secret_in_sandbox === false

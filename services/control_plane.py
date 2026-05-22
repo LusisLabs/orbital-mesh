@@ -6448,6 +6448,7 @@ def _agent_attempt_thread_projection(tasks: list[dict[str, Any]]) -> list[dict[s
                     "request": thread.get("request") if isinstance(thread.get("request"), dict) else {},
                     "tool_calls": thread.get("tool_calls") if isinstance(thread.get("tool_calls"), list) else [],
                     "output": thread.get("output") if isinstance(thread.get("output"), dict) else {},
+                    "changed_files": attempt.get("changed_files") if isinstance(attempt.get("changed_files"), list) else [],
                     "risk_flags": thread.get("risk_flags") if isinstance(thread.get("risk_flags"), list) else [],
                     "test_results": thread.get("test_results") if isinstance(thread.get("test_results"), list) else [],
                     "release_status": thread.get("release_status") if isinstance(thread.get("release_status"), dict) else {},

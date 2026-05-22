@@ -313,7 +313,9 @@ describe("run workbench and keys readiness", () => {
                       },
                     },
                     tool_calls: [{ name: "lookup_run" }],
+                    changed_files: ["services/orchestrator/centaur_adapter.py"],
                     risk_flags: [],
+                    test_results: [{ command: "pnpm run test:focused", status: "passed" }],
                     release_status: { released: true },
                     authority: {
                       mesh_control_plane_authoritative: true,
@@ -336,6 +338,8 @@ describe("run workbench and keys readiness", () => {
       authority: "Mesh approves and executes",
       release: "released",
       tools: 1,
+      changedFiles: 1,
+      tests: 1,
     });
   });
 
