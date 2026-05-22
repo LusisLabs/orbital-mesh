@@ -28,9 +28,10 @@ Required patterns before enabling a real sandbox runtime:
 - Dedicated sandbox namespace.
 - Service account scoped to sandbox lifecycle only.
 - Default-deny network policy.
+- Adapter egress policy that permits DNS and the credential proxy service only.
 - Per-sandbox labels binding `run_id`, `task_id`, `attempt_id`, and `agent`.
 - Optional warm pool.
-- Credential proxy sidecar pattern, disabled with the rest of the profile until credential proof passes.
+- Separate credential proxy deployment and service; the adapter reaches credentials only through `MESH_CREDENTIAL_EGRESS_PROXY_URL`.
 - Health endpoint for adapter readiness.
 
 ## Preview And Production

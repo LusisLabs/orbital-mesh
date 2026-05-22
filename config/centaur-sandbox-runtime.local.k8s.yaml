@@ -20,7 +20,26 @@ spec:
           env:
             - name: MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH
               value: /app/config/centaur-credential-egress.local.json
+            - name: MESH_CREDENTIAL_EGRESS_PROXY_URL
+              value: http://mesh-centaur-credential-egress-proxy:15001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-centaur-credential-egress-proxy
+  namespace: mesh-centaur-sandboxes
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        mesh.lusis.io/environment: local
+      annotations:
+        mesh.lusis.io/live-execution: local-only-after-credential-egress-proof
+    spec:
+      containers:
         - name: credential-egress-proxy
+          image: ghcr.io/lusislabs/mesh-credential-egress-proxy:local
           env:
             - name: MESH_CREDENTIAL_ALLOWED_HOSTS
               value: mesh-centaur-adapter,127.0.0.1,localhost

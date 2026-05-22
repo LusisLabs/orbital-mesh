@@ -130,7 +130,7 @@ Centaur’s security model is the strongest reusable part: sandbox isolation, de
 
 Mesh should implement this in two levels:
 - Level 1: contract and readiness proof only. No raw keys in sandbox configs.
-- Level 2: optional iron-proxy sidecar in compose/k8s.
+- Level 2: optional compose proxy or Kubernetes credential-proxy service with adapter egress constrained to the proxy.
 
 Required records:
 - secret name;
@@ -205,7 +205,7 @@ Do not copy Centaur’s Helm chart directly. Extract patterns:
 - default-deny network policy;
 - per-sandbox labels;
 - warm-pool optional;
-- proxy sidecar optional;
+- proxy service optional;
 - health endpoints.
 
 Mesh deployment paths:
@@ -273,9 +273,9 @@ Implemented:
 - operator ingress records projected to Mesh-owned proposal tasks without direct actuation;
 - product UI attempt/thread observability;
 - opt-in local compose profile for adapter plus credential proxy proof;
-- disabled-by-default Kubernetes deployment profile with local/preview/prod overlays, default-deny namespace policy, per-sandbox labels, cleanup policy, and credential proxy sidecar pattern.
+- disabled-by-default Kubernetes deployment profile with local/preview/prod overlays, default-deny namespace policy, adapter-to-proxy-only egress policy, per-sandbox labels, cleanup policy, and separate credential proxy service pattern.
 
 Proof status:
 - local end-to-end Mesh proof uses real loopback HTTP servers and the Mesh-owned runtime adapter endpoints; it proves the Mesh integration path without requiring a target Centaur Kubernetes cluster;
-- target-cluster Centaur execution remains gated by deployment-specific namespace, credential proxy sidecar, and live egress audit proofs;
+- target-cluster Centaur execution remains gated by deployment-specific namespace, credential proxy service, and live egress audit proofs;
 - workflow state can persist through the selected Mesh state backend via `MeshStateWorkflowStore`; Postgres deployments inherit that path through `PostgresStateStore` without workflows owning remediation.
