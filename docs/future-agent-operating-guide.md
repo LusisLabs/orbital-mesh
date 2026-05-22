@@ -145,5 +145,5 @@ Run focused Python tests only when the change touches executable behavior, gener
 - `deepagents/`: vendored dependency path used by `pyproject.toml`; do not refactor or modernize it during first-party cleanup.
 - `latent-mesh/LatentMAS/`: vendored Rust/Python source input; run Rust validation only when touching it.
 - `agentic-operator-core-main/`: source input only when present; absence is represented by provenance checks rather than active runtime failure. Use `config/agentic-operator-source.provenance.json` and `python3 scripts/verify_agentic_operator_source_provenance.py --json` before any fork work.
-- `lusistrigger.dev`: source input only at `/Users/shaan.s.patel/Desktop/lusistrigger.dev`; `config/trigger-web-source.provenance.json` records remotes, allowed imported paths, forbidden backend imports, `active_runtime: false`, and `wholesale_copy_allowed: false`.
+- `lusistrigger.dev`: source input only at `/Users/shaan.s.patel/Desktop/lusistrigger.dev`; `config/trigger-web-source.provenance.json` records remotes, allowed imported paths, forbidden backend imports, `active_runtime: false`, and `wholesale_copy_allowed: false`. Use `python3 scripts/verify_trigger_web_source_provenance.py --json` to verify permitted imports.
 - Archived `docs/history/gpui/`: provenance only. Do not treat it as active UI code.

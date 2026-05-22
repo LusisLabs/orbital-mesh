@@ -235,6 +235,27 @@ Remix resource route that proxies the backend `/api/stream/system` SSE stream to
 
 Both routes forward SSE events from the control-plane API to the browser client using Remix resource stream responses.
 
+### Additional BFF resource routes
+
+The `apps/mesh-webapp` Remix app exposes these additional resource routes for the operator UI:
+
+- `GET /resources/mesh/vault.document.ts` — vault document lookup
+- `GET /resources/mesh/vault.tree.ts` — vault tree/hierarchy view
+- `GET /resources/mesh/approvals.ts` — approval status and actions
+- `GET /resources/mesh/policy.ts` — policy retrieval
+- `GET /resources/mesh/kill-switch.ts` — global kill-switch state
+- `GET /resources/mesh/readiness.ts` — system readiness probe
+- `GET /resources/mesh/connector-certification.ts` — connector certification status
+- `GET /resources/mesh.runs.ts` — list runs
+- `GET /resources/mesh.runs.$runId.ts` — run detail
+- `GET /resources/mesh.runs.$runId.events.ts` — run event stream
+- `GET /resources/mesh.runs.$runId.evidence-graph.ts` — run evidence graph
+- `GET /resources/mesh.runs.$runId.export.ts` — run export
+- `GET /resources/mesh.runs.$runId.export.archive.ts` — run archive export
+- `GET /resources/mesh.runs.$runId.merkle.ts` — run Merkle tree
+- `GET /resources/mesh.runs.$runId.merkle.proof.$eventId.ts` — Merkle proof for event
+- `GET /resources/mesh.runs.$runId.timeline-proof.ts` — timeline proof
+
 ---
 
 ## Scenarios, simulations, benchmarks
