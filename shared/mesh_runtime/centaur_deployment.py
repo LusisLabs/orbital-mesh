@@ -1,10 +1,143 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 
 CENTAUR_DEPLOYMENT_PROFILE_VERSION = "mesh.centaur_deployment_profile.v1"
+CENTAUR_KUBERNETES_LIVE_PROOF_VERSION = "mesh.centaur_kubernetes_live_proof.v1"
+
+
+def verify_centaur_kubernetes_live_proof(
+    *,
+    manifest_path: str | Path = "config/centaur-sandbox-runtime.k8s.yaml",
+    namespace: str = "mesh-centaur-sandboxes",
+    kubectl_command: str = "kubectl",
+    timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    manifest_result = verify_centaur_kubernetes_profile(manifest_path)
+    proof: dict[str, Any] = {
+        "schema_version": CENTAUR_KUBERNETES_LIVE_PROOF_VERSION,
+        "state_slice": CENTAUR_DEPLOYMENT_PROFILE_VERSION,
+        "namespace": namespace,
+        "manifest_path": str(manifest_path),
+        "kubectl_command": kubectl_command,
+        "status": "blocked",
+        "checks": {
+            "static_manifest_profile_passed": manifest_result.get("status") == "pass",
+        },
+        "command_results": [],
+        "blockers": [],
+    }
+    if manifest_result.get("status") != "pass":
+        proof["blockers"].append("static_manifest_profile_failed")
+        proof["manifest_profile"] = manifest_result
+        return proof
+
+    command_specs = [
+        (
+            "client_dry_run_apply",
+            [kubectl_command, "apply", "--dry-run=client", "--validate=false", "-f", str(manifest_path)],
+        ),
+        ("namespace_reachable", [kubectl_command, "get", "namespace", namespace, "-o", "json"]),
+        (
+            "adapter_deployment_observed",
+            [kubectl_command, "-n", namespace, "get", "deployment", "mesh-centaur-sandbox-adapter", "-o", "json"],
+        ),
+        (
+            "proxy_deployment_observed",
+            [
+                kubectl_command,
+                "-n",
+                namespace,
+                "get",
+                "deployment",
+                "mesh-centaur-credential-egress-proxy",
+                "-o",
+                "json",
+            ],
+        ),
+        (
+            "proxy_service_observed",
+            [kubectl_command, "-n", namespace, "get", "service", "mesh-centaur-credential-egress-proxy", "-o", "json"],
+        ),
+        (
+            "default_deny_network_policy_observed",
+            [kubectl_command, "-n", namespace, "get", "networkpolicy", "default-deny", "-o", "json"],
+        ),
+        (
+            "adapter_proxy_network_policy_observed",
+            [
+                kubectl_command,
+                "-n",
+                namespace,
+                "get",
+                "networkpolicy",
+                "allow-adapter-to-credential-proxy",
+                "-o",
+                "json",
+            ],
+        ),
+    ]
+
+    for name, command in command_specs:
+        result = _run_kubectl_probe(command, timeout_seconds=timeout_seconds)
+        proof["command_results"].append(result)
+        proof["checks"][name] = result["ok"]
+        if not result["ok"]:
+            proof["blockers"].append(f"{name}_failed")
+
+    if proof["checks"].get("adapter_deployment_observed"):
+        adapter_payload = _json_payload_for_check(proof, "adapter_deployment_observed")
+        proof["checks"]["adapter_points_to_credential_proxy"] = _deployment_has_env(
+            adapter_payload,
+            "adapter",
+            "MESH_CREDENTIAL_EGRESS_PROXY_URL",
+            "http://mesh-centaur-credential-egress-proxy:15001",
+        )
+        proof["checks"]["adapter_service_account_token_not_automounted"] = _deployment_token_not_automounted(
+            adapter_payload
+        )
+    else:
+        proof["checks"]["adapter_points_to_credential_proxy"] = False
+        proof["checks"]["adapter_service_account_token_not_automounted"] = False
+
+    if proof["checks"].get("proxy_deployment_observed"):
+        proxy_payload = _json_payload_for_check(proof, "proxy_deployment_observed")
+        proof["checks"]["proxy_placeholder_mode"] = _deployment_has_env(
+            proxy_payload,
+            "credential-egress-proxy",
+            "MESH_CREDENTIAL_PLACEHOLDER_MODE",
+            "true",
+        )
+        proof["checks"]["proxy_service_account_token_not_automounted"] = _deployment_token_not_automounted(
+            proxy_payload
+        )
+    else:
+        proof["checks"]["proxy_placeholder_mode"] = False
+        proof["checks"]["proxy_service_account_token_not_automounted"] = False
+
+    if proof["checks"].get("adapter_proxy_network_policy_observed"):
+        policy_payload = _json_payload_for_check(proof, "adapter_proxy_network_policy_observed")
+        proof["checks"]["live_policy_allows_adapter_to_proxy_only"] = _live_policy_targets_proxy_only(policy_payload)
+    else:
+        proof["checks"]["live_policy_allows_adapter_to_proxy_only"] = False
+
+    for key in (
+        "adapter_points_to_credential_proxy",
+        "adapter_service_account_token_not_automounted",
+        "proxy_placeholder_mode",
+        "proxy_service_account_token_not_automounted",
+        "live_policy_allows_adapter_to_proxy_only",
+    ):
+        if not proof["checks"][key]:
+            proof["blockers"].append(f"{key}_failed")
+
+    proof["blockers"] = sorted(set(proof["blockers"]))
+    proof["status"] = "pass" if proof["checks"] and all(proof["checks"].values()) else "blocked"
+    return proof
 
 
 def verify_centaur_kubernetes_profile(path: str | Path) -> dict[str, Any]:
@@ -78,6 +211,87 @@ def verify_centaur_kubernetes_profile(path: str | Path) -> dict[str, Any]:
         "kinds": sorted(kinds),
         "checks": checks,
     }
+
+
+def _run_kubectl_probe(command: list[str], *, timeout_seconds: float) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError as exc:
+        return {
+            "command": command,
+            "ok": False,
+            "returncode": 127,
+            "stdout": "",
+            "stderr": str(exc),
+        }
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "ok": False,
+            "returncode": None,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or "timed out",
+        }
+    return {
+        "command": command,
+        "ok": completed.returncode == 0,
+        "returncode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+
+
+def _json_payload_for_check(proof: dict[str, Any], name: str) -> dict[str, Any]:
+    for result in proof.get("command_results", []):
+        if not isinstance(result, dict) or not result.get("ok"):
+            continue
+        command = result.get("command") if isinstance(result.get("command"), list) else []
+        if not _command_matches_check(command, name):
+            continue
+        try:
+            payload = json.loads(str(result.get("stdout") or "{}"))
+        except json.JSONDecodeError:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+    return {}
+
+
+def _command_matches_check(command: list[Any], name: str) -> bool:
+    text = " ".join(str(part) for part in command)
+    if name == "adapter_deployment_observed":
+        return "deployment mesh-centaur-sandbox-adapter" in text
+    if name == "proxy_deployment_observed":
+        return "deployment mesh-centaur-credential-egress-proxy" in text
+    if name == "adapter_proxy_network_policy_observed":
+        return "networkpolicy allow-adapter-to-credential-proxy" in text
+    return False
+
+
+def _deployment_has_env(payload: dict[str, Any], container_name: str, name: str, value: str) -> bool:
+    for container in _deployment_containers(payload):
+        if container.get("name") != container_name:
+            continue
+        env = container.get("env") if isinstance(container.get("env"), list) else []
+        return any(isinstance(item, dict) and item.get("name") == name and item.get("value") == value for item in env)
+    return False
+
+
+def _deployment_token_not_automounted(payload: dict[str, Any]) -> bool:
+    return payload.get("spec", {}).get("template", {}).get("spec", {}).get("automountServiceAccountToken") is False
+
+
+def _live_policy_targets_proxy_only(payload: dict[str, Any]) -> bool:
+    spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
+    selector = spec.get("podSelector") if isinstance(spec.get("podSelector"), dict) else {}
+    labels = selector.get("matchLabels") if isinstance(selector.get("matchLabels"), dict) else {}
+    egress = spec.get("egress") if isinstance(spec.get("egress"), list) else []
+    return labels.get("app.kubernetes.io/name") == "mesh-centaur-sandbox-adapter" and _egress_targets_proxy_port(egress)
 
 
 def _load_yaml_documents(text: str) -> list[dict[str, Any]]:

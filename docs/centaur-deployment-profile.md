@@ -60,6 +60,7 @@ Deployment-specific checks:
 ```bash
 docker compose config --quiet
 docker compose --profile centaur-sandbox config --quiet
+pnpm run verify:centaur-k8s-live -- --allow-blocked
 ```
 
-No target-cluster live execution claim is valid until Kubernetes manifests are rendered for that environment and the credential-egress proof passes there.
+No target-cluster live execution claim is valid until `pnpm run verify:centaur-k8s-live` returns `status=pass` against that cluster. `--allow-blocked` is for recording a structured blocked proof only.
