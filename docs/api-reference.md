@@ -273,6 +273,45 @@ The proxy also extracts operator identity from configurable headers (`MESH_OPERA
 
 ---
 
+## Contract Generation Workflow
+
+Mesh uses JSON Schema files as the source of truth for TypeScript contracts used by the operator UI. Generate TypeScript interfaces from schemas:
+
+```bash
+pnpm --dir internal-packages/mesh-contracts run generate
+```
+
+This reads JSON Schema files from `shared/mesh_runtime/schemas/` and generates TypeScript interfaces in `internal-packages/mesh-contracts/src/generated/`:
+
+| Schema Source | Generated Output |
+|---|---|
+| `shared/mesh_runtime/schemas/control-plane.schema.json` | `src/generated/control-plane.ts` |
+| `shared/mesh_runtime/schemas/operator-product.schema.json` | `src/generated/operator-product.ts` |
+
+To check if generated contracts are outdated:
+
+```bash
+pnpm --dir internal-packages/mesh-contracts run check
+```
+
+This is used in CI to ensure generated TypeScript stays in sync with JSON Schema sources.
+
+### Importing Generated Contracts
+
+```typescript
+import type {
+  MeshControlPlaneContracts,
+  MeshOperatorProductContracts,
+} from "@orbital-mesh/mesh-contracts/generated/control-plane";
+
+// Use the contracted types in your code
+const contracts: MeshOperatorProductContracts = {
+  dashboard_payload: { /* ... */ },
+};
+```
+
+---
+
 ## Scenarios, simulations, benchmarks
 
 ### `GET /api/scenarios`
