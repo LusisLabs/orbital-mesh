@@ -1,0 +1,26 @@
+# State slice: mesh.centaur_deployment_profile.v1
+# Local overlay for opt-in Centaur-style sandbox runtime proof.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mesh-centaur-sandbox-adapter
+  namespace: mesh-centaur-sandboxes
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        mesh.lusis.io/environment: local
+      annotations:
+        mesh.lusis.io/live-execution: local-only-after-credential-egress-proof
+    spec:
+      containers:
+        - name: adapter
+          image: ghcr.io/lusislabs/mesh-centaur-sandbox-adapter:local
+          env:
+            - name: MESH_CENTAUR_CREDENTIAL_EGRESS_POLICY_PATH
+              value: /app/config/centaur-credential-egress.local.json
+        - name: credential-egress-proxy
+          env:
+            - name: MESH_CREDENTIAL_ALLOWED_HOSTS
+              value: mesh-centaur-adapter,127.0.0.1,localhost

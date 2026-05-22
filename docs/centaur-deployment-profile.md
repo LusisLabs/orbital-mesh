@@ -14,6 +14,12 @@ This profile extracts deployment patterns from Centaur without copying Centaur's
 
 Mesh-owned profile: `config/centaur-sandbox-runtime.k8s.yaml`.
 
+Environment overlays:
+
+- `config/centaur-sandbox-runtime.local.k8s.yaml`: opt-in local execution after credential egress proof.
+- `config/centaur-sandbox-runtime.preview.k8s.yaml`: disabled until preview namespace and proxy audit proof pass.
+- `config/centaur-sandbox-runtime.prod.k8s.yaml`: disabled until production namespace, proxy audit, operator approval, and cleanup proof pass.
+
 Required patterns before enabling a real sandbox runtime:
 
 - Dedicated sandbox namespace.
