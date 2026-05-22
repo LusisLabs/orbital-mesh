@@ -271,6 +271,18 @@ State slice: `mesh.control_plane_proxy`
 
 The proxy also extracts operator identity from configurable headers (`MESH_OPERATOR_IDENTITY_HEADER`) and propagates them to backend requests.
 
+State slice: `mesh.operator_ui.realtime`
+
+SSE connection state machine for real-time run and system event streams. Proxies backend `/api/stream/runs/:id` and `/api/stream/system` endpoints to the operator UI via Remix resource routes.
+
+State slice: `mesh.operator_ui.run_detail`
+
+Run detail page data including events, evidence graph, RCA, Merkle trees, timeline proofs, and export endpoints. Loaded via routes `resources.mesh.runs.$runId.*`.
+
+State slice: `mesh.operator_ui.overview`
+
+Dashboard overview page data including runs list, approvals status, system readiness, and connector certifications. Loaded via routes `resources.mesh.runs.ts`, `resources.mesh.approvals.ts`, `resources.mesh.readiness.ts`, and `resources.mesh.connector-certification.ts`.
+
 ---
 
 ## Contract Generation Workflow
