@@ -163,6 +163,14 @@
           },
           "type": "array"
         },
+        "output": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "release_status": {
+          "additionalProperties": {},
+          "type": "object"
+        },
         "released_at": {
           "anyOf": [
             {
@@ -172,6 +180,16 @@
               "type": "null"
             }
           ]
+        },
+        "request": {
+          "additionalProperties": {},
+          "type": "object"
+        },
+        "risk_flags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         },
         "run_id": {
           "type": "string"
@@ -192,8 +210,22 @@
         "task_id": {
           "type": "string"
         },
+        "test_results": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
+        },
         "thread_id": {
           "type": "string"
+        },
+        "tool_calls": {
+          "items": {
+            "additionalProperties": {},
+            "type": "object"
+          },
+          "type": "array"
         },
         "updated_at": {
           "type": "string"
@@ -214,6 +246,12 @@
         "sandbox_ref",
         "harness",
         "released_at",
+        "request",
+        "tool_calls",
+        "output",
+        "risk_flags",
+        "test_results",
+        "release_status",
         "authority"
       ],
       "type": "object"

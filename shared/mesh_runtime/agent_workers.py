@@ -139,6 +139,12 @@ def build_agent_attempt_thread(
     sandbox_ref: str | None = None,
     harness: str | None = None,
     events: list[AgentAttemptThreadEvent] | None = None,
+    request: dict[str, Any] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+    output: dict[str, Any] | None = None,
+    risk_flags: list[str] | None = None,
+    test_results: list[dict[str, Any]] | None = None,
+    release_status: dict[str, Any] | None = None,
 ) -> AgentAttemptThread:
     created_at = started_at or _timestamp()
     updated_at = completed_at or created_at
@@ -178,6 +184,12 @@ def build_agent_attempt_thread(
         sandbox_ref=sandbox_ref,
         harness=harness,
         released_at=updated_at if status in {"completed", "failed", "cancelled"} else None,
+        request=dict(request or {}),
+        tool_calls=list(tool_calls or []),
+        output=dict(output or {}),
+        risk_flags=list(risk_flags or []),
+        test_results=list(test_results or []),
+        release_status=dict(release_status or {}),
         authority={
             "mesh_control_plane_authoritative": True,
             "agent_thread_authoritative": False,
@@ -200,6 +212,12 @@ def ensure_agent_attempt_thread(attempt: AgentAttempt, *, task: AgentTask) -> Ag
         started_at=attempt.started_at,
         completed_at=attempt.completed_at,
         harness=_harness_for_attempt(attempt),
+        request=_thread_request_from_attempt(attempt),
+        tool_calls=_thread_tool_calls_from_attempt(attempt),
+        output=_thread_output_from_attempt(attempt),
+        risk_flags=list(attempt.risk_flags),
+        test_results=list(attempt.test_results),
+        release_status=_thread_release_status_from_attempt(attempt),
     ).to_dict()
     attempt.output = output
     return attempt
@@ -211,6 +229,35 @@ def _harness_for_attempt(attempt: AgentAttempt) -> str:
     if attempt.adapter == "native_orchestration_contract":
         return "mesh-native-orchestration-contract"
     return attempt.adapter
+
+
+def _thread_request_from_attempt(attempt: AgentAttempt) -> dict[str, Any]:
+    output = attempt.output if isinstance(attempt.output, dict) else {}
+    request = output.get("sandbox_request") if isinstance(output.get("sandbox_request"), dict) else {}
+    return dict(request)
+
+
+def _thread_tool_calls_from_attempt(attempt: AgentAttempt) -> list[dict[str, Any]]:
+    output = attempt.output if isinstance(attempt.output, dict) else {}
+    calls = output.get("tool_calls") if isinstance(output.get("tool_calls"), list) else []
+    return [dict(item) for item in calls if isinstance(item, dict)]
+
+
+def _thread_output_from_attempt(attempt: AgentAttempt) -> dict[str, Any]:
+    output = attempt.output if isinstance(attempt.output, dict) else {}
+    centaur_output = output.get("centaur_output")
+    if isinstance(centaur_output, dict):
+        return dict(centaur_output)
+    proposal_output = output.get("proposal_output")
+    return dict(proposal_output) if isinstance(proposal_output, dict) else {}
+
+
+def _thread_release_status_from_attempt(attempt: AgentAttempt) -> dict[str, Any]:
+    thread_output = _thread_output_from_attempt(attempt)
+    release = thread_output.get("release")
+    if isinstance(release, dict):
+        return dict(release)
+    return {}
 
 
 def _timestamp() -> str:

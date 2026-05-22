@@ -5078,6 +5078,9 @@ export function AgentMeshPanel({
                   : null;
               const thread = asRecord(attempt.output?.thread);
               const threadEvents = firstArray(thread.events);
+              const threadToolCalls = firstArray(thread.tool_calls);
+              const threadOutput = asRecord(thread.output);
+              const releaseStatus = asRecord(thread.release_status);
               const authority = asRecord(thread.authority ?? attempt.output?.authority);
               const sandboxRequest = asRecord(attempt.output?.sandbox_request);
               const credentialPolicy = asRecord(sandboxRequest.credential_policy ?? attempt.output?.credential_policy);
@@ -5096,6 +5099,8 @@ export function AgentMeshPanel({
                     {thread.thread_id ? <ContextLink label="Thread" value={String(thread.thread_id)} mono /> : null}
                     {thread.harness ? <ContextLink label="Harness" value={String(thread.harness)} /> : null}
                     {threadEvents.length > 0 ? <ContextLink label="Events" value={String(threadEvents.length)} /> : null}
+                    {threadToolCalls.length > 0 ? <ContextLink label="Tool calls" value={String(threadToolCalls.length)} /> : null}
+                    {releaseStatus.released != null ? <ContextLink label="Release" value={releaseStatus.released === true ? "released" : "blocked"} /> : null}
                     {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="placeholder only" /> : null}
                     {authority.mesh_control_plane_authoritative === true ? <ContextLink label="Authority" value="Mesh proposed / Mesh approved" /> : null}
                     {typeof attempt.output?.confidence === "number" && (
@@ -5117,6 +5122,21 @@ export function AgentMeshPanel({
                   {attempt.test_results.length > 0 && (
                     <pre className="timeline-summary">{JSON.stringify(attempt.test_results, null, 2)}</pre>
                   )}
+                  {threadToolCalls.length > 0 ? (
+                    <pre className="timeline-summary">
+                      {JSON.stringify(threadToolCalls.slice(0, 5), null, 2)}
+                    </pre>
+                  ) : null}
+                  {Object.keys(threadOutput).length > 0 ? (
+                    <pre className="timeline-summary">
+                      {JSON.stringify({
+                        execution_id: threadOutput.execution_id,
+                        terminal_reason: threadOutput.terminal_reason,
+                        centaur_status: threadOutput.centaur_status,
+                        proposal: threadOutput.proposal,
+                      }, null, 2)}
+                    </pre>
+                  ) : null}
                   {typeof attempt.output?.workspace_path === "string" && attempt.output.workspace_path ? (
                     <ContextLink label="Workspace" value={String(attempt.output.workspace_path)} />
                   ) : null}

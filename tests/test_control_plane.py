@@ -442,10 +442,18 @@ class ControlPlaneApiTests(unittest.TestCase):
             self.assertNotIn("centaur_real_secret", output_text)
             self.assertEqual(attempts[0]["output"]["authority"]["centaur_control_plane_authoritative"], False)
             self.assertEqual(attempts[0]["output"]["thread"]["events"][0]["event_type"], "centaur_execute_enqueued")
+            self.assertEqual(attempts[0]["output"]["thread"]["request"]["run_id"], run["run_id"])
+            self.assertEqual(attempts[0]["output"]["thread"]["output"]["execution_id"], "exec_mesh_real_run")
+            self.assertEqual(attempts[0]["output"]["thread"]["release_status"]["released"], True)
+            self.assertEqual(attempts[0]["output"]["thread"]["risk_flags"], attempts[0]["risk_flags"])
+            self.assertEqual(attempts[0]["output"]["thread"]["test_results"], attempts[0]["test_results"])
 
             agent_events = [event for event in completed["events"] if event["event_type"] == "agent_task_recorded"]
             self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["adapter"], "centaur")
             self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["status"], "completed")
+            self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["request"]["run_id"], run["run_id"])
+            self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["output"]["execution_id"], "exec_mesh_real_run")
+            self.assertEqual(agent_events[-1]["payload"]["attempt_threads"][0]["release_status"]["released"], True)
             self.assertEqual(
                 [request["path"] for request in centaur_requests],
                 [

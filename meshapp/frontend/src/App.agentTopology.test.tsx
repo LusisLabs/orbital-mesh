@@ -108,6 +108,9 @@ describe("AgentMeshPanel topology", () => {
               thread_id: "thread_centaur_1",
               harness: "codex",
               events: [{ event_type: "sandbox_completed", status: "completed", recorded_at: "2026-05-06T00:00:01Z" }],
+              tool_calls: [{ tool_name: "mesh.lookup_run", status: "completed" }],
+              output: { execution_id: "exec_centaur_1", centaur_status: "completed" },
+              release_status: { released: true },
               authority: { mesh_control_plane_authoritative: true },
             },
           },
@@ -144,6 +147,9 @@ describe("AgentMeshPanel topology", () => {
     expect(html).toContain("codex");
     expect(html).toContain("placeholder only");
     expect(html).toContain("Mesh proposed / Mesh approved");
+    expect(html).toContain("Tool calls");
+    expect(html).toContain("released");
+    expect(html).toContain("exec_centaur_1");
   });
 
   it("lists orchestration platform lanes with connector certification posture", () => {

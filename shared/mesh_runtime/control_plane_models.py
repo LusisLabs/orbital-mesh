@@ -182,6 +182,12 @@ class AgentAttemptThread(JsonModel):
     sandbox_ref: str | None = None
     harness: str | None = None
     released_at: str | None = None
+    request: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    output: dict[str, Any] = field(default_factory=dict)
+    risk_flags: list[str] = field(default_factory=list)
+    test_results: list[dict[str, Any]] = field(default_factory=list)
+    release_status: dict[str, Any] = field(default_factory=dict)
     authority: dict[str, Any] = field(default_factory=dict)
 
 

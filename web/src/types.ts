@@ -86,6 +86,12 @@ export interface AgentAttemptThread {
   sandbox_ref?: string | null;
   harness?: string | null;
   released_at?: string | null;
+  request: Record<string, any>;
+  tool_calls: Record<string, any>[];
+  output: Record<string, any>;
+  risk_flags: string[];
+  test_results: Record<string, any>[];
+  release_status: Record<string, any>;
   authority: Record<string, any>;
 }
 

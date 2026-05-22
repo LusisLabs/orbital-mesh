@@ -19,6 +19,12 @@
     "sandbox_ref",
     "harness",
     "released_at",
+    "request",
+    "tool_calls",
+    "output",
+    "risk_flags",
+    "test_results",
+    "release_status",
     "authority"
   ],
   "properties": {
@@ -47,6 +53,36 @@
     },
     "released_at": {
       "anyOf": [{ "type": "string" }, { "type": "null" }]
+    },
+    "request": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "risk_flags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "test_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    },
+    "release_status": {
+      "type": "object",
+      "additionalProperties": true
     },
     "authority": {
       "type": "object",

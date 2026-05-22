@@ -200,6 +200,7 @@ class CentaurAdapter:
             output={
                 "sandbox_request": request,
                 "execution_events": _list_of_dicts(result.get("events")),
+                "tool_calls": _list_of_dicts(result.get("tool_calls")),
                 "centaur_output": _safe_result_output(result.get("output")),
                 "authority": _mesh_authority_record(),
             },
@@ -210,7 +211,7 @@ class CentaurAdapter:
             contradictions_detected=_list_of_dicts(result.get("contradictions_detected")),
             memory_actions_requested=[str(item) for item in result.get("memory_actions_requested", []) if str(item)],
         )
-        self._attach_thread(attempt, task=task, harness=harness, events=_list_of_dicts(result.get("events")))
+        self._attach_thread(attempt, task=task, harness=harness, events=_list_of_dicts(result.get("events")), request=request)
         return attempt
 
     def _failed_attempt(
@@ -235,10 +236,17 @@ class CentaurAdapter:
             output={
                 "sandbox_request": request,
                 "execution_events": events,
+                "tool_calls": [],
                 "authority": _mesh_authority_record(),
             },
         )
-        self._attach_thread(attempt, task=task, harness=str(request.get("harness") or self.config.centaur_default_harness), events=events)
+        self._attach_thread(
+            attempt,
+            task=task,
+            harness=str(request.get("harness") or self.config.centaur_default_harness),
+            events=events,
+            request=request,
+        )
         return attempt
 
     def _attach_thread(
@@ -248,6 +256,7 @@ class CentaurAdapter:
         task: AgentTask,
         harness: str,
         events: list[dict[str, Any]],
+        request: dict[str, Any],
     ) -> None:
         thread_events = [
             AgentAttemptThreadEvent(
@@ -262,6 +271,7 @@ class CentaurAdapter:
             )
             for idx, event in enumerate(events, start=1)
         ]
+        output = dict(attempt.output)
         thread = build_agent_attempt_thread(
             attempt_id=attempt.attempt_id,
             task_id=task.task_id,
@@ -274,8 +284,13 @@ class CentaurAdapter:
             sandbox_ref=None,
             harness=harness,
             events=thread_events,
+            request=request,
+            tool_calls=_list_of_dicts(output.get("tool_calls")),
+            output=_safe_result_output(output.get("centaur_output")),
+            risk_flags=list(attempt.risk_flags),
+            test_results=list(attempt.test_results),
+            release_status=_release_status_from_output(output),
         )
-        output = dict(attempt.output)
         output["thread"] = thread.to_dict()
         attempt.output = output
 
@@ -422,6 +437,14 @@ def _list_of_dict_strings(value: Any) -> list[str]:
 
 def _safe_result_output(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
+
+
+def _release_status_from_output(output: dict[str, Any]) -> dict[str, Any]:
+    centaur_output = output.get("centaur_output")
+    if not isinstance(centaur_output, dict):
+        return {}
+    release = centaur_output.get("release")
+    return dict(release) if isinstance(release, dict) else {}
 
 
 def _mesh_authority_record() -> dict[str, Any]:

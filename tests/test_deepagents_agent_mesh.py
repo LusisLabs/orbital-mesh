@@ -165,6 +165,12 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertEqual(thread["authority"]["agent_thread_authoritative"], False)
         self.assertIn("stream_or_replay_events", thread["lifecycle"])
         self.assertEqual(thread["events"][0]["event_type"], "agent_attempt_terminal")
+        self.assertEqual(thread["request"], {})
+        self.assertEqual(thread["tool_calls"], [])
+        self.assertEqual(thread["output"], {})
+        self.assertEqual(thread["risk_flags"], first_attempt.risk_flags)
+        self.assertEqual(thread["test_results"], first_attempt.test_results)
+        self.assertEqual(thread["release_status"], {})
 
     def test_centaur_fabric_routes_proposal_lanes_through_sandbox_adapter(self) -> None:
         self.config.agent_fabric_mode = "centaur"
@@ -195,6 +201,8 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
                             "summary": {"proposal": "recorded"},
                         },
                     ],
+                    "tool_calls": [{"tool_name": "mesh.lookup_run", "status": "completed"}],
+                    "test_results": [{"command": "pytest", "status": "passed"}],
                     "output": {"proposal": "inspect run evidence"},
                     "citations": [{"source_type": "fake_centaur", "ref": "evt_centaur_result"}],
                 }
@@ -219,6 +227,10 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
         self.assertEqual(attempt.status, "completed")
         self.assertEqual(attempt.output["authority"]["centaur_control_plane_authoritative"], False)
         self.assertEqual(attempt.output["thread"]["events"][1]["event_type"], "sandbox_completed")
+        self.assertEqual(attempt.output["thread"]["request"]["run_id"], task.run_id)
+        self.assertEqual(attempt.output["thread"]["tool_calls"][0]["tool_name"], "mesh.lookup_run")
+        self.assertEqual(attempt.output["thread"]["output"]["proposal"], "inspect run evidence")
+        self.assertEqual(attempt.output["thread"]["test_results"][0]["command"], "pytest")
 
     def test_http_centaur_client_uses_real_durable_lifecycle_endpoints(self) -> None:
         self.config.centaur_endpoint = "http://centaur.test"
