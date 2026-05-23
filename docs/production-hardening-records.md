@@ -496,16 +496,10 @@ Pilot release packets must include:
 
 `scripts/generate_release_provenance.py` now emits `mesh.release_provenance.v1` packets. Local developer output is allowed to be `status: incomplete`; pilot release jobs must run with `--require-complete`.
 
-Current local generation returns `status: incomplete` with `git.dirty=false` after the repo-local commit step because release-supplied and CI-only artifacts are absent:
+Current local generation returns `status: incomplete` with `git.dirty=false` after the repo-local commit step and current-head image rebuild. The current-head local rehearsal now supplies image digest, base-image digests, policy lifecycle signature, migration rehearsal, SBOM, and build command. Remaining release blockers are:
 
-- `image_digest`;
-- `base_image_digests`;
-- `policy_lifecycle_signed`;
-- `migration_rehearsal`;
-- `sbom_path`;
-- `vulnerability_scan_path`;
-- `ci_attestation`;
-- `build_command`.
+- `vulnerability_scan_path` because the normalized Grype scan has 14 unaccepted high/critical findings;
+- `ci_attestation` because the generated local attestation is `provider=local`, not GitHub Actions proof.
 
 Until those fields are supplied by CI and `--require-complete` exits successfully, pilot readiness remains blocked at the release-packet layer even if `/api/pilot/go-no-go` is `go`.
 
