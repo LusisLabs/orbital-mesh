@@ -102,10 +102,10 @@ Future backend registry routes should add dynamic agents, integrations, domains,
 Run from the repository root:
 
 ```bash
-npm --prefix web run test
-npm --prefix web run lint
-npm --prefix web run build
-npm --prefix web run test:e2e
+pnpm --dir web run test
+pnpm --dir web run lint
+pnpm --dir web run build
+pnpm --dir web run test:e2e
 ```
 
 The E2E suite verifies:

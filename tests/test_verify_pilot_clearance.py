@@ -11,6 +11,10 @@ from scripts.verify_pilot_clearance import (
 
 
 class VerifyPilotClearanceTest(unittest.TestCase):
+    def test_default_expected_blockers_assume_design_partner_scope_packet_is_mounted(self) -> None:
+        self.assertNotIn("design_partner_packet_verified", DEFAULT_EXPECTED_READINESS_BLOCKERS)
+        self.assertNotIn("authenticated_ingress_deployment_verified", DEFAULT_EXPECTED_READINESS_BLOCKERS)
+
     def test_expect_blocked_passes_for_expected_pilot_evidence_gaps(self) -> None:
         result = verify_pilot_clearance(
             base_url="http://mesh.test",
@@ -29,6 +33,8 @@ class VerifyPilotClearanceTest(unittest.TestCase):
                     "missing_evidence": list(DEFAULT_EXPECTED_GO_NO_GO_MISSING),
                     "checks": {
                         **{name: False for name in DEFAULT_EXPECTED_GO_NO_GO_MISSING},
+                        "operator_approval_observed": True,
+                        "live_action_proof_observed": True,
                         "denied_action_proof_observed": True,
                     },
                     "observed": _observed_proofs(),
@@ -42,7 +48,7 @@ class VerifyPilotClearanceTest(unittest.TestCase):
         self.assertEqual(result["mode"], "expect_blocked")
         self.assertEqual(result["missing"], [])
         self.assertIn(
-            "authenticated_ingress_deployment_verified",
+            "mesh_brain_artifact_upload_proof_verified",
             result["expected_blocked"]["readiness_blocker_details"],
         )
         self.assertIn("release_provenance_complete", result["expected_blocked"]["go_no_go_missing_details"])
@@ -50,7 +56,11 @@ class VerifyPilotClearanceTest(unittest.TestCase):
         self.assertEqual(len(checklist), len(result["prompt_to_artifact_checklist"]))
         self.assertEqual(checklist["runtime_booted"]["status"], "pass")
         self.assertEqual(
-            checklist["readiness.authenticated_ingress_deployment_verified"]["status"],
+            checklist["readiness.mesh_brain_artifact_upload_proof_verified"]["status"],
+            "blocked_expected",
+        )
+        self.assertEqual(
+            checklist["readiness.mesh_brain_serving_backend_configured"]["status"],
             "blocked_expected",
         )
         self.assertEqual(
@@ -98,6 +108,8 @@ class VerifyPilotClearanceTest(unittest.TestCase):
                     "missing_evidence": [*DEFAULT_EXPECTED_GO_NO_GO_MISSING, "unexpected_canary_gap"],
                     "checks": {
                         **{name: False for name in DEFAULT_EXPECTED_GO_NO_GO_MISSING},
+                        "operator_approval_observed": True,
+                        "live_action_proof_observed": True,
                         "denied_action_proof_observed": True,
                     },
                     "observed": _observed_proofs(),

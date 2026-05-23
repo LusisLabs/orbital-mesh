@@ -84,7 +84,7 @@ Use this path for small teams validating the core loop without procurement.
 Five-minute local demo:
 
 1. Run `python3 setup_integrations.py`.
-2. Run `npm --prefix web install` once, then `npm --prefix web run build`.
+2. Run `pnpm install` once from the repository root, then `pnpm --dir web run build`.
 3. Run `python3 run_server.py`.
 4. Open `http://127.0.0.1:8787`.
 5. Launch the `search_latency_regression` fixture in approval-gate mode and inspect the evidence graph.
@@ -96,7 +96,7 @@ Thirty-minute staging guide:
 3. Configure `MESH_OTEL_RECEIVER_TOKEN` if OTel ingest is enabled.
 4. Keep `MESH_KUBERNETES_LIVE_EXECUTION_ENABLED=0` until Kubernetes context and namespace allowlists are reviewed.
 5. Run `PYTHONPATH=. python3 -m unittest tests.test_production_cut_list`.
-6. Run `npm --prefix web run lint`.
+6. Run `pnpm --dir web run lint`.
 
 Sample exported run:
 

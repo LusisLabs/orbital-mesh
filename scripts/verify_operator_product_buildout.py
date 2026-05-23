@@ -114,7 +114,7 @@ REQUIRED_PARITY_ROWS = [
     "`web/branding/logo.svg`",
     "`web/e2e/operator-ui.spec.ts`",
     "`web/dist/*`",
-    "`web/node_modules/*`, `web/package-lock.json`",
+    "`web/node_modules/*`",
 ]
 
 REQUIRED_PRODUCT_API_PATHS = [
@@ -229,7 +229,16 @@ REQUIRED_PRODUCT_E2E_MARKERS = [
     "Save settings",
     "Save members",
     "Mesh admitted this run.",
+    "meshapp.run-preflight.v1",
+    "meshapp.run-workbench.v1",
+    "timelineProof",
+    "exportPackage",
     "MESH_CAPTCHA_SECRET_KEY",
+    "product-native pages expose runtime read models without legacy shortcuts",
+    "Memory Projection",
+    "Kill Switch",
+    "Policy State",
+    "Evidence graph",
 ]
 
 REQUIRED_PRODUCT_TYPE_MARKERS = [

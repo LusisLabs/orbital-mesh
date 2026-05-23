@@ -105,7 +105,7 @@ scripts/verify_release_cut_list.py --json
 The repository-level lint command delegates to the web contract/typecheck gate:
 
 ```bash
-npm run lint
+pnpm run lint
 ```
 
 The focused Darkharness CI step must pass:

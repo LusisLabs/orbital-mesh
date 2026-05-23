@@ -10,6 +10,7 @@ from pathlib import Path
 from shared.mesh_runtime import RuntimeConfig, load_schema, validate_payload
 from shared.mesh_runtime.backup_restore import verify_backup_restore_rehearsal
 from shared.mesh_runtime.integrations import build_readiness
+from scripts.run_backup_restore_rehearsal import BackupRestoreMeasurements, ComponentSnapshot, build_proof
 
 
 class BackupRestoreRehearsalTests(unittest.TestCase):
@@ -146,6 +147,68 @@ class BackupRestoreRehearsalTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["status"], "pass")
         self.assertEqual(payload["schema_version"], "mesh.backup_restore_verification.v1")
+
+    def test_rehearsal_runner_builds_verifiable_packet(self) -> None:
+        digest = "b" * 64
+        proof = build_proof(
+            BackupRestoreMeasurements(
+                rehearsal_id="backup_restore_runner_test",
+                generated_at="2026-05-23T12:00:00Z",
+                environment="pilot",
+                operator_id="platform@example.com",
+                backup_ref="file:///tmp/backup_restore_runner_test",
+                restore_ref="postgres://backup-restore/backup_restore_runner_test/restore",
+                rpo_seconds=2,
+                rto_seconds=900,
+                measured_restore_seconds=1.2,
+                components=[
+                    ComponentSnapshot(
+                        component=component,
+                        backup_uri=f"file:///tmp/backup_restore_runner_test/{component}.json",
+                        restored=True,
+                        sha256_before=digest,
+                        sha256_after=digest,
+                        record_count=1,
+                    )
+                    for component in (
+                        "state_store",
+                        "vault",
+                        "merkle_proofs",
+                        "integrations_config",
+                        "research_artifacts",
+                    )
+                ],
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            proof_path = Path(tmp) / "backup-restore-rehearsal.json"
+            proof_path.write_text(json.dumps(proof, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            result = verify_backup_restore_rehearsal(
+                proof_path,
+                expected_environment="pilot",
+                expected_state_backend="postgres",
+            )
+
+        self.assertEqual(result["status"], "pass")
+
+    def test_runner_cli_can_skip_without_database_url(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "scripts/run_backup_restore_rehearsal.py",
+                "--database-url",
+                "",
+                "--skip-if-missing",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["status"], "skipped")
 
 
 def _config(tmp: str, **overrides) -> RuntimeConfig:

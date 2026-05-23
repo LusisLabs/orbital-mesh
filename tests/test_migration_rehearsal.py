@@ -115,6 +115,7 @@ class MigrationRehearsalTests(unittest.TestCase):
     def test_generate_migration_rehearsal_cli(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output_path = Path(tmp) / "migration-rehearsal.json"
+            expected_inventory = migration_rehearsal_inventory("migrations/postgres")
 
             completed = subprocess.run(
                 [
@@ -127,7 +128,7 @@ class MigrationRehearsalTests(unittest.TestCase):
                     "--environment",
                     "staging",
                     "--applied-migration-count",
-                    "6",
+                    str(len(expected_inventory["hashes"])),
                     "--rolled-back",
                     "--rollback-ref",
                     "restore://postgres/migration-rehearsal/test",
@@ -157,7 +158,7 @@ class MigrationRehearsalTests(unittest.TestCase):
             )
 
         self.assertEqual(packet["schema_version"], "mesh.migration_rehearsal.v1")
-        self.assertEqual(packet["migration_version"], "005_helix_projection_outbox")
+        self.assertEqual(packet["migration_version"], expected_inventory["migration_version"])
         self.assertEqual(verification["status"], "pass")
 
 

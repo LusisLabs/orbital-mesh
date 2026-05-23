@@ -198,7 +198,7 @@ Dockerfile*                 # main + latentmas-cpu + hermes
 | --- | --- |
 | Core services + runtime | Python 3.11+, `uv` |
 | HTTP API | stdlib `http.server` (ThreadingHTTPServer) — not FastAPI |
-| Web UI | React 18 + Vite + TypeScript, `npm` |
+| Web UI | React 19, Vite/Next, TypeScript, `pnpm` |
 | TUI | textual (`tui.py`) |
 | Schemas / contracts | JSON Schema (source of truth) + Python dataclasses |
 | State | File-backed (default) or Postgres (psycopg3 + pool) |
@@ -218,7 +218,9 @@ RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check .
 TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache uvx --with-editable . --with deepagents --with mypy mypy --strict \
   --exclude 'deepagents/|latent-mesh/LatentMAS/|services/skills/'
 
-npm --prefix web ci && npm --prefix web run build
+pnpm install --frozen-lockfile
+pnpm --dir web run build
+pnpm --dir meshapp/frontend run build
 
 (cd latent-mesh/LatentMAS && cargo test && cargo clippy)   # only when touching Rust
 ```

@@ -70,8 +70,7 @@ jobs:
             --format json \
             --output-file /src/dist/security/osv-lockfile-scan.json \
             --lockfile=/src/uv.lock \
-            --lockfile=/src/web/package-lock.json \
-            --lockfile=/src/meshapp/frontend/package-lock.json \
+            --lockfile=/src/pnpm-lock.yaml \
             --lockfile=/src/latent-mesh/LatentMAS/Cargo.lock
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -80,32 +79,28 @@ jobs:
           path: dist/security/osv-lockfile-scan.json
           retention-days: 30
 
-  npm-audit:
+  pnpm-audit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Enable pnpm for setup-node cache
+        run: corepack enable
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            meshapp/frontend/package-lock.json
-      - run: npm ci
-        working-directory: web
-      - run: npm ci
-        working-directory: meshapp/frontend
-      - run: mkdir -p ../dist/security
-        working-directory: web
-      - run: npm audit --audit-level=high --json > ../dist/security/npm-audit.json
-        working-directory: web
-      - run: npm audit --audit-level=high --json > ../../dist/security/npm-audit-meshapp.json
-        working-directory: meshapp/frontend
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Enable pnpm for Node 22
+        run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: mkdir -p dist/security
+      - run: pnpm --dir web audit --audit-level high --json > dist/security/pnpm-audit-web.json
+      - run: pnpm --dir meshapp/frontend audit --audit-level high --json > dist/security/pnpm-audit-meshapp.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: npm-audit
-          path: dist/security/npm-audit*.json
+          name: pnpm-audit
+          path: dist/security/pnpm-audit*.json
           retention-days: 30
 
   codeql:

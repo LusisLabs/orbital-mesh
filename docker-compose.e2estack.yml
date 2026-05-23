@@ -187,11 +187,12 @@ services:
     environment:
       MINIO_ROOT_USER: "${MESH_E2E_MINIO_ROOT_USER:-meshadmin}"
       MINIO_ROOT_PASSWORD: "${MESH_E2E_MINIO_ROOT_PASSWORD:-meshadmin123}"
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      until mc alias set e2e http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done &&
-      mc mb --ignore-existing e2e/mesh-e2e &&
-      mc anonymous set none e2e/mesh-e2e
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        until mc alias set e2e http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do sleep 2; done
+        mc mb --ignore-existing e2e/mesh-e2e
+        mc anonymous set none e2e/mesh-e2e
     networks:
       - mesh_artifacts
     restart: "no"
@@ -238,7 +239,10 @@ services:
                         "model": "mesh-brain-e2e-local",
                         "choices": [{
                             "index": 0,
-                            "message": {"role": "assistant", "content": "mesh brain e2e serving path online"},
+                            "message": {
+                                "role": "assistant",
+                                "content": "Observed evidence is verified. Bounded remediation stays reversible and safe with a rollback limit. Operator approval and human review gate any production action.",
+                            },
                             "finish_reason": "stop",
                         }],
                     })
@@ -1111,7 +1115,7 @@ services:
       MESH_BRAIN_ARTIFACT_URI_PREFIX: "s3://mesh-e2e/mesh-brain"
       MESH_BRAIN_ARTIFACT_REGISTRY_PATH: "/app/.mesh-runtime-state/e2e/mesh-brain-artifacts.json"
       MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH: "/app/.mesh-runtime-state/e2e/mesh-brain-artifact-upload-proof.json"
-      MESH_BRAIN_SERVING_BASE_URL: "http://mesh-brain-serving:8000/v1"
+      MESH_BRAIN_SERVING_BASE_URL: "http://mesh-brain-serving:8000"
       MESH_BRAIN_SERVING_MODEL: "mesh-brain-e2e-local"
       MESH_RUN_EXPORT_RETENTION_REVIEWED: "1"
       MESH_DESIGN_PARTNER_PACKET_PATH: "/app/.mesh-runtime-state/e2e/design-partner-packet.json"
@@ -1260,7 +1264,6 @@ networks:
     internal: true
   mesh_targets:
     name: orbital-mesh-e2e-targets
-    internal: true
   mesh_telemetry:
     name: orbital-mesh-e2e-telemetry
     internal: true

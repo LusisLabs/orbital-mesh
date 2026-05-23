@@ -24,8 +24,7 @@ REQUIRED_CI_ATTESTATION_FIELDS = ("workflow", "job", "run_id", "sha")
 DEPENDENCY_LOCKFILES = (
     "pyproject.toml",
     "uv.lock",
-    "web/package-lock.json",
-    "meshapp/frontend/package-lock.json",
+    "pnpm-lock.yaml",
 )
 BUILD_INPUTS = (
     "Dockerfile",

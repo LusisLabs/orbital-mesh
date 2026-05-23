@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -128,6 +131,35 @@ class OperatorIdentityStoreTests(unittest.TestCase):
             self.assertEqual(audit_record["reason"], "test")
             self.assertEqual(audit_record["scope"], "team:team_test")
             self.assertEqual(audit_record["state_slice"], "mesh-settings-control")
+
+    def test_operator_config_script_runs_from_repo_root_without_pythonpath(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(__file__).resolve().parents[1]
+            identity_path = Path(temp_dir) / "operator-identity.json"
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/operator_config.py",
+                    "--identity-path",
+                    str(identity_path),
+                    "validate",
+                    "--scope",
+                    "global",
+                ],
+                cwd=repo_root,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue(payload["valid"])
+            self.assertEqual(payload["scope"], "global")
 
     def test_invalid_setting_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

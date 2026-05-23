@@ -74,11 +74,23 @@ test("team settings, member invites, provider posture, connector filters, and la
   const launchRegion = page.getByRole("region", { name: "New Evaluation / Launch Run" });
   await expect(launchRegion.locator("select").first()).toHaveValue("search_latency_regression");
   await expect(launchRegion.getByLabel("Require target lock")).toBeChecked();
+  await expect(launchRegion.getByText("meshapp.run-preflight.v1")).toBeVisible();
+  const preflightRegion = launchRegion.getByRole("region", { name: "Run preflight" });
+  await expect(preflightRegion.getByText("Operator", { exact: true })).toBeVisible();
+  await expect(preflightRegion.getByText("Topology", { exact: true })).toBeVisible();
+  await expect(preflightRegion.getByText("Target", { exact: true })).toBeVisible();
+  await expect(preflightRegion.getByText(/Connector scopes:/)).toBeVisible();
   await launchRegion.getByLabel("Audit reason").fill("e2e launch uses saved defaults");
   await launchRegion.getByRole("button", { name: "Launch run" }).click();
   await expect(launchRegion.getByText("Mesh admitted this run.")).toBeVisible();
   await expect(launchRegion.getByText("mesh.run_admission.v1")).toBeVisible();
   await expect(page.locator(".data-table").getByText("search_latency_regression")).toBeVisible();
+  const proofRegion = page.getByRole("region", { name: "Proof packet and evidence views" });
+  await proofRegion.getByRole("button", { name: "Load proof views" }).click();
+  await expect(proofRegion.getByText("meshapp.run-workbench.v1")).toBeVisible();
+  await expect(proofRegion.getByText("timelineProof", { exact: true })).toBeVisible();
+  await expect(proofRegion.getByText("exportPackage", { exact: true })).toBeVisible();
+  await expect(proofRegion.getByText("Agent mesh", { exact: true })).toBeVisible();
 
   await page.getByRole("navigation").getByRole("button", { name: "Members" }).click();
   await page.getByLabel("Emails").fill(memberEmail);
@@ -122,6 +134,51 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await expect(page.locator(".console-workspace-toolbar").getByText("Run timeline, delivery context, evidence graph")).toBeVisible();
   await expect(page.getByTestId("mesh-view-runs")).toBeVisible();
   await expect(page.getByRole("button", { name: "Delivery" })).toBeVisible();
+});
+
+test("product-native pages expose runtime read models without legacy shortcuts", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Product Native E2E Operator");
+  await page.getByLabel("Email address").fill(`product-native-${Date.now()}@example.com`);
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  const productPages = [
+    { nav: "Topology", heading: "Topology", cards: ["Orchestration topology", "Runtime graph"] },
+    { nav: "Memory Projection", heading: "Memory Projection", cards: ["Memory graph", "Active memory"] },
+    { nav: "Readiness", heading: "Readiness", cards: ["Runtime readiness", "Watchers"] },
+    { nav: "Kill Switch", heading: "Kill Switch", cards: ["Kill switch", "Pilot go/no-go"] },
+    { nav: "Policy State", heading: "Policy State", cards: ["Approval queue", "Trust ladder"] },
+    { nav: "Keys & Secrets", heading: "Keys & Secrets", cards: ["Auth mode", "Deployment-owned variables"] },
+  ];
+
+  for (const pageSpec of productPages) {
+    await page.getByRole("navigation").getByRole("button", { name: pageSpec.nav, exact: true }).click();
+    await expect(page.locator(".product-header h1", { hasText: pageSpec.heading })).toBeVisible();
+    for (const card of pageSpec.cards) {
+      await expect(page.getByText(card, { exact: true }).first()).toBeVisible();
+    }
+  }
+
+  await page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Settings" })).toBeVisible();
+  await expect(page.getByText("Default Evaluation Mode")).toBeVisible();
+  await expect(page.getByLabel("Audit reason")).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Team Settings", exact: true }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Team Settings" })).toBeVisible();
+  await expect(page.locator(".product-header .breadcrumb-row", { hasText: "Solo dashboard" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Evaluations", exact: true }).click();
+  await expect(page.getByRole("region", { name: "New Evaluation / Launch Run" })).toBeVisible();
+  await expect(page.getByText("Approval queue", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Proof packet and evidence views" }).getByText(/Evidence graph \/ proof packet/)).toBeVisible();
 });
 
 test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", async ({ page }) => {

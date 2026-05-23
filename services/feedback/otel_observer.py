@@ -83,7 +83,7 @@ class PrometheusFeedbackObserver:
         return observation
 
     def _query(self, template: str, service: str, window_label: str) -> MetricWindowResult:
-        query = template.format(service=service, window=window_label)
+        query = _render_query_template(template, service=service, window_label=window_label)
         try:
             value = self.client.instant_query(query)
         except PrometheusQueryError as exc:
@@ -95,6 +95,12 @@ class PrometheusFeedbackObserver:
             value=value,
             measured_at=datetime.now(timezone.utc).isoformat(),
         )
+
+
+def _render_query_template(template: str, *, service: str, window_label: str) -> str:
+    safe_service = service.replace("\\", "\\\\").replace('"', '\\"')
+    safe_window = window_label.replace("\\", "\\\\").replace('"', '\\"')
+    return template.replace("{service}", safe_service).replace("{window}", safe_window)
 
 
 def augment_observations(

@@ -825,8 +825,8 @@ class ProductionComposeContractTests(unittest.TestCase):
         env_example = Path(".env.example").read_text(encoding="utf-8")
 
         for marker in (
-            "MESH_AUTHENTICATED_INGRESS_PROOF_PATH=.mesh-runtime-state/authenticated-ingress-deployment-proof.json",
-            "MESH_DESIGN_PARTNER_PACKET_PATH=.mesh-runtime-state/design-partner-packet.json",
+            "MESH_AUTHENTICATED_INGRESS_PROOF_PATH=.mesh-runtime-state/proofs/authenticated-ingress-deployment-proof.json",
+            "MESH_DESIGN_PARTNER_PACKET_PATH=.mesh-runtime-state/proofs/design-partner-packet.json",
             "MESH_BACKUP_RESTORE_REHEARSAL_PATH=.mesh-runtime-state/backup-restore-rehearsal.json",
             "# MESH_POLICY_SIGNING_KEY_PATH=/run/secrets/mesh-policy-signing-key",
             "# MESH_POLICY_SIGNING_KEY=<target HMAC key from secret manager>",
@@ -861,7 +861,10 @@ class PilotGoNoGoMeshBrainGateTests(unittest.TestCase):
                     first = coordinator.build_readiness()
                     second = coordinator.build_readiness()
 
-                self.assertEqual(first, {"status": "ready", "profile": "pilot", "blockers": []})
+                self.assertEqual(first["status"], "ready")
+                self.assertEqual(first["profile"], "pilot")
+                self.assertEqual(first["blockers"], [])
+                self.assertIn("hardened_arena", first)
                 self.assertIs(second, first)
                 self.assertEqual(readiness_probe.call_count, 1)
             finally:

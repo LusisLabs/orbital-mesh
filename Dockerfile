@@ -37,6 +37,20 @@ RUN apt-get update \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
   && rm -rf /var/lib/apt/lists/*
 
+FROM golang:1.26.3-bookworm AS kubectl-builder
+ARG KUBECTL_VERSION=v1.36.1
+ARG KUBERNETES_SRC_SHA512=5f2c24638d56895bb3575aff0e25641fd9c25c192e27c6cd5255b888efc041221975cff9df99c1c842b876d3092cb9eaec0fd5b410bd0ec9ea74f3bc437dfaff
+WORKDIR /src
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl make rsync \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/kubernetes-src.tar.gz "https://dl.k8s.io/release/${KUBECTL_VERSION}/kubernetes-src.tar.gz" \
+  && echo "${KUBERNETES_SRC_SHA512}  /tmp/kubernetes-src.tar.gz" | sha512sum -c - \
+  && tar -xzf /tmp/kubernetes-src.tar.gz -C /src \
+  && make WHAT=cmd/kubectl KUBE_BUILD_PLATFORMS="linux/$(go env GOARCH)" \
+  && mkdir -p /out \
+  && install -m 755 "_output/local/bin/linux/$(go env GOARCH)/kubectl" /out/kubectl \
+  && rm -rf /tmp/kubernetes-src.tar.gz /var/lib/apt/lists/*
+
 FROM rust:1.92-slim-bookworm AS latentmas-rust
 WORKDIR /repo/latent-mesh/LatentMAS
 RUN apt-get update \
@@ -54,21 +68,17 @@ ARG MESH_BUILD_COMMIT=unknown
 ARG MESH_BUILD_IMAGE_DIGEST=
 ARG HERMES_AGENT_REF=1525624904159e7c2d6ac3feef951e27ad0d23bb
 ARG UV_VERSION=0.11.6
-ARG DOCKER_CLI_VERSION=29.4.2
-ARG KUBECTL_VERSION=v1.36.0
+ARG DOCKER_CLI_VERSION=29.5.2
 
 RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
   && arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
-    amd64) kubectl_arch="amd64"; kubectl_sha="123d8c8844f46b1244c547fffb3c17180c0c26dac9890589fe7e67763298748e"; docker_arch="x86_64"; docker_sha="e985c6dc5008b8d62d6bdf9b5894427d075b335a1391cacf24ee01a7a29a3728" ;; \
-    arm64) kubectl_arch="arm64"; kubectl_sha="9f9d9c44a7b5264515ac9da5991584e2395bd50662e651132337e7b4d0c56f8f"; docker_arch="aarch64"; docker_sha="ce2cea8c740707d736ab356239f858d2272470d0734b5d14f20b950d1d6b952e" ;; \
+    amd64) docker_arch="x86_64"; docker_sha="6d81a5be56232d9cc047e60b7110a087793536ae5a8b465719cd303f05fc56ec" ;; \
+    arm64) docker_arch="aarch64"; docker_sha="d1d9cb857c32c596ea96a9ca6b25d13621a97c83511e667868a33a320b2a707f" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
-  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${kubectl_arch}/kubectl" \
-  && echo "${kubectl_sha}  /usr/local/bin/kubectl" | sha256sum -c - \
-  && chmod +x /usr/local/bin/kubectl \
   && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
   && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
   && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
@@ -76,6 +86,7 @@ RUN apt-get update \
   && python3 -m pip install --no-cache-dir --upgrade pip \
   && rm -rf /tmp/docker /tmp/docker.tgz /var/lib/apt/lists/*
 
+COPY --from=kubectl-builder /out/kubectl /usr/local/bin/kubectl
 COPY --from=promptfoo /usr/local/bin/node /usr/local/bin/node
 COPY --from=promptfoo /usr/local/lib/node_modules/promptfoo /usr/local/lib/node_modules/promptfoo
 RUN ln -sf ../lib/node_modules/promptfoo/dist/src/entrypoint.js /usr/local/bin/promptfoo
@@ -126,7 +137,7 @@ COPY services ./services
 COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary]>=3.2,<4" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary,pool]>=3.2,<4" /app/deepagents/libs/deepagents
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies

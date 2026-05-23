@@ -43,7 +43,9 @@ Roles:
 
 Release gates:
 
-- `npm --prefix web run lint`;
+- `pnpm run lint:fast`;
+- `pnpm --dir web run lint`;
+- `pnpm --dir meshapp/frontend run lint`;
 - `PYTHONPATH=. uvx --with-editable . --with deepagents --with pytest pytest`;
 - `RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check .`;
 - strict mypy command from `AGENTS.md`;

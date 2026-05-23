@@ -11,12 +11,19 @@ Coverage:
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from unittest.mock import patch
 
+from control_plane_server import start_server_in_thread
 from services.feedback.otel_observer import PrometheusFeedbackObserver, augment_observations
 from services.ingest.otel_signal import AlertContext, OtlpPushIngester, PrometheusPullIngester
 from services.ingest.service import IngestService
+from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.otel import (
     PrometheusClient,
     PrometheusQueryError,
@@ -224,14 +231,75 @@ class PrometheusPullIngesterTests(unittest.TestCase):
         IngestService().normalize_signal(signal)
 
 
+class OtlpHttpRouteTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.config = RuntimeConfig(
+            state_directory=self.temp.name,
+            vault_path=str(Path(self.temp.name) / "vault"),
+            integrations_config_path=str(Path(self.temp.name) / "integrations.json"),
+            server_host="127.0.0.1",
+            server_port=0,
+            promptfoo_command="/missing/promptfoo",
+            goose_command="/missing/goose",
+            gitnexus_sidecar_url="http://127.0.0.1:65535",
+            otel_receiver_enabled=True,
+            otel_receiver_token="test-token",
+        )
+        self.server, self.thread = start_server_in_thread(self.config, start_sidecar=False)
+        self.base_url = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+    def test_otlp_receiver_rejects_missing_bearer_token(self) -> None:
+        with self.assertRaises(HTTPError) as ctx:
+            self._post_metrics(headers={})
+
+        self.assertEqual(ctx.exception.code, 401)
+
+    def test_otlp_receiver_accepts_authorized_payload(self) -> None:
+        response = self._post_metrics(headers={"Authorization": "Bearer test-token"})
+
+        self.assertEqual(response["status"], "accepted")
+        self.assertTrue(str(response["run_id"]).startswith("run_"))
+
+    def _post_metrics(self, *, headers: dict[str, str]) -> dict:
+        payload = _otlp_payload_with(
+            [
+                {
+                    "name": "http.server.duration",
+                    "unit": "ms",
+                    "histogram": {
+                        "dataPoints": [
+                            {"count": "100", "sum": 42000.0, "timeUnixNano": "1", "attributes": []},
+                            {"count": "100", "sum": 72000.0, "timeUnixNano": "2", "attributes": []},
+                        ]
+                    },
+                }
+            ]
+        )
+        request = Request(
+            f"{self.base_url}/v1/metrics",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", **headers},
+        )
+        with urlopen(request, timeout=5) as response:
+            return json.loads(response.read())
+
+
 class FeedbackObserverTests(unittest.TestCase):
     def test_augment_observations_live_wins_stub_fills(self) -> None:
         client = PrometheusClient("http://prom:9090")
         with patch.object(client, "instant_query", side_effect=[430.0, 0.013, 420.0, 0.011]):
             observer = PrometheusFeedbackObserver(
                 client=client,
-                latency_query_template='latency{{service="{service}"}}[{window}]',
-                error_rate_query_template='error_rate{{service="{service}"}}[{window}]',
+                latency_query_template='latency{service="{service}"}[{window}]',
+                error_rate_query_template='error_rate{service="{service}"}[{window}]',
             )
             merged = augment_observations(
                 signal_observations={"10m": {"side_effects": ["stub"]}, "30m": {}},
@@ -242,6 +310,20 @@ class FeedbackObserverTests(unittest.TestCase):
         self.assertAlmostEqual(merged["10m"]["p95_latency_ms"], 430.0)
         self.assertEqual(merged["10m"]["side_effects"], ["stub"])
         self.assertAlmostEqual(merged["30m"]["error_rate"], 0.011)
+
+    def test_promql_template_keeps_label_braces_literal(self) -> None:
+        client = PrometheusClient("http://prom:9090")
+        with patch.object(client, "instant_query", return_value=430.0) as instant_query:
+            observer = PrometheusFeedbackObserver(
+                client=client,
+                latency_query_template='histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="{service}"}[{window}])) by (le)) * 1000',
+                error_rate_query_template='sum(rate(http_requests_total{service="{service}",status=~"5.."}[{window}]))',
+            )
+            observer.observe('api"gateway', "10m")
+        self.assertEqual(
+            instant_query.call_args_list[0].args[0],
+            'histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="api\\"gateway"}[10m])) by (le)) * 1000',
+        )
 
     def test_augment_without_observer_returns_stub_intact(self) -> None:
         merged = augment_observations(

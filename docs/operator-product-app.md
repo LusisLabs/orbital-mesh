@@ -253,11 +253,11 @@ Source inventory is scoped to `web/` production-relevant source, assets, UX stat
 | `web/e2e/operator-ui.spec.ts` | port | Root validation ladder and product-focused HTTP/unit tests | `tests-and-validation` | Browser intent is preserved by first-run signup/dashboard validation; full browser proof depends on local provider/server setup. |
 | `web/package.json`, `web/tsconfig.json`, `web/vite.config.ts`, `web/playwright.config.ts` | deprecate | Root `package.json` and `meshapp/frontend` package config | `tests-and-validation` | Standalone web package remains only for legacy lint coverage until removed by a separate cleanup. |
 | `web/dist/*` | deprecate | Fresh `meshapp/frontend` build output | `persisted artifact` | Historical Vite build output must not be shipped as product truth. |
-| `web/node_modules/*`, `web/package-lock.json` | deprecate | Root `pnpm` workspace and lock discipline | `persisted artifact` | Node dependencies and npm lock state are not product source surfaces. |
+| `web/node_modules/*` | deprecate | Root `pnpm` workspace and lock discipline | `persisted artifact` | Node dependencies are not product source surfaces. |
 
 Operator workflow coverage:
 
-Cleanliness note: `web/package-lock.json` and `meshapp/frontend/package-lock.json` are tracked npm lockfiles. They conflict with the pnpm-only operating rule and should be removed in a dedicated cleanup slice, not as an incidental P0 inventory edit in a dirty worktree.
+Cleanliness note: the old `web/package-lock.json` and `meshapp/frontend/package-lock.json` npm lockfiles were removed in the `repo-gate-ladder.v1` cleanup. The root `pnpm-lock.yaml` is the workspace lock source.
 
 | Workflow in `web/src/App.tsx` | Classification | Product disposition |
 | --- | --- | --- |
@@ -469,8 +469,8 @@ Validation transcript from this buildout:
 | `pnpm run verify:operator-goal` | Reports `blocked_external_provider_proof` with only `live_provider_proof_missing` as the known external blocker when local P0-P6 evidence is intact. |
 | `pnpm run test:auth-provider:live` | Blocked as expected until `.mesh-runtime-state/operator-auth-proof/live-provider-proof.json` records clean-browser Google, GitHub, and hCaptcha completion. |
 | `pnpm run lint:fast` | Passed contracts, operator verifier, Praxis verifier, and Python compile checks. |
-| `pnpm run test:focused` | Passed 207 Python tests and 35 frontend tests. |
-| `pnpm run test:product:e2e` | Passed 7 Playwright tests covering first-run team dashboard, settings-backed launch defaults, member invite, provider posture, connector filtering, console workflow handoff, Praxis P10 proof flow, solo dashboard, logout cookie clearing, and expired-session recovery. |
+| `pnpm run test:focused` | Passed 360 Python tests, including route-hardening role/API regressions, and 53 frontend tests. |
+| `pnpm run test:product:e2e` | Passed 9 Playwright tests covering first-run team dashboard, settings-backed launch defaults, member invite, provider posture, connector filtering, product-native topology/memory/readiness/kill-switch/policy/settings/keys/team pages, console workflow handoff, Praxis P10 proof flow, Agent Flow draft-only confirmation, solo dashboard, logout cookie clearing, and expired-session recovery. |
 | `pnpm run verify:contracts` | Passed control-plane contract checks, Praxis verifier, and operator product verifier. |
 | `pnpm run verify:full` | Passed contracts, focused tests, Praxis proof packet verifier, web lint, and meshapp frontend lint. |
 | `pnpm run lint` | Passed the heavy root gate. |

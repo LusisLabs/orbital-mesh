@@ -59,8 +59,11 @@ Exit gates:
 Validation:
 
 - `PYTHONPATH=. python3 -m unittest discover -s tests`
-- `npm --prefix web run lint`
-- `npm --prefix web run build`
+- `pnpm run lint:fast`
+- `pnpm --dir web run lint`
+- `pnpm --dir web run build`
+- `pnpm --dir meshapp/frontend run lint`
+- `pnpm --dir meshapp/frontend run build`
 
 ### Phase 1: Local Production-Like E2E
 
@@ -82,7 +85,7 @@ Exit gates:
 Validation:
 
 - `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke`
-- `npm --prefix web run test:e2e`
+- `pnpm --dir web run test:e2e`
 - `./scripts/prod_smoke.sh` against the running service
 
 ### Phase 2: Private Staging With Real Operators

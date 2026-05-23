@@ -305,7 +305,7 @@ class RuntimeConfigPathTests(unittest.TestCase):
     def test_authenticated_ingress_proof_path_env_is_repo_anchored(self) -> None:
         with patch.dict(
             "os.environ",
-            {"MESH_AUTHENTICATED_INGRESS_PROOF_PATH": ".mesh-runtime-state/authenticated-ingress-deployment-proof.json"},
+            {"MESH_AUTHENTICATED_INGRESS_PROOF_PATH": ".mesh-runtime-state/proofs/authenticated-ingress-deployment-proof.json"},
             clear=False,
         ):
             cfg = RuntimeConfig.from_env()
@@ -320,7 +320,7 @@ class RuntimeConfigPathTests(unittest.TestCase):
     def test_design_partner_packet_path_env_is_repo_anchored(self) -> None:
         with patch.dict(
             "os.environ",
-            {"MESH_DESIGN_PARTNER_PACKET_PATH": ".mesh-runtime-state/design-partner-packet.json"},
+            {"MESH_DESIGN_PARTNER_PACKET_PATH": ".mesh-runtime-state/proofs/design-partner-packet.json"},
             clear=False,
         ):
             cfg = RuntimeConfig.from_env()

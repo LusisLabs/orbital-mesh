@@ -312,16 +312,18 @@ describe("operator setup and preflight models", () => {
       },
       operator_preferences_schema: {},
     },
-    mesh: {
-      health: {},
-      readiness: {
-        status: "ready",
-        orchestration_topology: {
-          active_topology: "hybrid",
-          organization_profile: { preferred_agents: ["hermes", "goose"] },
-          model_provider_policy: { allowed_models: [{ provider: "openai-compatible", model: "MiniMax-M2.7" }] },
+      mesh: {
+        health: {},
+        readiness: {
+          status: "ready",
+          blockers: ["policy_signature_missing"],
+          orchestration_topology: {
+            active_topology: "hybrid",
+            blockers: ["topology_gate_missing"],
+            organization_profile: { preferred_agents: ["hermes", "goose"] },
+            model_provider_policy: { allowed_models: [{ provider: "openai-compatible", model: "MiniMax-M2.7" }] },
+          },
         },
-      },
       connectors: { connectors: { kubernetes: { state: "pilot-ready", allowed_scopes: ["rollback"], credential_boundary: { credential_mode: "runtime-secret" } } } },
     },
   } as any;
@@ -340,9 +342,18 @@ describe("operator setup and preflight models", () => {
     const preflight = buildRunPreflightModel(dashboard, { requireTargetLock: true });
     expect(preflight.operatorPresent).toBe(true);
     expect(preflight.operatorId).toBe("operator@example.com");
+    expect(preflight.roles).toEqual(["admin", "launcher"]);
+    expect(preflight.source).toBe("operator_session");
+    expect(preflight.team).toBe("Mesh Ops");
+    expect(preflight.selectedTopology).toBe("hybrid");
     expect(preflight.selectedAgents).toEqual(["codex", "hermes"]);
+    expect(preflight.modelBinding).toBe("openai-compatible:MiniMax-M2.7");
+    expect(preflight.pausePoints).toEqual(["evaluation", "pre_actuation"]);
+    expect(preflight.target).toBe("pilot/search/semantic-search");
     expect(preflight.targetLock).toBe("required");
     expect(preflight.connectorScopes).toEqual(["rollback"]);
+    expect(preflight.readiness).toBe("ready");
+    expect(preflight.blockers).toEqual(["policy_signature_missing", "topology_gate_missing"]);
   });
 });
 
@@ -358,14 +369,24 @@ describe("run workbench and keys readiness", () => {
           artifacts: {
             operator: { operator_id: "operator@example.com" },
             run_admission: { decision: "admitted", blockers: [] },
+            decision: { decision_type: "manual_review" },
             agent_tasks: [{ task_id: "task-1" }],
           },
         },
       },
+      events: { payload: { events: [{ event_id: "evt-2" }, { event_id: "evt-3" }] } },
+      evidenceGraph: { payload: { nodes: [{ id: "evidence-1" }] } },
+      merkle: { payload: { root: "abc" } },
+      timelineProof: { payload: { status: "verified" } },
+      exportPackage: { payload: { package_version: "mesh.run_export.v1", artifacts: { evaluation: { blocking_reasons: [] } } } },
     });
     expect(model.nextAction).toContain("Approve");
+    expect(model.operator).toBe("operator@example.com");
+    expect(model.evidenceSummary).toBe("Evidence, Merkle, timeline, and export endpoints loaded.");
+    expect(model.decisionSummary).toBe("manual_review");
     expect(model.agentSummary).toBe("1 agent task(s) recorded");
     expect(model.events).toBe(1);
+    expect(model.blockers).toEqual([]);
   });
 
   it("projects durable agent attempt threads without granting execution authority", () => {

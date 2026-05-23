@@ -89,10 +89,16 @@ Additional migrations extend the same production store:
 
 - `002_memory_substrate.sql`: canonical observations, claims, relationships,
   supersessions, retrieval records, and memory packets.
+- `002_scenario_analysis_memory.sql`: memory and run-event indexes used by
+  scenario analysis, evidence nodes, subdecisions, and compaction records.
+- `003_benchmarks.sql`: benchmark records linked to runs and scenarios.
 - `004_incident_corpus.sql`: normalized incident-corpus rows, labels, artifact
   refs, text indexes, and row-to-memory projection refs.
-- `005_helix_projection_outbox.sql`:HelixDB projection outbox for async event
+- `005_helix_projection_outbox.sql`: HelixDB projection outbox for async event
   replay when `MESH_MEMORY_GRAPH_BACKEND=helix` with Postgres backend.
+- `005_relationship_infra_node_key.sql`: partial index for relationship
+  records that carry an InfraGraph node key, used by topology-aware memory
+  traversal.
 
 Incident-corpus payloads keep the full JSON row as the compatibility boundary.
 Prefer explicit `labels.coverage` and `training_fact.quality_measurements`

@@ -10,15 +10,12 @@ from urllib.request import urlopen
 
 SCHEMA_VERSION = "mesh.pilot_clearance_audit.v1"
 DEFAULT_EXPECTED_READINESS_BLOCKERS = (
-    "authenticated_ingress_deployment_verified",
     "mesh_brain_artifact_uri_prefix_configured",
     "mesh_brain_artifact_upload_proof_verified",
-    "design_partner_packet_verified",
+    "mesh_brain_serving_backend_configured",
 )
 DEFAULT_EXPECTED_GO_NO_GO_MISSING = (
     "readiness_green",
-    "operator_approval_observed",
-    "live_action_proof_observed",
     "mesh_brain_model_kernel_gate_observed",
     "mesh_brain_live_canary_smoke_observed",
     "mesh_brain_single_crops_canary_lane_observed",
@@ -335,6 +332,7 @@ def _go_no_go_missing_detail_map(
     observed = go_no_go.get("observed") if isinstance(go_no_go.get("observed"), dict) else {}
     evidence_keys = {
         "operator_approval_observed": ("approved_run_ids",),
+        "denied_action_proof_observed": ("denied_action_run_ids",),
         "live_action_proof_observed": ("live_action_run_ids",),
         "mesh_brain_model_kernel_gate_observed": ("mesh_brain_model_kernel_run_ids",),
         "mesh_brain_live_canary_smoke_observed": (

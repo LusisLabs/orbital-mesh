@@ -84,37 +84,31 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Enable pnpm for setup-node cache
+        run: corepack enable
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: |
-            web/package-lock.json
-            meshapp/frontend/package-lock.json
-      - run: npm ci
-      - name: Lint
-        run: npm run lint
-      - name: Build
-        run: npm run build
-      - name: Test
-        run: npm test --silent
-      - name: Install meshapp dependencies
-        run: npm ci
-        working-directory: meshapp/frontend
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Enable pnpm for Node 22
+        run: corepack enable
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Lint web
+        run: pnpm --dir web run lint
+      - name: Build web
+        run: pnpm --dir web run build
+      - name: Test web
+        run: pnpm --dir web run test
       - name: Lint meshapp
-        run: npm run lint
-        working-directory: meshapp/frontend
+        run: pnpm --dir meshapp/frontend run lint
       - name: Build meshapp
-        run: npm run build
-        working-directory: meshapp/frontend
+        run: pnpm --dir meshapp/frontend run build
       - name: Test meshapp
-        run: npm test --silent
-        working-directory: meshapp/frontend
+        run: pnpm --dir meshapp/frontend run test
 
   docker-build:
     runs-on: ubuntu-latest

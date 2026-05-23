@@ -51,7 +51,8 @@ REQUIRED_MARKERS = {
     ".github/workflows/ci.yml": (
         "permissions:",
         "contents: read",
-        "npm run lint",
+        "pnpm --dir web run lint",
+        "pnpm --dir meshapp/frontend run lint",
         "docker build",
     ),
     ".github/workflows/security.yml": (
@@ -66,8 +67,9 @@ REQUIRED_MARKERS = {
         "gitleaks detect --source=.",
         "ghcr.io/google/osv-scanner@sha256:",
         "osv-lockfile-scan.json",
-        "npm audit --audit-level=high",
-        "npm-audit.json",
+        "pnpm --dir web audit --audit-level high --json",
+        "pnpm --dir meshapp/frontend audit --audit-level high --json",
+        "pnpm-audit*.json",
         "GHAS_DEPENDENCY_REVIEW_ON_PRIVATE",
         "github/codeql-action/init@",
         "ossf/scorecard-action@",

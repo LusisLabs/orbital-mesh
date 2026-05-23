@@ -6,7 +6,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 
 1. Current code and config win over prose: `control_plane_server.py`, `services/`, `shared/mesh_runtime/`, `mesh_brain/`, `meshapp/`, `web/`, `scripts/`, `config/`, `policies/`, and `docker-compose*.yml`.
 2. Contracts win over inferred shapes: JSON Schemas in `shared/mesh_runtime/schemas/` plus Python dataclasses and validators in `shared/mesh_runtime/contracts.py` and related modules.
-3. Generated UI contracts must match backend contracts in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`. Use `npm run lint`, `npm --prefix web run contracts:check`, or `npm --prefix meshapp/frontend run contracts:check`; use `scripts/generate_control_plane_contracts.py --types-path <path>` only when intentionally checking or updating one UI surface.
+3. Generated UI contracts must match backend contracts in both `web/src/types.ts` and `meshapp/frontend/src/types.ts`. Use `pnpm run lint`, `pnpm --dir web run contracts:check`, or `pnpm --dir meshapp/frontend run contracts:check`; use `scripts/generate_control_plane_contracts.py --types-path <path>` only when intentionally checking or updating one UI surface.
 4. Roadmap and evidence docs are evidence indexes, not truth by themselves: `docs/production-deployment-roadmap.md`, `docs/production-hardening-records.md`, and `docs/production-readiness-validation.md`.
 5. Historical docs and archived trees are provenance only unless the task explicitly revives them.
 6. External product, competitor, market, or certification claims require independent verification and explicit evidence.

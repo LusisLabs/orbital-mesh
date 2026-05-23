@@ -10,7 +10,7 @@ This repository treats OpenSSF alignment as an executable control set, not a bad
 | Scorecard | `.github/workflows/security.yml` runs OpenSSF Scorecard on public repositories, and on private repositories only when `OPENSSF_SCORECARD_ON_PRIVATE=true` is set. |
 | Dependency update tool | `.github/dependabot.yml` covers GitHub Actions, npm, pip, root Cargo, and LatentMAS Cargo dependencies. |
 | Dependency review | Pull requests run GitHub dependency review and fail on high or critical severity dependency changes when the repository is public or `GHAS_DEPENDENCY_REVIEW_ON_PRIVATE=true` confirms private-repository support. |
-| Known vulnerabilities | The security workflow scans lockfiles with a pinned OSV scanner image, uploads `osv-lockfile-scan.json`, runs `npm audit --audit-level=high`, and uploads `npm-audit.json` for release-candidate evidence. |
+| Known vulnerabilities | The security workflow scans lockfiles with a pinned OSV scanner image, uploads `osv-lockfile-scan.json`, runs `pnpm audit --audit-level high`, and uploads `pnpm-audit*.json` for release-candidate evidence. |
 | Token permissions | GitHub workflows use `contents: read` by default; private-repository CodeQL and Scorecard jobs add the read scopes needed for workflow-run, check, issue, status, and pull-request metadata plus scoped `security-events: write` for SARIF upload. Scorecard receives `GITHUB_TOKEN` explicitly for private-repository GraphQL queries. |
 | Pinned workflow dependencies | First-party workflows pin external GitHub Actions to full commit SHAs. |
 | Code review ownership | `.github/CODEOWNERS` names owners for critical runtime, schema, policy, docs, and workflow paths. |
@@ -30,14 +30,14 @@ Pull request:
 - dependency review;
 - secret scan;
 - lockfile vulnerability scan;
-- npm audit.
+- pnpm audit.
 
 Weekly:
 
 - scheduled security workflow;
 - OpenSSF Scorecard where repository visibility and GitHub security features permit it;
 - CodeQL where repository visibility and GitHub security features permit it;
-- dependency-review, OSV lockfile scan, and npm audit release-candidate outputs;
+- dependency-review, OSV lockfile scan, and pnpm audit release-candidate outputs;
 - Dependabot update proposals.
 
 Release candidate:
@@ -69,7 +69,7 @@ scripts/prod_smoke.sh
 scripts/verify_postgres_restart_proof.py --json
 scripts/generate_release_provenance.py --require-complete --json
 scripts/verify_mesh_brain_artifact_registry.py --artifacts-json "$MESH_BRAIN_ARTIFACT_REGISTRY_PATH" --proof-manifest "$MESH_BRAIN_ARTIFACT_UPLOAD_PROOF_PATH" --require-upload-proof --json
-npm --prefix web run lint
+pnpm --dir web run lint
 ```
 
 `scripts/generate_release_provenance.py --require-complete` requires CI or release-job inputs for image digest, base-image digests, SBOM, vulnerability scan, build command, and builder identity. Local developer runs are expected to be incomplete unless those inputs are provided.
@@ -79,7 +79,7 @@ npm --prefix web run lint
 Auditors should receive:
 
 - GitHub workflow run URLs for CI and security audit;
-- dependency-review, secret-scan, OSV, npm audit, CodeQL, and Scorecard outputs when available;
+- dependency-review, secret-scan, OSV, pnpm audit, CodeQL, and Scorecard outputs when available;
 - release provenance JSON and packet hash;
 - SBOM and vulnerability scan artifacts referenced by release provenance;
 - authenticated ingress rehearsal output;

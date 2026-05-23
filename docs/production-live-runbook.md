@@ -17,11 +17,13 @@ Use [`docs/production-deployment-roadmap.md`](./production-deployment-roadmap.md
 
 ```bash
 python3 -m unittest discover -s tests
-cd web
-npm run lint
-npm test
-npm run build
-cd ..
+pnpm install --frozen-lockfile
+pnpm --dir web run lint
+pnpm --dir web run test
+pnpm --dir web run build
+pnpm --dir meshapp/frontend run lint
+pnpm --dir meshapp/frontend run test
+pnpm --dir meshapp/frontend run build
 ```
 
 Expected result:

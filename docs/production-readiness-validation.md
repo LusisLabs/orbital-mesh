@@ -22,14 +22,14 @@ Latest imported hydrogen-mesh audit:
 | Python lint | `UV_CACHE_DIR=/tmp/uv-cache-ruff-fresh UV_TOOL_DIR=/tmp/uv-tools-ruff-fresh2 RUFF_CACHE_DIR=/tmp/ruff-cache uvx ruff check .` | PASS | Reran on 2026-05-08 with a fresh uvx cache after the reused `/tmp/uv-cache` Ruff archive returned an entrypoint error; output: `All checks passed!`. |
 | Python tests | `PYTHONPATH=. UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uvx --with-editable . --with deepagents --with pytest pytest` | PASS | Reran on 2026-05-08 with approved network/localhost permissions after the production-autonomy proof slice; `1431 passed, 1 skipped, 7 warnings` in `279.93s`. A sandbox-only dependency-resolution attempt failed on PyPI DNS and is not a valid gate result. |
 | Strict mypy | <code>TMPDIR=/tmp MYPY_CACHE_DIR=/tmp/mypy-cache UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools PYTHONPATH=. uvx --with-editable . --with deepagents --with mypy mypy --strict --exclude 'deepagents/&#124;latent-mesh/LatentMAS/&#124;services/skills/'</code> | PASS, SCOPED | Reran on 2026-05-08 with isolated cache/tool dirs; output: `Success: no issues found in 1 source file`. This is strict mypy under the current `pyproject.toml` scope, not whole-repo type proof. |
-| Web lint/contracts | `npm run lint` | PASS | Reran on 2026-05-08; root lint invoked `npm --prefix web run lint`, contracts check and `tsc --noEmit` exited `0`. npm emitted only the existing `store-dir` config warnings. |
-| Web unit tests | `npm --prefix web test` | PASS | Reran on 2026-05-04; `2` files passed, `14` tests passed. |
-| Web build | `npm --prefix web run build` | PASS WITH WARNING | Reran on 2026-05-04; build exited `0`. Vite reported `dist/assets/index-DGcNkvvo.js` at `620.11 kB`, above the 500 kB warning threshold. |
-| UI Labyrinth/Playwright | `npm --prefix web run test:e2e` | PASS | Reran on 2026-05-06 with approved localhost-bind permissions; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. |
+| Web lint/contracts | `pnpm run lint` | PASS, HISTORICAL | Reran on 2026-05-08 when the root gate still used npm. The current gate surface is now pnpm-based and must be rerun on the current head before CI or release clearance is cited as authoritative. |
+| Web unit tests | `pnpm --dir web run test` | PASS, HISTORICAL | Reran on 2026-05-04 through the older npm invocation; `2` files passed, `14` tests passed. Rerun through pnpm for current-head proof. |
+| Web build | `pnpm --dir web run build` | PASS WITH WARNING, HISTORICAL | Reran on 2026-05-04 through the older npm invocation; build exited `0`. Vite reported `dist/assets/index-DGcNkvvo.js` at `620.11 kB`, above the 500 kB warning threshold. Rerun through pnpm for current-head proof. |
+| UI Labyrinth/Playwright | `pnpm --dir web run test:e2e` | PASS, HISTORICAL | Reran on 2026-05-06 with approved localhost-bind permissions through the older npm invocation; `14 passed`. A sandbox-only attempt fails before browser launch with control-plane and Vite `listen EPERM`, so approved localhost bind is required in this environment. Rerun through pnpm for current-head proof. |
 | Compose stack smoke | `docker compose -f docker-compose.stack.yml up --build --abort-on-container-exit --exit-code-from mesh-smoke mesh-smoke` | PASS | Reran on 2026-05-06; smoke container exited `0`, target probes for `rpc-gateway` and `indexer` were ready, and run `run_20260506T182325_c87c4261` completed with `decision_type=rollback_deployment`, `execution_status=succeeded`, and `feedback_outcome=successful`. |
 | Production-like smoke | `./scripts/prod_smoke.sh` | PASS | Reran on 2026-05-06 against `http://127.0.0.1:8787` with approved localhost HTTP access; health returned `status=ok`, readiness returned `state_path=/app/.mesh-runtime-state`, `goose.ready=true`, and the script printed `prod smoke passed`. |
-| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | BLOCKED, BOOT VERIFIED, NO CURRENT-HEAD RUNTIME BINDING | Reran `scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 30 --expect-blocked --json` on 2026-05-11 against the live compose stack. `/api/health` returned `status=ok` with runtime commit `unknown` and `image_digest=null`; the endpoint was reachable but not release-bound. The blocked-state verifier returned `status=pass`, `mode=expect_blocked`: `/api/readiness` was `profile=pilot`, `status=blocked`, and `/api/pilot/go-no-go` was `status=blocked` with a valid `pilot.go_no_go.v1` packet. Readiness blockers are now `authenticated_ingress_deployment_verified`, `mesh_brain_artifact_uri_prefix_configured`, `mesh_brain_artifact_upload_proof_verified`, and `design_partner_packet_verified`, which are also the default expected blockers for `--expect-blocked`. Missing go/no-go evidence remains `readiness_green`, `operator_approval_observed`, `live_action_proof_observed`, `mesh_brain_model_kernel_gate_observed`, `mesh_brain_live_canary_smoke_observed`, `mesh_brain_single_crops_canary_lane_observed`, `mesh_brain_rollback_drill_observed`, `mesh_brain_artifact_upload_proof_verified`, `release_provenance_complete`, and `on_call_drill_verified`; denied-action proof is observed but does not clear the remaining blockers. The 2026-05-10 release-bound verifier result for commit `583eb3e2335cb416e1360d9f0b2cbd3420e04275` and image digest `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a` remains historical because readiness and go/no-go were blocked and the checked-out head has since moved. |
-| Release provenance / CI artifacts | CI and handoff artifacts plus `mesh.release_provenance.v1` completion and runtime-binding checks | PARTIAL, CURRENT-HEAD PROVENANCE INCOMPLETE | Current-head provenance generation on 2026-05-11 from clean `origin/main` commit `d327b03825d95649728816cad449f7f2dae472fc` returned `status=incomplete`; missing release inputs were `image_digest`, `base_image_digests`, `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`, `vulnerability_scan_path`, `ci_attestation`, and `build_command`. After the 2026-05-11 merge of PR #27, current `origin/main` is `6c257296fa8d553c164b7c09b7f927b41eda3bd2`; release provenance and runtime binding must be regenerated for that or later branch heads before any current-head pilot claim. The 2026-05-10 handoff runtime mounted a complete release packet for then-current commit `583eb3e2335cb416e1360d9f0b2cbd3420e04275`, image digest `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a`, and packet SHA `db7a5d5b6cddfcf9994605672f984e10cb72ebcef8f9e3cbec86ad33855d2904`; that is historical for the current head. The older CI run `25525840560` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f` remain historical evidence for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` only. |
+| Pilot readiness/go-no-go | `GET /api/readiness` and `GET /api/pilot/go-no-go` | PASS, LOCAL E2E OVERLAY; NOT A CLEAN RELEASE CUT | On 2026-05-23 the E2E overlay was started with `MESH_E2E_BUILD_COMMIT=$(git rev-parse HEAD) docker compose -f docker-compose.stack.yml -f docker-compose.e2estack.yml up -d --build mesh` for current head `cfd9f3b18d0d0bd87a59056faaa442ae73994573`. The overlay supplies Postgres, k3s targets, authenticated ingress proof, backup/restore proof, migration proof, on-call drill proof, feature-flag/incident/audit provider proofs, Mesh Brain artifact registry/upload proof, and a local OpenAI-compatible Mesh Brain serving stub. The control plane observed Mesh Brain model-kernel run `run_20260523T052801_58d01fb1`, live canary smoke run `run_20260523T053440_0bfaa6dd`, exactly one CROPS canary lane for `tenant_a`, rollback drill run `run_20260523T052801_12a88f6f`, denied-action run `run_20260523T050025_ed9817d1`, and approved smoke run `run_20260523T043031_f55fbea8`. `docker exec -w /workspace/orbital-mesh orbital-mesh-stack python3 scripts/verify_pilot_clearance.py --base-url http://127.0.0.1:8787 --timeout-seconds 45 --expected-head cfd9f3b18d0d0bd87a59056faaa442ae73994573 --json` returned `status=pass`, `mode=clearance`, `/api/health status=ok`, `/api/readiness status=ready`, `/api/pilot/go-no-go status=go`, empty `missing_evidence`, release provenance packet SHA `3027c613c9088247a1ae092df35a5606891896c4ccb52515000e86388f29ae20`, runtime image digest `sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee`, and runtime commit matching current head. The captured local packet `.mesh-runtime-state/e2e/pilot-go-no-go.json` also verifies with signed operator signoff `.mesh-runtime-state/e2e/pilot-signoff.json` using `scripts/verify_pilot_signoff.py --signoff .mesh-runtime-state/e2e/pilot-signoff.json --go-no-go .mesh-runtime-state/e2e/pilot-go-no-go.json --signing-key mesh-e2e-pilot-signoff-key --json`, which returned `status=pass`. Boundary: the overlay release provenance uses `compose-e2e` CI attestation and the explicit E2E digest, so this does not clear P14 clean release provenance or same-target production proof slices. |
+| Release provenance / CI artifacts | CI and handoff artifacts plus `mesh.release_provenance.v1` completion and runtime-binding checks | PARTIAL, CURRENT-HEAD PROVENANCE INCOMPLETE | Current-head strict provenance generation on 2026-05-23 for checked out commit `cfd9f3b18d0d0bd87a59056faaa442ae73994573` returned `status=incomplete`; missing release inputs are `clean_git_tree`, `image_digest`, `base_image_digests`, `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`, `vulnerability_scan_path`, `ci_attestation`, and `build_command`. A local kubectl-source-build image rehearsal reduced the local missing set to `vulnerability_scan_path` and `ci_attestation` after supplying image digest `sha256:af36481183033d5dd3aa0e7a9542068ebdbb71e3e87e4c0fb893f3bb34f1eef8`, 6 unique base image digests, migration rehearsal, policy signing key, build command, and real Syft/Grype artifacts. The SBOM is valid and digest-matched with 4827 components, but the vulnerability scan is invalid for release signing because it has 14 unaccepted high/critical findings. Docker CLI `29.5.2` removed the duplicate Docker binary Go stdlib findings; source-built kubectl `v1.36.1` is now built with `go1.26.3`, which removes the kubectl Go stdlib findings, and the configured exception policy expired on 2026-05-21. `scripts/verify_release_runtime_binding.py --json` still fails with missing `release_provenance_path`. The E2E overlay release packet is local compose evidence only and does not replace a clean signed CI release packet. The 2026-05-10 handoff runtime mounted a complete release packet for then-current commit `583eb3e2335cb416e1360d9f0b2cbd3420e04275`, image digest `sha256:c54e7e28b9d94cb8ecdb07b60048a9bf3cf5ce853362c37089955ff8d9303d3a`, and packet SHA `db7a5d5b6cddfcf9994605672f984e10cb72ebcef8f9e3cbec86ad33855d2904`; that is historical for the current head. The older CI run `25525840560` and image digest `sha256:2c088dd6ae51e97f9560fbc9e65ff564d0ec173afdb33121b41219fa8684da2f` remain historical evidence for commit `803b13e51f984a27f4bf42d0014ebb8d50cdd26a` only. |
 | Autonomy policy tier guard | `PYTHONPATH=. python3 -m unittest tests.test_autonomy_policy tests.test_remediation_safety -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `shared.mesh_runtime.autonomy_policy.evaluate_autonomy_policy`. The focused suite verifies `fully_autonomous`, `approval_required`, `advisory_only`, and `denied_always`; Kubernetes live rollback is allowed only when connector certification grants the `rollback` scope; live feature-flag writes fail closed because `feature_flag_adapter` is still `dry-run`/`proposal` only; local mock execution reports live blockers without promoting fixture execution to live authority; and `force_approval_gate` blocks autonomous live Kubernetes execution through `EvaluationService.stage_results.autonomy_policy`. This is contract and fixture evidence, not a live broad-production autonomy proof. |
 | Watch-mode proof contract | `PYTHONPATH=. python3 -m unittest tests.test_watch_mode_proof tests.test_autonomy_policy tests.test_kubernetes_watcher tests.test_watcher_registry -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `mesh.watch_mode_proof.v1` and `scripts/verify_watch_mode_proof.py`. The verifier requires multiple ticks, at least two unique run IDs, duplicate suppression with zero repeated runs, healthy false-positive suppression, watcher kill-switch pause evidence, recovered provider failure with no run created during the failure, recorded decisions/evidence/approval state, run export refs, postmortem export refs, secret-redaction proof, and a third-party replay ref. `--require-live` fails fixture packets unless `evidence_level=live`, so fixture watch proof cannot be presented as live production proof. |
 | Provider action-scope proof contract | `PYTHONPATH=. python3 -m unittest tests.test_provider_action_scope tests.test_watch_mode_proof tests.test_autonomy_policy -v` | PASS, FOCUSED | Reran on 2026-05-08 after adding `mesh.provider_action_scope_proof.v1` and `scripts/verify_provider_action_scopes.py`. The verifier checks requested incident/action scopes against `config/connector-certification.registry.json`, connector state, policy tier, evidence refs, approval behavior, rollback or compensating refs, degraded behavior, credential governance, run exports, live refs when `--require-live` is set, and secret-material absence. Fixture tests prove Kubernetes `rollback`, OTel `feedback-proof`, and audit `local-audit` can pass as registry-allowed fixture scopes, while feature-flag `write` and external audit `append-only-audit-write` fail closed because the registry does not currently certify those scopes. This does not promote incident, feature-flag, or external audit providers beyond their registry states. |
@@ -48,11 +48,12 @@ When the intended proof is that the live runtime booted and is correctly blocked
 scripts/verify_pilot_clearance.py \
   --base-url http://127.0.0.1:8787 \
   --timeout-seconds 30 \
+  --expected-head "$(git rev-parse HEAD)" \
   --expect-blocked \
   --json
 ```
 
-`--expect-blocked` still fails on endpoint errors, the wrong readiness profile, missing blocked status, malformed go/no-go packets, missing expected blocker names, unexpected extra blocker names, missing blocker-detail mappings, or regression of expected observed go/no-go proofs such as denied-action evidence. The JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details so each live gap maps back to its state slice, env vars, evidence path, remediation, and source endpoint. It does not clear pilot readiness or release clearance.
+`--expect-blocked` still fails on endpoint errors, the wrong readiness profile, missing blocked status, malformed go/no-go packets, missing expected blocker names, unexpected extra blocker names, missing blocker-detail mappings, missing go/no-go missing-evidence detail mappings, or a runtime commit that does not match an optional `--expected-head`. Optional `--expected-go-no-go-true-check` arguments still enforce observed proof when a specific proof must remain true in a blocked packet. The JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details so each live gap maps back to its state slice, env vars, evidence path, remediation, and source endpoint. It does not clear pilot readiness or release clearance.
 
 ## Pilot Evidence Handoff
 
@@ -147,20 +148,27 @@ service container and succeeded.
 - Commit fixtures under `fixtures/` only when deterministic and required by
   tests or docs.
 - Commit generated web contracts only when backend schema changes require
-  them, and run `npm --prefix web run contracts:check` through the web lint or
+  them, and run `pnpm --dir web run contracts:check` through the web lint or
   build gate before PR.
 
 ## Release Blockers To Track
 
 - Full strict mypy remains partial until the `files` scope is expanded beyond
   `services/decision/hypothesis_engine.py`.
-- Current-head release provenance is incomplete for `origin/main`
-  `d327b03825d95649728816cad449f7f2dae472fc`. Clean-tree local provenance
-  generation still lacks `image_digest`, `base_image_digests`,
+- Current-head release provenance is incomplete for checked out commit
+  `cfd9f3b18d0d0bd87a59056faaa442ae73994573`. Strict provenance generation
+  still lacks `clean_git_tree`, `image_digest`, `base_image_digests`,
   `policy_lifecycle_signed`, `migration_rehearsal`, `sbom_path`,
-  `vulnerability_scan_path`, `ci_attestation`, and `build_command`. The older
-  CI run `25525840560` remains historical evidence for commit
-  `803b13e51f984a27f4bf42d0014ebb8d50cdd26a`, not for current `HEAD`.
+  `vulnerability_scan_path`, `ci_attestation`, and `build_command`. Local
+  rehearsal evidence can now bind the local image digest, base image digests,
+  policy lifecycle signature, migration rehearsal, build command, and
+  digest-matched SBOM, but the latest kubectl-source-build Grype scan still has
+  14 unaccepted high/critical findings in Python `3.13.13` and Debian trixie
+  libc/ncurses packages, and the exception policy expired on 2026-05-21.
+  Runtime-binding
+  verification still lacks `MESH_RELEASE_PROVENANCE_PATH`. Historical CI and
+  handoff packets remain evidence for their own commits only, not for current
+  `HEAD`.
 - Pilot readiness and go/no-go must be treated as runtime-bound, not
   repository-wide. The 2026-05-10 handoff runtime was commit/image bound to
   `583eb3e2335cb416e1360d9f0b2cbd3420e04275`, but the pilot-clearance verifier
@@ -220,27 +228,48 @@ service container and succeeded.
   <current-head> --json` without `--allow-dirty-env`, proving a fresh image,
   current-head release packet, no stale packet reuse, no manual `.env` surgery,
   at least two unique passing run IDs, command timestamps, and artifact paths.
-- Production-like target proof has a focused verifier, but no current live
-  target packet is mounted in this audit. A broad production-autonomy claim must
-  provide `mesh.production_target_proof.v1` from the target environment and
-  pass `scripts/verify_production_target_proof.py --proof <path>
-  --expected-environment <target-env> --require-live --json`, proving the same
-  bounded path has authenticated ingress, identity, telemetry, protected
-  secrets, rollback, operator approval, postmortem export, governance refs, and
-  replayable audit evidence. Missing credentials, ingress proof, or runtime live
-  artifacts keep this gate blocked.
-- Aggregate production-autonomy clearance has a focused verifier, but no
-  current live proof bundle is mounted in this audit. A broad autonomy claim
-  must pass `scripts/verify_production_autonomy_clearance.py` without
-  `--allow-fixture` or `--allow-dirty-env`, using current-head repeatability,
-  live production-target, live provider action-scope, live watch-mode, live
-  incident-coverage, and on-call drill proof packets from the same bounded
-  environment. The production target run must be bound through repeatability,
-  watch-mode, provider action export, incident coverage, target refs, and
-  third-party replay evidence in the aggregate verifier output. The on-call
-  drill must prove kill-switch live-execution stop, watcher pause,
-  approval-gate forcing, break-glass recording, credential rotation, state
-  restore, and environment binding.
+  `scripts/run_breakthrough_proof.sh --replay-only` still fails closed because
+  the available `.mesh-runtime-state/compose-chaos/summary-*.json` files are
+  below the ready-summary threshold. The latest local summary
+  `summary-20260513T155259Z.json` still has `breakthrough_probe.ready=false`,
+  misses `avoid_false_positive_remediation`, `detect_zero_ready_replicas`,
+  `separate_transient_from_service_outage`, and
+  `separate_zero_ready_after_transient_churn_multifault`, and lacks the
+  `zero_ready_after_churn` multi-fault experiment.
+- `scripts/capture_production_live_proof_bundle.py` records a current-head live
+  API proof window as `mesh.production_live_proof_capture.v1` by creating two
+  approved runs and capturing health, readiness, kill-switch, denied action,
+  run, event, export, timeline-proof, and Merkle artifacts. It can then call
+  `scripts/generate_production_live_proof_bundle.py` to turn those observed
+  artifacts into `mesh.production_live_proof_bundle.v1`, including
+  repeatability, production target, provider action-scope, watch-mode,
+  incident-coverage, and aggregate clearance artifacts. This path does not
+  synthesize proof: it records dirty or unrecreated environments as missing
+  `repeatability_passed`, requires explicit `--clean-env-recreated` and
+  `--fresh-image-built` for strict clearance, and only treats `--allow-partial`
+  as an evidence-capture mode.
+- Production-like target proof now has a current-head live target packet mounted
+  at `.mesh-runtime-state/live-proof-current/proofs/production-target-proof.json`.
+  `scripts/verify_production_target_proof.py --proof
+  .mesh-runtime-state/live-proof-current/proofs/production-target-proof.json
+  --expected-environment pilot --require-live --json` passes for commit
+  `cfd9f3b18d0d0bd87a59056faaa442ae73994573` and run
+  `run_20260523T072245_108d1468`, proving the bounded pilot path has live
+  authenticated-ingress, identity, telemetry, protected-secret, rollback,
+  operator-approval, postmortem-export, governance, and replayable audit
+  evidence. This clears the target packet only; aggregate autonomy still depends
+  on strict repeatability.
+- Aggregate production-autonomy clearance has a focused verifier and a
+  current-head live proof bundle mounted at `.mesh-runtime-state/live-proof-current`.
+  Production target, provider action-scope, watch-mode, and incident-coverage
+  packets verify from the same observed API artifact window. The strict
+  aggregate verifier still fails only `repeatability_passed` because the
+  repeatability packet records `working_tree_clean=false` in this dirty checkout.
+  Release packet head matching, clean environment recreation flag, fresh image
+  build flag, stale-packet rejection, unique passing runs, and artifact refs are
+  present, but broad autonomy must still pass
+  `scripts/verify_production_autonomy_clearance.py` without dirty-env relaxation
+  before any production-ready claim.
 - Compose and UI gates depend on local Docker/browser availability and must be
   recorded with exact command output before merge. Reth/Kurtosis remains
   historical research provenance, not a controlled-production-pilot release
