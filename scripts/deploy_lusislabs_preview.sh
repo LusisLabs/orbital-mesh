@@ -139,10 +139,10 @@ main() {
   printf 'MESH_BUILD_COMMIT=%s\nMESH_BUILD_VERSION=%s\n' "$commit" "$release_id" > "${release_dir}/.deploy-env"
 
   cd "$release_dir"
-  if ! pnpm --dir meshapp/frontend install --no-frozen-lockfile; then
+  if ! pnpm --dir meshapp/frontend install --frozen-lockfile; then
     log "pnpm install failed; approving pending build scripts and retrying once"
     pnpm --dir meshapp/frontend approve-builds --all
-    pnpm --dir meshapp/frontend install --no-frozen-lockfile
+    pnpm --dir meshapp/frontend install --frozen-lockfile
   fi
   NEXT_PUBLIC_MESH_API_URL="$PUBLIC_URL" pnpm --dir meshapp/frontend run build
   require_path "${release_dir}/meshapp/frontend/out/index.html"

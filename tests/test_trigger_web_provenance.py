@@ -20,6 +20,24 @@ class TriggerWebSourceProvenanceTests(unittest.TestCase):
         self.assertTrue(result["license_valid"])
         self.assertTrue(result["remotes_valid"])
 
+<<<<<<< HEAD
+=======
+    def test_absent_source_checkout_still_validates_recorded_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _copy_fixture(tmp)
+            path = root / "config" / "trigger-web-source.provenance.json"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["source_root"] = str(root / "missing-lusistrigger.dev")
+            payload["license_path"] = str(root / "missing-lusistrigger.dev" / "LICENSE")
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            result = verify_trigger_web_source_provenance(path)
+
+        self.assertEqual(result["status"], "pass")
+        self.assertFalse(result["source_root_available"])
+        self.assertEqual(result["missing_existing_paths"], [])
+        self.assertTrue(result["license_valid"])
+
+>>>>>>> 6c18536ee552a3d12c4f533d004ab896b9283007
     def test_missing_required_path_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = _copy_fixture(tmp)

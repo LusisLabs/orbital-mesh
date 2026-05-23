@@ -3,3 +3,13 @@ packages:
   - "internal-packages/*"
   - "meshapp/frontend"
   - "web"
+<<<<<<< HEAD
+=======
+
+minimumReleaseAge: 1440
+
+overrides:
+  motion-dom: 12.39.0
+  node-releases: 2.0.44
+  postcss: 8.5.14
+>>>>>>> 6c18536ee552a3d12c4f533d004ab896b9283007

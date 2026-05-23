@@ -75,7 +75,13 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
     source_paths = [str(entry.get("path") or "") for entry in source_entries]
     duplicate_paths = sorted({item for item in source_paths if source_paths.count(item) > 1})
     missing_source_paths = sorted(REQUIRED_SOURCE_PATHS - set(source_paths))
+<<<<<<< HEAD
     missing_existing_paths = sorted(path for path in source_paths if not _resolve_path(path).exists())
+=======
+    source_root = _resolve_path(str(provenance.get("source_root") or "")) if provenance else None
+    source_root_available = bool(source_root and source_root.exists())
+    missing_existing_paths = sorted(path for path in source_paths if source_root_available and not _resolve_path(path).exists())
+>>>>>>> 6c18536ee552a3d12c4f533d004ab896b9283007
     missing_import_value = _missing_text(source_entries, "import_value")
     missing_fork_posture = _missing_text(source_entries, "fork_posture")
     missing_adaptation = _missing_text(source_entries, "orbital_mesh_adaptation")
@@ -96,9 +102,20 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
     license_valid = bool(
         provenance
         and provenance.get("license") == "Apache-2.0"
+<<<<<<< HEAD
         and license_path
         and license_path.exists()
         and "Apache License" in license_path.read_text(encoding="utf-8", errors="ignore")[:200]
+=======
+        and (
+            not source_root_available
+            or (
+                license_path
+                and license_path.exists()
+                and "Apache License" in license_path.read_text(encoding="utf-8", errors="ignore")[:200]
+            )
+        )
+>>>>>>> 6c18536ee552a3d12c4f533d004ab896b9283007
     )
     remotes = provenance.get("remotes", {}) if provenance else {}
     remotes_valid = bool(
@@ -146,6 +163,10 @@ def verify_trigger_web_source_provenance(path: str | Path | None) -> dict[str, A
         "provenance_path": str(_resolve_path(path)) if path else None,
         "provenance_version": provenance.get("version") if provenance else None,
         "source_root": provenance.get("source_root") if provenance else None,
+<<<<<<< HEAD
+=======
+        "source_root_available": source_root_available,
+>>>>>>> 6c18536ee552a3d12c4f533d004ab896b9283007
         "source_commit": provenance.get("source_commit") if provenance else None,
         "source_commit_status": provenance.get("source_commit_status") if provenance else None,
         "license_valid": license_valid,

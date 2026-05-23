@@ -80,6 +80,7 @@ All deployment targets must preserve the same authority contract:
 - `/api/health`, `/api/readiness`, `/api/pilot/go-no-go`, `/api/failure-modes`, `/api/watchers/ownership`, `/metrics`, run export, and release packet visibility;
 - signed or hash-addressed release evidence for image, policy, migration, and connector state;
 - agentic-operator source provenance with Apache-2.0 license verification, source snapshot hash, source-input-only posture, and authority-gate adaptation requirements before any CRD, controller, Helm, MCP, LiteLLM, Argo, or CLI fork enters runtime;
+- trigger-web source provenance with Apache-2.0 license verification, source snapshot hash, source-input-only posture, and authority-gate adaptation requirements before any trigger-web-derived code enters runtime;
 - external audit-sink append-only proof before expansion or compliance reliance;
 - operator-visible degraded state when a target cannot provide required identity, persistence, feedback, or audit guarantees.
 
