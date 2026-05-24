@@ -275,6 +275,12 @@ class ProductionLiveProofBundleTests(unittest.TestCase):
             stdout = json.loads(completed.stdout)
             self.assertEqual(stdout["status"], "partial")
             self.assertIn("repeatability_passed", stdout["missing"])
+            self.assertIn("repeatability-verification.json", stdout["failed_checks"])
+            self.assertIn("working_tree_clean", stdout["failed_checks"]["repeatability-verification.json"])
+            self.assertIn("clean_env_recreated", stdout["failed_checks"]["repeatability-verification.json"])
+            manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["verification_statuses"]["repeatability-verification.json"], "fail")
+            self.assertIn("repeatability-verification.json", manifest["failed_checks"])
 
 
 def _write_inputs(root: Path, *, head: str) -> None:

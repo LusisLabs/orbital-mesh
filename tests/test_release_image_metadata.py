@@ -73,6 +73,7 @@ class ReleaseImageMetadataTests(unittest.TestCase):
             workflow,
         )
         self.assertIn("dist/release-provenance-draft.json", workflow)
+        self.assertIn("--require-complete", workflow)
         self.assertIn("release-provenance-draft", workflow)
         self.assertIn("Generate release provenance draft\n        if: always()", workflow)
         self.assertIn("MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}", workflow)

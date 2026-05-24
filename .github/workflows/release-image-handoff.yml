@@ -182,6 +182,7 @@ jobs:
           fi
           python scripts/generate_release_provenance.py \
             --output dist/release-provenance-draft.json \
+            --require-complete \
             --image-tag "$HANDOFF_IMAGE_TAG" \
             --ci-attestation dist/ci-attestation.json \
             --migration-rehearsal dist/migration-rehearsal.json \

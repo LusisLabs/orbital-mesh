@@ -100,7 +100,7 @@ def _clearance_checks(
         "governance_drill_passed": artifacts["governance"].get("status") == "pass",
         "live_evidence_required": _live_evidence_required(artifacts) if require_live else True,
         "environments_match_expected": _environments_match(artifacts, environment) if environment else True,
-        "all_proof_paths_present": all(bool(record.get("proof_path")) for record in artifacts.values()),
+        "all_proof_paths_present": _all_proof_packets_present(artifacts),
         "target_bound_to_watch_mode": _target_bound_to_watch_mode(artifacts),
         "run_bound_to_repeatability": _run_bound_to_repeatability(artifacts),
         "run_bound_to_watch_mode": _run_bound_to_watch_mode(artifacts),
@@ -127,6 +127,14 @@ def _live_evidence_required(artifacts: dict[str, dict[str, Any]]) -> bool:
     incident_checks = artifacts["incident_coverage"].get("checks")
     if not isinstance(incident_checks, dict) or incident_checks.get("live_evidence_required") is not True:
         return False
+    return True
+
+
+def _all_proof_packets_present(artifacts: dict[str, dict[str, Any]]) -> bool:
+    for record in artifacts.values():
+        checks = record.get("checks")
+        if not isinstance(checks, dict) or checks.get("proof_present") is not True:
+            return False
     return True
 
 

@@ -34,6 +34,11 @@ def main() -> int:
     now = _timestamp()
     repo_head = args.repo_head or _git(["rev-parse", "HEAD"], repo_root)
     working_tree_clean = _git_clean(repo_root)
+    if not working_tree_clean and args.clean_env_recreated and args.fresh_image_built and not args.allow_partial:
+        raise SystemExit(
+            "tracked working tree is dirty; strict repeatability cannot pass. "
+            "Commit or discard tracked changes, or rerun with --allow-partial to record blocked evidence."
+        )
     target_run_id = _run_id(args.target_run_json, args.target_run_id)
     repeat_run_id = _run_id(args.repeat_run_json, args.repeat_run_id)
     target_ref = args.target_ref
@@ -343,6 +348,7 @@ def main() -> int:
     )
     for name, payload in verifications.items():
         _write(verifications_dir / name, payload)
+    failed_checks = _failed_verification_checks(verifications)
 
     manifest = {
         "schema_version": "mesh.production_live_proof_bundle.v1",
@@ -355,10 +361,23 @@ def main() -> int:
         "status": "pass" if verifications["production-autonomy-clearance.json"].get("status") == "pass" else "partial",
         "proofs": {key: str(path) for key, path in proof_paths.items()},
         "verifications": {key: str(verifications_dir / key) for key in verifications},
+        "verification_statuses": {key: str(payload.get("status") or "unknown") for key, payload in verifications.items()},
         "missing": verifications["production-autonomy-clearance.json"].get("missing", []),
+        "failed_checks": failed_checks,
     }
     manifest_path = _write(output_dir / "manifest.json", manifest)
-    print(json.dumps({"status": manifest["status"], "manifest": str(manifest_path), "missing": manifest["missing"]}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": manifest["status"],
+                "manifest": str(manifest_path),
+                "missing": manifest["missing"],
+                "failed_checks": failed_checks,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0 if manifest["status"] == "pass" or args.allow_partial else 1
 
 
@@ -415,6 +434,17 @@ def _parser() -> argparse.ArgumentParser:
 def _write(path: Path, payload: dict[str, Any]) -> Path:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return path
+
+
+def _failed_verification_checks(verifications: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    failed: dict[str, list[str]] = {}
+    for name, payload in verifications.items():
+        checks = payload.get("checks")
+        if isinstance(checks, dict):
+            names = [str(check_name) for check_name, passed in checks.items() if passed is not True]
+            if names:
+                failed[name] = names
+    return failed
 
 
 def _copy(raw_path: str, output_dir: Path) -> Path:

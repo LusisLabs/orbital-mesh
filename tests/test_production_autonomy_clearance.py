@@ -143,6 +143,24 @@ class ProductionAutonomyClearanceTests(unittest.TestCase):
             self.assertIn("governance_break_glass_verified", result["missing"])
             self.assertIn("governance_credential_rotation_verified", result["missing"])
 
+    def test_clearance_rejects_missing_packet_paths_as_not_present(self) -> None:
+        missing = Path("missing-live-proof-current") / "proof.json"
+
+        result = verify_production_autonomy_clearance(
+            repeatability_proof=missing,
+            production_target_proof=missing,
+            provider_action_scope_proof=missing,
+            watch_mode_proof=missing,
+            incident_coverage_proof=missing,
+            on_call_drill_proof=missing,
+            expected_head=_HEAD,
+            expected_environment="pilot",
+        )
+
+        self.assertEqual(result["status"], "fail")
+        self.assertIn("all_proof_paths_present", result["missing"])
+        self.assertFalse(result["checks"]["all_proof_paths_present"])
+
     def test_cli_verifies_clearance_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = _write_bundle(Path(tmp), evidence_level="live")

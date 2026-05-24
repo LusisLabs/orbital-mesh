@@ -258,18 +258,17 @@ service container and succeeded.
   operator-approval, postmortem-export, governance, and replayable audit
   evidence. This clears the target packet only; aggregate autonomy still depends
   on strict repeatability.
-- Aggregate production-autonomy clearance has a focused verifier and a
-  current-head live proof bundle mounted at `.mesh-runtime-state/live-proof-current`.
-  Production target, provider action-scope, watch-mode, and incident-coverage
-  packets verify from the same observed API artifact window. The strict
-  aggregate verifier still fails `repeatability_passed` for the current checked-out
-  head because the mounted repeatability packet is stale: it records repo head
-  `cfd9f3b18d0d0bd87a59056faaa442ae73994573` and `working_tree_clean=false`.
-  Clean environment recreation flag, fresh image build flag, stale-packet
-  rejection, unique passing runs, and artifact refs are present in that stale
-  packet, but broad autonomy must still regenerate current-head proof and pass
+- Aggregate production-autonomy clearance has a focused verifier and the last
+  documented local live proof bundle under `.mesh-runtime-state/live-proof-current`
+  verified production target, provider action-scope, watch-mode, and
+  incident-coverage packets from the same observed API artifact window for
+  `cfd9f3b18d0d0bd87a59056faaa442ae73994573`. That ignored bundle is not
+  mounted in this local checkout and does not clear any later commit. Broad
+  autonomy must regenerate current-head proof and pass
   `scripts/verify_production_autonomy_clearance.py` without dirty-env relaxation
-  before any production-ready claim.
+  before any production-ready claim. New generated partial bundle manifests
+  expose nested verifier failures under `failed_checks` so missing or stale
+  repeatability does not collapse to only `repeatability_passed`.
 - Compose and UI gates depend on local Docker/browser availability and must be
   recorded with exact command output before merge. Reth/Kurtosis remains
   historical research provenance, not a controlled-production-pilot release
