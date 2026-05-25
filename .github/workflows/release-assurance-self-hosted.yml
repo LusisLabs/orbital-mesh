@@ -57,6 +57,7 @@ jobs:
       MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
       - name: Checkout repository without marketplace actions
+        id: checkout
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -70,7 +71,15 @@ jobs:
           }
           trap scrub_origin EXIT
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-          git fetch --depth=1 origin "$GITHUB_SHA"
+          if ! git fetch --depth=1 origin "$GITHUB_SHA"; then
+            scrub_origin
+            echo "::warning::GITHUB_TOKEN fetch failed; retrying without token"
+            if ! git fetch --depth=1 origin "$GITHUB_SHA"; then
+              echo "::warning::HTTPS fetch failed; retrying with runner SSH credentials"
+              git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+              GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git fetch --depth=1 origin "$GITHUB_SHA"
+            fi
+          fi
           git checkout --detach FETCH_HEAD
           scrub_origin
           trap - EXIT
@@ -168,7 +177,7 @@ jobs:
             --exception-policy config/release-vulnerability-exceptions.json
 
       - name: Generate CI attestation
-        if: always()
+        if: always() && steps.checkout.outcome == 'success'
         env:
           RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
         run: |
@@ -194,7 +203,7 @@ jobs:
             "${BASE_IMAGE_ARGS[@]}"
 
       - name: Generate release provenance draft
-        if: always()
+        if: always() && steps.checkout.outcome == 'success'
         run: |
           set -euo pipefail
           BASE_IMAGE_ARGS=()
