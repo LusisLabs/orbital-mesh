@@ -1,8 +1,30 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-test("first-run signup creates a team and reaches the product dashboard", async ({ page }) => {
+const pageIssues = new WeakMap<Page, string[]>();
+
+test.beforeEach(async ({ page }) => {
+  const issues: string[] = [];
+  pageIssues.set(page, issues);
+  page.on("console", (message) => {
+    if ((message.type() === "error" || message.type() === "warning") && !isExpectedBrowserResourceStatus(message.text())) {
+      issues.push(`console.${message.type()}: ${message.text()}`);
+    }
+  });
+  page.on("pageerror", (error) => {
+    issues.push(`pageerror: ${error.message}`);
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  expect(pageIssues.get(page) ?? []).toEqual([]);
+});
+
+test("first-run signup creates a team and reaches the product dashboard", async ({ page }, testInfo) => {
+  const email = testEmail(testInfo, "operator");
+  const teamName = testLabel(testInfo, "E2E Operators");
+
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Welcome" })).toBeVisible();
@@ -10,7 +32,7 @@ test("first-run signup creates a team and reaches the product dashboard", async 
 
   await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
   await page.getByLabel("Display name").fill("E2E Operator");
-  await page.getByLabel("Email address").fill(`operator-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(email);
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
@@ -18,7 +40,7 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await page.getByRole("button", { name: "Sign up" }).click();
 
   await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
-  await page.getByLabel("Team name").fill("E2E Operators");
+  await page.getByLabel("Team name").fill(teamName);
   const dashboardResponse = page.waitForResponse((response) =>
     response.url().includes("/api/operator/dashboard") && response.status() === 200,
   );
@@ -32,13 +54,13 @@ test("first-run signup creates a team and reaches the product dashboard", async 
   await expect(page.getByRole("navigation").getByRole("button", { name: "Connectors", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation").getByRole("button", { name: "Evaluations", exact: true })).toBeVisible();
   await expect(page.getByRole("navigation").getByRole("button", { name: "Readiness", exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 });
 
-test("team settings, member invites, provider posture, connector filters, and launch defaults work end to end", async ({ page }) => {
-  const stamp = Date.now();
-  const email = `integrated-${stamp}@example.com`;
-  const teamName = `Integrated Product Operators ${stamp}`;
-  const memberEmail = `member-${stamp}@example.com`;
+test("team settings, member invites, provider posture, connector filters, and launch defaults work end to end", async ({ page }, testInfo) => {
+  const email = testEmail(testInfo, "integrated");
+  const teamName = testLabel(testInfo, "Integrated Product Operators");
+  const memberEmail = testEmail(testInfo, "member");
 
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
@@ -56,6 +78,7 @@ test("team settings, member invites, provider posture, connector filters, and la
 
   await page.getByRole("navigation").getByRole("button", { name: "Team Settings" }).click();
   await expect(page.locator(".product-header h1", { hasText: "Team Settings" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
   await page.getByLabel("Display name").fill("Integrated Product Display");
   await page.getByRole("button", { name: "Save team profile" }).click();
   await expect(page.getByText(/Saved team profile/)).toBeVisible();
@@ -84,13 +107,16 @@ test("team settings, member invites, provider posture, connector filters, and la
   await launchRegion.getByRole("button", { name: "Launch run" }).click();
   await expect(launchRegion.getByText("Mesh admitted this run.")).toBeVisible();
   await expect(launchRegion.getByText("mesh.run_admission.v1")).toBeVisible();
-  await expect(page.locator(".data-table").getByText("search_latency_regression")).toBeVisible();
+  const admittedRunId = await runIdFromRegion(launchRegion);
+  await expect(page.locator(".data-table").getByText(admittedRunId)).toBeVisible();
   const proofRegion = page.getByRole("region", { name: "Proof packet and evidence views" });
   await proofRegion.getByRole("button", { name: "Load proof views" }).click();
   await expect(proofRegion.getByText("meshapp.run-workbench.v1")).toBeVisible();
   await expect(proofRegion.getByText("timelineProof", { exact: true })).toBeVisible();
   await expect(proofRegion.getByText("exportPackage", { exact: true })).toBeVisible();
   await expect(proofRegion.getByText("Agent mesh", { exact: true })).toBeVisible();
+
+  await cancelRunThroughMesh(page, admittedRunId);
 
   await page.getByRole("navigation").getByRole("button", { name: "Members" }).click();
   await page.getByLabel("Emails").fill(memberEmail);
@@ -110,11 +136,11 @@ test("team settings, member invites, provider posture, connector filters, and la
   await expect(page.locator(".environment-card h4", { hasText: "hermes" })).toHaveCount(0);
 });
 
-test("product dashboard opens migrated console workflows in place", async ({ page }) => {
+test("product dashboard opens migrated console workflows in place", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Console E2E Operator");
-  await page.getByLabel("Email address").fill(`console-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "console"));
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
@@ -136,11 +162,11 @@ test("product dashboard opens migrated console workflows in place", async ({ pag
   await expect(page.getByRole("button", { name: "Delivery" })).toBeVisible();
 });
 
-test("product-native pages expose runtime read models without legacy shortcuts", async ({ page }) => {
+test("product-native pages expose runtime read models without legacy shortcuts", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Product Native E2E Operator");
-  await page.getByLabel("Email address").fill(`product-native-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "product-native"));
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
@@ -161,6 +187,7 @@ test("product-native pages expose runtime read models without legacy shortcuts",
   for (const pageSpec of productPages) {
     await page.getByRole("navigation").getByRole("button", { name: pageSpec.nav, exact: true }).click();
     await expect(page.locator(".product-header h1", { hasText: pageSpec.heading })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
     for (const card of pageSpec.cards) {
       await expect(page.getByText(card, { exact: true }).first()).toBeVisible();
     }
@@ -181,11 +208,11 @@ test("product-native pages expose runtime read models without legacy shortcuts",
   await expect(page.getByRole("region", { name: "Proof packet and evidence views" }).getByText(/Evidence graph \/ proof packet/)).toBeVisible();
 });
 
-test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", async ({ page }) => {
+test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Agent Flow E2E Operator");
-  await page.getByLabel("Email address").fill(`agent-flow-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "agent-flow"));
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
@@ -201,6 +228,7 @@ test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", as
   await livekitResponse;
   await expect(page.getByRole("heading", { name: "Agent Flow", exact: true })).toBeVisible();
   await expect(page.getByText("Draft-first composer")).toBeVisible();
+  await expectNoHorizontalOverflow(page);
 
   const chatResponse = page.waitForResponse((response) =>
     response.url().includes("/api/operator/agent-flow/chat") && response.status() === 200,
@@ -225,23 +253,26 @@ test("agent flow calls Mesh endpoints and keeps mutation preview draft-only", as
   await expect(page.locator(".agent-flow-confirmation").getByText("side_effects_executed=false")).toBeVisible();
 });
 
-test("product Praxis import generates, dry-runs, audits, exports P10 proof, and revokes", async ({ page }) => {
+test("product Praxis import generates, dry-runs, audits, exports P10 proof, and revokes", async ({ page }, testInfo) => {
+  const teamName = testLabel(testInfo, "Praxis E2E Operators");
+
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Praxis E2E Operator");
-  await page.getByLabel("Email address").fill(`praxis-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "praxis"));
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
   await page.getByRole("button", { name: "Sign up" }).click();
 
   await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
-  await page.getByLabel("Team name").fill("Praxis E2E Operators");
+  await page.getByLabel("Team name").fill(teamName);
   await page.getByRole("button", { name: "Create team" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
   await page.getByRole("navigation").getByRole("button", { name: "Praxis" }).click();
   await expect(page.getByRole("heading", { name: "Praxis MCP Generator" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
   const sourceImport = page.getByRole("region", { name: "Praxis source import" });
   await page.getByLabel("OpenAPI file").setInputFiles(praxisFixture("demo-openapi.redacted.json"));
   await page.getByLabel("Postman file").setInputFiles(praxisFixture("demo-postman.redacted.json"));
@@ -275,8 +306,9 @@ test("product Praxis import generates, dry-runs, audits, exports P10 proof, and 
   await expect(page.getByRole("button", { name: /Deploy managed pilot runtime/ })).toBeDisabled();
 });
 
-test("first-run signup can continue solo from a clean browser session", async ({ page }) => {
-  const email = `solo-${Date.now()}@example.com`;
+test("first-run signup can continue solo from a clean browser session", async ({ page }, testInfo) => {
+  const email = testEmail(testInfo, "solo");
+  const teamName = testLabel(testInfo, "Solo Upgrade Operators");
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Solo E2E Operator");
@@ -300,20 +332,20 @@ test("first-run signup can continue solo from a clean browser session", async ({
 
   await page.getByRole("navigation").getByRole("button", { name: "Team Settings" }).click();
   await expect(page.locator(".product-header h1", { hasText: "Team Settings" })).toBeVisible();
-  await page.getByLabel("Team name").fill("Solo Upgrade Operators");
+  await page.getByLabel("Team name").fill(teamName);
   await page.getByRole("button", { name: "Create team", exact: true }).click();
-  await expect(page.locator(".sidebar-footer").getByText("Solo Upgrade Operators")).toBeVisible();
+  await expect(page.locator(".sidebar-footer").getByText(teamName)).toBeVisible();
 
   await page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true }).click();
   await expect(page.locator(".product-header h1", { hasText: "Settings" })).toBeVisible();
   await expect(page.getByText("Default Evaluation Mode")).toBeVisible();
 });
 
-test("logout returns a clean browser session to sign-in", async ({ page }) => {
+test("logout returns a clean browser session to sign-in", async ({ page }, testInfo) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Logout E2E Operator");
-  await page.getByLabel("Email address").fill(`logout-${Date.now()}@example.com`);
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "logout"));
   await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
   await page.getByLabel("Confirm password").fill("correct-horse-42");
   await page.getByLabel(/I agree to use only redacted sources/).check();
@@ -321,15 +353,15 @@ test("logout returns a clean browser session to sign-in", async ({ page }) => {
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
-  await page.getByTitle("Log out").click();
+  await page.getByRole("button", { name: "Log out" }).click();
   await expect(page.getByRole("heading", { name: "Welcome" })).toBeVisible();
   await expect
     .poll(async () => (await page.context().cookies()).some((cookie) => cookie.name === "mesh_session"))
     .toBe(false);
 });
 
-test("expired session clears cookie and recovers through login", async ({ page }) => {
-  const email = `expired-browser-${Date.now()}@example.com`;
+test("expired session clears cookie and recovers through login", async ({ page }, testInfo) => {
+  const email = testEmail(testInfo, "expired-browser");
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
   await page.getByLabel("Display name").fill("Expired E2E Operator");
@@ -341,7 +373,7 @@ test("expired session clears cookie and recovers through login", async ({ page }
   await page.getByRole("button", { name: "Continue solo" }).click();
   await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
 
-  expireSessions();
+  expireSessionsForEmail(email);
   await page.reload();
   await expect(page.getByRole("heading", { name: "Welcome" })).toBeVisible();
   await expect
@@ -355,16 +387,73 @@ test("expired session clears cookie and recovers through login", async ({ page }
   await expect(page.getByText(email)).toBeVisible();
 });
 
-function expireSessions() {
+function expireSessionsForEmail(email: string) {
   const identityPath = process.env.MESH_OPERATOR_IDENTITY_PATH;
   if (!identityPath) throw new Error("MESH_OPERATOR_IDENTITY_PATH is required for session-expiry proof");
   const data = JSON.parse(readFileSync(identityPath, "utf-8"));
+  const userIds = new Set(
+    Object.entries((data.users || {}) as Record<string, { email?: string }>)
+      .filter(([, user]) => user.email === email)
+      .map(([userId]) => userId),
+  );
   for (const record of Object.values(data.sessions || {}) as Array<Record<string, unknown>>) {
-    record.expires_at = "2000-01-01T00:00:00Z";
+    if (userIds.has(String(record.user_id))) {
+      record.expires_at = "2000-01-01T00:00:00Z";
+    }
   }
   writeFileSync(identityPath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 function praxisFixture(name: string) {
   return resolve(__dirname, "../../../fixtures/praxis", name);
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const overflow = await page.evaluate(() => {
+    const root = document.scrollingElement ?? document.documentElement;
+    return Math.max(0, root.scrollWidth - window.innerWidth);
+  });
+  expect(overflow).toBeLessThanOrEqual(1);
+}
+
+function testEmail(testInfo: TestInfo, prefix: string) {
+  return `${slug([prefix, testInfo.project.name, String(testInfo.workerIndex), String(Date.now())])}@example.com`;
+}
+
+function testLabel(testInfo: TestInfo, label: string) {
+  return `${label} ${slug([testInfo.project.name, String(testInfo.workerIndex), String(Date.now())])}`;
+}
+
+function slug(parts: string[]) {
+  return parts.join("-").replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "").toLowerCase();
+}
+
+function isExpectedBrowserResourceStatus(text: string) {
+  return /^Failed to load resource: the server responded with a status of (401|404) \((Unauthorized|Not Found)\)$/.test(text);
+}
+
+async function runIdFromRegion(region: Locator) {
+  const text = await region.textContent();
+  const match = text?.match(/run_\d{8}T\d{6}_[a-f0-9]+/);
+  if (!match) throw new Error("admitted run id not found");
+  return match[0];
+}
+
+async function cancelRunThroughMesh(page: Page, runId: string) {
+  const apiUrl = process.env.MESH_PRODUCT_E2E_API_URL;
+  if (!apiUrl) throw new Error("MESH_PRODUCT_E2E_API_URL is required for run cleanup");
+  await page.evaluate(
+    async ({ apiUrl, runId }) => {
+      const response = await fetch(`${apiUrl}/api/runs/${encodeURIComponent(runId)}/steer`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command: "cancel", reason: "e2e releases target lock" }),
+      });
+      if (!response.ok) {
+        throw new Error(`run cleanup failed: ${response.status} ${await response.text()}`);
+      }
+    },
+    { apiUrl, runId },
+  );
 }

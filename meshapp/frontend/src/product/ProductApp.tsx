@@ -1111,7 +1111,7 @@ function Sidebar({
           <strong>{session.active_team?.name || "Solo"}</strong>
           <span>{session.user.email}</span>
         </div>
-        <button type="button" onClick={onLogout} disabled={loggingOut} title={loggingOut ? "Logging out" : "Log out"}><LogOut size={15} /></button>
+        <button type="button" onClick={onLogout} disabled={loggingOut} title={loggingOut ? "Logging out" : "Log out"} aria-label={loggingOut ? "Logging out" : "Log out"}><LogOut size={15} /></button>
       </div>
     </aside>
   );
@@ -2844,7 +2844,7 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
         <Stat label="Kubernetes boundary" value={humanize(actuatorBoundary.kubernetesState)} detail={actuatorBoundary.kubernetesScopes.length ? actuatorBoundary.kubernetesScopes.join(", ") : "explicit allowlists required"} />
         <Stat label="Non-Kubernetes credential bleed" value={actuatorBoundary.nonKubernetesCredentialConnectorIds.length ? "Blocked" : "None"} detail={actuatorBoundary.nonKubernetesCredentialConnectorIds.join(", ") || "proposal/advisory lanes report no actuator credentials"} />
       </div>
-      <SearchBar value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
+      <SearchBar label="Filter connectors" value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
       <div className="filter-row">
         <label>
           State
@@ -2960,7 +2960,7 @@ function EvaluationsView({
       </div>
       <TraceRail steps={traceSteps} />
       <ProofDrilldownPanel dashboard={dashboard} />
-      <SearchBar value={query} onChange={setQuery} placeholder="Search by run, scenario, status, operator..." />
+      <SearchBar label="Search evaluations" value={query} onChange={setQuery} placeholder="Search by run, scenario, status, operator..." />
       <div className="data-table">
         <div className="table-head"><span>Name</span><span>Scenario</span><span>Status</span><span>Created</span><span>Created by</span></div>
         {filteredRuns.length ? filteredRuns.map((run: any) => (
@@ -4744,17 +4744,19 @@ function Toolbar({
 
 function SearchBar({
   placeholder = "Search by name, author, description, tags...",
+  label = "Search",
   value,
   onChange,
 }: {
   placeholder?: string;
+  label?: string;
   value?: string;
   onChange?: (value: string) => void;
 }) {
   return (
     <label className="search-bar">
       <Search size={16} />
-      <input placeholder={placeholder} value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
+      <input aria-label={label} placeholder={placeholder} value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
     </label>
   );
 }

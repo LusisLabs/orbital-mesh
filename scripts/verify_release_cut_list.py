@@ -51,6 +51,7 @@ REQUIRED_SCRIPTS = (
     "scripts/collect_release_image_metadata.py",
     "scripts/generate_release_image_handoff.py",
     "scripts/verify_release_image_handoff.py",
+    "scripts/verify_e2e_claim.py",
     "scripts/generate_release_provenance.py",
     "scripts/generate_ci_attestation.py",
     "scripts/generate_release_assurance_rehearsal_inputs.py",

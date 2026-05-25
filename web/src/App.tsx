@@ -5101,7 +5101,7 @@ export function AgentMeshPanel({
                     {threadEvents.length > 0 ? <ContextLink label="Events" value={String(threadEvents.length)} /> : null}
                     {threadToolCalls.length > 0 ? <ContextLink label="Tool calls" value={String(threadToolCalls.length)} /> : null}
                     {releaseStatus.released != null ? <ContextLink label="Release" value={releaseStatus.released === true ? "released" : "blocked"} /> : null}
-                    {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="placeholder only" /> : null}
+                    {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="redacted reference only" /> : null}
                     {authority.mesh_control_plane_authoritative === true ? <ContextLink label="Authority" value="Mesh proposed / Mesh approved" /> : null}
                     {typeof attempt.output?.confidence === "number" && (
                       <ContextLink label="Confidence" value={`${Math.round(attempt.output.confidence * 100)}%`} />

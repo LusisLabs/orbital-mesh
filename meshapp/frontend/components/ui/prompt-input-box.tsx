@@ -566,6 +566,7 @@ export const PromptInputBox = React.forwardRef<HTMLDivElement, PromptInputBoxPro
                       event.stopPropagation();
                       handleRemoveFile(index);
                     }}
+                    aria-label={`Remove ${file.name}`}
                     className="absolute right-1 top-1 rounded-full bg-black/70 p-0.5"
                   >
                     <X className="h-3 w-3 text-white" />

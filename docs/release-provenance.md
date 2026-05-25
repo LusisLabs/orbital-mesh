@@ -81,6 +81,22 @@ scripts/verify_pilot_clearance.py \
 
 This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` are reachable and explicitly blocked on the expected evidence/config gaps with no unexpected extra blocker names. It also fails if expected observed proofs such as denied-action evidence regress. Mesh Brain kernel, canary, and rollback proofs remain expected missing evidence until a live canary lane produces them. Its JSON output includes `prompt_to_artifact_checklist`, readiness blocker details, go/no-go missing-evidence details, and observed-proof details for the required state slices, env vars, evidence paths, remediation, and source endpoints. It is not a release-clearance signal.
 
+## Full E2E Claim Gate
+
+`pnpm run lint` proves the local contracts, focused tests, product browser E2E, release-cut list, and security-readiness gates. It does not prove that a production-ready frontend/backend claim is current-head and live-runtime bound. Use the E2E claim gate after downloading CI release artifacts and deploying the bound runtime:
+
+```bash
+pnpm run verify:e2e-claim -- \
+  --artifact-root dist/ci-release-artifacts \
+  --health-url https://<mesh-host>/api/health \
+  --pilot-base-url https://<mesh-host> \
+  --live-proof-dir .mesh-runtime-state/live-proof-current \
+  --expected-head "$(git rev-parse HEAD)" \
+  --json
+```
+
+The gate verifies the release artifact bundle, runtime release binding, pilot clearance, and production-autonomy proof aggregate as one state slice. It fails closed when any artifact path, live runtime binding, pilot endpoint, or `.mesh-runtime-state/live-proof-current/` proof packet is absent. Do not use production-ready or flawless E2E language for the current head until this gate passes with explicit artifact inputs.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:
