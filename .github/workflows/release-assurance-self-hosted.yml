@@ -157,9 +157,11 @@ jobs:
             echo "::error::Playwright Chromium headless shell was not installed"
             exit 1
           fi
-          if ldd "$browser_path" | grep -q "libnspr4.so.*not found"; then
+          missing_libs="$(ldd "$browser_path" | awk '/not found/ {print $1}' || true)"
+          if [ -n "$missing_libs" ]; then
             if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
-              echo "::error::libnspr4.so is missing and apt-get/dpkg-deb are unavailable"
+              echo "::error::Playwright Chromium is missing shared libraries and apt-get/dpkg-deb are unavailable"
+              printf '%s\n' "$missing_libs"
               exit 1
             fi
             lib_root="${RUNNER_TEMP:-/tmp}/playwright-rootless-libs"
@@ -167,15 +169,27 @@ jobs:
             mkdir -p "$lib_root/downloads"
             (
               cd "$lib_root/downloads"
-              apt-get download libnspr4
-              dpkg-deb -x libnspr4_*.deb "$lib_root"
+              for package in \
+                libnspr4 \
+                libnss3 \
+                libatk1.0-0t64 \
+                libatk-bridge2.0-0t64 \
+                libxdamage1 \
+                libasound2t64 \
+                libatspi2.0-0t64
+              do
+                apt-get download "$package"
+              done
+              for archive in ./*.deb; do
+                dpkg-deb -x "$archive" "$lib_root"
+              done
             )
-            multiarch_dir="$(find "$lib_root/usr/lib" -type f -name "libnspr4.so" -exec dirname {} \; -quit)"
-            if [ -z "$multiarch_dir" ]; then
-              echo "::error::downloaded libnspr4 package did not contain libnspr4.so"
+            lib_dirs="$(find "$lib_root/usr/lib" -type f -name "*.so*" -exec dirname {} \; | sort -u | paste -sd: -)"
+            if [ -z "$lib_dirs" ]; then
+              echo "::error::downloaded Playwright dependency packages did not contain shared libraries"
               exit 1
             fi
-            export LD_LIBRARY_PATH="${multiarch_dir}:${LD_LIBRARY_PATH:-}"
+            export LD_LIBRARY_PATH="${lib_dirs}:${LD_LIBRARY_PATH:-}"
             echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           fi
           ldd "$browser_path" | grep "not found" && exit 1 || true
