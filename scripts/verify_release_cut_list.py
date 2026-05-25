@@ -297,7 +297,7 @@ REQUIRED_MARKERS = {
         "docker save",
         "gzip -n",
         "scripts/generate_release_image_handoff.py",
-        "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
         "retention-days: ${{ inputs.retention_days }}",
     ),
     "scripts/generate_ci_attestation.py": (

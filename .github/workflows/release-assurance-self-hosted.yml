@@ -56,7 +56,7 @@ jobs:
       POSTGRES_PORT: "55432"
       MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
 
@@ -202,7 +202,7 @@ jobs:
         if: steps.release_assurance.outcome != 'success'
         run: exit 1
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: self-hosted-release-assurance-${{ github.sha }}
