@@ -56,9 +56,24 @@ jobs:
       POSTGRES_PORT: "55432"
       MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          persist-credentials: false
+      - name: Checkout repository without marketplace actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote remove origin >/dev/null 2>&1 || true
+          scrub_origin() {
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git" >/dev/null 2>&1 || true
+          }
+          trap scrub_origin EXIT
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          git checkout --detach FETCH_HEAD
+          scrub_origin
+          trap - EXIT
 
       - name: Verify self-hosted toolchain
         run: |
@@ -202,15 +217,27 @@ jobs:
         if: steps.release_assurance.outcome != 'success'
         run: exit 1
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - name: Preserve runner-local evidence bundle
         if: always()
-        with:
-          name: self-hosted-release-assurance-${{ github.sha }}
-          path: |
-            dist/ci-attestation.json
-            dist/migration-rehearsal.json
-            dist/release-assurance/
-            dist/release-assurance-raw/
-            dist/release-image-metadata.json
-            dist/release-provenance-draft.json
-          retention-days: 14
+        run: |
+          set -euo pipefail
+          evidence_root="/var/tmp/orbital-mesh-release-assurance/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence_root"
+          if [ -d dist ]; then
+            cp -R dist/. "$evidence_root/"
+          fi
+          {
+            echo "### Self-hosted release assurance evidence"
+            echo
+            echo "- state_slice: \`release-provenance-current-head.v1\`"
+            echo "- git_sha: \`${GITHUB_SHA}\`"
+            echo "- runner_evidence_root: \`${evidence_root}\`"
+            echo
+            echo "| sha256 | path |"
+            echo "| --- | --- |"
+            find "$evidence_root" -type f -print0 | sort -z | while IFS= read -r -d '' path; do
+              digest="$(sha256sum "$path" | awk '{print $1}')"
+              rel="${path#${evidence_root}/}"
+              echo "| \`${digest}\` | \`${rel}\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
