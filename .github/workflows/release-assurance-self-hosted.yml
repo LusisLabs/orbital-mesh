@@ -152,6 +152,33 @@ jobs:
             fi
           }
           run_pnpm --dir meshapp/frontend exec playwright install chromium
+          browser_path="$(find "${HOME}/.cache/ms-playwright" -path "*chrome-headless-shell" -type f -perm -111 -print -quit)"
+          if [ -z "$browser_path" ]; then
+            echo "::error::Playwright Chromium headless shell was not installed"
+            exit 1
+          fi
+          if ldd "$browser_path" | grep -q "libnspr4.so.*not found"; then
+            if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
+              echo "::error::libnspr4.so is missing and apt-get/dpkg-deb are unavailable"
+              exit 1
+            fi
+            lib_root="${RUNNER_TEMP:-/tmp}/playwright-rootless-libs"
+            rm -rf "$lib_root"
+            mkdir -p "$lib_root/downloads"
+            (
+              cd "$lib_root/downloads"
+              apt-get download libnspr4
+              dpkg-deb -x libnspr4_*.deb "$lib_root"
+            )
+            multiarch_dir="$(find "$lib_root/usr/lib" -type f -name "libnspr4.so" -exec dirname {} \; -quit)"
+            if [ -z "$multiarch_dir" ]; then
+              echo "::error::downloaded libnspr4 package did not contain libnspr4.so"
+              exit 1
+            fi
+            export LD_LIBRARY_PATH="${multiarch_dir}:${LD_LIBRARY_PATH:-}"
+            echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
+          ldd "$browser_path" | grep "not found" && exit 1 || true
 
       - name: Run heavy root gate
         id: root_gate
