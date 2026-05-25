@@ -140,6 +140,19 @@ jobs:
           }
           run_pnpm install --frozen-lockfile
 
+      - name: Install Playwright browser runtime
+        id: playwright_install
+        run: |
+          set -euo pipefail
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm --dir meshapp/frontend exec playwright install --with-deps chromium
+
       - name: Run heavy root gate
         id: root_gate
         run: |
