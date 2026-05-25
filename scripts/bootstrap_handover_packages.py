@@ -75,7 +75,6 @@ def bootstrap_darkharness() -> None:
 def bootstrap_hardened_arena() -> None:
     root = PACKAGES / "mesh-hardened-arena"
     pkg = root / "src" / "mesh_hardened_arena"
-    config_dir = root / "config"
     if pkg.exists():
         shutil.rmtree(pkg)
     write(pkg / "schema_validation.py", schema_validation_module())

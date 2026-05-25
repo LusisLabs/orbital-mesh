@@ -48,7 +48,7 @@ Partner-facing signup can be constrained with invite state before live external 
 ```bash
 # Exact emails, bare domains, or @domain entries are accepted.
 MESH_AUTH_INVITE_ALLOWLIST=alice@example.com,@partner.example
-MESH_AUTH_INVITE_CODES=pilot-2026-redacted
+# Set invite codes through the deployment secret manager, not source files.
 ```
 
 When configured, `/api/auth/signup` requires a matching allowlisted email and, when `MESH_AUTH_INVITE_CODES` is non-empty, an invite code. The product UI hides unconfigured OAuth providers, asks for password confirmation, requires data-handling consent, and maps provider/captcha/invite failures to partner-safe messages. Runtime auth events record only redacted invite/provider proof metadata under `auth-provider-proof.v1`; raw invite codes, OAuth secrets, captcha responses, cookies, and passwords are not persisted in proof artifacts.
