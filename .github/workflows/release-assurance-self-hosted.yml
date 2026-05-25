@@ -80,24 +80,57 @@ jobs:
               GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git fetch --depth=1 origin "$GITHUB_SHA"
             fi
           fi
-          git checkout --detach FETCH_HEAD
+          git checkout --detach --force FETCH_HEAD
+          git reset --hard FETCH_HEAD
+          git clean -ffdx
           scrub_origin
           trap - EXIT
 
       - name: Verify self-hosted toolchain
+        id: toolchain
         run: |
           set -euo pipefail
           command -v python3
           command -v docker
-          command -v corepack
+          if command -v corepack >/dev/null 2>&1; then
+            corepack --version
+            corepack pnpm --version
+          elif command -v pnpm >/dev/null 2>&1; then
+            pnpm --version
+          else
+            echo "::error::corepack or pnpm is required on the self-hosted runner"
+            exit 1
+          fi
           docker version
 
-      - name: Run heavy root gate
+      - name: Install pnpm dependencies
+        id: pnpm_install
         run: |
           set -euo pipefail
-          corepack pnpm run lint
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm install --frozen-lockfile
+
+      - name: Run heavy root gate
+        id: root_gate
+        run: |
+          set -euo pipefail
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm run lint
 
       - name: Build Docker image
+        id: docker_build
         run: |
           set -euo pipefail
           docker build \
@@ -106,6 +139,7 @@ jobs:
             -t "$ASSURANCE_IMAGE_TAG" .
 
       - name: Collect release image metadata
+        id: image_metadata
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -116,6 +150,7 @@ jobs:
             --base-image-args dist/base-image-digest.args
 
       - name: Start migration rehearsal database
+        id: migration_database
         run: |
           set -euo pipefail
           docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
@@ -136,6 +171,7 @@ jobs:
           exit 1
 
       - name: Run Postgres migration rehearsal
+        id: migration_rehearsal
         env:
           MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:55432/mesh
         run: |
@@ -178,7 +214,12 @@ jobs:
 
       - name: Generate CI attestation
         if: always() && steps.checkout.outcome == 'success'
+        id: ci_attestation
         env:
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain.outcome }}
+          PNPM_INSTALL_OUTCOME: ${{ steps.pnpm_install.outcome }}
+          ROOT_GATE_OUTCOME: ${{ steps.root_gate.outcome }}
+          DOCKER_BUILD_OUTCOME: ${{ steps.docker_build.outcome }}
           RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
         run: |
           set -euo pipefail
@@ -186,24 +227,33 @@ jobs:
           if [ -f dist/base-image-digest.args ]; then
             mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
           fi
-          release_assurance_status=failed
-          if [ "$RELEASE_ASSURANCE_OUTCOME" = "success" ]; then
-            release_assurance_status=passed
-          fi
+          status_from_outcome() {
+            case "${1:-skipped}" in
+              success) echo passed ;;
+              failure) echo failed ;;
+              cancelled) echo cancelled ;;
+              skipped) echo skipped ;;
+              *) echo skipped ;;
+            esac
+          }
+          root_gate_status="$(status_from_outcome "$ROOT_GATE_OUTCOME")"
           python3 scripts/generate_ci_attestation.py \
             --output dist/ci-attestation.json \
             --require-github-actions \
-            --check python-test \
-            --check web \
-            --check docker-build \
-            --check-status "release-image-assurance=${release_assurance_status}" \
+            --check-status "toolchain=$(status_from_outcome "$TOOLCHAIN_OUTCOME")" \
+            --check-status "pnpm-install=$(status_from_outcome "$PNPM_INSTALL_OUTCOME")" \
+            --check-status "root-lint=${root_gate_status}" \
+            --check-status "python-test=${root_gate_status}" \
+            --check-status "web=${root_gate_status}" \
+            --check-status "docker-build=$(status_from_outcome "$DOCKER_BUILD_OUTCOME")" \
+            --check-status "release-image-assurance=$(status_from_outcome "$RELEASE_ASSURANCE_OUTCOME")" \
             --image-tag "$ASSURANCE_IMAGE_TAG" \
             --image-digest "${MESH_IMAGE_DIGEST:-}" \
             --build-command "docker build --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $ASSURANCE_IMAGE_TAG ." \
             "${BASE_IMAGE_ARGS[@]}"
 
       - name: Generate release provenance draft
-        if: always() && steps.checkout.outcome == 'success'
+        if: always() && steps.checkout.outcome == 'success' && steps.ci_attestation.outcome == 'success'
         run: |
           set -euo pipefail
           BASE_IMAGE_ARGS=()
