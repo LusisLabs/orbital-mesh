@@ -178,6 +178,11 @@ def _agent_flow_preview_signature(*, preview: dict[str, Any], context: dict[str,
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
 
+def _preview_target_run_id(preview: dict[str, Any]) -> str:
+    target = preview.get("target") if isinstance(preview.get("target"), dict) else {}
+    return str(target.get("run_id") or "")
+
+
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
     return {
         "auto_mode": run.get("auto_mode"),
@@ -1642,12 +1647,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         resource = str(preview.get("proposed_resource") or "")
         endpoint = str(preview.get("endpoint") or "")
         state_slice = str(preview.get("would_touch_state_slice") or "")
+        target_run_id = _preview_target_run_id(preview)
         if resource == "RunSession" and endpoint == "/api/runs" and state_slice == "mesh.run_admission.v1":
             return preview
         if (
             resource == "SteeringCommand"
-            and endpoint.startswith("/api/runs/")
-            and endpoint.endswith("/steer")
+            and bool(target_run_id)
+            and endpoint == f"/api/runs/{target_run_id}/steer"
             and state_slice == "mesh.run_steering.v1"
         ):
             return preview

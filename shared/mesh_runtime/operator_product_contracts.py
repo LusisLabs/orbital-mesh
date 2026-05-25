@@ -167,17 +167,17 @@ def operator_product_schema() -> dict[str, Any]:
             "proof",
         ],
         "properties": {
-            "schema_version": {"type": "string"},
-            "state_slice": {"type": "string"},
+            "schema_version": {"type": "string", "enum": ["mesh.agent_flow.mutation_preview.v1"]},
+            "state_slice": {"type": "string", "enum": ["mesh.agent_flow.mutation_preview.v1"]},
             "preview_id": {"type": "string"},
-            "status": {"type": "string"},
+            "status": {"type": "string", "enum": ["draft_requires_confirmation"]},
             "proposed_resource": {"type": "string"},
             "action": {"type": "string"},
             "target": {"type": "object", "additionalProperties": True},
             "endpoint": {"type": "string"},
             "would_touch_state_slice": {"type": "string"},
-            "confirmation_required": {"type": "boolean"},
-            "side_effects_executed": {"type": "boolean"},
+            "confirmation_required": {"type": "boolean", "enum": [True]},
+            "side_effects_executed": {"type": "boolean", "enum": [False]},
             "issued_scope": {"type": "string"},
             "issued_operator_id": {"type": "string"},
             "issued_at": {"type": "string"},
@@ -186,8 +186,8 @@ def operator_product_schema() -> dict[str, Any]:
                 "additionalProperties": False,
                 "required": ["algorithm", "bound_state_slice", "signature"],
                 "properties": {
-                    "algorithm": {"type": "string"},
-                    "bound_state_slice": {"type": "string"},
+                    "algorithm": {"type": "string", "enum": ["HMAC-SHA256"]},
+                    "bound_state_slice": {"type": "string", "enum": ["mesh.agent_flow.mutation_preview.v1"]},
                     "signature": {"type": "string"},
                 },
             },
@@ -287,17 +287,17 @@ def operator_product_schema() -> dict[str, Any]:
             "side_effects_executed",
         ],
         "properties": {
-            "schema_version": {"type": "string"},
-            "state_slice": {"type": "string"},
+            "schema_version": {"type": "string", "enum": ["mesh.agent_flow.livekit_session.v1"]},
+            "state_slice": {"type": "string", "enum": ["mesh.agent_flow.livekit_session.v1"]},
             "agent": agent_flow_agent,
-            "status": {"type": "string"},
+            "status": {"type": "string", "enum": ["unconfigured", "invalid_token", "expired", "ready", "permission_required"]},
             "livekit_url": {"type": "string"},
             "room": {"type": "string"},
             "participant_identity": {"type": "string"},
             "token": {"type": "string"},
             "token_expires_at": {"type": ["string", "null"]},
             "required_env": {"type": "array", "items": {"type": "string"}},
-            "side_effects_executed": {"type": "boolean"},
+            "side_effects_executed": {"type": "boolean", "enum": [False]},
         },
     }
     agent_flow_confirmation = {
@@ -318,16 +318,16 @@ def operator_product_schema() -> dict[str, Any]:
             "created_at",
         ],
         "properties": {
-            "schema_version": {"type": "string"},
-            "state_slice": {"type": "string"},
+            "schema_version": {"type": "string", "enum": ["mesh.agent_flow.confirmation.v1"]},
+            "state_slice": {"type": "string", "enum": ["mesh.agent_flow.mutation_preview.v1"]},
             "preview_id": {"type": "string"},
-            "status": {"type": "string"},
+            "status": {"type": "string", "enum": ["confirmation_recorded"]},
             "confirmed_by": {"type": "string"},
             "reason": {"type": "string"},
             "proposed_resource": {"type": "string"},
             "would_touch_state_slice": {"type": "string"},
             "routed_to": {"type": "string"},
-            "side_effects_executed": {"type": "boolean"},
+            "side_effects_executed": {"type": "boolean", "enum": [False]},
             "next_step": {"type": "string"},
             "created_at": {"type": "string"},
         },
@@ -595,23 +595,23 @@ export interface AgentFlowLifecycleTask {
 }
 
 export interface AgentFlowMutationPreview {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.mutation_preview.v1";
+  state_slice: "mesh.agent_flow.mutation_preview.v1";
   preview_id: string;
-  status: string;
+  status: "draft_requires_confirmation";
   proposed_resource: string;
   action: string;
   target: Record<string, any>;
   endpoint: string;
   would_touch_state_slice: string;
-  confirmation_required: boolean;
-  side_effects_executed: boolean;
+  confirmation_required: true;
+  side_effects_executed: false;
   issued_scope: string;
   issued_operator_id: string;
   issued_at: string;
   proof: {
-    algorithm: string;
-    bound_state_slice: string;
+    algorithm: "HMAC-SHA256";
+    bound_state_slice: "mesh.agent_flow.mutation_preview.v1";
     signature: string;
   };
 }
@@ -630,30 +630,30 @@ export interface AgentFlowChatResponse {
 }
 
 export interface AgentFlowLiveKitSessionResponse {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.livekit_session.v1";
+  state_slice: "mesh.agent_flow.livekit_session.v1";
   agent: { id: string; name: string; source: string; authority?: string };
-  status: string;
+  status: "unconfigured" | "invalid_token" | "expired" | "ready" | "permission_required";
   livekit_url: string;
   room: string;
   participant_identity: string;
   token: string;
   token_expires_at: string | null;
   required_env: string[];
-  side_effects_executed: boolean;
+  side_effects_executed: false;
 }
 
 export interface AgentFlowConfirmationResponse {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.confirmation.v1";
+  state_slice: "mesh.agent_flow.mutation_preview.v1";
   preview_id: string;
-  status: string;
+  status: "confirmation_recorded";
   confirmed_by: string;
   reason: string;
   proposed_resource: string;
   would_touch_state_slice: string;
   routed_to: string;
-  side_effects_executed: boolean;
+  side_effects_executed: false;
   next_step: string;
   created_at: string;
 }

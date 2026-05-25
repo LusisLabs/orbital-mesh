@@ -73,6 +73,7 @@ def build_connector_certification_matrix(
             credential_boundary = dict(record["credential_boundary"])
             connector_blockers.extend(
                 _credential_boundary_blockers(
+                    connector_id=connector_id,
                     state=effective_state,
                     credential_boundary=credential_boundary,
                     runtime_record=runtime_record,
@@ -123,11 +124,14 @@ def _bounded_state(certified_state: str, observed_state: str) -> str:
 
 def _credential_boundary_blockers(
     *,
+    connector_id: str,
     state: str,
     credential_boundary: dict[str, Any],
     runtime_record: dict[str, Any],
 ) -> list[str]:
     blockers: list[str] = []
+    if connector_id != "kubernetes" and credential_boundary.get("production_actuator_credentials_allowed"):
+        blockers.append("non_kubernetes_connector_allows_production_actuator_credentials")
     is_proposal_lane = state == "proposal-only"
     if is_proposal_lane and credential_boundary.get("production_actuator_credentials_allowed"):
         blockers.append("proposal_lane_allows_production_actuator_credentials")
