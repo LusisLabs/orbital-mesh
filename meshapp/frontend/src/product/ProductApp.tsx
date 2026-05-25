@@ -500,6 +500,22 @@ export default function ProductApp() {
     }
   }
 
+  function applyDashboardSettings(settings: Record<string, string>) {
+    setDashboardState((current) => {
+      if (current.state !== "ready") return current;
+      return {
+        state: "ready",
+        data: {
+          ...current.data,
+          settings: {
+            ...current.data.settings,
+            ...settings,
+          },
+        },
+      };
+    });
+  }
+
   useEffect(() => {
     let mounted = true;
     async function boot() {
@@ -637,6 +653,7 @@ export default function ProductApp() {
           lens={lens}
           setView={openView}
           onDashboardRefresh={refreshDashboard}
+          onDashboardSettingsUpdate={applyDashboardSettings}
           onSession={acceptSession}
           onLogout={logout}
           loggingOut={loggingOut}
@@ -1213,6 +1230,7 @@ function ContentRouter({
   dashboardState,
   setView,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
   onSession,
   onLogout,
   loggingOut,
@@ -1224,6 +1242,7 @@ function ContentRouter({
   dashboardState: LoadState<DashboardPayload>;
   setView: (view: ViewKey) => void;
   onDashboardRefresh: () => Promise<void>;
+  onDashboardSettingsUpdate: (settings: Record<string, string>) => void;
   onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
@@ -1241,11 +1260,11 @@ function ContentRouter({
   if (view === "hardened-arena") return <HardenedArenaView dashboard={dashboard} setView={setView} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
-  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
+  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
   if (view === "members") return <MembersView session={session} setView={setView} onSession={onSession} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "keys") return <KeysView authConfig={authConfig} dashboard={dashboard} setView={setView} />;
   if (view === "operator-setup") return <OperatorSetupView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} setView={setView} />;
-  if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} /></div>;
+  if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} /></div>;
   return <CapabilityView view={view} dashboard={dashboard} setView={setView} />;
 }
 
@@ -3582,6 +3601,7 @@ function TeamSettingsView({
   session,
   dashboard,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
   onSession,
   onLogout,
   loggingOut,
@@ -3589,6 +3609,7 @@ function TeamSettingsView({
   session: SessionPayload;
   dashboard: DashboardPayload;
   onDashboardRefresh: () => Promise<void>;
+  onDashboardSettingsUpdate: (settings: Record<string, string>) => void;
   onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
@@ -3694,7 +3715,7 @@ function TeamSettingsView({
           <button type="button" onClick={onLogout} disabled={loggingOut}>{loggingOut ? "Logging out" : "Log out"}</button>
         </div>
       </section>
-      <SettingsView dashboard={dashboard} compact onDashboardRefresh={onDashboardRefresh} />
+      <SettingsView dashboard={dashboard} compact onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} />
     </div>
   );
 }
@@ -4084,10 +4105,12 @@ function SettingsView({
   dashboard,
   compact = false,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
 }: {
   dashboard: DashboardPayload;
   compact?: boolean;
   onDashboardRefresh?: () => Promise<void>;
+  onDashboardSettingsUpdate?: (settings: Record<string, string>) => void;
 }) {
   const settingsPosture = operatorWorkflowPosture("settings");
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -4115,7 +4138,9 @@ function SettingsView({
       const response = await productApi.updateSettings(dashboard.scope.team?.id || null, draft, cleanedReason);
       setDraft(response.settings);
       setReason("");
+      onDashboardSettingsUpdate?.(response.settings);
       await onDashboardRefresh?.();
+      onDashboardSettingsUpdate?.(response.settings);
       setMessage(`Saved ${response.audit.fields.join(", ")} for ${response.audit.scope}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Settings update failed");
