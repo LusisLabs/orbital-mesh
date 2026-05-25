@@ -118,6 +118,14 @@ jobs:
           command -v corepack
           corepack --version
           corepack pnpm --version
+          if ! docker version; then
+            if command -v setfacl >/dev/null 2>&1; then
+              sudo setfacl -m "u:$(id -un):rw" /var/run/docker.sock
+            else
+              echo "::error::docker socket is not accessible and setfacl is unavailable"
+              exit 1
+            fi
+          fi
           docker version
 
       - name: Install pnpm dependencies
