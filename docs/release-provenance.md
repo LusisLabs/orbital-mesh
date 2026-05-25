@@ -176,6 +176,8 @@ The collector writes `MESH_IMAGE_DIGEST` and base-image digest args for the atte
 
 The current CI workflow builds and attests the image, but it does not upload a runnable private image artifact. That is intentional: uploading the built image exports private repo contents into GitHub Actions artifact storage.
 
+When GitHub-hosted runners fail before job steps start, use the manual `Self-hosted Release Assurance` workflow. It runs on the `self-hosted` `lusislabs-preview` runner, executes the root `pnpm run lint` gate, builds the release candidate image, performs the Postgres migration rehearsal, generates Syft/Grype release assurance artifacts, emits `mesh.ci_attestation.v1`, and uploads `self-hosted-release-assurance-<sha>`. This lane is still GitHub Actions evidence, but it is runner-provenance-specific; hosted CI remains the default broad compatibility signal when available.
+
 Use `.github/workflows/release-image-handoff.yml` only after operator approval. The workflow is `workflow_dispatch` only, requires the exact `confirm_export=EXPORT_RELEASE_IMAGE` input, limits artifact retention to `1` through `7` days, runs Python, web reference, meshapp operator, release-cut, and security gates, builds the image, records release image metadata, rehearses Postgres migrations, generates SBOM and vulnerability scan artifacts, creates a CI attestation and release provenance draft, saves the runnable image with `docker save`, compresses it with `gzip -n`, and writes `scripts/generate_release_image_handoff.py` output as `mesh.release_image_handoff.v1`. Release provenance hashes the root `pnpm-lock.yaml` because the production image now serves the meshapp static export through the workspace lock discipline.
 
 The uploaded artifact includes:

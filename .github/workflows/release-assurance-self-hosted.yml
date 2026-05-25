@@ -1,0 +1,216 @@
+name: Self-hosted Release Assurance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-assurance-self-hosted.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release-image-handoff.yml"
+      - ".github/workflows/security.yml"
+      - "Dockerfile"
+      - "Dockerfile.stack.hermes"
+      - "Dockerfile.latentmas.cpu"
+      - "docker-compose.prod.yml"
+      - "docker-compose.stack.yml"
+      - "config/release-vulnerability-exceptions.json"
+      - "config/policy-lifecycle.manifest.json"
+      - "meshapp/frontend/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "policies/**"
+      - "pyproject.toml"
+      - "scripts/collect_release_image_metadata.py"
+      - "scripts/generate_ci_attestation.py"
+      - "scripts/generate_release_image_assurance.py"
+      - "scripts/generate_release_provenance.py"
+      - "scripts/run_postgres_migration_rehearsal.py"
+      - "scripts/verify_release_cut_list.py"
+      - "scripts/verify_release_runtime_binding.py"
+      - "scripts/verify_security_audit_readiness.py"
+      - "shared/mesh_runtime/**"
+      - "uv.lock"
+      - "web/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-release-assurance-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SYFT_VERSION: "1.44.0"
+  SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
+  GRYPE_VERSION: "0.112.0"
+  GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
+
+jobs:
+  release-assurance:
+    runs-on: [self-hosted, lusislabs-preview]
+    timeout-minutes: 90
+    env:
+      ASSURANCE_IMAGE_TAG: orbital-mesh:selfhosted-${{ github.run_id }}
+      POSTGRES_CONTAINER: mesh-release-assurance-postgres-${{ github.run_id }}
+      POSTGRES_PORT: "55432"
+      MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Verify self-hosted toolchain
+        run: |
+          set -euo pipefail
+          command -v python3
+          command -v docker
+          command -v corepack
+          docker version
+
+      - name: Run heavy root gate
+        run: |
+          set -euo pipefail
+          corepack pnpm run lint
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} \
+            --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} \
+            -t "$ASSURANCE_IMAGE_TAG" .
+
+      - name: Collect release image metadata
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 scripts/collect_release_image_metadata.py \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --output dist/release-image-metadata.json \
+            --github-env "$GITHUB_ENV" \
+            --base-image-args dist/base-image-digest.args
+
+      - name: Start migration rehearsal database
+        run: |
+          set -euo pipefail
+          docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d \
+            --name "$POSTGRES_CONTAINER" \
+            -e POSTGRES_DB=mesh \
+            -e POSTGRES_USER=mesh \
+            -e POSTGRES_PASSWORD=mesh \
+            -p "127.0.0.1:${POSTGRES_PORT}:5432" \
+            postgres:16-alpine
+          for attempt in $(seq 1 30); do
+            if docker exec "$POSTGRES_CONTAINER" pg_isready -U mesh -d mesh >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$POSTGRES_CONTAINER" || true
+          exit 1
+
+      - name: Run Postgres migration rehearsal
+        env:
+          MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:55432/mesh
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user "psycopg[binary]>=3.2,<4"
+          python3 scripts/run_postgres_migration_rehearsal.py \
+            --output dist/migration-rehearsal.json \
+            --operator-id github-actions-self-hosted \
+            --environment ci \
+            --rehearsal-id "selfhosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --json
+
+      - name: Stop migration rehearsal database
+        if: always()
+        run: docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+
+      - name: Install release scanners
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
+          echo "${SYFT_DEB_SHA256}  /tmp/syft.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/syft.deb
+          curl -fsSLo /tmp/grype.deb "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.deb"
+          echo "${GRYPE_DEB_SHA256}  /tmp/grype.deb" | sha256sum -c -
+          sudo dpkg -i /tmp/grype.deb
+          syft version
+          grype version
+
+      - name: Generate release image assurance artifacts
+        id: release_assurance
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_release_image_assurance.py \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --image-digest "$MESH_IMAGE_DIGEST" \
+            --raw-output-dir dist/release-assurance-raw \
+            --output-dir dist/release-assurance \
+            --exception-policy config/release-vulnerability-exceptions.json
+
+      - name: Generate CI attestation
+        if: always()
+        env:
+          RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          release_assurance_status=failed
+          if [ "$RELEASE_ASSURANCE_OUTCOME" = "success" ]; then
+            release_assurance_status=passed
+          fi
+          python3 scripts/generate_ci_attestation.py \
+            --output dist/ci-attestation.json \
+            --require-github-actions \
+            --check python-test \
+            --check web \
+            --check docker-build \
+            --check-status "release-image-assurance=${release_assurance_status}" \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --image-digest "${MESH_IMAGE_DIGEST:-}" \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $ASSURANCE_IMAGE_TAG ." \
+            "${BASE_IMAGE_ARGS[@]}"
+
+      - name: Generate release provenance draft
+        if: always()
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          python3 scripts/generate_release_provenance.py \
+            --output dist/release-provenance-draft.json \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --ci-attestation dist/ci-attestation.json \
+            --migration-rehearsal dist/migration-rehearsal.json \
+            --sbom dist/release-assurance/sbom.cdx.json \
+            --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $ASSURANCE_IMAGE_TAG ." \
+            --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
+            --json \
+            "${BASE_IMAGE_ARGS[@]}"
+
+      - name: Fail on release image assurance errors
+        if: steps.release_assurance.outcome != 'success'
+        run: exit 1
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: self-hosted-release-assurance-${{ github.sha }}
+          path: |
+            dist/ci-attestation.json
+            dist/migration-rehearsal.json
+            dist/release-assurance/
+            dist/release-assurance-raw/
+            dist/release-image-metadata.json
+            dist/release-provenance-draft.json
+          retention-days: 14
