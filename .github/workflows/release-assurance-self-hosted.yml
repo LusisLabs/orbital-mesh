@@ -265,6 +265,12 @@ jobs:
         if: always()
         run: docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
 
+      - name: Prune Docker build cache before release scanners
+        run: |
+          docker builder prune --force
+          docker image prune --force
+          df -h
+
       - name: Install release scanners
         run: |
           set -euo pipefail

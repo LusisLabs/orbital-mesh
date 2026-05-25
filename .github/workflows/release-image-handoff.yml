@@ -126,11 +126,11 @@ jobs:
             --environment ci \
             --rehearsal-id "handoff-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --json
-      - name: Save runnable image archive
+      - name: Prune Docker build cache before release scanners
         run: |
-          set -euo pipefail
-          docker save "$HANDOFF_IMAGE_TAG" -o dist/release-image-handoff/orbital-mesh-handoff-image.tar
-          gzip -n dist/release-image-handoff/orbital-mesh-handoff-image.tar
+          docker builder prune --force
+          docker image prune --force
+          df -h
       - name: Install release scanners
         run: |
           curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
@@ -147,6 +147,11 @@ jobs:
             --raw-output-dir dist/release-assurance-raw \
             --output-dir dist/release-assurance \
             --exception-policy config/release-vulnerability-exceptions.json
+      - name: Save runnable image archive
+        run: |
+          set -euo pipefail
+          docker save "$HANDOFF_IMAGE_TAG" -o dist/release-image-handoff/orbital-mesh-handoff-image.tar
+          gzip -n dist/release-image-handoff/orbital-mesh-handoff-image.tar
       - name: Generate CI attestation
         run: |
           set -euo pipefail

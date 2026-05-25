@@ -186,6 +186,11 @@ jobs:
       - name: Stop container
         if: always()
         run: docker stop mesh-ci || true
+      - name: Prune Docker build cache before release scanners
+        run: |
+          docker builder prune --force
+          docker image prune --force
+          df -h
       - name: Install release scanners
         run: |
           curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
