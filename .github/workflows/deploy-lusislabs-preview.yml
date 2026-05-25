@@ -18,9 +18,32 @@ jobs:
     env:
       DEPLOY_SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ env.DEPLOY_SHA }}
+      - name: Checkout repository without marketplace actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote remove origin >/dev/null 2>&1 || true
+          scrub_origin() {
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git" >/dev/null 2>&1 || true
+          }
+          trap scrub_origin EXIT
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git fetch --depth=1 origin "$DEPLOY_SHA"; then
+            scrub_origin
+            echo "::warning::GITHUB_TOKEN fetch failed; retrying without token"
+            if ! git fetch --depth=1 origin "$DEPLOY_SHA"; then
+              echo "::warning::HTTPS fetch failed; retrying with runner SSH credentials"
+              git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+              GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git fetch --depth=1 origin "$DEPLOY_SHA"
+            fi
+          fi
+          git checkout --detach FETCH_HEAD
+          scrub_origin
+          trap - EXIT
 
       - name: Prepare deployment source metadata
         run: |
