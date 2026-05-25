@@ -4136,11 +4136,12 @@ function SettingsView({
     setMessage("");
     try {
       const response = await productApi.updateSettings(dashboard.scope.team?.id || null, draft, cleanedReason);
-      setDraft(response.settings);
+      const savedSettings = { ...response.settings, ...draft };
+      setDraft(savedSettings);
       setReason("");
-      onDashboardSettingsUpdate?.(response.settings);
+      onDashboardSettingsUpdate?.(savedSettings);
       await onDashboardRefresh?.();
-      onDashboardSettingsUpdate?.(response.settings);
+      onDashboardSettingsUpdate?.(savedSettings);
       setMessage(`Saved ${response.audit.fields.join(", ")} for ${response.audit.scope}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Settings update failed");
