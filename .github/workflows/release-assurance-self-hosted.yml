@@ -270,10 +270,15 @@ jobs:
           set -euo pipefail
           curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
           echo "${SYFT_DEB_SHA256}  /tmp/syft.deb" | sha256sum -c -
-          sudo dpkg -i /tmp/syft.deb
           curl -fsSLo /tmp/grype.deb "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.deb"
           echo "${GRYPE_DEB_SHA256}  /tmp/grype.deb" | sha256sum -c -
-          sudo dpkg -i /tmp/grype.deb
+          scanner_root="${RUNNER_TEMP:-/tmp}/release-scanners"
+          rm -rf "$scanner_root"
+          mkdir -p "$scanner_root"
+          dpkg-deb -x /tmp/syft.deb "$scanner_root"
+          dpkg-deb -x /tmp/grype.deb "$scanner_root"
+          echo "${scanner_root}/usr/bin" >> "$GITHUB_PATH"
+          export PATH="${scanner_root}/usr/bin:${PATH}"
           syft version
           grype version
 
