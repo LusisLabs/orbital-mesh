@@ -254,8 +254,7 @@ jobs:
           MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:55432/mesh
         run: |
           set -euo pipefail
-          python3 -m pip install --user "psycopg[binary]>=3.2,<4"
-          python3 scripts/run_postgres_migration_rehearsal.py \
+          UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . --with "psycopg[binary]>=3.2,<4" python scripts/run_postgres_migration_rehearsal.py \
             --output dist/migration-rehearsal.json \
             --operator-id github-actions-self-hosted \
             --environment ci \
