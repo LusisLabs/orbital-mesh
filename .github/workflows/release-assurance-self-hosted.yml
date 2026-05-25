@@ -151,7 +151,7 @@ jobs:
               pnpm "$@"
             fi
           }
-          run_pnpm --dir meshapp/frontend exec playwright install --with-deps chromium
+          run_pnpm --dir meshapp/frontend exec playwright install chromium
 
       - name: Run heavy root gate
         id: root_gate
