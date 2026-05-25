@@ -160,6 +160,60 @@ The script runs Syft for a CycloneDX SBOM, runs Grype as the real release-image 
 
 `scripts/generate_release_provenance.py` requires the `mesh.ci_attestation.v1` image digest to match the release packet image digest. A packet that supplies a local or explicit image digest while reusing a CI attestation for a different image remains incomplete with `ci_attestation` missing.
 
+## Downloaded CI Artifact Bundle
+
+After the `CI` workflow completes, download the release artifacts and verify
+them as one bundle before any deployment handoff:
+
+```bash
+gh run download <run-id> \
+  --repo LusisLabs/orbital-mesh \
+  --dir dist/ci-release-artifacts
+
+scripts/verify_release_artifact_bundle.py \
+  --artifact-root dist/ci-release-artifacts \
+  --expected-head "$(git rev-parse HEAD)" \
+  --json
+```
+
+The verifier checks the downloaded `ci-attestation`, `release-provenance-draft`,
+`release-assurance-artifacts`, migration rehearsal, SBOM, vulnerability scan,
+and release-image metadata as one state slice. It fails unless the release
+packet is complete, every embedded check passes, the CI attestation is
+GitHub-Actions backed, the attestation commit and image digest match the
+release packet, and the downloaded SBOM, scan, migration rehearsal, and
+attestation files match the hashes recorded in the release packet.
+
+To produce deployment runtime env from the verified bundle, add either a local
+image binding before deployment or a live health binding after deployment:
+
+```bash
+scripts/verify_release_artifact_bundle.py \
+  --artifact-root dist/ci-release-artifacts \
+  --expected-head "$(git rev-parse HEAD)" \
+  --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
+  --image-ref "$MESH_IMAGE" \
+  --env-output dist/release-runtime.env \
+  --json
+```
+
+or:
+
+```bash
+scripts/verify_release_artifact_bundle.py \
+  --artifact-root dist/ci-release-artifacts \
+  --expected-head "$(git rev-parse HEAD)" \
+  --runtime-release-provenance-path /app/.mesh-runtime-state/release-provenance.json \
+  --health-url https://<mesh-host>/api/health \
+  --env-output dist/release-runtime.env \
+  --json
+```
+
+`--allow-unverified-env-output` exists only for external deployment systems that
+verify image identity outside this repository. Do not use it as pilot-release
+evidence. The generated env is valid only together with the verified release
+packet and image or health binding.
+
 Collect release image metadata before generating the CI attestation:
 
 ```bash

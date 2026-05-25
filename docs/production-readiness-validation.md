@@ -155,19 +155,25 @@ service container and succeeded.
 
 - Full strict mypy remains partial until the `files` scope is expanded beyond
   `services/decision/hypothesis_engine.py`.
-- Current-head release provenance is incomplete for the checked-out head. After
-  the repo-local commit step and current-head local image rebuild, strict
-  provenance generation reports `git.dirty=false` and still lacks only
-  `vulnerability_scan_path` and `ci_attestation`. Local
-  rehearsal evidence can now bind the local image digest, base image digests,
-  policy lifecycle signature, migration rehearsal, build command, and
-  digest-matched SBOM, but the latest kubectl-source-build Grype scan still has
-  14 unaccepted high/critical findings in Python `3.13.13` and Debian trixie
-  libc/ncurses packages, and the exception policy expired on 2026-05-21.
-  Runtime-binding
-  verification still lacks `MESH_RELEASE_PROVENANCE_PATH`. Historical CI and
-  handoff packets remain evidence for their own commits only, not for current
-  `HEAD`.
+- A local checkout without the matching downloaded CI artifact bundle still has
+  incomplete release provenance: `scripts/generate_release_provenance.py
+  --require-complete --json` cannot prove the CI attestation, SBOM,
+  vulnerability scan, and release-image digest unless those artifacts are
+  supplied for the same commit. Runtime-binding verification also remains
+  blocked until `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and
+  `MESH_BUILD_IMAGE_DIGEST` are mounted into the deployed runtime from the
+  verified packet. Historical CI and handoff packets remain evidence for their
+  own commits only, not for later `HEAD` values.
+- The 2026-05-26 post-merge `main` CI run `26461140820` produced a complete
+  `mesh.release_provenance.v1` packet for merge commit
+  `d804be3bf698f520199abfc0fbb034c1370c8739`, image digest
+  `sha256:b221805bd4194e97c42233488fac61866fa4f34c8fec547b6ec5095520c7ac86`,
+  GitHub Actions CI attestation, migration rehearsal, SBOM, and normalized
+  Grype scan. That retires the P14 CI-artifact gap for that exact head. It does
+  not clear later commits or a deployed runtime until the artifacts are
+  downloaded and verified with `scripts/verify_release_artifact_bundle.py`, then
+  bound to the runtime with `scripts/verify_release_runtime_binding.py` or the
+  bundle verifier's `--image-ref` / `--health-url` path.
 - Pilot readiness and go/no-go must be treated as runtime-bound, not
   repository-wide. The 2026-05-10 handoff runtime was commit/image bound to
   `583eb3e2335cb416e1360d9f0b2cbd3420e04275`, but the pilot-clearance verifier

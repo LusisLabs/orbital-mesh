@@ -56,6 +56,7 @@ REQUIRED_SCRIPTS = (
     "scripts/generate_release_assurance_rehearsal_inputs.py",
     "scripts/generate_release_image_assurance.py",
     "scripts/normalize_release_assurance_artifacts.py",
+    "scripts/verify_release_artifact_bundle.py",
     "scripts/verify_release_runtime_binding.py",
     "scripts/verify_pilot_clearance.py",
     "scripts/verify_authenticated_ingress.py",
