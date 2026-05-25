@@ -56,7 +56,6 @@ jobs:
       ASSURANCE_IMAGE_TAG: orbital-mesh:selfhosted-${{ github.run_id }}
       POSTGRES_CONTAINER: mesh-release-assurance-postgres-${{ github.run_id }}
       POSTGRES_PORT: "55432"
-      MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
     steps:
       - name: Checkout repository without marketplace actions
         id: checkout
@@ -281,6 +280,8 @@ jobs:
 
       - name: Generate release provenance draft
         if: always() && steps.checkout.outcome == 'success' && steps.ci_attestation.outcome == 'success'
+        env:
+          MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
         run: |
           set -euo pipefail
           BASE_IMAGE_ARGS=()
