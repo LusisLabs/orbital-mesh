@@ -3220,15 +3220,52 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
   const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
     ? setup.agentFabricMode
     : dashboard.settings.default_orchestration_mode || "auto";
-  const [scenarioKey, setScenarioKey] = useState(defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation");
-  const [evaluationMode, setEvaluationMode] = useState(dashboard.settings.default_evaluation_mode || "native");
-  const [orchestrationMode, setOrchestrationMode] = useState(String(preferredOrchestration));
-  const [steeringMode, setSteeringMode] = useState(setup.approvalPolicy === "interruptible_auto" ? "interruptible_auto" : dashboard.settings.default_steering_mode || "approval_gate");
+  const defaultScenarioKey = defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation";
+  const defaultEvaluationMode = dashboard.settings.default_evaluation_mode || "native";
+  const defaultOrchestrationMode = String(preferredOrchestration);
+  const defaultSteeringMode = setup.approvalPolicy === "interruptible_auto"
+    ? "interruptible_auto"
+    : dashboard.settings.default_steering_mode || "approval_gate";
+  const defaultRequireTargetLock = setup.target.lockRequired || dashboard.settings.default_target_lock === "required";
+  const launchDefaultsKey = [
+    defaultScenarioKey,
+    defaultEvaluationMode,
+    defaultOrchestrationMode,
+    defaultSteeringMode,
+    defaultRequireTargetLock ? "required" : "optional",
+  ].join("|");
+  const lastLaunchDefaultsKey = useRef(launchDefaultsKey);
+  const [scenarioKey, setScenarioKey] = useState(defaultScenarioKey);
+  const [evaluationMode, setEvaluationMode] = useState(defaultEvaluationMode);
+  const [orchestrationMode, setOrchestrationMode] = useState(defaultOrchestrationMode);
+  const [steeringMode, setSteeringMode] = useState(defaultSteeringMode);
   const [auditReason, setAuditReason] = useState("");
-  const [requireTargetLock, setRequireTargetLock] = useState(setup.target.lockRequired || dashboard.settings.default_target_lock === "required");
+  const [requireTargetLock, setRequireTargetLock] = useState(defaultRequireTargetLock);
   const [result, setResult] = useState<RunLaunchResponse | null>(null);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (lastLaunchDefaultsKey.current === launchDefaultsKey) {
+      return;
+    }
+    lastLaunchDefaultsKey.current = launchDefaultsKey;
+    setScenarioKey(defaultScenarioKey);
+    setEvaluationMode(defaultEvaluationMode);
+    setOrchestrationMode(defaultOrchestrationMode);
+    setSteeringMode(defaultSteeringMode);
+    setRequireTargetLock(defaultRequireTargetLock);
+    setResult(null);
+    setMessage("");
+  }, [
+    launchDefaultsKey,
+    defaultScenarioKey,
+    defaultEvaluationMode,
+    defaultOrchestrationMode,
+    defaultSteeringMode,
+    defaultRequireTargetLock,
+  ]);
+
   const preflight = buildRunPreflightModel(dashboard, { scenarioKey, orchestrationMode, steeringMode, requireTargetLock });
 
   async function launchRun() {
