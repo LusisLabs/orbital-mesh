@@ -13,6 +13,7 @@ env:
   SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
   GRYPE_VERSION: "0.112.0"
   GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
+  MESH_CI_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -23,6 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.MESH_CI_SOURCE_SHA }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -42,6 +45,8 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.MESH_CI_SOURCE_SHA }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: ${{ matrix.python-version }}
@@ -59,6 +64,8 @@ jobs:
     needs: [python-lint]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.MESH_CI_SOURCE_SHA }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -76,6 +83,8 @@ jobs:
     needs: [python-lint]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.MESH_CI_SOURCE_SHA }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
@@ -133,8 +142,10 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ env.MESH_CI_SOURCE_SHA }}
       - name: Build Docker image
-        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .
+        run: docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${MESH_CI_SOURCE_SHA} -t orbital-mesh:ci .
       - name: Collect release image metadata
         run: |
           mkdir -p dist
@@ -162,7 +173,7 @@ jobs:
             -e MESH_SERVER_HOST=0.0.0.0 \
             -e MESH_SERVER_PORT=8787 \
             -e MESH_ENVIRONMENT=ci \
-            -e MESH_BUILD_COMMIT="${GITHUB_SHA}" \
+            -e MESH_BUILD_COMMIT="${MESH_CI_SOURCE_SHA}" \
             -e MESH_BUILD_IMAGE_DIGEST="${MESH_IMAGE_DIGEST}" \
             -e MESH_GITNEXUS_DISABLE_AUTOSTART=1 \
             -p 8787:8787 \
@@ -179,7 +190,7 @@ jobs:
             fi
             sleep 1
           done
-          curl -sf http://localhost:8787/api/health | tee /dev/stderr | python3 -c "import os, sys, json; payload=json.load(sys.stdin); assert payload['status'] == 'ok'; assert payload['commit'] == os.environ['GITHUB_SHA']; assert payload['image_digest'] == os.environ['MESH_IMAGE_DIGEST']"
+          curl -sf http://localhost:8787/api/health | tee /dev/stderr | python3 -c "import os, sys, json; payload=json.load(sys.stdin); assert payload['status'] == 'ok'; assert payload['commit'] == os.environ['MESH_CI_SOURCE_SHA']; assert payload['image_digest'] == os.environ['MESH_IMAGE_DIGEST']"
       - name: Capture container logs on failure
         if: failure()
         run: docker logs mesh-ci || true
@@ -233,7 +244,8 @@ jobs:
             --check-status "docker-build=${docker_build_status}" \
             --image-tag orbital-mesh:ci \
             --image-digest "${MESH_IMAGE_DIGEST:-}" \
-            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
+            --source-sha "${MESH_CI_SOURCE_SHA}" \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=ci-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${MESH_CI_SOURCE_SHA} -t orbital-mesh:ci ." \
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
         if: always()
@@ -250,7 +262,7 @@ jobs:
             --migration-rehearsal dist/migration-rehearsal.json \
             --sbom dist/release-assurance/sbom.cdx.json \
             --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
-            --build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .' \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=ci-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${MESH_CI_SOURCE_SHA} -t orbital-mesh:ci ." \
             --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
             --json \
             "${BASE_IMAGE_ARGS[@]}"
