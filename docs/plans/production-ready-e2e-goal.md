@@ -63,7 +63,7 @@ Current code and config beat prose. JSON Schemas in `shared/mesh_runtime/schemas
 These are blockers to track from the current repo posture. Revalidate before editing because blocker names can change.
 
 - Current-head release provenance is incomplete until a clean release packet binds image digest, base image digests, policy signature, migration rehearsal, SBOM, vulnerability scan, CI attestation, and build command.
-- CI and older docs still need pnpm convergence before CI can be treated as authoritative for this goal. Check `.github/workflows/ci.yml`, `.github/workflows/release-image-handoff.yml`, `.github/workflows/security.yml`, and touched docs for stale non-pnpm gates during the validation-gate slice.
+- CI artifacts must be downloaded and verified as a bundle before they feed runtime deployment. Use `scripts/verify_release_artifact_bundle.py` to bind the CI attestation, release provenance draft, SBOM, vulnerability scan, migration rehearsal, and release-image metadata for the same commit; later commits need fresh CI artifacts.
 - Pilot readiness is runtime-bound. Historical green packets do not clear the current branch or deployed image.
 - Authenticated ingress deployment proof is required for target TLS, identity enforcement, header stripping, private upstream, role mapping, app rehearsal, audit identity, and no raw secret material.
 - Operator auth provider proof remains blocked until clean-browser Google OAuth, GitHub OAuth, and captcha proof are captured and matched to runtime auth events without raw secret material.
