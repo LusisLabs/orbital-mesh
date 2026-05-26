@@ -300,7 +300,19 @@ type AgentFabricAttemptView = {
   release: string;
   egress: string;
   authority: string;
+  productionActuation: string;
+  threadAuthority: string;
   output: string;
+};
+type ConnectorActuatorBoundaryModel = {
+  stateSlice: "mesh.connector_certification.v1";
+  label: string;
+  detail: string;
+  posture: "bounded" | "blocked" | "disabled";
+  kubernetesState: string;
+  kubernetesScopes: string[];
+  productionActuatorConnectorIds: string[];
+  nonKubernetesCredentialConnectorIds: string[];
 };
 type DashboardTileModel = {
   title: string;
@@ -1301,13 +1313,13 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
           schema_version: "mesh.agent_flow.livekit_session.v1",
           state_slice: "mesh.agent_flow.livekit_session.v1",
           agent: { id: "harper-696", name: "Harper-696", source: harperSource },
-          status: "unavailable",
+          status: "unconfigured",
           livekit_url: "",
           room: "",
           participant_identity: "",
           token: "",
           token_expires_at: null,
-          required_env: ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET"],
+          required_env: ["MESH_LIVEKIT_URL", "MESH_LIVEKIT_API_KEY", "MESH_LIVEKIT_API_SECRET", "MESH_LIVEKIT_ACCESS_TOKEN"],
           side_effects_executed: false,
         });
         setChatError(error instanceof Error ? error.message : "LiveKit session bootstrap failed");
@@ -2793,6 +2805,7 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
 function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
   const connectorPosture = operatorWorkflowPosture("connector");
   const connectors = dashboard.mesh.connectors?.connectors || dashboard.mesh.connectors?.connector_certification || {};
+  const actuatorBoundary = buildConnectorActuatorBoundary(dashboard);
   const [query, setQuery] = useState("");
   const [stateFilter, setStateFilter] = useState("all");
   const [domainFilter, setDomainFilter] = useState("all");
@@ -2826,6 +2839,11 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
         action="Review Dashboard"
         onAction={() => setView("home")}
       />
+      <div className="stat-row">
+        <Stat label="Production actuator credentials" value={actuatorBoundary.label} detail={actuatorBoundary.detail} />
+        <Stat label="Kubernetes boundary" value={humanize(actuatorBoundary.kubernetesState)} detail={actuatorBoundary.kubernetesScopes.length ? actuatorBoundary.kubernetesScopes.join(", ") : "explicit allowlists required"} />
+        <Stat label="Non-Kubernetes credential bleed" value={actuatorBoundary.nonKubernetesCredentialConnectorIds.length ? "Blocked" : "None"} detail={actuatorBoundary.nonKubernetesCredentialConnectorIds.join(", ") || "proposal/advisory lanes report no actuator credentials"} />
+      </div>
       <SearchBar value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
       <div className="filter-row">
         <label>
@@ -2849,6 +2867,43 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
       {filteredCards.length ? <CardRows sections={grouped} /> : <EmptyInline text="No connectors match the current filters." />}
     </div>
   );
+}
+
+export function buildConnectorActuatorBoundary(dashboard: DashboardPayload): ConnectorActuatorBoundaryModel {
+  const connectors = dashboard.mesh?.connectors?.connectors || dashboard.mesh?.connectors?.connector_certification || {};
+  const entries = Object.entries(connectors) as Array<[string, any]>;
+  const productionActuators = entries
+    .filter(([, connector]) => connector?.credential_boundary?.production_actuator_credentials_allowed === true)
+    .map(([id]) => id)
+    .sort();
+  const nonKubernetesCredentialConnectorIds = productionActuators.filter((id) => id !== "kubernetes");
+  const kubernetes = connectors.kubernetes || {};
+  const kubernetesScopes = Array.isArray(kubernetes.allowed_scopes) ? kubernetes.allowed_scopes.map(String).sort() : [];
+  const posture = nonKubernetesCredentialConnectorIds.length
+    ? "blocked"
+    : productionActuators.length
+      ? "bounded"
+      : "disabled";
+  const label = productionActuators.length === 1 && productionActuators[0] === "kubernetes"
+    ? "Kubernetes only"
+    : productionActuators.length
+      ? `${productionActuators.length} connectors`
+      : "Disabled";
+  const detail = nonKubernetesCredentialConnectorIds.length
+    ? `${nonKubernetesCredentialConnectorIds.join(", ")} must not hold production actuator credentials`
+    : productionActuators.includes("kubernetes")
+      ? "all other connector boundaries are proposal, advisory, ingest, audit, or read-only"
+      : "no connector currently reports production actuator credentials";
+  return {
+    stateSlice: "mesh.connector_certification.v1",
+    label,
+    detail,
+    posture,
+    kubernetesState: String(kubernetes.state || kubernetes.status || "missing"),
+    kubernetesScopes,
+    productionActuatorConnectorIds: productionActuators,
+    nonKubernetesCredentialConnectorIds,
+  };
 }
 
 function groupConnectorCards(cards: Array<{ id: string; state: string; domain: string; [key: string]: any }>): { title: string; count: number; cards: any[] }[] {
@@ -3124,6 +3179,8 @@ function AgentFabricObservability({ attempts }: { attempts: AgentFabricAttemptVi
               <small>egress: {attempt.egress}</small>
               <small>release: {attempt.release}</small>
               <small>authority: {attempt.authority}</small>
+              <small>production actuation: {attempt.productionActuation}</small>
+              <small>thread authority: {attempt.threadAuthority}</small>
               <small>risk: {attempt.riskFlags.length ? attempt.riskFlags.join(", ") : "none"}</small>
               <small>proposal: {attempt.output}</small>
             </div>
@@ -3422,8 +3479,16 @@ function agentAttemptViewFromThread(thread: any): AgentFabricAttemptView | null 
       ? "placeholder-only"
       : "not proven",
     authority: authority.mesh_control_plane_authoritative === true && authority.agent_thread_authoritative === false
-      ? "Mesh approves and executes"
+      ? String(authority.boundary || "Mesh authoritative")
       : "authority not proven",
+    productionActuation: authority.production_actuation_allowed === false || authority.policy_approval_actuation_allowed === false
+      ? "blocked"
+      : authority.production_actuation_allowed === true
+        ? "allowed by Mesh"
+        : "not proven",
+    threadAuthority: authority.agent_thread_authoritative === false || authority.agent_attempt_authoritative === false
+      ? "not authoritative"
+      : "not proven",
     output: String(output.summary || output.result_text || output.execution_id || "proposal metadata recorded"),
   };
 }

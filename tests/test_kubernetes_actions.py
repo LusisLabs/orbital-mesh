@@ -61,6 +61,26 @@ class RestartPodTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertIn("allowed list", result["failure"]["detail"])
 
+    def test_live_rejects_missing_explicit_context_allowlist(self):
+        adapter = KubernetesAdapter(config=_live_config(kubernetes_allowed_contexts=()))
+        result = adapter.restart_pod({
+            "pod_name": "web-abc",
+            "namespace": "prod",
+            "kube_context": "test-ctx",
+        })
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("explicit context allowed list", result["failure"]["detail"])
+
+    def test_live_rejects_missing_explicit_namespace_allowlist(self):
+        adapter = KubernetesAdapter(config=_live_config(kubernetes_allowed_namespaces=()))
+        result = adapter.restart_pod({
+            "pod_name": "web-abc",
+            "namespace": "prod",
+            "kube_context": "test-ctx",
+        })
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("explicit namespace allowed list", result["failure"]["detail"])
+
 
 class ScaleDeploymentTests(unittest.TestCase):
     def test_dry_run(self):
@@ -127,6 +147,12 @@ class CordonNodeTests(unittest.TestCase):
         called_cmd = mock_run.call_args[0][0]
         self.assertIn("cordon", called_cmd)
         self.assertIn("node-1", called_cmd)
+
+    def test_live_rejects_missing_explicit_context_allowlist(self):
+        adapter = KubernetesAdapter(config=_live_config(kubernetes_allowed_contexts=()))
+        result = adapter.cordon_node({"node_name": "node-1", "kube_context": "test-ctx"})
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("explicit context allowed list", result["failure"]["detail"])
 
 
 class DrainNodeTests(unittest.TestCase):

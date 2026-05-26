@@ -165,6 +165,9 @@
               "type": "string"
             },
             "confirmation_required": {
+              "enum": [
+                true
+              ],
               "type": "boolean"
             },
             "endpoint": {
@@ -186,9 +189,15 @@
               "additionalProperties": false,
               "properties": {
                 "algorithm": {
+                  "enum": [
+                    "HMAC-SHA256"
+                  ],
                   "type": "string"
                 },
                 "bound_state_slice": {
+                  "enum": [
+                    "mesh.agent_flow.mutation_preview.v1"
+                  ],
                   "type": "string"
                 },
                 "signature": {
@@ -206,15 +215,27 @@
               "type": "string"
             },
             "schema_version": {
+              "enum": [
+                "mesh.agent_flow.mutation_preview.v1"
+              ],
               "type": "string"
             },
             "side_effects_executed": {
+              "enum": [
+                false
+              ],
               "type": "boolean"
             },
             "state_slice": {
+              "enum": [
+                "mesh.agent_flow.mutation_preview.v1"
+              ],
               "type": "string"
             },
             "status": {
+              "enum": [
+                "draft_requires_confirmation"
+              ],
               "type": "string"
             },
             "target": {
@@ -296,15 +317,27 @@
           "type": "string"
         },
         "schema_version": {
+          "enum": [
+            "mesh.agent_flow.confirmation.v1"
+          ],
           "type": "string"
         },
         "side_effects_executed": {
+          "enum": [
+            false
+          ],
           "type": "boolean"
         },
         "state_slice": {
+          "enum": [
+            "mesh.agent_flow.mutation_preview.v1"
+          ],
           "type": "string"
         },
         "status": {
+          "enum": [
+            "confirmation_recorded"
+          ],
           "type": "string"
         },
         "would_touch_state_slice": {
@@ -369,15 +402,31 @@
           "type": "string"
         },
         "schema_version": {
+          "enum": [
+            "mesh.agent_flow.livekit_session.v1"
+          ],
           "type": "string"
         },
         "side_effects_executed": {
+          "enum": [
+            false
+          ],
           "type": "boolean"
         },
         "state_slice": {
+          "enum": [
+            "mesh.agent_flow.livekit_session.v1"
+          ],
           "type": "string"
         },
         "status": {
+          "enum": [
+            "unconfigured",
+            "invalid_token",
+            "expired",
+            "ready",
+            "permission_required"
+          ],
           "type": "string"
         },
         "token": {

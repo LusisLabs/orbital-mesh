@@ -271,6 +271,8 @@ test("product Praxis import generates, dry-runs, audits, exports P10 proof, and 
 
   await sourceImport.getByRole("button", { name: "Export" }).click();
   await expect(page.getByText(/Exported P10 proof packet .* complete/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Praxis generator workbench" })).toContainText("Managed runtime deployed: no");
+  await expect(page.getByRole("button", { name: /Deploy managed pilot runtime/ })).toBeDisabled();
 });
 
 test("first-run signup can continue solo from a clean browser session", async ({ page }) => {

@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
-from control_plane_server import start_server_in_thread
+from control_plane_server import _agent_flow_preview_signature, start_server_in_thread
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.schema_validation import validate_payload
 
@@ -30,6 +30,14 @@ def _unsigned_jwt(payload: dict) -> str:
         encoded = json.dumps(value, separators=(",", ":"), sort_keys=True).encode("utf-8")
         segments.append(base64.urlsafe_b64encode(encoded).decode("ascii").rstrip("="))
     return f"{segments[0]}.{segments[1]}.signature"
+
+
+def _session_token_from_cookie(cookie: str) -> str:
+    for part in cookie.split(";"):
+        name, _, value = part.strip().partition("=")
+        if name == "mesh_session":
+            return value
+    return ""
 
 
 class OperatorAuthHttpTests(unittest.TestCase):
@@ -492,6 +500,22 @@ class OperatorAuthHttpTests(unittest.TestCase):
             )
         self.assertEqual(metadata_tampered.exception.code, HTTPStatus.BAD_REQUEST)
 
+        side_effects_tampered_preview = dict(chat["mutation_preview"])
+        side_effects_tampered_preview["side_effects_executed"] = True
+        with self.assertRaises(HTTPError) as side_effects_tampered:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "team_id": team_id,
+                    "preview_id": chat["mutation_preview"]["preview_id"],
+                    "preview": side_effects_tampered_preview,
+                    "reason": "side effects must remain blocked before execution",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(side_effects_tampered.exception.code, HTTPStatus.BAD_REQUEST)
+
         _, other_cookie = self._request(
             "POST",
             "/api/auth/signup",
@@ -532,6 +556,53 @@ class OperatorAuthHttpTests(unittest.TestCase):
         self.assertEqual(confirmation["status"], "confirmation_recorded")
         self.assertEqual(confirmation["routed_to"], "/api/runs")
         self.assertFalse(confirmation["side_effects_executed"])
+
+        run, _ = self._request(
+            "POST",
+            "/api/runs",
+            {"scenario_key": "reth_peer_starvation", "audit_reason": "agent flow steering boundary"},
+            cookie=cookie,
+            include_cookie=True,
+        )
+        steering_chat = self._request(
+            "POST",
+            "/api/operator/agent-flow/chat",
+            {"team_id": team_id, "message": "approve the active run"},
+            cookie=cookie,
+        )
+        steering_preview = steering_chat["mutation_preview"]
+        self.assertEqual(steering_preview["proposed_resource"], "SteeringCommand")
+        self.assertEqual(steering_preview["target"]["run_id"], run["run_id"])
+        self.assertEqual(steering_preview["endpoint"], f"/api/runs/{run['run_id']}/steer")
+
+        token = _session_token_from_cookie(cookie)
+        operator = self.server.operator_identity.operator_context_from_session(token) or {}
+        operator["team_id"] = team_id
+        context = {
+            "operator": operator,
+            "scope": {"kind": "team", "id": team_id, "scope_id": f"team:{team_id}"},
+            "session_token": token,
+        }
+        mismatched_preview = dict(steering_preview)
+        mismatched_preview["target"] = {"run_id": f"{run['run_id']}-other"}
+        mismatched_preview["proof"] = dict(steering_preview["proof"])
+        mismatched_preview["proof"]["signature"] = _agent_flow_preview_signature(
+            preview=mismatched_preview,
+            context=context,
+        )
+        with self.assertRaises(HTTPError) as mismatched_target:
+            self._request(
+                "POST",
+                "/api/operator/agent-flow/confirm-preview",
+                {
+                    "team_id": team_id,
+                    "preview_id": steering_preview["preview_id"],
+                    "preview": mismatched_preview,
+                    "reason": "endpoint must match the target run id",
+                },
+                cookie=cookie,
+            )
+        self.assertEqual(mismatched_target.exception.code, HTTPStatus.BAD_REQUEST)
 
     def test_logout_login_and_dashboard_recovery(self) -> None:
         _, cookie = self._request(

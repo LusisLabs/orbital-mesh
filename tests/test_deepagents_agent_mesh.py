@@ -158,11 +158,19 @@ class DeepAgentsAgentMeshTests(unittest.TestCase):
 
         first_attempt = tasks[0].attempts[0]
         thread = first_attempt.output["thread"]
+        authority = first_attempt.output["authority"]
+        self.assertEqual(authority["state_slice"], "mesh.agent_attempt_thread.v1")
+        self.assertTrue(authority["mesh_control_plane_authoritative"])
+        self.assertFalse(authority["agent_attempt_authoritative"])
+        self.assertFalse(authority["production_actuation_allowed"])
+        self.assertEqual(authority["boundary"], "proposal_only")
         self.assertEqual(thread["run_id"], task.run_id)
         self.assertEqual(thread["task_id"], tasks[0].task_id)
         self.assertEqual(thread["attempt_id"], first_attempt.attempt_id)
+        self.assertEqual(thread["authority"]["state_slice"], "mesh.agent_attempt_thread.v1")
         self.assertEqual(thread["authority"]["mesh_control_plane_authoritative"], True)
         self.assertEqual(thread["authority"]["agent_thread_authoritative"], False)
+        self.assertEqual(thread["authority"]["production_actuation_allowed"], False)
         self.assertIn("stream_or_replay_events", thread["lifecycle"])
         self.assertEqual(thread["events"][0]["event_type"], "agent_attempt_terminal")
         self.assertEqual(thread["request"], {})

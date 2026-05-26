@@ -328,14 +328,20 @@ class KubernetesAdapter:
             }
 
     def _validate_context_and_namespace(self, kube_context: str, namespace: str) -> None:
-        if self.config.kubernetes_allowed_contexts and kube_context not in self.config.kubernetes_allowed_contexts:
+        if not self.config.kubernetes_allowed_contexts:
+            raise _KubectlError("kubernetes live execution requires an explicit context allowed list")
+        if not self.config.kubernetes_allowed_namespaces:
+            raise _KubectlError("kubernetes live execution requires an explicit namespace allowed list")
+        if kube_context not in self.config.kubernetes_allowed_contexts:
             raise _KubectlError(f"context '{kube_context}' is not in the allowed list")
-        if self.config.kubernetes_allowed_namespaces and namespace not in self.config.kubernetes_allowed_namespaces:
+        if namespace not in self.config.kubernetes_allowed_namespaces:
             raise _KubectlError(f"namespace '{namespace}' is not in the allowed list")
 
     def _validate_context_only(self, kube_context: str) -> None:
         """Context-scope validation for cluster-level operations (cordon/drain)."""
-        if self.config.kubernetes_allowed_contexts and kube_context not in self.config.kubernetes_allowed_contexts:
+        if not self.config.kubernetes_allowed_contexts:
+            raise _KubectlError("kubernetes live execution requires an explicit context allowed list")
+        if kube_context not in self.config.kubernetes_allowed_contexts:
             raise _KubectlError(f"context '{kube_context}' is not in the allowed list")
 
     def _kubectl(self, kube_context: str, *args: str) -> str:
