@@ -3231,15 +3231,16 @@ function RunWorkbenchSummary({ model }: { model: RunWorkbenchModel }) {
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
   const setup = buildOperatorSetupModel(dashboard);
   const operatorDefaultTemplate = String(dashboard.operator_preferences_schema?.run_template?.default || "reth_peer_starvation");
-  const settingsDefaultScenario = dashboard.settings.default_run_scenario || "";
-  const configuredDefaultScenario = setup.runTemplate && setup.runTemplate !== operatorDefaultTemplate
-    ? setup.runTemplate
-    : settingsDefaultScenario || setup.runTemplate || "reth_peer_starvation";
-  const defaultScenarioKnown = SCENARIO_PICKER.some((scenario) => scenario.key === configuredDefaultScenario);
+  const settingsDefaultScenario = String(dashboard.settings.default_run_scenario || "");
+  const defaultScenarioKey = [
+    settingsDefaultScenario,
+    setup.runTemplate,
+    operatorDefaultTemplate,
+    "reth_peer_starvation",
+  ].find((candidate) => SCENARIO_PICKER.some((scenario) => scenario.key === candidate)) || "reth_peer_starvation";
   const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
     ? setup.agentFabricMode
     : dashboard.settings.default_orchestration_mode || "auto";
-  const defaultScenarioKey = defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation";
   const defaultEvaluationMode = dashboard.settings.default_evaluation_mode || "native";
   const defaultOrchestrationMode = String(preferredOrchestration);
   const defaultSteeringMode = setup.approvalPolicy === "interruptible_auto"
