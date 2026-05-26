@@ -18,7 +18,8 @@ HEAD = "a" * 40
 
 class VerifyE2EClaimTests(unittest.TestCase):
     def test_fails_closed_without_release_runtime_pilot_and_autonomy_artifacts(self) -> None:
-        result = verify_e2e_claim(expected_head=HEAD)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = verify_e2e_claim(expected_head=HEAD, live_proof_dir=Path(tmp) / "missing-live-proof")
 
         self.assertEqual(result["schema_version"], "mesh.e2e_claim_verification.v1")
         self.assertEqual(result["status"], "fail")
@@ -40,13 +41,22 @@ class VerifyE2EClaimTests(unittest.TestCase):
         )
 
     def test_cli_reports_structured_failure_for_missing_inputs(self) -> None:
-        completed = subprocess.run(
-            [sys.executable, SCRIPT, "--expected-head", HEAD, "--json"],
-            cwd=REPO_ROOT,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--expected-head",
+                    HEAD,
+                    "--live-proof-dir",
+                    str(Path(tmp) / "missing-live-proof"),
+                    "--json",
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
 
         self.assertEqual(completed.returncode, 1, completed.stderr + completed.stdout)
         payload = json.loads(completed.stdout)
@@ -59,7 +69,11 @@ class VerifyE2EClaimTests(unittest.TestCase):
             release_path = Path(tmp) / "release-provenance.json"
             release_path.write_text("{}\n", encoding="utf-8")
 
-            result = verify_e2e_claim(expected_head=HEAD, release_provenance=release_path)
+            result = verify_e2e_claim(
+                expected_head=HEAD,
+                release_provenance=release_path,
+                live_proof_dir=Path(tmp) / "missing-live-proof",
+            )
 
             self.assertEqual(result["status"], "fail")
             self.assertIn("runtime_binding_passed", result["missing"])
