@@ -97,6 +97,38 @@ pnpm run verify:e2e-claim -- \
 
 The gate verifies the release artifact bundle, runtime release binding, pilot clearance, and production-autonomy proof aggregate as one state slice. It fails closed when any artifact path, live runtime binding, pilot endpoint, or `.mesh-runtime-state/live-proof-current/` proof packet is absent. Do not use production-ready or flawless E2E language for the current head until this gate passes with explicit artifact inputs.
 
+## Local CI/CD Lane
+
+The repo-owned local lane is `scripts/local_ci.py`. It avoids GitHub Actions spend and gives operators a repeatable local preflight, but it deliberately does not create GitHub-backed release authority.
+
+Common commands:
+
+```bash
+pnpm run ci:fast
+pnpm run ci:local
+pnpm run ci:release
+```
+
+`pnpm run ci:fast` delegates to `lint:fast`. `pnpm run ci:local` runs the heavy root gate and `git diff --check`, then writes a `mesh.local_ci_manifest.v1` manifest under `dist/local-ci/<head>/manifest.json`. `pnpm run ci:release` adds the release rehearsal path: Docker image build, local runtime health smoke, release-image metadata, optional Postgres migration rehearsal when `MESH_MIGRATION_REHEARSAL_DATABASE_URL` is set, optional Syft/Grype release-image assurance when those binaries are installed, local CI attestation, and local release-provenance rehearsal.
+
+The local manifest records:
+
+- exact git head and branch;
+- every command, status, duration, and log path;
+- image tag and Docker/scanner availability;
+- skipped optional evidence with reasons;
+- explicit authority boundaries.
+
+The local attestation is `provider=local`. That is intentional. Pilot and production release gates still require GitHub Actions-backed `mesh.ci_attestation.v1` evidence, complete release artifact bundles, runtime binding, pilot clearance, and live proof packets. Local CI is evidence for developer/operator readiness; it is not a shortcut around `scripts/verify_release_artifact_bundle.py` or `pnpm run verify:e2e-claim`.
+
+Use `act` only as a compatibility check for the GitHub workflow YAML:
+
+```bash
+pnpm run ci:act
+```
+
+Use Skaffold only for a later Kubernetes deployment loop. It is not the source of truth for this repo's contracts, provenance, security, and proof gates.
+
 ## Pilot Completeness Gate
 
 For a pilot release, run with `--require-complete`. The command exits non-zero unless every required field is present:
