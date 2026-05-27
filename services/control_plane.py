@@ -536,11 +536,16 @@ class RunCoordinator:
             if not worker.is_alive():
                 continue
             worker.join(timeout=max(0.0, deadline - time.monotonic()))
-        agent_tasks_drained = self._join_agent_task_threads(deadline)
-        if drained and agent_tasks_drained:
-            close_state_store = getattr(self.state_store, "close", None)
-            if callable(close_state_store):
-                close_state_store(timeout=max(0.0, deadline - time.monotonic()))
+        agent_task_timeout = max(_AGENT_TASK_TERMINAL_SETTLE_SECONDS, min(timeout, 5.0))
+        agent_task_deadline = max(deadline, time.monotonic() + agent_task_timeout)
+        agent_tasks_drained = self._join_agent_task_threads(agent_task_deadline)
+        close_state_store = getattr(self.state_store, "close", None)
+        if callable(close_state_store):
+            close_timeout = agent_task_timeout if not (drained and agent_tasks_drained) else max(
+                agent_task_timeout,
+                deadline - time.monotonic(),
+            )
+            close_state_store(timeout=max(0.0, close_timeout))
 
     def _join_agent_task_threads(self, deadline: float) -> bool:
         """Wait for async agent-task writers so teardown cannot race vault writes."""

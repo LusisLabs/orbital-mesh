@@ -51,8 +51,11 @@ REQUIRED_MARKERS = {
     ".github/workflows/ci.yml": (
         "permissions:",
         "contents: read",
-        "pnpm --dir web run lint",
-        "pnpm --dir meshapp/frontend run lint",
+        "python -m pip install uv",
+        "pnpm --dir web exec playwright install --with-deps chromium",
+        "pnpm run lint",
+        "pnpm --dir web run build",
+        "pnpm --dir meshapp/frontend run build",
         "docker build",
     ),
     ".github/workflows/security.yml": (

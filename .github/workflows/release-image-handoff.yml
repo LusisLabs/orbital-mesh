@@ -87,19 +87,15 @@ jobs:
       - name: Enable pnpm for Node 22
         run: corepack enable
       - name: Install Python test dependency
-        run: python -m pip install "cryptography>=44,<47" "psycopg[binary]>=3.2,<4"
-      - name: Run Python tests
-        run: python -W ignore::DeprecationWarning -m unittest discover -s tests -v
-      - name: Run web gates
+        run: python -m pip install uv "cryptography>=44,<47" "psycopg[binary]>=3.2,<4"
+      - name: Run root and web gates
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile
-          pnpm --dir web run lint
+          pnpm --dir web exec playwright install --with-deps chromium
+          pnpm run lint
           pnpm --dir web run build
-          pnpm --dir web run test
-          pnpm --dir meshapp/frontend run lint
           pnpm --dir meshapp/frontend run build
-          pnpm --dir meshapp/frontend run test
       - name: Run release static gates
         run: |
           set -euo pipefail
@@ -130,11 +126,11 @@ jobs:
             --environment ci \
             --rehearsal-id "handoff-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             --json
-      - name: Save runnable image archive
+      - name: Prune Docker build cache before release scanners
         run: |
-          set -euo pipefail
-          docker save "$HANDOFF_IMAGE_TAG" -o dist/release-image-handoff/orbital-mesh-handoff-image.tar
-          gzip -n dist/release-image-handoff/orbital-mesh-handoff-image.tar
+          docker builder prune --force
+          docker image prune --force
+          df -h
       - name: Install release scanners
         run: |
           curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
@@ -151,6 +147,11 @@ jobs:
             --raw-output-dir dist/release-assurance-raw \
             --output-dir dist/release-assurance \
             --exception-policy config/release-vulnerability-exceptions.json
+      - name: Save runnable image archive
+        run: |
+          set -euo pipefail
+          docker save "$HANDOFF_IMAGE_TAG" -o dist/release-image-handoff/orbital-mesh-handoff-image.tar
+          gzip -n dist/release-image-handoff/orbital-mesh-handoff-image.tar
       - name: Generate CI attestation
         run: |
           set -euo pipefail

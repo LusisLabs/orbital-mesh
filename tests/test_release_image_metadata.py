@@ -68,8 +68,11 @@ class ReleaseImageMetadataTests(unittest.TestCase):
         self.assertIn("--image-digest \"$MESH_IMAGE_DIGEST\"", workflow)
         self.assertEqual(workflow.count("\"${BASE_IMAGE_ARGS[@]}\""), 2)
         self.assertIn("--image-tag orbital-mesh:ci", workflow)
+        self.assertIn("MESH_CI_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}", workflow)
+        self.assertIn("ref: ${{ env.MESH_CI_SOURCE_SHA }}", workflow)
+        self.assertIn("--source-sha \"${MESH_CI_SOURCE_SHA}\"", workflow)
         self.assertIn(
-            "--build-command 'docker build --build-arg MESH_BUILD_VERSION=ci-${{ github.run_number }} --build-arg MESH_BUILD_COMMIT=${{ github.sha }} -t orbital-mesh:ci .'",
+            "--build-command \"docker build --build-arg MESH_BUILD_VERSION=ci-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${MESH_CI_SOURCE_SHA} -t orbital-mesh:ci .\"",
             workflow,
         )
         self.assertIn("dist/release-provenance-draft.json", workflow)

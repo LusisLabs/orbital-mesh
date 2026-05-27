@@ -151,6 +151,8 @@ class ReleaseProvenanceTests(unittest.TestCase):
                     "orbital-mesh:ci",
                     "--image-digest",
                     f"sha256:{'b' * 64}",
+                    "--source-sha",
+                    "def456",
                     "--build-command",
                     "docker build -t orbital-mesh:ci .",
                     "--base-image-digest",
@@ -176,6 +178,8 @@ class ReleaseProvenanceTests(unittest.TestCase):
             self.assertEqual(packet["provider"], "github-actions")
             self.assertEqual(packet["workflow"], "CI")
             self.assertEqual(packet["job"], "docker-build")
+            self.assertEqual(packet["sha"], "def456")
+            self.assertEqual(packet["run_sha"], "abc123")
             self.assertEqual(packet["image"]["digest"], f"sha256:{'b' * 64}")
             self.assertEqual(
                 packet["build"]["base_images"],

@@ -145,7 +145,7 @@ describe("AgentMeshPanel topology", () => {
     expect(html).toContain("own_search_api_pilot");
     expect(html).toContain("thread_centaur_1");
     expect(html).toContain("codex");
-    expect(html).toContain("placeholder only");
+    expect(html).toContain("redacted reference only");
     expect(html).toContain("Mesh proposed / Mesh approved");
     expect(html).toContain("Tool calls");
     expect(html).toContain("released");

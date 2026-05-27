@@ -1463,6 +1463,30 @@ class PolicySimulationAndKillSwitchTests(unittest.TestCase):
                 release.set()
                 coordinator.stop_background_workers()
 
+    def test_stop_background_workers_gives_agent_task_threads_teardown_window(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            coordinator = RunCoordinator(_config(tmp))
+            started = threading.Event()
+
+            def worker() -> None:
+                started.set()
+                time.sleep(0.05)
+
+            thread = threading.Thread(target=worker)
+            try:
+                with coordinator._lock:
+                    coordinator._agent_task_threads["run_test"] = thread
+                thread.start()
+                self.assertTrue(started.wait(timeout=1))
+
+                coordinator.stop_background_workers(timeout=0)
+
+                self.assertFalse(thread.is_alive())
+                with coordinator._lock:
+                    self.assertEqual(coordinator._agent_task_threads, {})
+            finally:
+                coordinator.stop_background_workers()
+
     def test_policy_simulator_does_not_create_runs_or_evaluation_state(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             coordinator = RunCoordinator(_config(tmp))

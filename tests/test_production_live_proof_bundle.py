@@ -179,6 +179,44 @@ class ProductionLiveProofBundleTests(unittest.TestCase):
             self.assertEqual(clearance["status"], "pass")
             self.assertEqual(clearance["missing"], [])
 
+    def test_generator_requires_runtime_binding_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+            artifacts = root / "artifacts"
+            artifacts.mkdir()
+            output = root / "bundle"
+            head = "a" * 40
+            _write_inputs(artifacts, head=head)
+            image_digest = "sha256:" + "c" * 64
+            weak_binding = _release_runtime_binding(head=head, image_digest=image_digest)
+            weak_binding.pop("health")
+            _write(artifacts / "release-runtime-binding.json", weak_binding)
+
+            completed = subprocess.run(
+                [
+                    *_generator_command(repo_root=repo, output=output, artifacts=artifacts, head=head),
+                    "--clean-env-recreated",
+                    "--fresh-image-built",
+                    "--allow-partial",
+                ],
+                cwd=Path(__file__).resolve().parents[1],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            stdout = json.loads(completed.stdout)
+            self.assertEqual(stdout["status"], "partial")
+            self.assertIn("release_runtime_binding:runtime_binding_evidence_present", stdout["missing"])
+            verification = json.loads(
+                (output / "verifications" / "release-runtime-binding-verification.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(verification["status"], "fail")
+            self.assertIn("runtime_binding_evidence_present", verification["missing"])
+
     def test_generator_records_dirty_or_incomplete_repeatability_as_partial(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -283,7 +321,7 @@ def _write_inputs(root: Path, *, head: str) -> None:
     _write(root / "readiness.json", {"status": "ready"})
     _write(root / "kill-switch.json", {"status": "ok", "watchers_paused": True})
     _write(root / "denied-action.json", {"status": "denied"})
-    _write(root / "release-runtime-binding.json", {"status": "pass", "commit": head, "image_digest": image_digest})
+    _write(root / "release-runtime-binding.json", _release_runtime_binding(head=head, image_digest=image_digest))
     _write(
         root / "release-provenance.json",
         {
@@ -303,6 +341,85 @@ def _write_inputs(root: Path, *, head: str) -> None:
         _write(root / f"{prefix}-export.json", {"run_id": run_id, "decision_record": {}, "evaluation_record": {}, "execution_record": {}, "feedback_record": {}})
         _write(root / f"{prefix}-timeline.json", {"run_id": run_id, "timeline": []})
         _write(root / f"{prefix}-merkle.json", {"run_id": run_id, "merkle_root": "d" * 64})
+
+
+def _generator_command(*, repo_root: Path, output: Path, artifacts: Path, head: str) -> list[str]:
+    return [
+        sys.executable,
+        "scripts/generate_production_live_proof_bundle.py",
+        "--repo-root",
+        str(repo_root),
+        "--repo-head",
+        head,
+        "--output-dir",
+        str(output),
+        "--environment",
+        "pilot",
+        "--operator-id",
+        "launcher@example.com",
+        "--operator-identity-ref",
+        "proxy-header://X-Mesh-Operator/launcher@example.com",
+        "--approver-identity-ref",
+        "proxy-header://X-Mesh-Operator/approver@example.com",
+        "--target-ref",
+        "kubernetes://pilot/edge/api-gateway",
+        "--repeat-target-ref",
+        "kubernetes://pilot/edge/repeatability",
+        "--healthy-target-ref",
+        "kubernetes://pilot/edge/healthy-control",
+        "--provider-failure-target-ref",
+        "kubernetes://pilot/edge/provider",
+        "--ingress-url",
+        "https://mesh.pilot.local",
+        "--authenticated-ingress-ref",
+        "artifact://authenticated-ingress-deployment-proof.json",
+        "--credential-rotation-ref",
+        "rotation://mesh/pilot/2026-05-23",
+        "--rollback-ref",
+        "rollback://kubernetes/pilot/edge/api-gateway",
+        "--runtime-secret-ref",
+        "secret://mesh/kubernetes-service-account",
+        "--health",
+        str(artifacts / "health.json"),
+        "--readiness",
+        str(artifacts / "readiness.json"),
+        "--kill-switch",
+        str(artifacts / "kill-switch.json"),
+        "--denied-action",
+        str(artifacts / "denied-action.json"),
+        "--release-provenance",
+        str(artifacts / "release-provenance.json"),
+        "--release-runtime-binding",
+        str(artifacts / "release-runtime-binding.json"),
+        "--on-call-drill",
+        str(artifacts / "on-call-drill.json"),
+        "--target-run-json",
+        str(artifacts / "target-run.json"),
+        "--target-events",
+        str(artifacts / "target-events.json"),
+        "--target-export",
+        str(artifacts / "target-export.json"),
+        "--target-timeline",
+        str(artifacts / "target-timeline.json"),
+        "--target-merkle",
+        str(artifacts / "target-merkle.json"),
+        "--repeat-run-json",
+        str(artifacts / "repeat-run.json"),
+        "--repeat-events",
+        str(artifacts / "repeat-events.json"),
+        "--repeat-export",
+        str(artifacts / "repeat-export.json"),
+        "--repeat-timeline",
+        str(artifacts / "repeat-timeline.json"),
+        "--repeat-merkle",
+        str(artifacts / "repeat-merkle.json"),
+        "--build-command",
+        "docker build --pull -t orbital-mesh-stack:proof .",
+        "--target-run-command",
+        "POST /api/runs target proof",
+        "--repeat-run-command",
+        "POST /api/runs repeat proof",
+    ]
 
 
 class _CaptureServer(ThreadingHTTPServer):
@@ -409,6 +526,54 @@ def _fake_run(run_id: str, *, stage: str) -> dict[str, object]:
 
 def _write(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _release_runtime_binding(*, head: str, image_digest: str) -> dict[str, object]:
+    return {
+        "schema_version": "mesh.release_runtime_binding.v1",
+        "generated_at": "2026-05-23T00:00:00Z",
+        "status": "pass",
+        "release_provenance_path": "release-provenance.json",
+        "runtime_env": {
+            "MESH_RELEASE_PROVENANCE_PATH": "/app/.mesh-runtime-state/release-provenance.json",
+            "MESH_BUILD_COMMIT": head,
+            "MESH_BUILD_IMAGE_DIGEST": image_digest,
+        },
+        "release": {
+            "packet_sha256": "e" * 64,
+            "git_commit": head,
+            "image_digest": image_digest,
+            "checks": {
+                "schema_version": True,
+                "release_provenance_complete": True,
+                "release_provenance_missing_empty": True,
+                "release_provenance_checks": True,
+                "ci_attestation_sha_matches_git_commit": True,
+                "release_git_commit": True,
+                "release_image_digest": True,
+            },
+            "missing": [],
+        },
+        "health": {
+            "url": "http://127.0.0.1:8787/api/health",
+            "commit": head,
+            "image_digest": image_digest,
+            "commit_match": True,
+            "image_digest_match": True,
+        },
+        "checks": {
+            "schema_version": True,
+            "release_provenance_complete": True,
+            "release_provenance_missing_empty": True,
+            "release_provenance_checks": True,
+            "ci_attestation_sha_matches_git_commit": True,
+            "release_git_commit": True,
+            "release_image_digest": True,
+            "runtime_build_commit_match": True,
+            "runtime_image_digest_match": True,
+        },
+        "missing": [],
+    }
 
 
 if __name__ == "__main__":

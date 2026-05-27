@@ -500,6 +500,22 @@ export default function ProductApp() {
     }
   }
 
+  function applyDashboardSettings(settings: Record<string, string>) {
+    setDashboardState((current) => {
+      if (current.state !== "ready") return current;
+      return {
+        state: "ready",
+        data: {
+          ...current.data,
+          settings: {
+            ...current.data.settings,
+            ...settings,
+          },
+        },
+      };
+    });
+  }
+
   useEffect(() => {
     let mounted = true;
     async function boot() {
@@ -637,6 +653,7 @@ export default function ProductApp() {
           lens={lens}
           setView={openView}
           onDashboardRefresh={refreshDashboard}
+          onDashboardSettingsUpdate={applyDashboardSettings}
           onSession={acceptSession}
           onLogout={logout}
           loggingOut={loggingOut}
@@ -1111,7 +1128,7 @@ function Sidebar({
           <strong>{session.active_team?.name || "Solo"}</strong>
           <span>{session.user.email}</span>
         </div>
-        <button type="button" onClick={onLogout} disabled={loggingOut} title={loggingOut ? "Logging out" : "Log out"}><LogOut size={15} /></button>
+        <button type="button" onClick={onLogout} disabled={loggingOut} title={loggingOut ? "Logging out" : "Log out"} aria-label={loggingOut ? "Logging out" : "Log out"}><LogOut size={15} /></button>
       </div>
     </aside>
   );
@@ -1213,6 +1230,7 @@ function ContentRouter({
   dashboardState,
   setView,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
   onSession,
   onLogout,
   loggingOut,
@@ -1224,6 +1242,7 @@ function ContentRouter({
   dashboardState: LoadState<DashboardPayload>;
   setView: (view: ViewKey) => void;
   onDashboardRefresh: () => Promise<void>;
+  onDashboardSettingsUpdate: (settings: Record<string, string>) => void;
   onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
@@ -1241,11 +1260,11 @@ function ContentRouter({
   if (view === "hardened-arena") return <HardenedArenaView dashboard={dashboard} setView={setView} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
-  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
+  if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;
   if (view === "members") return <MembersView session={session} setView={setView} onSession={onSession} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "keys") return <KeysView authConfig={authConfig} dashboard={dashboard} setView={setView} />;
   if (view === "operator-setup") return <OperatorSetupView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} setView={setView} />;
-  if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} /></div>;
+  if (view === "settings") return <div className="content-stack"><SettingsView dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} /></div>;
   return <CapabilityView view={view} dashboard={dashboard} setView={setView} />;
 }
 
@@ -2844,7 +2863,7 @@ function EnvironmentView({ dashboard, setView }: { dashboard: DashboardPayload; 
         <Stat label="Kubernetes boundary" value={humanize(actuatorBoundary.kubernetesState)} detail={actuatorBoundary.kubernetesScopes.length ? actuatorBoundary.kubernetesScopes.join(", ") : "explicit allowlists required"} />
         <Stat label="Non-Kubernetes credential bleed" value={actuatorBoundary.nonKubernetesCredentialConnectorIds.length ? "Blocked" : "None"} detail={actuatorBoundary.nonKubernetesCredentialConnectorIds.join(", ") || "proposal/advisory lanes report no actuator credentials"} />
       </div>
-      <SearchBar value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
+      <SearchBar label="Filter connectors" value={query} onChange={setQuery} placeholder="Filter connectors by name, status, domain, blocker..." />
       <div className="filter-row">
         <label>
           State
@@ -2960,7 +2979,7 @@ function EvaluationsView({
       </div>
       <TraceRail steps={traceSteps} />
       <ProofDrilldownPanel dashboard={dashboard} />
-      <SearchBar value={query} onChange={setQuery} placeholder="Search by run, scenario, status, operator..." />
+      <SearchBar label="Search evaluations" value={query} onChange={setQuery} placeholder="Search by run, scenario, status, operator..." />
       <div className="data-table">
         <div className="table-head"><span>Name</span><span>Scenario</span><span>Status</span><span>Created</span><span>Created by</span></div>
         {filteredRuns.length ? filteredRuns.map((run: any) => (
@@ -3212,23 +3231,61 @@ function RunWorkbenchSummary({ model }: { model: RunWorkbenchModel }) {
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
   const setup = buildOperatorSetupModel(dashboard);
   const operatorDefaultTemplate = String(dashboard.operator_preferences_schema?.run_template?.default || "reth_peer_starvation");
-  const settingsDefaultScenario = dashboard.settings.default_run_scenario || "";
-  const configuredDefaultScenario = setup.runTemplate && setup.runTemplate !== operatorDefaultTemplate
-    ? setup.runTemplate
-    : settingsDefaultScenario || setup.runTemplate || "reth_peer_starvation";
-  const defaultScenarioKnown = SCENARIO_PICKER.some((scenario) => scenario.key === configuredDefaultScenario);
+  const settingsDefaultScenario = String(dashboard.settings.default_run_scenario || "");
+  const defaultScenarioKey = [
+    settingsDefaultScenario,
+    setup.runTemplate,
+    operatorDefaultTemplate,
+    "reth_peer_starvation",
+  ].find((candidate) => SCENARIO_PICKER.some((scenario) => scenario.key === candidate)) || "reth_peer_starvation";
   const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
     ? setup.agentFabricMode
     : dashboard.settings.default_orchestration_mode || "auto";
-  const [scenarioKey, setScenarioKey] = useState(defaultScenarioKnown ? configuredDefaultScenario : "reth_peer_starvation");
-  const [evaluationMode, setEvaluationMode] = useState(dashboard.settings.default_evaluation_mode || "native");
-  const [orchestrationMode, setOrchestrationMode] = useState(String(preferredOrchestration));
-  const [steeringMode, setSteeringMode] = useState(setup.approvalPolicy === "interruptible_auto" ? "interruptible_auto" : dashboard.settings.default_steering_mode || "approval_gate");
+  const defaultEvaluationMode = dashboard.settings.default_evaluation_mode || "native";
+  const defaultOrchestrationMode = String(preferredOrchestration);
+  const defaultSteeringMode = setup.approvalPolicy === "interruptible_auto"
+    ? "interruptible_auto"
+    : dashboard.settings.default_steering_mode || "approval_gate";
+  const defaultRequireTargetLock = setup.target.lockRequired || dashboard.settings.default_target_lock === "required";
+  const launchDefaultsKey = [
+    defaultScenarioKey,
+    defaultEvaluationMode,
+    defaultOrchestrationMode,
+    defaultSteeringMode,
+    defaultRequireTargetLock ? "required" : "optional",
+  ].join("|");
+  const lastLaunchDefaultsKey = useRef(launchDefaultsKey);
+  const [scenarioKey, setScenarioKey] = useState(defaultScenarioKey);
+  const [evaluationMode, setEvaluationMode] = useState(defaultEvaluationMode);
+  const [orchestrationMode, setOrchestrationMode] = useState(defaultOrchestrationMode);
+  const [steeringMode, setSteeringMode] = useState(defaultSteeringMode);
   const [auditReason, setAuditReason] = useState("");
-  const [requireTargetLock, setRequireTargetLock] = useState(setup.target.lockRequired || dashboard.settings.default_target_lock === "required");
+  const [requireTargetLock, setRequireTargetLock] = useState(defaultRequireTargetLock);
   const [result, setResult] = useState<RunLaunchResponse | null>(null);
   const [message, setMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (lastLaunchDefaultsKey.current === launchDefaultsKey) {
+      return;
+    }
+    lastLaunchDefaultsKey.current = launchDefaultsKey;
+    setScenarioKey(defaultScenarioKey);
+    setEvaluationMode(defaultEvaluationMode);
+    setOrchestrationMode(defaultOrchestrationMode);
+    setSteeringMode(defaultSteeringMode);
+    setRequireTargetLock(defaultRequireTargetLock);
+    setResult(null);
+    setMessage("");
+  }, [
+    launchDefaultsKey,
+    defaultScenarioKey,
+    defaultEvaluationMode,
+    defaultOrchestrationMode,
+    defaultSteeringMode,
+    defaultRequireTargetLock,
+  ]);
+
   const preflight = buildRunPreflightModel(dashboard, { scenarioKey, orchestrationMode, steeringMode, requireTargetLock });
 
   async function launchRun() {
@@ -3545,6 +3602,7 @@ function TeamSettingsView({
   session,
   dashboard,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
   onSession,
   onLogout,
   loggingOut,
@@ -3552,6 +3610,7 @@ function TeamSettingsView({
   session: SessionPayload;
   dashboard: DashboardPayload;
   onDashboardRefresh: () => Promise<void>;
+  onDashboardSettingsUpdate: (settings: Record<string, string>) => void;
   onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
@@ -3657,7 +3716,7 @@ function TeamSettingsView({
           <button type="button" onClick={onLogout} disabled={loggingOut}>{loggingOut ? "Logging out" : "Log out"}</button>
         </div>
       </section>
-      <SettingsView dashboard={dashboard} compact onDashboardRefresh={onDashboardRefresh} />
+      <SettingsView dashboard={dashboard} compact onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} />
     </div>
   );
 }
@@ -4047,10 +4106,12 @@ function SettingsView({
   dashboard,
   compact = false,
   onDashboardRefresh,
+  onDashboardSettingsUpdate,
 }: {
   dashboard: DashboardPayload;
   compact?: boolean;
   onDashboardRefresh?: () => Promise<void>;
+  onDashboardSettingsUpdate?: (settings: Record<string, string>) => void;
 }) {
   const settingsPosture = operatorWorkflowPosture("settings");
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -4076,9 +4137,12 @@ function SettingsView({
     setMessage("");
     try {
       const response = await productApi.updateSettings(dashboard.scope.team?.id || null, draft, cleanedReason);
-      setDraft(response.settings);
+      const savedSettings = { ...response.settings, ...draft };
+      setDraft(savedSettings);
       setReason("");
+      onDashboardSettingsUpdate?.(savedSettings);
       await onDashboardRefresh?.();
+      onDashboardSettingsUpdate?.(savedSettings);
       setMessage(`Saved ${response.audit.fields.join(", ")} for ${response.audit.scope}.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Settings update failed");
@@ -4744,17 +4808,19 @@ function Toolbar({
 
 function SearchBar({
   placeholder = "Search by name, author, description, tags...",
+  label = "Search",
   value,
   onChange,
 }: {
   placeholder?: string;
+  label?: string;
   value?: string;
   onChange?: (value: string) => void;
 }) {
   return (
     <label className="search-bar">
       <Search size={16} />
-      <input placeholder={placeholder} value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
+      <input aria-label={label} placeholder={placeholder} value={value ?? ""} onChange={(event) => onChange?.(event.target.value)} />
     </label>
   );
 }
