@@ -55,7 +55,7 @@ scripts/verify_release_runtime_binding.py \
   --json
 ```
 
-The command writes `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` only after the packet is complete and the env write has binding evidence. When `--image-ref` is supplied and the local image digest matches the packet, it also writes `MESH_IMAGE` and `MESH_STACK_IMAGE` so compose restarts the verified image. Supply `--image-ref` before deployment so the local image must match the packet digest, or `--health-url` after deployment so the live control plane must report the packet commit and image digest. `--allow-unverified-env-output` exists only for external deployment orchestrators that verify image identity elsewhere; do not use it as pilot-release evidence. After deployment, run the same verifier with `--health-url https://<mesh-host>/api/health` to confirm the live control plane reports the bound commit and image digest before capturing `/api/pilot/go-no-go`.
+The command writes `MESH_RELEASE_PROVENANCE_PATH`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` only after the packet is complete and the env write has binding evidence. When `--image-ref` is supplied and the local image digest matches the packet, it also writes `MESH_IMAGE` and `MESH_STACK_IMAGE` so compose restarts the verified image. Supply `--image-ref` before deployment so the local image must match the packet digest, or `--health-url` after deployment so the live control plane must report the packet commit and image digest. `--allow-unverified-env-output` exists only for external deployment orchestrators that verify image identity elsewhere; do not use it as pilot-release evidence. After deployment, run the same verifier with `--health-url https://<mesh-host>/api/health` to confirm the live control plane reports the bound commit and image digest before capturing `/api/pilot/go-no-go`. For `lusislabs.com`, use the manual `Deploy Lusis Labs Preview` workflow with `deploy_mode=release-image` and the successful Release Image Handoff run ID. The source-preview deployment is useful for product inspection, but it is not release-image-bound evidence.
 
 Run the final pilot-clearance audit only after deployment binding is in place:
 
@@ -86,7 +86,7 @@ This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` ar
 `pnpm run lint` proves the local contracts, focused tests, product browser E2E, release-cut list, and security-readiness gates. It does not prove that a production-ready frontend/backend claim is current-head and live-runtime bound. Use the E2E claim gate after downloading CI release artifacts and deploying the bound runtime:
 
 ```bash
-pnpm run verify:e2e-claim -- \
+pnpm run verify:e2e-claim \
   --artifact-root dist/ci-release-artifacts \
   --health-url https://<mesh-host>/api/health \
   --pilot-base-url https://<mesh-host> \

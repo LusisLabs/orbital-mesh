@@ -13,16 +13,18 @@ State slice: `lusislabs-preview-deployment`.
 - `/etc/lusis-mesh-webapp-preview.env`: root-only OAuth provider secrets and callback URLs.
 - `/usr/local/bin/deploy-lusis-mesh-webapp`: deployment entrypoint.
 - `lusis-mesh-preview.service`: systemd unit that runs the preview API/web server.
+- `lusis-mesh-release`: Docker container name used only for verified release-image deployments.
 
 ## Deployment Flow
 
 `.github/workflows/deploy-lusislabs-preview.yml` deploys on every push to `main`, and can also be run manually with `workflow_dispatch`. It runs on the Hetzner self-hosted runner labeled `lusislabs-preview`, so it does not depend on GitHub-hosted runner minutes.
 
-The workflow:
+The source-preview workflow:
 
 1. Checks out the pushed commit.
 2. Writes `.deploy-commit`.
-3. Runs `sudo /usr/local/bin/deploy-lusis-mesh-webapp --source "$GITHUB_WORKSPACE"` on the self-hosted runner.
+3. Installs the repository deployment entrypoint to `/usr/local/bin/deploy-lusis-mesh-webapp`.
+4. Runs `sudo /usr/local/bin/deploy-lusis-mesh-webapp --source "$GITHUB_WORKSPACE"` on the self-hosted runner.
 
 The server script:
 
@@ -34,11 +36,34 @@ The server script:
 6. Verifies `http://127.0.0.1:8788/api/health`.
 7. Rolls back the symlink and restarts the previous release if the restart or healthcheck fails.
 
+## Release-Image Deployment
+
+State slice: `release-image-runtime-binding`.
+
+Use the manual `Deploy Lusis Labs Preview` workflow with:
+
+- `deploy_mode=release-image`;
+- `handoff_run_id=<successful Release Image Handoff run ID>`.
+
+The release-image path:
+
+1. Downloads the `release-image-handoff-<sha>` artifact from the named handoff run.
+2. Installs the current deployment entrypoint on the self-hosted runner.
+3. Runs `sudo /usr/local/bin/deploy-lusis-mesh-webapp --release-artifact-root <artifact-root>`.
+4. Loads `release-image-handoff/orbital-mesh-handoff-image.tar.gz` with Docker.
+5. Runs `scripts/verify_release_image_handoff.py` with `--require-artifacts`, `--image-ref`, the signed complete provenance packet, and `--env-output`.
+6. Copies the signed `release-provenance-draft.json` to `/opt/lusis-mesh-webapp/shared/state/release-provenance.json`.
+7. Starts the actual verified image as Docker container `lusis-mesh-release`, bound to `127.0.0.1:8788:8787`, with `MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` from the verifier-generated env.
+8. Healthchecks `http://127.0.0.1:8788/api/health`.
+9. Rolls back to the previous release container or the source preview service if startup or healthcheck fails.
+
+Do not copy `MESH_BUILD_IMAGE_DIGEST` into the source-preview service to force a green runtime-binding check. The release-image path must run the actual verified image that produced the handoff digest.
+
 ## GitHub Runner
 
 The self-hosted runner is registered to `LusisLabs/orbital-mesh` with the label `lusislabs-preview`. It is intended only for trusted `main` pushes and manual dispatches from this repository.
 
-The runner service account is allowed to run only `/usr/local/bin/deploy-lusis-mesh-webapp` through passwordless sudo.
+The runner service account must be allowed to run `/usr/local/bin/deploy-lusis-mesh-webapp` through passwordless sudo. If passwordless sudo is restricted to that entrypoint, install the updated script once out of band before using `deploy_mode=release-image`; the workflow fails closed when the installed entrypoint does not expose `--release-artifact-root`.
 
 ## Manual Commands
 
@@ -52,6 +77,12 @@ Run a manual server deploy after uploading source:
 
 ```bash
 ssh root@<server-host> 'sudo /usr/local/bin/deploy-lusis-mesh-webapp --source /opt/lusis-mesh-webapp/incoming/source'
+```
+
+Run a manual release-image deploy after uploading a handoff artifact directory:
+
+```bash
+ssh root@<server-host> 'sudo /usr/local/bin/deploy-lusis-mesh-webapp --release-artifact-root /opt/lusis-mesh-webapp/incoming/release-image-handoff'
 ```
 
 Verify public ingress:
