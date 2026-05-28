@@ -11,7 +11,7 @@ CURRENT_LINK="${BASE_DIR}/current"
 ENV_FILE="${LUSIS_PREVIEW_ENV_FILE:-/etc/lusis-mesh-webapp-preview.env}"
 SERVICE_NAME="${LUSIS_PREVIEW_SERVICE:-lusis-mesh-preview.service}"
 RELEASE_CONTAINER_NAME="${LUSIS_RELEASE_CONTAINER:-lusis-mesh-release}"
-PUBLIC_URL="${LUSIS_PUBLIC_URL:-https://lusislabs.com}"
+PUBLIC_URL="${LUSIS_PUBLIC_URL:-https://app.lusislabs.com}"
 NODE_HOME="${LUSIS_NODE_HOME:-/root/.nvm/versions/node/v22.22.3}"
 KEEP_RELEASES="${LUSIS_KEEP_RELEASES:-5}"
 LOCK_FILE="${LUSIS_DEPLOY_LOCK:-/run/lusis-mesh-webapp-deploy.lock}"
@@ -174,6 +174,10 @@ deploy_release_image() {
     --env-file "$runtime_env_tmp" \
     -e MESH_SERVER_HOST=0.0.0.0 \
     -e MESH_SERVER_PORT=8787 \
+    -e MESH_AUTH_MODE=app_session \
+    -e MESH_CAPTCHA_DEV_BYPASS=1 \
+    -e MESH_AUTH_PRODUCT_REDIRECT_URL=https://app.lusislabs.com/ \
+    -e MESH_AUTH_ALLOWED_ORIGINS=https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788 \
     -e MESH_ENVIRONMENT=pilot \
     -e MESH_READINESS_PROFILE=pilot \
     -e MESH_STATE_DIRECTORY=/app/.mesh-runtime-state \

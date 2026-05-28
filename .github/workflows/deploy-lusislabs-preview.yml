@@ -31,6 +31,7 @@ jobs:
     runs-on: [self-hosted, lusislabs-preview]
     env:
       DEPLOY_SHA: ${{ github.sha }}
+      LUSIS_PUBLIC_URL: https://app.lusislabs.com
     steps:
       - name: Checkout repository without marketplace actions
         env:

@@ -201,7 +201,8 @@ export type PraxisMcpRequest = {
   params?: Record<string, any>;
 };
 
-const DEFAULT_API_BASE_URL = process.env.NEXT_PUBLIC_MESH_API_URL?.trim() || "http://127.0.0.1:8787";
+const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_MESH_API_URL?.trim() || "";
+const LOCAL_DEV_API_BASE_URL = "http://127.0.0.1:8787";
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 function isLoopbackHost(hostname: string): boolean {
@@ -221,12 +222,24 @@ export function normalizeLoopbackBaseUrl(baseUrl: string, pageLocation?: Pick<Lo
   }
 }
 
+export function defaultApiBaseUrl(pageLocation?: Pick<Location, "hostname" | "origin" | "protocol">): string {
+  if (CONFIGURED_API_BASE_URL) return CONFIGURED_API_BASE_URL;
+  if (
+    pageLocation &&
+    !isLoopbackHost(pageLocation.hostname) &&
+    (pageLocation.protocol === "http:" || pageLocation.protocol === "https:")
+  ) {
+    return pageLocation.origin;
+  }
+  return LOCAL_DEV_API_BASE_URL;
+}
+
 export function resolveBaseUrl(): string {
-  if (typeof window === "undefined") return DEFAULT_API_BASE_URL;
+  if (typeof window === "undefined") return defaultApiBaseUrl();
   const params = new URLSearchParams(window.location.search);
   const explicitServer = params.get("server");
   if (explicitServer) return explicitServer.replace(/\/+$/, "");
-  return normalizeLoopbackBaseUrl(DEFAULT_API_BASE_URL, window.location);
+  return normalizeLoopbackBaseUrl(defaultApiBaseUrl(window.location), window.location);
 }
 
 export function backendUnavailableMessage(): string {

@@ -107,6 +107,7 @@ jobs:
           docker build \
             --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} \
             --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} \
+            --build-arg NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com \
             -t "$HANDOFF_IMAGE_TAG" .
       - name: Collect release image metadata
         run: |
@@ -170,7 +171,7 @@ jobs:
             --check release-image-assurance \
             --image-tag "$HANDOFF_IMAGE_TAG" \
             --image-digest "$MESH_IMAGE_DIGEST" \
-            --build-command "docker build --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $HANDOFF_IMAGE_TAG ." \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} --build-arg NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com -t $HANDOFF_IMAGE_TAG ." \
             "${BASE_IMAGE_ARGS[@]}"
       - name: Generate release provenance draft
         env:
@@ -188,7 +189,7 @@ jobs:
             --migration-rehearsal dist/migration-rehearsal.json \
             --sbom dist/release-assurance/sbom.cdx.json \
             --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
-            --build-command "docker build --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $HANDOFF_IMAGE_TAG ." \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=handoff-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} --build-arg NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com -t $HANDOFF_IMAGE_TAG ." \
             --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
             --json \
             "${BASE_IMAGE_ARGS[@]}"
