@@ -74,6 +74,21 @@ class ReleaseArtifactBundleTests(unittest.TestCase):
                 ],
             )
 
+    def test_verifies_downloaded_release_image_handoff_artifact_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handoff_root = root / f"release-image-handoff-{RELEASE_COMMIT}"
+            _write_handoff_bundle(handoff_root)
+
+            result = _run_bundle_verifier(root, "--expected-head", RELEASE_COMMIT)
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["status"], "pass")
+            self.assertEqual(payload["artifact_layout"], "release-image-handoff")
+            self.assertEqual(payload["artifact_bundle_root"], str(handoff_root.resolve()))
+            self.assertEqual(payload["release"]["image_digest"], RELEASE_DIGEST)
+
 
 def _run_bundle_verifier(root: Path, *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -195,6 +210,24 @@ def _write_bundle(root: Path) -> None:
     }
     release["packet_sha256"] = _payload_hash(release)
     _write_json(root / "release-provenance-draft" / "release-provenance-draft.json", release)
+
+
+def _write_handoff_bundle(root: Path) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        ci_root = Path(tmp)
+        _write_bundle(ci_root)
+        mappings = {
+            "ci-attestation/ci-attestation.json": "ci-attestation.json",
+            "release-provenance-draft/release-provenance-draft.json": "release-provenance-draft.json",
+            "release-provenance-draft/release-image-metadata.json": "release-image-metadata.json",
+            "release-provenance-draft/migration-rehearsal.json": "migration-rehearsal.json",
+            "release-assurance-artifacts/release-assurance/sbom.cdx.json": "release-assurance/sbom.cdx.json",
+            "release-assurance-artifacts/release-assurance/vulnerability-scan.json": "release-assurance/vulnerability-scan.json",
+        }
+        for source, target in mappings.items():
+            target_path = root / target
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_bytes((ci_root / source).read_bytes())
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
