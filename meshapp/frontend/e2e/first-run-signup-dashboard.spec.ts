@@ -306,6 +306,48 @@ test("product Praxis import generates, dry-runs, audits, exports P10 proof, and 
   await expect(page.getByRole("button", { name: /Deploy managed pilot runtime/ })).toBeDisabled();
 });
 
+test("Build Arena generates review packets and intent bundles without deployment authority", async ({ page }, testInfo) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Arena E2E Operator");
+  await page.getByLabel("Email address").fill(testEmail(testInfo, "arena"));
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await expect(page.getByRole("heading", { name: "Create a team" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Build Arena" }).click();
+  await expect(page.getByRole("heading", { name: "Build Arena" })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+
+  const packetResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/hardened-arena/packets") && response.status() === 201,
+  );
+  await page.getByRole("button", { name: "Generate packet" }).click();
+  const packetPayload = await (await packetResponse).json();
+  expect(packetPayload.live_deployment_allowed).toBe(false);
+  expect(packetPayload.secret_ingestion_allowed).toBe(false);
+  await expect(page.getByText("Export / review packet")).toBeVisible();
+  await expect(page.getByText("Live deployment allowed").first()).toBeVisible();
+  await expect(page.getByText("Secret ingestion allowed").first()).toBeVisible();
+  await expect(page.getByText(/target_validated remains false/)).toBeVisible();
+
+  const intentResponse = page.waitForResponse((response) =>
+    response.url().includes("/api/hardened-arena/intents") && response.status() === 201,
+  );
+  await page.getByRole("button", { name: "Prepare intent" }).click();
+  const intentPayload = await (await intentResponse).json();
+  expect(intentPayload.live_deployment_allowed).toBe(false);
+  expect(intentPayload.secret_ingestion_allowed).toBe(false);
+  expect(intentPayload.kubeconfig_material_present).toBe(false);
+  await expect(page.getByText("Intent review bundle")).toBeVisible();
+  await expect(page.getByText("Kubeconfig material present")).toBeVisible();
+  await expect(page.getByText(/mesh.hardened_arena.intent.v1/)).toBeVisible();
+});
+
 test("first-run signup can continue solo from a clean browser session", async ({ page }, testInfo) => {
   const email = testEmail(testInfo, "solo");
   const teamName = testLabel(testInfo, "Solo Upgrade Operators");

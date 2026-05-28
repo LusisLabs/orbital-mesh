@@ -50,6 +50,7 @@ import {
   type AgentFlowMutationPreview,
   type DashboardPayload,
   type HardenedArenaCatalog,
+  type HardenedArenaIntentCreateResponse,
   type HardenedArenaPacketCreateResponse,
   type HardenedArenaProfileRegistry,
   type LoadState,
@@ -2708,6 +2709,7 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
   const [intendedUse, setIntendedUse] = useState("solo project / startup trial");
   const [compliancePosture, setCompliancePosture] = useState("baseline with DHI preferred inputs");
   const [packetState, setPacketState] = useState<LoadState<HardenedArenaPacketCreateResponse>>({ state: "empty", message: "No packet generated yet." });
+  const [intentState, setIntentState] = useState<LoadState<HardenedArenaIntentCreateResponse>>({ state: "empty", message: "No intent bundle prepared yet." });
 
   useEffect(() => {
     let mounted = true;
@@ -2737,6 +2739,17 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
     }
   }
 
+  async function prepareIntent() {
+    if (!selectedProfileId || intentState.state === "loading") return;
+    setIntentState({ state: "loading" });
+    try {
+      const response = await productApi.generateHardenedArenaIntent(selectedProfileId);
+      setIntentState({ state: "ready", data: response });
+    } catch (error) {
+      setIntentState(loadStateFromError(error));
+    }
+  }
+
   if (arenaState.state !== "ready") {
     return <LoadStatePanel state={arenaState} />;
   }
@@ -2746,6 +2759,8 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
   const selectedProfile = profiles.profiles.find((profile) => profile.profile_id === selectedProfileId) || profiles.profiles[0];
   const packetCreate = packetState.state === "ready" ? packetState.data : null;
   const packet = packetCreate?.packet ?? null;
+  const intentCreate = intentState.state === "ready" ? intentState.data : null;
+  const intent = intentCreate?.intent ?? null;
   const catalogImages = catalog.entries.filter((entry) => entry.type === "image").length;
   const catalogCharts = catalog.entries.filter((entry) => entry.type === "chart").length;
   const proofBlocked = packet?.readiness_posture?.target_validated === false;
@@ -2792,10 +2807,11 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
         </div>
         <div className="action-row">
           <button className="primary-button" type="button" onClick={generatePacket} disabled={packetState.state === "loading"}>Generate packet</button>
-          <button type="button" disabled>Prepare intent</button>
-          <span>Intent preparation is review material only; no Deploy production action exists.</span>
+          <button type="button" onClick={prepareIntent} disabled={intentState.state === "loading"}>{intentState.state === "loading" ? "Preparing intent" : "Prepare intent"}</button>
+          <span>Intent preparation writes `mesh.hardened_arena.intent.v1` review material only; no Deploy production action exists.</span>
         </div>
         {packetState.state === "error" || packetState.state === "forbidden" || packetState.state === "unauthorized" ? <EmptyInline text={packetState.message} /> : null}
+        {intentState.state === "error" || intentState.state === "forbidden" || intentState.state === "unauthorized" ? <EmptyInline text={intentState.message} /> : null}
       </section>
       {selectedProfile ? (
         <div className="capability-grid two">
@@ -2810,10 +2826,30 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
         <section className="form-card">
           <h3>Export / review packet</h3>
           <p>Packet `{packet.packet_id}` is stored for review. It says <strong>{packet.readiness_posture.status}</strong>, not deployed or production-ready.</p>
+          <div className="stat-row">
+            <Stat label="Live deployment allowed" value={String(packetCreate?.live_deployment_allowed === true)} detail="packet review does not deploy" />
+            <Stat label="Secret ingestion allowed" value={String(packetCreate?.secret_ingestion_allowed === true)} detail="raw secret ingestion remains disabled" />
+            <Stat label="Stored artifact" value={String(packetCreate?.stored_artifact === true)} detail={packetCreate?.packet_path || "state directory artifact"} />
+          </div>
           {proofBlocked ? <EmptyInline text="Blocked proof state visible: target_validated remains false until observed target-specific proof exists." /> : null}
           <div className="capability-grid two">
             <ReadModelCard title="Generated packet" payload={packet} />
             <ReadModelCard title="Packet storage" payload={{ packet_path: packetCreate?.packet_path, stored_artifact: packetCreate?.stored_artifact, live_deployment_allowed: packetCreate?.live_deployment_allowed }} />
+          </div>
+        </section>
+      ) : null}
+      {intent ? (
+        <section className="form-card">
+          <h3>Intent review bundle</h3>
+          <p>Intent `{intent.intent_id}` is stored for review. It emits <strong>{intent.outputs.length}</strong> generated intent files, with live deployment and secret material disabled.</p>
+          <div className="stat-row">
+            <Stat label="Live deployment allowed" value={String(intentCreate?.live_deployment_allowed === true)} detail="intent files are review-only" />
+            <Stat label="Secret ingestion allowed" value={String(intentCreate?.secret_ingestion_allowed === true)} detail="secret references only, no values" />
+            <Stat label="Kubeconfig material present" value={String(intentCreate?.kubeconfig_material_present === true)} detail="no kubeconfig is emitted" />
+          </div>
+          <div className="capability-grid two">
+            <ReadModelCard title="Generated intent" payload={intent} />
+            <ReadModelCard title="Intent storage" payload={{ intent_path: intentCreate?.intent_path, stored_artifact: intentCreate?.stored_artifact, live_deployment_allowed: intentCreate?.live_deployment_allowed, secret_ingestion_allowed: intentCreate?.secret_ingestion_allowed, kubeconfig_material_present: intentCreate?.kubeconfig_material_present }} />
           </div>
         </section>
       ) : null}
