@@ -51,6 +51,12 @@ pilot clearance endpoint, and P24 aggregate autonomy proof all pass for the same
 commit. Missing `.mesh-runtime-state/live-proof-current/` artifacts are a real
 blocked result, not a warning.
 
+For live release-image deployments, pass the downloaded release-image handoff
+artifact root to `--artifact-root`; the verifier also accepts the CI release
+artifact download layout for CI-bundle-only checks. The handoff root is the
+runtime-binding authority when it is the bundle that produced the running image
+digest.
+
 When the intended proof is that the live runtime booted and is correctly blocked on missing pilot evidence, use the explicit blocked-state audit instead of treating a blocked packet as clearance:
 
 ```bash

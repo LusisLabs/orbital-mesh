@@ -83,11 +83,11 @@ This mode verifies `/api/health`, `/api/readiness`, and `/api/pilot/go-no-go` ar
 
 ## Full E2E Claim Gate
 
-`pnpm run lint` proves the local contracts, focused tests, product browser E2E, release-cut list, and security-readiness gates. It does not prove that a production-ready frontend/backend claim is current-head and live-runtime bound. Use the E2E claim gate after downloading CI release artifacts and deploying the bound runtime:
+`pnpm run lint` proves the local contracts, focused tests, product browser E2E, release-cut list, and security-readiness gates. It does not prove that a production-ready frontend/backend claim is current-head and live-runtime bound. Use the E2E claim gate after downloading the artifact bundle that produced the bound runtime:
 
 ```bash
 pnpm run verify:e2e-claim \
-  --artifact-root dist/ci-release-artifacts \
+  --artifact-root dist/release-image-handoff-current \
   --health-url https://<mesh-host>/api/health \
   --pilot-base-url https://<mesh-host> \
   --live-proof-dir .mesh-runtime-state/live-proof-current \
@@ -95,7 +95,7 @@ pnpm run verify:e2e-claim \
   --json
 ```
 
-The gate verifies the release artifact bundle, runtime release binding, pilot clearance, and production-autonomy proof aggregate as one state slice. It fails closed when any artifact path, live runtime binding, pilot endpoint, or `.mesh-runtime-state/live-proof-current/` proof packet is absent. Do not use production-ready or flawless E2E language for the current head until this gate passes with explicit artifact inputs.
+`--artifact-root` accepts either the CI release artifact download layout or the release-image handoff download layout. For live runtime checks, prefer the release-image handoff artifact because it is the signed bundle that produced the running image digest. The gate verifies the release artifact bundle, runtime release binding, pilot clearance, and production-autonomy proof aggregate as one state slice. It fails closed when any artifact path, live runtime binding, pilot endpoint, or `.mesh-runtime-state/live-proof-current/` proof packet is absent. Do not use production-ready or flawless E2E language for the current head until this gate passes with explicit artifact inputs.
 
 ## Local CI/CD Lane
 

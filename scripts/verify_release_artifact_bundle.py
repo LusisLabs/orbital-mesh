@@ -24,6 +24,15 @@ ARTIFACT_PATHS = {
     "vulnerability_scan": Path("release-assurance-artifacts/release-assurance/vulnerability-scan.json"),
 }
 
+HANDOFF_ARTIFACT_PATHS = {
+    "ci_attestation": Path("ci-attestation.json"),
+    "release_provenance": Path("release-provenance-draft.json"),
+    "release_image_metadata": Path("release-image-metadata.json"),
+    "migration_rehearsal": Path("migration-rehearsal.json"),
+    "sbom": Path("release-assurance/sbom.cdx.json"),
+    "vulnerability_scan": Path("release-assurance/vulnerability-scan.json"),
+}
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(
@@ -78,8 +87,12 @@ def verify_release_artifact_bundle(
     allow_unverified_env_output: bool = False,
 ) -> dict[str, Any]:
     artifact_root = artifact_root.resolve()
-    paths = {name: artifact_root / relative for name, relative in ARTIFACT_PATHS.items()}
-    checks: dict[str, bool] = {"artifact_root_present": artifact_root.is_dir()}
+    bundle_root, relative_paths, layout = _resolve_artifact_layout(artifact_root)
+    paths = {name: bundle_root / relative for name, relative in relative_paths.items()}
+    checks: dict[str, bool] = {
+        "artifact_root_present": artifact_root.is_dir(),
+        "artifact_layout_supported": layout != "unsupported",
+    }
     missing: list[str] = []
     payloads: dict[str, dict[str, Any]] = {}
     errors: dict[str, str] = {}
@@ -163,6 +176,8 @@ def verify_release_artifact_bundle(
         "generated_at": _timestamp(),
         "status": "pass" if not missing else "fail",
         "artifact_root": str(artifact_root),
+        "artifact_bundle_root": str(bundle_root),
+        "artifact_layout": layout,
         "checks": checks,
         "missing": missing,
         "errors": errors,
@@ -176,6 +191,27 @@ def verify_release_artifact_bundle(
         "resolved_paths": {name: str(path) for name, path in paths.items()},
         "runtime_binding": runtime_binding,
     }
+
+
+def _resolve_artifact_layout(artifact_root: Path) -> tuple[Path, dict[str, Path], str]:
+    if _has_artifact_paths(artifact_root, ARTIFACT_PATHS):
+        return artifact_root, ARTIFACT_PATHS, "ci-download"
+    if _has_artifact_paths(artifact_root, HANDOFF_ARTIFACT_PATHS):
+        return artifact_root, HANDOFF_ARTIFACT_PATHS, "release-image-handoff"
+
+    handoff_roots = [
+        child
+        for child in artifact_root.iterdir()
+        if child.is_dir() and child.name.startswith("release-image-handoff-")
+    ] if artifact_root.is_dir() else []
+    for child in sorted(handoff_roots, key=lambda path: path.name):
+        if _has_artifact_paths(child, HANDOFF_ARTIFACT_PATHS):
+            return child, HANDOFF_ARTIFACT_PATHS, "release-image-handoff"
+    return artifact_root, ARTIFACT_PATHS, "unsupported"
+
+
+def _has_artifact_paths(root: Path, paths: dict[str, Path]) -> bool:
+    return root.is_dir() and all((root / relative).is_file() for relative in paths.values())
 
 
 def _embedded_checks_pass(payload: dict[str, Any]) -> bool:
