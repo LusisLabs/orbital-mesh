@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from importlib import util
+from io import BytesIO
 from pathlib import Path
 
 
@@ -409,6 +411,111 @@ class ReleaseImageHandoffTests(unittest.TestCase):
                 ),
             )
 
+    def test_verifier_accepts_archive_config_digest_when_loaded_image_reports_manifest_digest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "release-image-handoff" / "orbital-mesh-image.tar.gz"
+            archive.parent.mkdir(parents=True)
+            manifest = archive.parent / "release-image-handoff.json"
+            env_output = root / "release-runtime.env"
+            image_digest = f"sha256:{'a' * 64}"
+            docker_manifest_digest = f"sha256:{'d' * 64}"
+            git_commit = "b" * 40
+            complete_packet = root / "release-provenance-complete.json"
+            _write_docker_archive(archive, image_tag="orbital-mesh:handoff", config_digest=image_digest)
+            (root / "ci-attestation.json").write_text(
+                json.dumps({"sha": git_commit, "image": {"digest": image_digest}}),
+                encoding="utf-8",
+            )
+            (root / "release-provenance-draft.json").write_text(
+                json.dumps({"git": {"commit": git_commit}, "image": {"digest": image_digest}}),
+                encoding="utf-8",
+            )
+            (root / "migration-rehearsal.json").write_text("{}", encoding="utf-8")
+            (root / "release-assurance").mkdir()
+            (root / "release-assurance" / "sbom.cdx.json").write_text("{}", encoding="utf-8")
+            (root / "release-assurance" / "vulnerability-scan.json").write_text("{}", encoding="utf-8")
+            complete_packet.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.release_provenance.v1",
+                        "status": "complete",
+                        "missing": [],
+                        "checks": {"release_provenance_complete": True},
+                        "ci": {"attestation": {"sha_matches_git_commit": True}},
+                        "git": {"commit": git_commit},
+                        "image": {"digest": image_digest},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            generated = subprocess.run(
+                [
+                    sys.executable,
+                    "scripts/generate_release_image_handoff.py",
+                    "--image-tag",
+                    "orbital-mesh:handoff",
+                    "--image-digest",
+                    image_digest,
+                    "--git-commit",
+                    git_commit,
+                    "--image-archive",
+                    str(archive),
+                    "--confirmation",
+                    "EXPORT_RELEASE_IMAGE",
+                    "--ci-attestation",
+                    "dist/ci-attestation.json",
+                    "--release-provenance",
+                    "dist/release-provenance-draft.json",
+                    "--migration-rehearsal",
+                    "dist/migration-rehearsal.json",
+                    "--sbom",
+                    "dist/release-assurance/sbom.cdx.json",
+                    "--vulnerability-scan",
+                    "dist/release-assurance/vulnerability-scan.json",
+                    "--output",
+                    str(manifest),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(generated.returncode, 0, generated.stderr + generated.stdout)
+
+            def fake_runner(args: list[str]) -> subprocess.CompletedProcess[str]:
+                self.assertEqual(args, ["docker", "image", "inspect", "orbital-mesh:handoff"])
+                return subprocess.CompletedProcess(
+                    args,
+                    0,
+                    stdout=json.dumps(
+                        [
+                            {
+                                "Id": docker_manifest_digest,
+                                "RepoDigests": [f"orbital-mesh@{docker_manifest_digest}"],
+                            }
+                        ]
+                    ),
+                    stderr="",
+                )
+
+            result = verify_release_image_handoff.verify_handoff(
+                manifest_path=manifest,
+                artifact_root=root,
+                image_ref="orbital-mesh:handoff",
+                complete_release_provenance=complete_packet,
+                runtime_release_provenance_path="/app/.mesh-runtime-state/release-provenance.json",
+                env_output=env_output,
+                require_artifacts=True,
+                runner=fake_runner,
+            )
+
+            self.assertEqual(result["status"], "pass", result)
+            self.assertTrue(result["checks"]["image_ref_digest_match"])
+            self.assertIn(image_digest, result["image_ref"]["digest_candidates"])
+            self.assertEqual(result["image_ref"]["archive"]["config_digest"], image_digest)
+
     def test_verifier_refuses_runtime_env_without_loaded_image_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -516,6 +623,27 @@ class ReleaseImageHandoffTests(unittest.TestCase):
             self.assertEqual(result["status"], "fail")
             self.assertIn("image_ref_digest_match", result["missing"])
             self.assertIn("invalid JSON", result["image_ref"]["error"])
+
+
+def _write_docker_archive(path: Path, *, image_tag: str, config_digest: str) -> None:
+    config_name = f"blobs/sha256/{config_digest.split(':', 1)[1]}"
+    manifest_payload = json.dumps(
+        [
+            {
+                "Config": config_name,
+                "RepoTags": [image_tag],
+                "Layers": [],
+            }
+        ]
+    ).encode("utf-8")
+    config_payload = b"{}"
+    with tarfile.open(path, "w:gz") as archive:
+        manifest_info = tarfile.TarInfo("manifest.json")
+        manifest_info.size = len(manifest_payload)
+        archive.addfile(manifest_info, BytesIO(manifest_payload))
+        config_info = tarfile.TarInfo(config_name)
+        config_info.size = len(config_payload)
+        archive.addfile(config_info, BytesIO(config_payload))
 
 
 if __name__ == "__main__":
