@@ -156,6 +156,32 @@ export type HardenedArenaPacketCreateResponse = {
   packet: HardenedArenaPacket;
 };
 
+export type HardenedArenaIntent = {
+  schema_version: string;
+  intent_id: string;
+  generated_at: string;
+  profile_id: string;
+  review_only: boolean;
+  live_deployment_allowed: boolean;
+  secret_values_present: boolean;
+  kubeconfig_material_present: boolean;
+  outputs: Array<{ kind: string; file_name: string; required: boolean; content: Record<string, any> }>;
+  rollback_cleanup_requirements: Array<{ component_id: string; rollback_intent: string[]; cleanup_intent: string[] }>;
+  blockers: string[];
+};
+
+export type HardenedArenaIntentCreateResponse = {
+  schema_version: string;
+  intent_id: string;
+  intent_path: string;
+  operator_id: string;
+  stored_artifact: boolean;
+  live_deployment_allowed: boolean;
+  secret_ingestion_allowed: boolean;
+  kubeconfig_material_present: boolean;
+  intent: HardenedArenaIntent;
+};
+
 export type PraxisSourceInput = {
   source_type: "openapi" | "postman_json" | "sop_markdown" | "redacted_traffic_ref" | string;
   filename?: string;
@@ -397,6 +423,12 @@ export const productApi = {
   },
   generateHardenedArenaPacket(profileId: string) {
     return request<HardenedArenaPacketCreateResponse>("/api/hardened-arena/packets", {
+      method: "POST",
+      body: JSON.stringify({ profile_id: profileId }),
+    });
+  },
+  generateHardenedArenaIntent(profileId: string) {
+    return request<HardenedArenaIntentCreateResponse>("/api/hardened-arena/intents", {
       method: "POST",
       body: JSON.stringify({ profile_id: profileId }),
     });

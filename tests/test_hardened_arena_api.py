@@ -98,6 +98,45 @@ class HardenedArenaApiTests(unittest.TestCase):
             )
         self.assertEqual(bad_request.exception.code, HTTPStatus.BAD_REQUEST)
 
+    def test_intent_creation_requires_operator_identity_and_stores_review_bundle(self) -> None:
+        with self.assertRaises(HTTPError) as unauth:
+            self._request("POST", "/api/hardened-arena/intents", {"profile_id": "solo_project_default"})
+        self.assertEqual(unauth.exception.code, HTTPStatus.UNAUTHORIZED)
+
+        created = self._request(
+            "POST",
+            "/api/hardened-arena/intents",
+            {"profile_id": "solo_project_default"},
+            operator="operator@example.com",
+            roles="launcher",
+            status=HTTPStatus.CREATED,
+        )
+
+        self.assertEqual(created["schema_version"], "mesh.hardened_arena.intent_create_response.v1")
+        self.assertEqual(created["operator_id"], "operator@example.com")
+        self.assertTrue(created["stored_artifact"])
+        self.assertFalse(created["live_deployment_allowed"])
+        self.assertFalse(created["secret_ingestion_allowed"])
+        self.assertFalse(created["kubeconfig_material_present"])
+        self.assertTrue(created["intent"]["review_only"])
+        self.assertFalse(created["intent"]["live_deployment_allowed"])
+        self.assertEqual(created["intent"]["profile_id"], "solo_project_default")
+        self.assertIn("target_validation_missing", created["intent"]["blockers"])
+        stored_path = Path(self.temp_dir.name) / created["intent_path"]
+        self.assertTrue(stored_path.exists())
+        self.assertEqual(json.loads(stored_path.read_text(encoding="utf-8"))["intent_id"], created["intent_id"])
+
+    def test_intent_api_rejects_unknown_profile(self) -> None:
+        with self.assertRaises(HTTPError) as bad_request:
+            self._request(
+                "POST",
+                "/api/hardened-arena/intents",
+                {"profile_id": "missing_profile"},
+                operator="operator@example.com",
+                roles="launcher",
+            )
+        self.assertEqual(bad_request.exception.code, HTTPStatus.BAD_REQUEST)
+
     def _request(
         self,
         method: str,

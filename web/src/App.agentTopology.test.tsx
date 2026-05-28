@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AgentMeshPanel, buildAgentConnectors } from "./App";
-import type { AgentTask, IntegrationReadiness, IntegrationStatus, RunDetail } from "./types";
+import { AgentMeshPanel, buildAgentConnectors, DarkharnessPacketPanel } from "./App";
+import type { AgentTask, DarkharnessPilotPacket, IntegrationReadiness, IntegrationStatus, RunDetail } from "./types";
 
 const integrationStatus = (name: string): IntegrationStatus => ({
   name,
@@ -213,5 +213,27 @@ describe("AgentMeshPanel topology", () => {
     expect(connectors.find((connector) => connector.id === "centaur")?.name).toBe("Centaur Sandbox");
     expect(connectors.find((connector) => connector.id === "kubernetes")?.state).toBe("pilot-ready");
     expect(connectors.find((connector) => connector.id === "airflow")?.boundary).toContain("DAG state");
+  });
+});
+
+describe("DarkharnessPacketPanel", () => {
+  it("renders blocked partial packets without crashing", () => {
+    const packet = {
+      packet: "darkharness.pilot_packet.v1",
+      status: "blocked",
+      run_id: "run_blocked_darkharness",
+      missing_evidence: ["run_export_missing"],
+      checks: { run_export: false },
+    } as DarkharnessPilotPacket;
+
+    const html = renderToStaticMarkup(
+      <DarkharnessPacketPanel packet={packet} activeRun={{ run_id: "run_blocked_darkharness" } as RunDetail} />,
+    );
+
+    expect(html).toContain("Dark Harness Packet");
+    expect(html).toContain("Blocked");
+    expect(html).toContain("Raw egress unavailable");
+    expect(html).toContain("Run Export Missing");
+    expect(html).toContain("0 implemented, 0 proposed, 0 not implemented");
   });
 });
