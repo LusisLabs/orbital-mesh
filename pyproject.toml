@@ -27,7 +27,7 @@ dependencies = [
 # sentence-transformers, etc.) that the runtime doesn't need. Install
 # with ``uv sync --extra eval``.
 eval = [
-  "deepeval>=2.0,<4.0",
+  "deepeval>=2.0,<5.0",
 ]
 
 helix = [

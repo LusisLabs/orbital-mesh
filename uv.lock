@@ -2161,7 +2161,7 @@ helix = [
 requires-dist = [
     { name = "cryptography", specifier = ">=44,<49" },
     { name = "deepagents", editable = "deepagents/libs/deepagents" },
-    { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0,<4.0" },
+    { name = "deepeval", marker = "extra == 'eval'", specifier = ">=2.0,<5.0" },
     { name = "halo-engine" },
     { name = "helix-py", marker = "extra == 'helix'" },
     { name = "langchain-openai", specifier = ">=1.1.14,<2.0.0" },
