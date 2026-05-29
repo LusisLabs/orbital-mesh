@@ -52,9 +52,9 @@
   --om-color-memory-quiet: rgba(111, 174, 141, 0.14);
 
   /* Typography */
-  --om-font-sans: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --om-font-display: Inter, "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  --om-font-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
+  --om-font-sans: var(--font-inter, Inter), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --om-font-display: var(--font-inter, Inter), "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --om-font-mono: var(--font-ibm-plex-mono, "IBM Plex Mono"), "SFMono-Regular", ui-monospace, monospace;
 
   /* Type scale */
   --om-text-xs: 0.72rem;
@@ -88,6 +88,14 @@
   --om-shadow-focus: 0 0 0 2px rgba(84, 138, 247, 0.32);
   --om-transition-fast: 120ms ease;
   --om-transition-base: 180ms ease;
+
+  /* Lusis marketing / landing accents (warm) */
+  --om-landing-accent: #e27c08;
+  --om-landing-accent-strong: #ff8c00;
+  --om-landing-accent-quiet: rgb(255 140 0 / 14%);
+  --om-landing-mint: #97bfaf;
+  --om-landing-ink: #f2f0e8;
+  --om-landing-muted: rgb(225 220 205 / 78%);
 
   /* Legacy aliases for older examples and gradual adoption. */
   --mesh-bg: var(--om-color-bg);

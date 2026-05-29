@@ -26,6 +26,7 @@ import {
   Network,
   Play,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   ShieldCheck,
@@ -61,6 +62,7 @@ import {
   backendUnavailableMessage,
   loadStateFromError,
   productApi,
+  resolveBaseUrl,
 } from "./api";
 
 export type ViewKey =
@@ -95,6 +97,87 @@ export type ViewKey =
   | "keys"
   | "operator-setup"
   | "settings";
+
+const VIEW_KEYS = new Set<ViewKey>([
+  "home",
+  "console",
+  "console-runs",
+  "console-approvals",
+  "console-launch",
+  "console-simulator",
+  "console-trust",
+  "console-packets",
+  "console-readiness",
+  "console-evidence",
+  "console-connectors",
+  "console-agents",
+  "console-signals",
+  "console-hermes",
+  "console-audit",
+  "console-roadmap",
+  "praxis",
+  "agent-flow",
+  "hardened-arena",
+  "environments",
+  "evaluations",
+  "training",
+  "inference",
+  "gpu",
+  "clusters",
+  "instances",
+  "team",
+  "members",
+  "keys",
+  "operator-setup",
+  "settings",
+]);
+
+function isViewKey(value: string | null): value is ViewKey {
+  return Boolean(value && VIEW_KEYS.has(value as ViewKey));
+}
+
+type ApiConnectionState = "checking" | "connected" | "offline";
+
+function useMeshApiConnection(enabled: boolean): { connection: ApiConnectionState; apiBase: string } {
+  const [connection, setConnection] = useState<ApiConnectionState>("checking");
+  const [apiBase, setApiBase] = useState("");
+
+  useEffect(() => {
+    if (!enabled || typeof window === "undefined") return undefined;
+    setApiBase(resolveBaseUrl());
+    let cancelled = false;
+
+    async function ping() {
+      try {
+        await productApi.health();
+        if (!cancelled) setConnection("connected");
+      } catch {
+        if (!cancelled) setConnection("offline");
+      }
+    }
+
+    setConnection("checking");
+    ping();
+    const interval = window.setInterval(ping, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [enabled]);
+
+  return { connection, apiBase };
+}
+
+function BackendStatusChip({ connection, apiBase }: { connection: ApiConnectionState; apiBase: string }) {
+  const label = connection === "connected" ? "API connected" : connection === "checking" ? "Checking API" : "API offline";
+  return (
+    <div className={`backend-status ${connection}`} title={apiBase || "Mesh control plane"}>
+      <span className="backend-status-dot" aria-hidden="true" />
+      <span>{label}</span>
+      {apiBase ? <code>{apiBase.replace(/^https?:\/\//, "")}</code> : null}
+    </div>
+  );
+}
 
 type LiveKitAudioTrack = {
   kind?: string;
@@ -448,6 +531,7 @@ export default function ProductApp() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [lens, setLens] = useState<LensKey>("operator");
+  const { connection: apiConnection, apiBase } = useMeshApiConnection(true);
 
   function soloOnboardingKey(userId: string): string {
     return `mesh.product.solo.${userId}`;
@@ -542,6 +626,22 @@ export default function ProductApp() {
     setLens(isLensKey(savedLens) ? savedLens : defaultLensForSession(session));
   }, [session?.user.id, session?.active_team?.id]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const viewParam = new URLSearchParams(window.location.search).get("view");
+    if (isViewKey(viewParam)) setView(viewParam);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !session) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("view") === view) return;
+    params.set("view", view);
+    const query = params.toString();
+    const nextUrl = query ? `${window.location.pathname}?${query}` : window.location.pathname;
+    window.history.replaceState(null, "", `${nextUrl}${window.location.hash}`);
+  }, [view, session]);
+
   async function refreshSession() {
     const payload = await productApi.me();
     acceptSession(payload);
@@ -553,12 +653,18 @@ export default function ProductApp() {
     setLoggingOut(true);
     setLogoutError("");
     try {
-      if (session) window.localStorage.removeItem(soloOnboardingKey(session.user.id));
       await productApi.logout();
       setSession(null);
       setOnboardingComplete(false);
+      setView("home");
       setSessionState({ state: "unauthorized", message: "Logged out" });
       setDashboardState({ state: "empty", message: "Sign in to load the dashboard." });
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        params.delete("view");
+        const query = params.toString();
+        window.history.replaceState(null, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
+      }
     } catch (err) {
       setLogoutError(err instanceof Error ? err.message : "Logout failed. Session was not cleared.");
     } finally {
@@ -571,7 +677,15 @@ export default function ProductApp() {
   }
 
   if (!session) {
-    return <AuthScreen config={authConfig} sessionState={sessionState} onSession={acceptSession} />;
+    return (
+      <AuthScreen
+        apiBase={apiBase}
+        apiConnection={apiConnection}
+        config={authConfig}
+        sessionState={sessionState}
+        onSession={acceptSession}
+      />
+    );
   }
 
   if (!session.active_team && !onboardingComplete) {
@@ -610,7 +724,18 @@ export default function ProductApp() {
         onCollapsedChange={setSidebarCollapsed}
       />
       <main className="product-main">
-        <Header session={session} dashboard={dashboard} refreshSession={refreshSession} consoleMode={consoleMode} activePage={activePage} lens={lens} onLens={updateLens} />
+        <Header
+          session={session}
+          dashboard={dashboard}
+          refreshSession={refreshSession}
+          onRefreshDashboard={refreshDashboard}
+          apiConnection={apiConnection}
+          apiBase={apiBase}
+          consoleMode={consoleMode}
+          activePage={activePage}
+          lens={lens}
+          onLens={updateLens}
+        />
         {logoutError ? (
           <div className="product-alert" role="alert">
             <AlertTriangle size={16} />
@@ -628,6 +753,9 @@ export default function ProductApp() {
           onSession={acceptSession}
           onLogout={logout}
           loggingOut={loggingOut}
+          onSignInAgain={() => {
+            clearSession({ state: "unauthorized", message: "Session expired or missing. Sign in again." });
+          }}
         />
       </main>
     </div>
@@ -661,10 +789,14 @@ function AsciiFlowBackground() {
 }
 
 export function AuthScreen({
+  apiBase,
+  apiConnection,
   config,
   sessionState,
   onSession,
 }: {
+  apiBase: string;
+  apiConnection: ApiConnectionState;
   config: AuthConfig | null;
   sessionState?: LoadState<SessionPayload>;
   onSession: (session: SessionPayload) => void;
@@ -698,9 +830,11 @@ export function AuthScreen({
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const authError = params.get("auth_error");
-    if (authError) {
-      setError(authCallbackErrorMessage(authError));
-    }
+    if (!authError) return;
+    setError(authCallbackErrorMessage(authError));
+    params.delete("auth_error");
+    const query = params.toString();
+    window.history.replaceState(null, "", query ? `${window.location.pathname}?${query}` : window.location.pathname);
   }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -755,6 +889,9 @@ export function AuthScreen({
         </div>
         <h1>{mode === "login" ? "Welcome" : "Create your account"}</h1>
         <p>Sign in to operate Mesh without changing its control-plane authority.</p>
+        <div className="auth-connection-row">
+          <BackendStatusChip connection={apiConnection} apiBase={apiBase} />
+        </div>
         {backendUnavailable || sessionIssueMessage ? (
           <div className="auth-backend-banner">
             <AlertTriangle size={16} />
@@ -1089,9 +1226,7 @@ function Sidebar({
       <div className="nav-group">
         <p>Support</p>
         <button type="button" onClick={() => onView("evaluations")} title="Run Review" aria-label="Run Review"><Mail size={16} /> <span className="nav-label">Run Review</span></button>
-        <button type="button" onClick={() => onView("operator-setup")} title="Operator Setup" aria-label="Operator Setup"><SlidersHorizontal size={16} /> <span className="nav-label">Operator Setup</span></button>
         <button type="button" onClick={openDocs} title="Documentation" aria-label="Documentation"><BookOpen size={16} /> <span className="nav-label">Documentation</span></button>
-        <button type="button" onClick={() => onView("settings")} title="Config" aria-label="Config"><Database size={16} /> <span className="nav-label">Config</span></button>
       </div>
       </nav>
       <div className="sidebar-footer">
@@ -1109,6 +1244,9 @@ function Header({
   session,
   dashboard,
   refreshSession,
+  onRefreshDashboard,
+  apiConnection,
+  apiBase,
   consoleMode,
   activePage,
   lens,
@@ -1117,6 +1255,9 @@ function Header({
   session: SessionPayload;
   dashboard: DashboardPayload | null;
   refreshSession: () => Promise<SessionPayload>;
+  onRefreshDashboard: () => Promise<void>;
+  apiConnection: ApiConnectionState;
+  apiBase: string;
   consoleMode?: boolean;
   activePage: { title: string; group: string; detail: string };
   lens: LensKey;
@@ -1135,6 +1276,16 @@ function Header({
         <p>{consoleMode ? activePage.detail : activePage.detail || dashboard?.authority_boundary || "Mesh controls policy, approvals, run state, readiness, evidence, and actuation."}</p>
       </div>
       <div className="header-actions">
+        <BackendStatusChip connection={apiConnection} apiBase={apiBase} />
+        <button
+          className="header-icon-button"
+          type="button"
+          onClick={() => void onRefreshDashboard()}
+          title="Refresh dashboard from Mesh"
+          aria-label="Refresh dashboard"
+        >
+          <RefreshCw size={15} />
+        </button>
         <LensSelector lens={lens} onLens={onLens} />
         <TeamSwitcher session={session} refreshSession={refreshSession} />
       </div>
@@ -1204,6 +1355,7 @@ function ContentRouter({
   onSession,
   onLogout,
   loggingOut,
+  onSignInAgain,
 }: {
   view: ViewKey;
   authConfig: AuthConfig | null;
@@ -1215,12 +1367,19 @@ function ContentRouter({
   onSession: (session: SessionPayload) => void;
   onLogout: () => void;
   loggingOut: boolean;
+  onSignInAgain: () => void;
 }) {
   if (isConsoleProductView(view)) {
     return <ConsoleWorkspace view={view} setView={setView} />;
   }
   if (dashboardState.state !== "ready") {
-    return <LoadStatePanel state={dashboardState} />;
+    return (
+      <LoadStatePanel
+        state={dashboardState}
+        onRetry={() => void onDashboardRefresh()}
+        onSignInAgain={onSignInAgain}
+      />
+    );
   }
   const dashboard = dashboardState.data;
   if (view === "home") return <HomeView dashboard={dashboard} authConfig={authConfig} lens={lens} setView={setView} />;
@@ -1568,10 +1727,31 @@ function AgentFlowView({ dashboard, setView }: { dashboard: DashboardPayload; se
   );
 }
 
-function LoadStatePanel<T>({ state }: { state: LoadState<T> }) {
+function LoadStatePanel<T>({
+  state,
+  onRetry,
+  onSignInAgain,
+}: {
+  state: LoadState<T>;
+  onRetry?: () => void;
+  onSignInAgain?: () => void;
+}) {
   if (state.state === "loading") return <div className="skeleton-panel"><span /><span /><span /></div>;
   if (state.state === "ready") return null;
-  return <div className={`state-panel ${state.state}`}><AlertTriangle size={18} /> {state.message}</div>;
+  const showRetry = onRetry && (state.state === "backend-unavailable" || state.state === "error");
+  const showSignIn = onSignInAgain && (state.state === "unauthorized" || state.state === "forbidden");
+  return (
+    <div className={`state-panel ${state.state}`}>
+      <AlertTriangle size={18} />
+      <div className="state-panel-copy">
+        <p>{state.message}</p>
+        <div className="state-panel-actions">
+          {showRetry ? <button type="button" className="primary-button" onClick={onRetry}>Retry</button> : null}
+          {showSignIn ? <button type="button" className="primary-button" onClick={onSignInAgain}>Sign in again</button> : null}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function HomeView({ dashboard, authConfig, lens, setView }: { dashboard: DashboardPayload; authConfig: AuthConfig | null; lens: LensKey; setView: (view: ViewKey) => void }) {
@@ -2707,7 +2887,22 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
   }
 
   if (arenaState.state !== "ready") {
-    return <LoadStatePanel state={arenaState} />;
+    return (
+      <LoadStatePanel
+        state={arenaState}
+        onRetry={() => {
+          setArenaState({ state: "loading" });
+          Promise.all([productApi.hardenedArenaProfiles(), productApi.hardenedArenaCatalog()])
+            .then(([profiles, catalog]) => {
+              setArenaState({ state: "ready", data: { profiles, catalog } });
+              if (profiles.profiles?.[0]?.profile_id) {
+                setSelectedProfileId((current) => current || profiles.profiles[0].profile_id);
+              }
+            })
+            .catch((error) => setArenaState(loadStateFromError(error)));
+        }}
+      />
+    );
   }
 
   const { profiles, catalog } = arenaState.data;
@@ -2761,8 +2956,10 @@ function HardenedArenaView({ setView }: { dashboard: DashboardPayload; setView: 
         </div>
         <div className="action-row">
           <button className="primary-button" type="button" onClick={generatePacket} disabled={packetState.state === "loading"}>Generate packet</button>
-          <button type="button" disabled>Prepare intent</button>
-          <span>Intent preparation is review material only; no Deploy production action exists.</span>
+          <button type="button" disabled title="Intent preparation is review-only in this release">
+            Prepare intent
+          </button>
+          <span className="muted-inline">Review-only — no production deploy from this surface.</span>
         </div>
         {packetState.state === "error" || packetState.state === "forbidden" || packetState.state === "unauthorized" ? <EmptyInline text={packetState.message} /> : null}
       </section>
@@ -4062,6 +4259,10 @@ function SettingsView({
 function CapabilityView({ view, dashboard, setView }: { view: ViewKey; dashboard: DashboardPayload; setView: (view: ViewKey) => void }) {
   const workflowPosture = operatorWorkflowPosture(workflowForView(view));
   const page = runtimeProductPage(view, dashboard);
+  const allEmpty = page.cards.every((card) => {
+    const payload = readModelCardPayload(card.title, card.payload);
+    return payload?.state === "empty" || (payload && typeof payload === "object" && Object.keys(payload).length <= 2);
+  });
   return (
     <div className="content-stack">
       <Toolbar
@@ -4070,6 +4271,12 @@ function CapabilityView({ view, dashboard, setView }: { view: ViewKey; dashboard
         action="Review Dashboard"
         onAction={() => setView("home")}
       />
+      {allEmpty ? (
+        <p className="capability-readonly-banner" role="status">
+          <AlertTriangle size={16} aria-hidden="true" />
+          Mesh has not published data for these read models in your current scope. Use Advanced Console for full operator workflows, or confirm the control plane is reachable.
+        </p>
+      ) : null}
       <div className="capability-grid two">
         {page.cards.map((card) => <ReadModelCard key={card.title} title={card.title} payload={card.payload} />)}
       </div>
@@ -4581,20 +4788,25 @@ function surfaceRank(state: DashboardSurfaceState): number {
 function ReadModelCard({ title, payload }: { title: string; payload: any }) {
   const displayPayload = readModelCardPayload(title, payload);
   const display = readModelDisplay(displayPayload);
+  const isEmpty = displayPayload?.state === "empty" || display.state === "empty";
   const sourcePath = `mesh.${title.toLowerCase().replaceAll(" ", "_")}`;
   const lineage = sourceLineage(sourcePath, displayPayload, "Mesh read model");
   return (
-    <section className={`read-model-card ${display.state}`}>
+    <section className={`read-model-card ${display.state} ${isEmpty ? "empty" : ""}`}>
       <CircleDot size={15} />
       <strong>{title}</strong>
       <span>{humanize(display.status)}</span>
       <p>{display.summary}</p>
       <SensitivityBadges badges={sensitivityBadgesForSource(sourcePath)} />
       <SourceLine {...lineage} />
-      <details>
-        <summary>Payload</summary>
-        <pre>{JSON.stringify(displayPayload, null, 2).slice(0, 720)}</pre>
-      </details>
+      {isEmpty ? (
+        <p className="read-model-empty-hint">Nothing to show here yet. This updates automatically as Mesh records activity for your team.</p>
+      ) : (
+        <details>
+          <summary>Raw payload</summary>
+          <pre>{JSON.stringify(displayPayload, null, 2).slice(0, 720)}</pre>
+        </details>
+      )}
     </section>
   );
 }

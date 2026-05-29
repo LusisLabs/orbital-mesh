@@ -200,6 +200,13 @@ export function resolveBaseUrl(): string {
   const params = new URLSearchParams(window.location.search);
   const explicitServer = params.get("server");
   if (explicitServer) return explicitServer.replace(/\/+$/, "");
+  const configured = process.env.NEXT_PUBLIC_MESH_API_URL?.trim();
+  if (configured) {
+    return normalizeLoopbackBaseUrl(configured, window.location);
+  }
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return window.location.origin;
+  }
   return normalizeLoopbackBaseUrl(DEFAULT_API_BASE_URL, window.location);
 }
 
@@ -254,6 +261,9 @@ export function loadStateFromError<T>(error: unknown): LoadState<T> {
 }
 
 export const productApi = {
+  health() {
+    return request<{ status?: string; commit?: string }>("/api/health");
+  },
   authConfig() {
     return request<AuthConfig>("/api/auth/config");
   },

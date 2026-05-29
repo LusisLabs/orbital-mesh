@@ -40,7 +40,11 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     ".next-ui-audit/types/**/*.ts",
-    ".next-ui-audit/dev/types/**/*.ts"
+    ".next-ui-audit/dev/types/**/*.ts",
+    ".next-e2e-51591/types/**/*.ts",
+    ".next-e2e-51591/dev/types/**/*.ts",
+    ".next-showcase/types/**/*.ts",
+    ".next-showcase/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

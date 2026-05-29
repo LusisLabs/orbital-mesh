@@ -25,6 +25,11 @@ const authConfig: AuthConfig = {
   },
 };
 
+const authScreenProps = {
+  apiBase: "http://127.0.0.1:8787",
+  apiConnection: "connected" as const,
+};
+
 function openingButtonTag(html: string, label: string): string {
   const labelIndex = html.indexOf(label);
   expect(labelIndex).toBeGreaterThan(-1);
@@ -37,6 +42,8 @@ describe("AuthScreen degraded API states", () => {
   it("shows backend-unavailable session probe failures and disables provider actions", () => {
     const html = renderToStaticMarkup(
       <AuthScreen
+        {...authScreenProps}
+        apiConnection="offline"
         config={authConfig}
         sessionState={{ state: "backend-unavailable", message: "Mesh API timed out at http://127.0.0.1:8787" }}
         onSession={() => undefined}
@@ -51,6 +58,7 @@ describe("AuthScreen degraded API states", () => {
   it("does not treat an unauthenticated session probe as an API outage", () => {
     const html = renderToStaticMarkup(
       <AuthScreen
+        {...authScreenProps}
         config={authConfig}
         sessionState={{ state: "unauthorized", message: "not authenticated" }}
         onSession={() => undefined}
@@ -67,6 +75,7 @@ describe("AuthScreen provider proof states", () => {
   it("hides unconfigured provider buttons from the partner-facing screen", () => {
     const html = renderToStaticMarkup(
       <AuthScreen
+        {...authScreenProps}
         config={{
           ...authConfig,
           oauth: {

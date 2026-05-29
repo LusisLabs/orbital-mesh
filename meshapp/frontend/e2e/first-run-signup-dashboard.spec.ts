@@ -307,6 +307,31 @@ test("first-run signup can continue solo from a clean browser session", async ({
   await expect(page.getByText("Default Evaluation Mode")).toBeVisible();
 });
 
+test("login returns an existing operator to the dashboard", async ({ page }) => {
+  const email = `login-${Date.now()}@example.com`;
+  const password = "correct-horse-42";
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Login E2E Operator");
+  await page.getByLabel("Email address").fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(password);
+  await page.getByLabel("Confirm password").fill(password);
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.getByTitle("Log out").click();
+  await expect(page.getByRole("heading", { name: "Welcome" })).toBeVisible();
+
+  await page.getByLabel("Email address").fill(email);
+  await page.getByLabel("Password").fill(password);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+  await expect(page.getByText(email)).toBeVisible();
+});
+
 test("logout returns a clean browser session to sign-in", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Need an account? Sign up" }).click();
@@ -324,6 +349,45 @@ test("logout returns a clean browser session to sign-in", async ({ page }) => {
   await expect
     .poll(async () => (await page.context().cookies()).some((cookie) => cookie.name === "mesh_session"))
     .toBe(false);
+});
+
+test("build arena loads profiles and generates a review packet", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Arena E2E Operator");
+  await page.getByLabel("Email address").fill(`arena-${Date.now()}@example.com`);
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Build Arena" }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Build Arena" })).toBeVisible();
+  await expect(page.getByText("Profile registry")).toBeVisible();
+  await page.getByRole("button", { name: "Generate packet" }).click();
+  await expect(page.getByText(/Export \/ review packet/)).toBeVisible();
+  await expect(page.getByText(/stored for review/i)).toBeVisible();
+});
+
+test("operator setup saves governed preferences with audit reason", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Need an account? Sign up" }).click();
+  await page.getByLabel("Display name").fill("Setup E2E Operator");
+  await page.getByLabel("Email address").fill(`setup-${Date.now()}@example.com`);
+  await page.getByLabel("Password", { exact: true }).fill("correct-horse-42");
+  await page.getByLabel("Confirm password").fill("correct-horse-42");
+  await page.getByLabel(/I agree to use only redacted sources/).check();
+  await page.getByRole("button", { name: "Sign up" }).click();
+  await page.getByRole("button", { name: "Continue solo" }).click();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
+
+  await page.getByRole("navigation").getByRole("button", { name: "Operator Setup", exact: true }).click();
+  await expect(page.locator(".product-header h1", { hasText: "Operator Setup" })).toBeVisible();
+  await page.getByPlaceholder("why this operator setup change is required").fill("e2e operator setup proof");
+  await page.getByRole("button", { name: "Save setup" }).first().click();
+  await expect(page.getByText(/^Saved /)).toBeVisible();
 });
 
 test("expired session clears cookie and recovers through login", async ({ page }) => {

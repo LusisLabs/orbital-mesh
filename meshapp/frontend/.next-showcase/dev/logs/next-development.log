@@ -1,0 +1,18 @@
+{"timestamp":"00:00:00.433","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:00.433","source":"Server","level":"LOG","message":"  We detected TypeScript in your project and reconfigured your tsconfig.json file for you."}
+{"timestamp":"00:00:00.434","source":"Server","level":"LOG","message":"  The following suggested values were added to your tsconfig.json. These values can be changed to fit your project's needs:\n"}
+{"timestamp":"00:00:00.434","source":"Server","level":"LOG","message":"  \t- include was updated to add '.next-showcase/types/**/*.ts'"}
+{"timestamp":"00:00:00.434","source":"Server","level":"LOG","message":"  \t- include was updated to add '.next-showcase/dev/types/**/*.ts'"}
+{"timestamp":"00:00:00.434","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:00.510","source":"Server","level":"LOG","message":""}
+{"timestamp":"00:00:38.667","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"00:00:53.195","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"00:02:22.686","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"00:03:04.782","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"00:33:21.670","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"00:45:27.112","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"01:20:21.618","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"01:20:21.654","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"01:20:33.690","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}
+{"timestamp":"01:38:04.585","source":"Server","level":"LOG","message":"✓ Compiled in 96ms"}
+{"timestamp":"01:40:11.615","source":"Browser","level":"INFO","message":"%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold"}

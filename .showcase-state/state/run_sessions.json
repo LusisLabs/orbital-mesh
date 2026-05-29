@@ -1,0 +1,2154 @@
+{
+  "runs": [
+    {
+      "artifacts": {
+        "delivery_context": {
+          "agent_attempt_refs": [],
+          "edges": [
+            {
+              "evidence_ref": null,
+              "id": "edge:04acbfe36d1071e5",
+              "relation": "deployment_emits_runtime_signal",
+              "source": "deploy:181e9f0f770e4620",
+              "status": "passed",
+              "target": "runtime:4d8aa8d0b54a62cc"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:build:44575cf5b28512d7:gap:674ad96abc8540af",
+              "relation": "node_has_evidence_gap",
+              "source": "build:44575cf5b28512d7",
+              "status": "passed",
+              "target": "gap:674ad96abc8540af"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:build:44575cf5b28512d7:gap:448b691a83d3d3fd",
+              "relation": "node_has_evidence_gap",
+              "source": "build:44575cf5b28512d7",
+              "status": "passed",
+              "target": "gap:448b691a83d3d3fd"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:build:44575cf5b28512d7:gap:3f31873293d40180",
+              "relation": "node_has_evidence_gap",
+              "source": "build:44575cf5b28512d7",
+              "status": "passed",
+              "target": "gap:3f31873293d40180"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:deploy:181e9f0f770e4620:gap:e382396b780b4190",
+              "relation": "node_has_evidence_gap",
+              "source": "deploy:181e9f0f770e4620",
+              "status": "passed",
+              "target": "gap:e382396b780b4190"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:deploy:181e9f0f770e4620:gap:7bcfd1075a773ff7",
+              "relation": "node_has_evidence_gap",
+              "source": "deploy:181e9f0f770e4620",
+              "status": "passed",
+              "target": "gap:7bcfd1075a773ff7"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:runtime:4d8aa8d0b54a62cc:policy:run_20260528T220953_3d2330fe:promotion",
+              "relation": "runtime_signal_informs_policy",
+              "source": "runtime:4d8aa8d0b54a62cc",
+              "status": "passed",
+              "target": "policy:run_20260528T220953_3d2330fe:promotion"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:674ad96abc8540af",
+              "relation": "policy_records_gap",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "gap:674ad96abc8540af"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:448b691a83d3d3fd",
+              "relation": "policy_records_gap",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "gap:448b691a83d3d3fd"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:3f31873293d40180",
+              "relation": "policy_records_gap",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "gap:3f31873293d40180"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:e382396b780b4190",
+              "relation": "policy_records_gap",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "gap:e382396b780b4190"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:7bcfd1075a773ff7",
+              "relation": "policy_records_gap",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "gap:7bcfd1075a773ff7"
+            },
+            {
+              "evidence_ref": null,
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:zaxy:evt_0007_bd306fa1",
+              "relation": "zaxy_mirrors_node",
+              "source": "policy:run_20260528T220953_3d2330fe:promotion",
+              "status": "passed",
+              "target": "zaxy:evt_0007_bd306fa1"
+            }
+          ],
+          "evidence_gaps": [
+            {
+              "id": "gap:674ad96abc8540af",
+              "missing_ref": "release_git_commit",
+              "owner": "build:44575cf5b28512d7",
+              "severity": "blocker",
+              "summary": "Missing release_git_commit for build:44575cf5b28512d7",
+              "title": "release_git_commit"
+            },
+            {
+              "id": "gap:448b691a83d3d3fd",
+              "missing_ref": "release_image_digest",
+              "owner": "build:44575cf5b28512d7",
+              "severity": "blocker",
+              "summary": "Missing release_image_digest for build:44575cf5b28512d7",
+              "title": "release_image_digest"
+            },
+            {
+              "id": "gap:3f31873293d40180",
+              "missing_ref": "release_provenance_packet_sha256",
+              "owner": "build:44575cf5b28512d7",
+              "severity": "blocker",
+              "summary": "Missing release_provenance_packet_sha256 for build:44575cf5b28512d7",
+              "title": "release_provenance_packet_sha256"
+            },
+            {
+              "id": "gap:e382396b780b4190",
+              "missing_ref": "deployment_image_or_artifact_digest",
+              "owner": "deploy:181e9f0f770e4620",
+              "severity": "blocker",
+              "summary": "Missing deployment_image_or_artifact_digest for deploy:181e9f0f770e4620",
+              "title": "deployment_image_or_artifact_digest"
+            },
+            {
+              "id": "gap:7bcfd1075a773ff7",
+              "missing_ref": "deployment_release_identifier",
+              "owner": "deploy:181e9f0f770e4620",
+              "severity": "warn",
+              "summary": "Missing deployment_release_identifier for deploy:181e9f0f770e4620",
+              "title": "deployment_release_identifier"
+            }
+          ],
+          "generated_at": "2026-05-28T22:20:23Z",
+          "langgraph_workflows": [],
+          "nodes": [
+            {
+              "id": "build:44575cf5b28512d7",
+              "kind": "build",
+              "metadata": {
+                "ci_provider": null,
+                "ci_run_id": null,
+                "ci_workflow": null,
+                "git_commit": null,
+                "image_digest": null,
+                "image_tag": null,
+                "release_provenance_packet_sha256": null,
+                "release_provenance_schema_version": null,
+                "release_provenance_status": "not_required"
+              },
+              "occurred_at": "2026-05-28T22:20:23Z",
+              "refs": [],
+              "stage": "build",
+              "status": "passed",
+              "summary": "Build artifact for unbound release provenance",
+              "title": "Build artifact for unbound release provenance"
+            },
+            {
+              "id": "gap:674ad96abc8540af",
+              "kind": "evidence_gap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_git_commit",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "occurred_at": "2026-05-28T22:20:23Z",
+              "refs": [],
+              "stage": "evidence",
+              "status": "blocked",
+              "summary": "Missing release_git_commit for build:44575cf5b28512d7",
+              "title": "release_git_commit"
+            },
+            {
+              "id": "gap:448b691a83d3d3fd",
+              "kind": "evidence_gap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_image_digest",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "occurred_at": "2026-05-28T22:20:23Z",
+              "refs": [],
+              "stage": "evidence",
+              "status": "blocked",
+              "summary": "Missing release_image_digest for build:44575cf5b28512d7",
+              "title": "release_image_digest"
+            },
+            {
+              "id": "gap:3f31873293d40180",
+              "kind": "evidence_gap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_provenance_packet_sha256",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "occurred_at": "2026-05-28T22:20:23Z",
+              "refs": [],
+              "stage": "evidence",
+              "status": "blocked",
+              "summary": "Missing release_provenance_packet_sha256 for build:44575cf5b28512d7",
+              "title": "release_provenance_packet_sha256"
+            },
+            {
+              "id": "deploy:181e9f0f770e4620",
+              "kind": "deploy",
+              "metadata": {
+                "artifact_ref": null,
+                "cluster": null,
+                "deployment_name": null,
+                "environment": "production",
+                "image": null,
+                "namespace": null,
+                "revision": null,
+                "rollout_status": null,
+                "service": "reth-mainnet-07"
+              },
+              "occurred_at": "2026-04-26T12:00:00Z",
+              "refs": [
+                {
+                  "label": "evidence",
+                  "value": "sig_reth_peer_starvation_001_4e5a078e61"
+                }
+              ],
+              "stage": "deploy",
+              "status": "passed",
+              "summary": "Deployment event for reth-mainnet-07",
+              "title": "Deployment event for reth-mainnet-07"
+            },
+            {
+              "id": "runtime:4d8aa8d0b54a62cc",
+              "kind": "runtime",
+              "metadata": {
+                "cluster": null,
+                "environment": "production",
+                "namespace": null,
+                "service": "reth-mainnet-07",
+                "signal_id": "sig_reth_peer_starvation_001_4e5a078e61",
+                "signal_type": "reth_node"
+              },
+              "occurred_at": "2026-04-26T12:00:00Z",
+              "refs": [
+                {
+                  "label": "evidence",
+                  "value": "sig_reth_peer_starvation_001_4e5a078e61"
+                }
+              ],
+              "stage": "runtime",
+              "status": "passed",
+              "summary": "Runtime signal for reth-mainnet-07",
+              "title": "Runtime signal for reth-mainnet-07"
+            },
+            {
+              "id": "gap:e382396b780b4190",
+              "kind": "evidence_gap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "deployment_image_or_artifact_digest",
+                "severity": "hard",
+                "subject_node_id": "deploy:181e9f0f770e4620"
+              },
+              "occurred_at": "2026-04-26T12:00:00Z",
+              "refs": [],
+              "stage": "evidence",
+              "status": "blocked",
+              "summary": "Missing deployment_image_or_artifact_digest for deploy:181e9f0f770e4620",
+              "title": "deployment_image_or_artifact_digest"
+            },
+            {
+              "id": "gap:7bcfd1075a773ff7",
+              "kind": "evidence_gap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "deployment_release_identifier",
+                "severity": "medium",
+                "subject_node_id": "deploy:181e9f0f770e4620"
+              },
+              "occurred_at": "2026-04-26T12:00:00Z",
+              "refs": [],
+              "stage": "evidence",
+              "status": "missing",
+              "summary": "Missing deployment_release_identifier for deploy:181e9f0f770e4620",
+              "title": "deployment_release_identifier"
+            },
+            {
+              "id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "kind": "policy",
+              "metadata": {
+                "details": {
+                  "evaluated_graph_id": "delivery:run_20260528T220953_3d2330fe:pre-policy"
+                },
+                "gate_name": "delivery-promotion",
+                "hard_missing_evidence": [
+                  "deployment_image_or_artifact_digest",
+                  "release_git_commit",
+                  "release_image_digest",
+                  "release_provenance_packet_sha256"
+                ],
+                "missing_evidence": [
+                  "deployment_image_or_artifact_digest",
+                  "deployment_release_identifier",
+                  "release_git_commit",
+                  "release_image_digest",
+                  "release_provenance_packet_sha256"
+                ],
+                "mode": "observe",
+                "outcome": "require_approval",
+                "policy_exception_refs": [],
+                "subject_node_id": null
+              },
+              "occurred_at": "2026-05-28T22:20:23Z",
+              "refs": [],
+              "stage": "policy",
+              "status": "pending",
+              "summary": "delivery-promotion -> require_approval",
+              "title": "delivery-promotion"
+            },
+            {
+              "id": "zaxy:evt_0007_bd306fa1",
+              "kind": "zaxy_mirror",
+              "metadata": {
+                "authoritative": false,
+                "citation_refs": [
+                  "run://run_20260528T220953_3d2330fe/events/evt_0007_bd306fa1"
+                ],
+                "enabled": false,
+                "eventloom_integrity": "mesh_merkle_bound",
+                "graph_available": false,
+                "merkle_root": "dc98db3bce9fc84792533fa187952eea34cf3ef519919311886ab8fe9528169a",
+                "mesh_event_id": "evt_0007_bd306fa1",
+                "projection_role": "mirror",
+                "rebuildable": true,
+                "redaction_status": "redacted",
+                "sequence": 7
+              },
+              "occurred_at": "2026-05-28T22:18:41.231849+00:00",
+              "refs": [
+                {
+                  "label": "evidence",
+                  "value": "run://run_20260528T220953_3d2330fe/events/evt_0007_bd306fa1"
+                }
+              ],
+              "stage": "zaxy",
+              "status": "pending",
+              "summary": "Zaxy mirror for Mesh event evt_0007_bd306fa1",
+              "title": "Zaxy mirror for Mesh event evt_0007_bd306fa1"
+            }
+          ],
+          "repository": null,
+          "run_id": "run_20260528T220953_3d2330fe",
+          "schema_version": "mesh.delivery_context_graph.v1",
+          "service": "reth-mainnet-07",
+          "summary": "Delivery context links PR, CI, build, deployment, runtime, policy, agent, feedback, and optional Zaxy mirror evidence.",
+          "zaxy_mirror": {
+            "enabled": false,
+            "graph_available": false,
+            "latest_event_id": "evt_0007_bd306fa1",
+            "latest_sequence": 7,
+            "merkle_root": "dc98db3bce9fc84792533fa187952eea34cf3ef519919311886ab8fe9528169a",
+            "projection_lag_ms": null,
+            "redaction_status": "redacted",
+            "status": "pending"
+          }
+        },
+        "delivery_context_graph": {
+          "edges": [
+            {
+              "from_node_id": "deploy:181e9f0f770e4620",
+              "id": "edge:04acbfe36d1071e5",
+              "kind": "deployment_emits_runtime_signal",
+              "metadata": {
+                "correlation": "missing_identifier"
+              },
+              "observed_at": "2026-04-26T12:00:00Z",
+              "source": "runtime_signal_binding",
+              "to_node_id": "runtime:4d8aa8d0b54a62cc"
+            },
+            {
+              "from_node_id": "build:44575cf5b28512d7",
+              "id": "edge:build:44575cf5b28512d7:gap:674ad96abc8540af",
+              "kind": "node_has_evidence_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_context",
+              "to_node_id": "gap:674ad96abc8540af"
+            },
+            {
+              "from_node_id": "build:44575cf5b28512d7",
+              "id": "edge:build:44575cf5b28512d7:gap:448b691a83d3d3fd",
+              "kind": "node_has_evidence_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_context",
+              "to_node_id": "gap:448b691a83d3d3fd"
+            },
+            {
+              "from_node_id": "build:44575cf5b28512d7",
+              "id": "edge:build:44575cf5b28512d7:gap:3f31873293d40180",
+              "kind": "node_has_evidence_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_context",
+              "to_node_id": "gap:3f31873293d40180"
+            },
+            {
+              "from_node_id": "deploy:181e9f0f770e4620",
+              "id": "edge:deploy:181e9f0f770e4620:gap:e382396b780b4190",
+              "kind": "node_has_evidence_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_context",
+              "to_node_id": "gap:e382396b780b4190"
+            },
+            {
+              "from_node_id": "deploy:181e9f0f770e4620",
+              "id": "edge:deploy:181e9f0f770e4620:gap:7bcfd1075a773ff7",
+              "kind": "node_has_evidence_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_context",
+              "to_node_id": "gap:7bcfd1075a773ff7"
+            },
+            {
+              "from_node_id": "runtime:4d8aa8d0b54a62cc",
+              "id": "edge:runtime:4d8aa8d0b54a62cc:policy:run_20260528T220953_3d2330fe:promotion",
+              "kind": "runtime_signal_informs_policy",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "policy:run_20260528T220953_3d2330fe:promotion"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:674ad96abc8540af",
+              "kind": "policy_records_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "gap:674ad96abc8540af"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:448b691a83d3d3fd",
+              "kind": "policy_records_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "gap:448b691a83d3d3fd"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:3f31873293d40180",
+              "kind": "policy_records_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "gap:3f31873293d40180"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:e382396b780b4190",
+              "kind": "policy_records_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "gap:e382396b780b4190"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:gap:7bcfd1075a773ff7",
+              "kind": "policy_records_gap",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "delivery_policy_gate",
+              "to_node_id": "gap:7bcfd1075a773ff7"
+            },
+            {
+              "from_node_id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "id": "edge:policy:run_20260528T220953_3d2330fe:promotion:zaxy:evt_0007_bd306fa1",
+              "kind": "zaxy_mirrors_node",
+              "metadata": {},
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "zaxy_eventloom_mirror",
+              "to_node_id": "zaxy:evt_0007_bd306fa1"
+            }
+          ],
+          "environment": "production",
+          "generated_at": "2026-05-28T22:20:23Z",
+          "graph_id": "delivery:run_20260528T220953_3d2330fe",
+          "metadata": {
+            "repository": null,
+            "run_id": "run_20260528T220953_3d2330fe",
+            "summary": "Delivery context links PR, CI, build, deployment, runtime, policy, agent, feedback, and optional Zaxy mirror evidence."
+          },
+          "nodes": [
+            {
+              "evidence_refs": [],
+              "id": "build:44575cf5b28512d7",
+              "kind": "BuildArtifact",
+              "metadata": {
+                "ci_provider": null,
+                "ci_run_id": null,
+                "ci_workflow": null,
+                "git_commit": null,
+                "image_digest": null,
+                "image_tag": null,
+                "release_provenance_packet_sha256": null,
+                "release_provenance_schema_version": null,
+                "release_provenance_status": "not_required"
+              },
+              "observed_at": "2026-05-28T22:20:23Z",
+              "source": "release_provenance",
+              "summary": "Build artifact for unbound release provenance"
+            },
+            {
+              "evidence_refs": [],
+              "id": "gap:674ad96abc8540af",
+              "kind": "EvidenceGap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_git_commit",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "observed_at": "2026-05-28T22:20:23Z",
+              "source": "release_provenance",
+              "summary": "Missing release_git_commit for build:44575cf5b28512d7"
+            },
+            {
+              "evidence_refs": [],
+              "id": "gap:448b691a83d3d3fd",
+              "kind": "EvidenceGap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_image_digest",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "observed_at": "2026-05-28T22:20:23Z",
+              "source": "release_provenance",
+              "summary": "Missing release_image_digest for build:44575cf5b28512d7"
+            },
+            {
+              "evidence_refs": [],
+              "id": "gap:3f31873293d40180",
+              "kind": "EvidenceGap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "release_provenance_packet_sha256",
+                "severity": "hard",
+                "subject_node_id": "build:44575cf5b28512d7"
+              },
+              "observed_at": "2026-05-28T22:20:23Z",
+              "source": "release_provenance",
+              "summary": "Missing release_provenance_packet_sha256 for build:44575cf5b28512d7"
+            },
+            {
+              "evidence_refs": [
+                "sig_reth_peer_starvation_001_4e5a078e61"
+              ],
+              "id": "deploy:181e9f0f770e4620",
+              "kind": "DeploymentEvent",
+              "metadata": {
+                "artifact_ref": null,
+                "cluster": null,
+                "deployment_name": null,
+                "environment": "production",
+                "image": null,
+                "namespace": null,
+                "revision": null,
+                "rollout_status": null,
+                "service": "reth-mainnet-07"
+              },
+              "observed_at": "2026-04-26T12:00:00Z",
+              "source": "runtime_signal_binding",
+              "summary": "Deployment event for reth-mainnet-07"
+            },
+            {
+              "evidence_refs": [
+                "sig_reth_peer_starvation_001_4e5a078e61"
+              ],
+              "id": "runtime:4d8aa8d0b54a62cc",
+              "kind": "RuntimeSignal",
+              "metadata": {
+                "cluster": null,
+                "environment": "production",
+                "namespace": null,
+                "service": "reth-mainnet-07",
+                "signal_id": "sig_reth_peer_starvation_001_4e5a078e61",
+                "signal_type": "reth_node"
+              },
+              "observed_at": "2026-04-26T12:00:00Z",
+              "source": "reth_node",
+              "summary": "Runtime signal for reth-mainnet-07"
+            },
+            {
+              "evidence_refs": [],
+              "id": "gap:e382396b780b4190",
+              "kind": "EvidenceGap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "deployment_image_or_artifact_digest",
+                "severity": "hard",
+                "subject_node_id": "deploy:181e9f0f770e4620"
+              },
+              "observed_at": "2026-04-26T12:00:00Z",
+              "source": "runtime_signal_binding",
+              "summary": "Missing deployment_image_or_artifact_digest for deploy:181e9f0f770e4620"
+            },
+            {
+              "evidence_refs": [],
+              "id": "gap:7bcfd1075a773ff7",
+              "kind": "EvidenceGap",
+              "metadata": {
+                "details": {},
+                "missing_evidence": "deployment_release_identifier",
+                "severity": "medium",
+                "subject_node_id": "deploy:181e9f0f770e4620"
+              },
+              "observed_at": "2026-04-26T12:00:00Z",
+              "source": "runtime_signal_binding",
+              "summary": "Missing deployment_release_identifier for deploy:181e9f0f770e4620"
+            },
+            {
+              "evidence_refs": [],
+              "id": "policy:run_20260528T220953_3d2330fe:promotion",
+              "kind": "PolicyDecision",
+              "metadata": {
+                "details": {
+                  "evaluated_graph_id": "delivery:run_20260528T220953_3d2330fe:pre-policy"
+                },
+                "gate_name": "delivery-promotion",
+                "hard_missing_evidence": [
+                  "deployment_image_or_artifact_digest",
+                  "release_git_commit",
+                  "release_image_digest",
+                  "release_provenance_packet_sha256"
+                ],
+                "missing_evidence": [
+                  "deployment_image_or_artifact_digest",
+                  "deployment_release_identifier",
+                  "release_git_commit",
+                  "release_image_digest",
+                  "release_provenance_packet_sha256"
+                ],
+                "mode": "observe",
+                "outcome": "require_approval",
+                "policy_exception_refs": [],
+                "subject_node_id": null
+              },
+              "observed_at": "2026-05-28T22:20:23Z",
+              "source": "delivery_policy_gate",
+              "summary": "delivery-promotion -> require_approval"
+            },
+            {
+              "evidence_refs": [
+                "run://run_20260528T220953_3d2330fe/events/evt_0007_bd306fa1"
+              ],
+              "id": "zaxy:evt_0007_bd306fa1",
+              "kind": "ZaxyMirror",
+              "metadata": {
+                "authoritative": false,
+                "citation_refs": [
+                  "run://run_20260528T220953_3d2330fe/events/evt_0007_bd306fa1"
+                ],
+                "enabled": false,
+                "eventloom_integrity": "mesh_merkle_bound",
+                "graph_available": false,
+                "merkle_root": "dc98db3bce9fc84792533fa187952eea34cf3ef519919311886ab8fe9528169a",
+                "mesh_event_id": "evt_0007_bd306fa1",
+                "projection_role": "mirror",
+                "rebuildable": true,
+                "redaction_status": "redacted",
+                "sequence": 7
+              },
+              "observed_at": "2026-05-28T22:18:41.231849+00:00",
+              "source": "zaxy_eventloom_mirror",
+              "summary": "Zaxy mirror for Mesh event evt_0007_bd306fa1"
+            }
+          ],
+          "schema_version": "mesh.delivery_context_graph.v1",
+          "service": "reth-mainnet-07",
+          "state_slice": "delivery-context-graph-contracts"
+        },
+        "delivery_context_summary": {
+          "agent_proposal_acceptance_rate": null,
+          "build_artifact_linked_to_ci_or_release_provenance_pct": 0.0,
+          "deployment_event_linked_to_build_artifact_pct": 0.0,
+          "edge_counts": {
+            "deployment_emits_runtime_signal": 1,
+            "node_has_evidence_gap": 5,
+            "policy_records_gap": 5,
+            "runtime_signal_informs_policy": 1,
+            "zaxy_mirrors_node": 1
+          },
+          "evidence_gap_count": 5,
+          "generated_at": "2026-05-28T22:20:23Z",
+          "graph_id": "delivery:run_20260528T220953_3d2330fe",
+          "node_counts": {
+            "BuildArtifact": 1,
+            "DeploymentEvent": 1,
+            "EvidenceGap": 5,
+            "PolicyDecision": 1,
+            "RuntimeSignal": 1,
+            "ZaxyMirror": 1
+          },
+          "node_ids": [
+            "build:44575cf5b28512d7",
+            "deploy:181e9f0f770e4620",
+            "gap:3f31873293d40180",
+            "gap:448b691a83d3d3fd",
+            "gap:674ad96abc8540af",
+            "gap:7bcfd1075a773ff7",
+            "gap:e382396b780b4190",
+            "policy:run_20260528T220953_3d2330fe:promotion",
+            "runtime:4d8aa8d0b54a62cc",
+            "zaxy:evt_0007_bd306fa1"
+          ],
+          "policy_hold_ids": [
+            "policy:run_20260528T220953_3d2330fe:promotion"
+          ],
+          "promotion_holds_caused_by_missing_evidence": 1,
+          "runtime_signal_linked_to_deployment_pct": 100.0,
+          "schema_version": "mesh.delivery_context_summary.v1",
+          "unlinked_build_artifact_ids": [
+            "build:44575cf5b28512d7"
+          ],
+          "unlinked_deployment_event_ids": [
+            "deploy:181e9f0f770e4620"
+          ],
+          "unlinked_runtime_signal_ids": [],
+          "zaxy_mirror_count": 1
+        },
+        "input_signal": {
+          "comparison_window": {
+            "baseline": "PT1H",
+            "observed": "PT5M"
+          },
+          "consensus": {
+            "client_healthy": true,
+            "client_kind": "lighthouse",
+            "consensus_client": "lighthouse",
+            "engine_api_reachable": true,
+            "forkchoice_updates_recent": true,
+            "jwt_configured": true,
+            "jwt_secret_exists": true,
+            "jwt_secret_mode": "0600"
+          },
+          "endpoint": "reth.rpc",
+          "environment": "production",
+          "execution": {
+            "block_lag": 0,
+            "finalized_block": null,
+            "head_block": 19234567,
+            "max_block_lag": 32,
+            "min_peer_count": 3,
+            "peer_count": 0,
+            "safe_block": null,
+            "syncing": false
+          },
+          "logs": {
+            "error_signatures": [],
+            "recent_errors": [
+              "no peers connected for 4m20s; entering peer_starvation state"
+            ]
+          },
+          "node": {
+            "client_version": "reth/v1.0.6",
+            "data_dir": "/var/lib/reth",
+            "deployment_mode": "systemd",
+            "jwt_secret_path": "/etc/reth/jwt.hex",
+            "name": "reth-mainnet-07",
+            "network": "mainnet",
+            "role": "rpc"
+          },
+          "observed_at": "2026-04-26T12:00:00Z",
+          "post_action_observations": {},
+          "related_context": {
+            "host": "vault-prod-07",
+            "node_kind": "reth",
+            "systemd_restarts_last_1h": 0,
+            "systemd_service": "reth.service"
+          },
+          "resource_attributes": {
+            "deployment.environment": "production",
+            "mesh.node.deployment_mode": "systemd",
+            "mesh.node.host": "vault-prod-07",
+            "mesh.node.kind": "reth",
+            "mesh.node.max_block_lag": 32,
+            "mesh.node.min_peer_count": 3,
+            "mesh.node.network": "mainnet",
+            "mesh.node.role": "rpc",
+            "mesh.node.service": "reth.service",
+            "service.name": "reth-mainnet-07"
+          },
+          "rpc": {
+            "authrpc_publicly_exposed": false,
+            "error_rate": 0.0,
+            "http_reachable": true,
+            "latency_ms": 32.0,
+            "publicly_exposed": false
+          },
+          "segment": {
+            "customer_tier": "system",
+            "region": "us-east-1"
+          },
+          "service": "reth-mainnet-07",
+          "signal_id": "sig_reth_peer_starvation_001_4e5a078e61",
+          "signal_type": "reth_node",
+          "storage": {
+            "data_dir_free_bytes": 549755813888,
+            "db_growth_rate_bytes_per_hour": null,
+            "diagnostic_source": "ssh_df",
+            "disk_used_pct": 62.0,
+            "snapshot_mode": "none"
+          }
+        },
+        "integration_readiness": {
+          "blocker_details": {},
+          "blockers": [],
+          "centaur": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled (MESH_AGENT_FABRIC_MODE is not centaur)",
+            "fallback_route": null,
+            "name": "centaur",
+            "posture": "source-input sandbox proposal fabric",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "pilot",
+            "url": null,
+            "warnings": []
+          },
+          "checked_at": "2026-05-28T22:09:53Z",
+          "connector_certification": {
+            "airflow": {
+              "allowed_scopes": [
+                "dag-read",
+                "task-state-read",
+                "proposal"
+              ],
+              "authority_posture": "DAG state can inform Mesh evaluation but cannot approve or execute production actions",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "airflow",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Airflow admin token, production actuator credential, or repo write token in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Airflow DAG evidence",
+              "display_name": "Apache Airflow orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "audit_sink": {
+              "allowed_scopes": [
+                "local-audit"
+              ],
+              "authority_posture": "local audit continuity for staging; external append-only sink proof is required before expansion or compliance reliance",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "audit_sink",
+              "credential_boundary": {
+                "break_glass_recording_required": true,
+                "credential_mode": "runtime-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": "docs/release-provenance.md#release-assurance-packet",
+                "runtime_secret_mount_required": true,
+                "service_account_ref": "serviceaccount://mesh/audit-sink-writer"
+              },
+              "credential_policy": "external sink credentials remain platform secrets",
+              "degraded_behavior": "keep local Merkle and run export audit path; expansion readiness blocks external compliance reliance until external proof and certification are mounted",
+              "display_name": "External audit sink",
+              "domain": "audit",
+              "evidence_refs": [
+                "docs/production-hardening-records.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "centaur": {
+              "allowed_scopes": [
+                "proposal",
+                "read-only-investigation"
+              ],
+              "authority_posture": "source-input sandbox proposal-only fabric",
+              "blockers": [
+                "centaur_connector_probe_not_ready"
+              ],
+              "certified_state": "proposal-only",
+              "connector_id": "centaur",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "placeholder-only credentials behind credential-egress policy",
+              "degraded_behavior": "fall back to Mesh-native proposal routing when Centaur endpoint or credential-egress proof is unavailable",
+              "display_name": "Centaur source-input sandbox fabric",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/centaur-source-input.md",
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "pilot",
+              "state": "disabled"
+            },
+            "claudecode": {
+              "allowed_scopes": [
+                "review",
+                "risk-analysis",
+                "proposal"
+              ],
+              "authority_posture": "review and risk analysis only; Mesh owns policy and promotion",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "claudecode",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no repository write credentials or production actuator credentials in run artifacts",
+              "degraded_behavior": "skip review lane and keep deterministic evaluation online",
+              "display_name": "Claude Code review lane",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "staging",
+              "state": "staging-ready"
+            },
+            "codex": {
+              "allowed_scopes": [
+                "patch-proposal",
+                "review",
+                "proposal"
+              ],
+              "authority_posture": "sandboxed patch proposals only; Mesh owns repo writes, tests, policy, and promotion",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "codex",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no repository write credentials or production actuator credentials in run artifacts",
+              "degraded_behavior": "skip code proposal lane and keep deterministic evaluation online",
+              "display_name": "Codex patch proposal lane",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "staging",
+              "state": "staging-ready"
+            },
+            "dagster": {
+              "allowed_scopes": [
+                "asset-read",
+                "lineage-read",
+                "proposal"
+              ],
+              "authority_posture": "asset lineage and checks can inform Mesh evaluation but cannot override Mesh policy",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "dagster",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Dagster launch or repository write credential in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Dagster asset lineage",
+              "display_name": "Dagster orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "deepagents": {
+              "allowed_scopes": [
+                "proposal"
+              ],
+              "authority_posture": "sandboxed proposal-only fabric",
+              "blockers": [
+                "deepagents_connector_probe_not_ready"
+              ],
+              "certified_state": "staging-ready",
+              "connector_id": "deepagents",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "workspace-scoped credentials only; no production actuator credentials",
+              "degraded_behavior": "keep Mesh-native proposal routing online and skip external Deep Agents execution when unavailable",
+              "display_name": "Deep Agents fabric",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agentic-operator-core-import-plan.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "pilot",
+              "state": "disabled"
+            },
+            "eventloom": {
+              "allowed_scopes": [
+                "event-mirror"
+              ],
+              "authority_posture": "append-only audit mirror; Mesh event log and Merkle roots remain authoritative",
+              "blockers": [
+                "eventloom_connector_probe_not_ready"
+              ],
+              "certified_state": "read-only",
+              "connector_id": "eventloom",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "event sink credentials remain runtime secrets",
+              "degraded_behavior": "buffer to optional outbox when configured and keep Mesh runs online",
+              "display_name": "Zaxy Eventloom mirror",
+              "domain": "audit",
+              "evidence_refs": [
+                "docs/memory-architecture.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "expansion",
+              "state": "disabled"
+            },
+            "feature_flag_adapter": {
+              "allowed_scopes": [
+                "dry-run",
+                "proposal"
+              ],
+              "authority_posture": "staging dry-run and proposal adapter only; not certified for pilot mutation",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "feature_flag_adapter",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "none",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production flag-provider write credentials without provider proof",
+              "degraded_behavior": "keep deterministic dry-run behavior online; pilot readiness blocks when credentials are presented without provider proof",
+              "display_name": "Feature flag adapter",
+              "domain": "execution",
+              "evidence_refs": [
+                "docs/reference-architectures.md"
+              ],
+              "observed_state": "unfinished",
+              "required_before": "pilot",
+              "state": "unfinished"
+            },
+            "flyte": {
+              "allowed_scopes": [
+                "execution-read",
+                "cache-read",
+                "version-read",
+                "proposal"
+              ],
+              "authority_posture": "ML workflow versioning and cache evidence can inform Mesh evaluation but not approve execution",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "flyte",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Flyte launch or Kubernetes mutation credential in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Flyte reproducibility evidence",
+              "display_name": "Flyte orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "goose": {
+              "allowed_scopes": [
+                "review",
+                "proposal"
+              ],
+              "authority_posture": "review and proposal only",
+              "blockers": [
+                "goose_connector_probe_not_ready"
+              ],
+              "certified_state": "staging-ready",
+              "connector_id": "goose",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production actuator credentials",
+              "degraded_behavior": "continue deterministic RCA and evaluation",
+              "display_name": "Goose review lane",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agentic-operator-core-import-plan.md"
+              ],
+              "observed_state": "mock",
+              "required_before": "staging",
+              "state": "mock"
+            },
+            "hermes": {
+              "allowed_scopes": [
+                "explain",
+                "proposal"
+              ],
+              "authority_posture": "advisory explanations and proposals only",
+              "blockers": [
+                "hermes_connector_probe_not_ready"
+              ],
+              "certified_state": "staging-ready",
+              "connector_id": "hermes",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production actuator credentials",
+              "degraded_behavior": "use native explanation path",
+              "display_name": "Hermes proposal lane",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agentic-operator-core-import-plan.md"
+              ],
+              "observed_state": "mock",
+              "required_before": "staging",
+              "state": "mock"
+            },
+            "incident_adapter": {
+              "allowed_scopes": [
+                "fixture-intake",
+                "proposal"
+              ],
+              "authority_posture": "staging fixture intake and proposal adapter only; not certified for pilot intake",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "incident_adapter",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "none",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production incident-provider credentials without provider proof",
+              "degraded_behavior": "keep deterministic fixture intake online; pilot readiness blocks when credentials are presented without provider proof",
+              "display_name": "Incident adapter",
+              "domain": "ingest",
+              "evidence_refs": [
+                "docs/reference-architectures.md"
+              ],
+              "observed_state": "unfinished",
+              "required_before": "pilot",
+              "state": "unfinished"
+            },
+            "kubernetes": {
+              "allowed_scopes": [
+                "read-only",
+                "rollout-restart",
+                "rollback",
+                "orchestration-evidence",
+                "operator-proposal"
+              ],
+              "authority_posture": "live execution requires explicit context and namespace allowlists",
+              "blockers": [],
+              "certified_state": "pilot-ready",
+              "connector_id": "kubernetes",
+              "credential_boundary": {
+                "break_glass_recording_required": true,
+                "credential_mode": "runtime-secret",
+                "production_actuator_credentials_allowed": true,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+                "runtime_secret_mount_required": true,
+                "service_account_ref": "serviceaccount://mesh/pilot-kubernetes-actuator"
+              },
+              "credential_policy": "runtime secret mount only; no kubeconfig or bearer token may be written to run artifacts",
+              "degraded_behavior": "fall back to read-only evidence collection and operator approval without live mutation",
+              "display_name": "Kubernetes actuator",
+              "domain": "execution",
+              "evidence_refs": [
+                "docs/authenticated-ingress.md",
+                "docs/postgres-restart-proof.md",
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "mock",
+              "required_before": "pilot",
+              "state": "mock"
+            },
+            "langgraph_checkpointing": {
+              "allowed_scopes": [
+                "checkpoint-read",
+                "checkpoint-write",
+                "proposal"
+              ],
+              "authority_posture": "proposal workflow checkpointing only; Mesh owns policy, approval, tests, audit, and actuation",
+              "blockers": [
+                "langgraph_checkpointing_connector_probe_not_ready"
+              ],
+              "certified_state": "proposal-only",
+              "connector_id": "langgraph_checkpointing",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "checkpointer credentials remain runtime secrets and cannot grant production authority",
+              "degraded_behavior": "record failed proposal attempts and keep Mesh-native proposal routing online",
+              "display_name": "LangGraph checkpointing",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "pilot",
+              "state": "disabled"
+            },
+            "latentmas": {
+              "allowed_scopes": [
+                "proposal"
+              ],
+              "authority_posture": "model lifecycle advisory lane",
+              "blockers": [
+                "latentmas_connector_probe_not_ready"
+              ],
+              "certified_state": "staging-ready",
+              "connector_id": "latentmas",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production actuator credentials",
+              "degraded_behavior": "keep Mesh-native advisory routing online and skip external sidecar inference when unavailable",
+              "display_name": "LatentMAS",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/reference-architectures.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "pilot",
+              "state": "disabled"
+            },
+            "luigi": {
+              "allowed_scopes": [
+                "task-read",
+                "dependency-read",
+                "proposal"
+              ],
+              "authority_posture": "task dependency state can inform Mesh evaluation but cannot approve or execute actions",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "luigi",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no scheduler mutation or repository write credential in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Luigi scheduler evidence",
+              "display_name": "Luigi orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "n8n": {
+              "allowed_scopes": [
+                "workflow-read",
+                "execution-trace-read",
+                "proposal"
+              ],
+              "authority_posture": "workflow node traces can inform Mesh evaluation but n8n cannot hold production authority",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "n8n",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no n8n credential export, node credential, or production actuator credential in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without n8n node execution traces",
+              "display_name": "n8n orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "neo4j_projection": {
+              "allowed_scopes": [
+                "graph-read",
+                "projection-write"
+              ],
+              "authority_posture": "temporal graph projection only; not a control-plane backend",
+              "blockers": [
+                "neo4j_projection_connector_probe_not_ready"
+              ],
+              "certified_state": "read-only",
+              "connector_id": "neo4j_projection",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "graph credentials remain runtime secrets",
+              "degraded_behavior": "skip projection and keep canonical Mesh memory retrieval online",
+              "display_name": "Zaxy Neo4j projection",
+              "domain": "memory",
+              "evidence_refs": [
+                "docs/memory-architecture.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "expansion",
+              "state": "disabled"
+            },
+            "oozie": {
+              "allowed_scopes": [
+                "workflow-read",
+                "action-state-read",
+                "proposal"
+              ],
+              "authority_posture": "Hadoop workflow action state can inform Mesh evaluation but cannot override Mesh policy",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "oozie",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Hadoop mutation, Hive mutation, or Kerberos material in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Oozie workflow evidence",
+              "display_name": "Apache Oozie orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "openclaw": {
+              "allowed_scopes": [
+                "staging-validation",
+                "proposal"
+              ],
+              "authority_posture": "staging validation proposals only; no direct cluster actuation",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "openclaw",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production actuator credentials or kubeconfig material in run artifacts",
+              "degraded_behavior": "skip staging validation lane and rely on Mesh readiness and Kubernetes evidence",
+              "display_name": "OpenClaw staging validation lane",
+              "domain": "agent",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "staging",
+              "state": "staging-ready"
+            },
+            "otel": {
+              "allowed_scopes": [
+                "metrics-read",
+                "feedback-proof"
+              ],
+              "authority_posture": "read-only telemetry evidence",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "otel",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+                "runtime_secret_mount_required": true,
+                "service_account_ref": "serviceaccount://mesh/telemetry-reader"
+              },
+              "credential_policy": "OTLP receiver requires bearer token when enabled",
+              "degraded_behavior": "block live feedback readiness and keep deterministic fixture evaluation",
+              "display_name": "OpenTelemetry and Prometheus",
+              "domain": "evidence",
+              "evidence_refs": [
+                "docs/pilot-slo-error-budget.md"
+              ],
+              "observed_state": "mock",
+              "required_before": "staging",
+              "state": "mock"
+            },
+            "prefect": {
+              "allowed_scopes": [
+                "flow-read",
+                "task-state-read",
+                "proposal"
+              ],
+              "authority_posture": "flow and task state can inform Mesh evaluation while Mesh owns approval and actuation",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "prefect",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Prefect deployment mutation credential in run artifacts",
+              "degraded_behavior": "continue Mesh-native evaluation without Prefect flow evidence",
+              "display_name": "Prefect orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "promptfoo": {
+              "allowed_scopes": [
+                "eval-read",
+                "contract-check"
+              ],
+              "authority_posture": "evaluation adapter only; Mesh policy remains authoritative",
+              "blockers": [
+                "promptfoo_connector_probe_not_ready"
+              ],
+              "certified_state": "staging-ready",
+              "connector_id": "promptfoo",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "none",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no production actuator credentials",
+              "degraded_behavior": "use Mesh-native evaluator",
+              "display_name": "Promptfoo bridge",
+              "domain": "evaluation",
+              "evidence_refs": [
+                "docs/evaluation-kits.md"
+              ],
+              "observed_state": "mock",
+              "required_before": "staging",
+              "state": "mock"
+            },
+            "temporal": {
+              "allowed_scopes": [
+                "workflow-read",
+                "activity-history-read",
+                "proposal"
+              ],
+              "authority_posture": "workflow and activity history can inform Mesh durability checks but Mesh owns policy and actuation",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "temporal",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "proposal-workspace",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "no Temporal namespace mutation token unless a future connector is certified for a bounded action class",
+              "degraded_behavior": "continue Mesh-native retry and idempotency evaluation without Temporal history",
+              "display_name": "Temporal orchestration lane",
+              "domain": "orchestration",
+              "evidence_refs": [
+                "docs/agent-mesh.md"
+              ],
+              "observed_state": "staging-ready",
+              "required_before": "expansion",
+              "state": "staging-ready"
+            },
+            "webhooks": {
+              "allowed_scopes": [
+                "alert-intake"
+              ],
+              "authority_posture": "signal intake only",
+              "blockers": [],
+              "certified_state": "staging-ready",
+              "connector_id": "webhooks",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": "docs/authenticated-ingress.md#runtime-secret-handling",
+                "runtime_secret_mount_required": true,
+                "service_account_ref": "serviceaccount://mesh/webhook-intake"
+              },
+              "credential_policy": "source HMAC secrets remain outside run artifacts",
+              "degraded_behavior": "reject unsigned sources and keep fixture/local ingest available",
+              "display_name": "Signed webhooks",
+              "domain": "ingest",
+              "evidence_refs": [
+                "docs/deployment-compatibility.md"
+              ],
+              "observed_state": "read-only",
+              "required_before": "staging",
+              "state": "read-only"
+            },
+            "zaxy": {
+              "allowed_scopes": [
+                "memory-read",
+                "event-mirror"
+              ],
+              "authority_posture": "memory sidecar only; Mesh state store and memory verifier remain authoritative",
+              "blockers": [
+                "zaxy_connector_probe_not_ready"
+              ],
+              "certified_state": "read-only",
+              "connector_id": "zaxy",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "sidecar credentials remain runtime secrets and cannot grant actuation or repository write authority",
+              "degraded_behavior": "keep Mesh-native state, memory retrieval, and run execution online",
+              "display_name": "Zaxy memory sidecar",
+              "domain": "memory",
+              "evidence_refs": [
+                "docs/memory-architecture.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "expansion",
+              "state": "disabled"
+            },
+            "zaxy_mcp": {
+              "allowed_scopes": [
+                "memory-checkout"
+              ],
+              "authority_posture": "bounded memory checkout only; checkout candidates require Mesh verification",
+              "blockers": [
+                "zaxy_mcp_connector_probe_not_ready"
+              ],
+              "certified_state": "read-only",
+              "connector_id": "zaxy_mcp",
+              "credential_boundary": {
+                "break_glass_recording_required": false,
+                "credential_mode": "read-only-secret",
+                "production_actuator_credentials_allowed": false,
+                "repo_write_credentials_allowed": false,
+                "rotation_evidence_ref": null,
+                "runtime_secret_mount_required": false,
+                "service_account_ref": null
+              },
+              "credential_policy": "MCP credentials remain runtime secrets and cannot grant production authority",
+              "degraded_behavior": "record checkout diagnostics and keep verified Mesh memory packets online",
+              "display_name": "Zaxy MCP memory checkout",
+              "domain": "memory",
+              "evidence_refs": [
+                "docs/memory-architecture.md"
+              ],
+              "observed_state": "disabled",
+              "required_before": "expansion",
+              "state": "disabled"
+            }
+          },
+          "deepagents": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled (MESH_AGENT_FABRIC_MODE is not deepagents)",
+            "fallback_route": null,
+            "name": "deepagents",
+            "posture": "sandboxed proposal fabric",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "pilot",
+            "url": null,
+            "warnings": []
+          },
+          "eventloom": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "eventloom",
+            "posture": "audit mirror sidecar",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "expansion",
+            "url": null,
+            "warnings": []
+          },
+          "goose": {
+            "certification": "mock",
+            "command": "/Users/shaanp/.pyenv/versions/3.14.5/bin/python3 -m services.orchestrator.goose_bridge --goose-bin /missing/goose",
+            "detail": "configured Goose bridge with the default Goose profile; probe=Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 470, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 47, in main\n    raise SystemExit(_passthrough(args, [\"--version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 212, in _passthrough\n    completed = subprocess.run(\n        [args.goose_bin] + extra_args,\n    ...<3 lines>...\n        env=_command_env(None),\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/goose'",
+            "fallback_route": null,
+            "name": "goose",
+            "posture": "review lane",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "staging",
+            "url": null,
+            "warnings": []
+          },
+          "hermes": {
+            "certification": "mock",
+            "command": "/Users/shaanp/.pyenv/versions/3.14.5/bin/python3 -m services.orchestrator.hermes_bridge --hermes-command /missing/hermes",
+            "detail": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 613, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 62, in main\n    raise SystemExit(_passthrough(args, [\"version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 212, in _passthrough\n    completed = subprocess.run(\n        _resolve_command(args) + extra_args,\n    ...<2 lines>...\n        text=True,\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/hermes'",
+            "fallback_route": null,
+            "name": "hermes",
+            "posture": "proposal lane",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "staging",
+            "url": null,
+            "warnings": []
+          },
+          "integrations_config_path": "/Users/shaanp/Documents/venture/lusis-mesh/.showcase-state/integrations.json",
+          "langgraph_checkpointing": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "langgraph_checkpointing",
+            "posture": "proposal checkpointing",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "pilot",
+            "url": null,
+            "warnings": []
+          },
+          "latentmas": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "latentmas",
+            "posture": "model-lifecycle advisory lane",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "pilot",
+            "url": null,
+            "warnings": []
+          },
+          "neo4j_projection": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "neo4j_projection",
+            "posture": "temporal graph projection",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "expansion",
+            "url": null,
+            "warnings": []
+          },
+          "optional_checks": {
+            "centaur": {
+              "certification": "disabled",
+              "detail": "disabled (MESH_AGENT_FABRIC_MODE is not centaur)",
+              "ready": false
+            },
+            "deepagents": {
+              "certification": "disabled",
+              "detail": "disabled (MESH_AGENT_FABRIC_MODE is not deepagents)",
+              "ready": false
+            },
+            "eventloom": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            },
+            "goose": {
+              "certification": "mock",
+              "detail": "configured Goose bridge with the default Goose profile; probe=Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 470, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 47, in main\n    raise SystemExit(_passthrough(args, [\"--version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/goose_bridge.py\", line 212, in _passthrough\n    completed = subprocess.run(\n        [args.goose_bin] + extra_args,\n    ...<3 lines>...\n        env=_command_env(None),\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/goose'",
+              "ready": false
+            },
+            "hermes": {
+              "certification": "mock",
+              "detail": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 613, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 62, in main\n    raise SystemExit(_passthrough(args, [\"version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/orchestrator/hermes_bridge.py\", line 212, in _passthrough\n    completed = subprocess.run(\n        _resolve_command(args) + extra_args,\n    ...<2 lines>...\n        text=True,\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/hermes'",
+              "ready": false
+            },
+            "langgraph_checkpointing": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            },
+            "latentmas": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            },
+            "neo4j_projection": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            },
+            "promptfoo": {
+              "certification": "mock",
+              "detail": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 353, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 33, in main\n    raise SystemExit(_passthrough(args.promptfoo_bin, [\"--version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 50, in _passthrough\n    completed = subprocess.run(\n        [promptfoo_bin] + extra_args,\n    ...<2 lines>...\n        text=True,\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/promptfoo'",
+              "ready": false
+            },
+            "zaxy": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            },
+            "zaxy_mcp": {
+              "certification": "disabled",
+              "detail": "disabled",
+              "ready": false
+            }
+          },
+          "orchestration_topology": {
+            "active_topologies": [
+              "centralized",
+              "decentralized",
+              "federated",
+              "hierarchical",
+              "hybrid"
+            ],
+            "active_topology": "centralized",
+            "blockers": [],
+            "model_provider_policy": {
+              "allowed_models": [
+                {
+                  "model": "MiniMax-M2.7",
+                  "provider": "openai-compatible"
+                },
+                {
+                  "model": "MiniMax-M2.5",
+                  "provider": "openai-compatible"
+                },
+                {
+                  "model": "Qwen/Qwen3-4B",
+                  "provider": "huggingface"
+                }
+              ],
+              "allowed_providers": [
+                "openai-compatible",
+                "openai",
+                "anthropic",
+                "huggingface",
+                "ollama",
+                "local"
+              ],
+              "lane_defaults": {
+                "deepagents": {
+                  "model": "MiniMax-M2.7",
+                  "provider": "openai-compatible",
+                  "route": "deepagents_sandbox",
+                  "secret_ref_envs": [
+                    "OPENAI_API_KEY",
+                    "MINIMAX_API_KEY"
+                  ]
+                },
+                "goose": {
+                  "model": "MiniMax-M2.5",
+                  "provider": "openai-compatible",
+                  "route": "goose_bridge",
+                  "secret_ref_envs": [
+                    "OPENAI_API_KEY",
+                    "MINIMAX_API_KEY"
+                  ]
+                },
+                "hermes": {
+                  "model": "MiniMax-M2.5",
+                  "provider": "openai-compatible",
+                  "route": "hermes_bridge",
+                  "secret_ref_envs": [
+                    "OPENAI_API_KEY",
+                    "MINIMAX_API_KEY"
+                  ]
+                },
+                "latentmas": {
+                  "model": "Qwen/Qwen3-4B",
+                  "provider": "huggingface",
+                  "route": "latentmas_http",
+                  "secret_ref_envs": []
+                }
+              }
+            },
+            "org_profile_ready": true,
+            "organization_profile": {
+              "allowed_model_count": 3,
+              "allowed_model_providers": [
+                "openai-compatible",
+                "openai",
+                "anthropic",
+                "huggingface",
+                "ollama",
+                "local"
+              ],
+              "autonomy_tier": "approval_required",
+              "data_boundaries": [
+                "tenant_a_operational",
+                "tenant_a_model_evidence"
+              ],
+              "deployment_substrates": [
+                "kubernetes",
+                "workflow",
+                "data",
+                "ml"
+              ],
+              "domain": "platform_sre",
+              "preferred_agents": [
+                "hermes",
+                "goose",
+                "codex",
+                "claudecode",
+                "openclaw",
+                "temporal",
+                "kubernetes",
+                "dagster",
+                "prefect",
+                "flyte",
+                "latentmas"
+              ],
+              "team_count": 2,
+              "tenant_count": 1
+            },
+            "path": "/Users/shaanp/Documents/venture/lusis-mesh/config/orchestration-topology.profile.json",
+            "ready": true,
+            "required_evidence_refs": [
+              "config/ownership.registry.json",
+              "config/connector-certification.registry.json",
+              "config/policy-lifecycle.manifest.json",
+              "config/threat-model.register.json",
+              "/api/readiness",
+              "state://runs",
+              "state://learning/trust_ladder.json"
+            ],
+            "rule_count": 5,
+            "source_refs": {
+              "connector_certification_registry": "config/connector-certification.registry.json",
+              "historical_outcomes": "state://runs",
+              "ownership_registry": "config/ownership.registry.json",
+              "policy_lifecycle_manifest": "config/policy-lifecycle.manifest.json",
+              "readiness": "/api/readiness",
+              "service_agent_registry": "state://service-agents",
+              "threat_model_register": "config/threat-model.register.json",
+              "trust_ladder": "state://learning/trust_ladder.json"
+            },
+            "version": "mesh.orchestration_topology_profile.v1"
+          },
+          "profile": "local",
+          "promptfoo": {
+            "certification": "mock",
+            "command": "/Users/shaanp/.pyenv/versions/3.14.5/bin/python3 -m services.evaluation.promptfoo_bridge --promptfoo-bin /missing/promptfoo",
+            "detail": "Traceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 353, in <module>\n    main()\n    ~~~~^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 33, in main\n    raise SystemExit(_passthrough(args.promptfoo_bin, [\"--version\"]))\n                     ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/Documents/venture/lusis-mesh/services/evaluation/promptfoo_bridge.py\", line 50, in _passthrough\n    completed = subprocess.run(\n        [promptfoo_bin] + extra_args,\n    ...<2 lines>...\n        text=True,\n    )\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 555, in run\n    with Popen(*popenargs, **kwargs) as process:\n         ~~~~~^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1039, in __init__\n    self._execute_child(args, executable, preexec_fn, close_fds,\n    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n                        pass_fds, cwd, env,\n                        ^^^^^^^^^^^^^^^^^^^\n    ...<5 lines>...\n                        gid, gids, uid, umask,\n                        ^^^^^^^^^^^^^^^^^^^^^^\n                        start_new_session, process_group)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/shaanp/.pyenv/versions/3.14.5/lib/python3.14/subprocess.py\", line 1990, in _execute_child\n    raise child_exception_type(errno_num, err_msg, err_filename)\nFileNotFoundError: [Errno 2] No such file or directory: '/missing/promptfoo'",
+            "fallback_route": null,
+            "name": "promptfoo",
+            "posture": "evaluation gate",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "staging",
+            "url": null,
+            "warnings": []
+          },
+          "required_checks": {
+            "security_headers_enabled": true,
+            "state_path_configured": true,
+            "vault_path_configured": true
+          },
+          "state_path": "/Users/shaanp/Documents/venture/lusis-mesh/.showcase-state/state",
+          "status": "ready",
+          "vault_path": "/Users/shaanp/Documents/venture/lusis-mesh/.showcase-state/vault",
+          "zaxy": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "zaxy",
+            "posture": "memory sidecar",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "expansion",
+            "url": null,
+            "warnings": []
+          },
+          "zaxy_mcp": {
+            "certification": "disabled",
+            "command": null,
+            "detail": "disabled",
+            "fallback_route": null,
+            "name": "zaxy_mcp",
+            "posture": "bounded memory checkout",
+            "primary_route": null,
+            "ready": false,
+            "required_before": "expansion",
+            "url": null,
+            "warnings": []
+          }
+        },
+        "operator": {
+          "operator_id": "showcase-demo@example.com",
+          "roles": [
+            "admin",
+            "approver",
+            "launcher",
+            "viewer"
+          ],
+          "source": "operator_session",
+          "source_ip": "127.0.0.1"
+        },
+        "operator_audit": {
+          "operator_id": "showcase-demo@example.com",
+          "reason": "UI/UX audit test",
+          "recorded_at": "2026-05-28T22:09:53.348491+00:00",
+          "state_slice": "meshapp.run-admission-launch.v1"
+        },
+        "ownership_boundary": {
+          "allowed_action_classes": [],
+          "approver_roles": [],
+          "blockers": [
+            "ownership_record_missing"
+          ],
+          "boundary_version": "ownership.boundary.v1",
+          "customer_boundary": "unknown",
+          "customer_id": "unknown",
+          "data_boundary": {
+            "classification": "unknown",
+            "export_allowed": false,
+            "export_policy": {
+              "allowed": false,
+              "allowed_destinations": [],
+              "redaction_required": true
+            },
+            "legal_action_scope": {
+              "allowed": false,
+              "authority_ref": "unresolved",
+              "review_required": true
+            },
+            "reservoir_refs": [],
+            "retention_days": 0
+          },
+          "environment": "production",
+          "escalation_route": "",
+          "namespace": "unknown",
+          "owner": {
+            "owner_id": "unassigned",
+            "source_refs": []
+          },
+          "policy_refs": [],
+          "record_id": "unresolved",
+          "resolved": false,
+          "rollback_authority": {},
+          "service": "reth-mainnet-07",
+          "source_refs": [
+            "file:///Users/shaanp/Documents/venture/lusis-mesh/config/ownership.registry.json"
+          ],
+          "tenant_id": "unknown"
+        },
+        "run_admission": {
+          "blockers": [],
+          "decision": "admitted",
+          "generated_at": "2026-05-28T22:09:53Z",
+          "lock": {
+            "granted": true,
+            "holder_run_id": null
+          },
+          "queue": {
+            "current_depth": 0,
+            "max_size": 100,
+            "worker_count": 4
+          },
+          "quotas": {
+            "tenant_active_run_quota": 4,
+            "tenant_active_runs": 0
+          },
+          "run_id": "run_20260528T220953_3d2330fe",
+          "schema_version": "mesh.run_admission.v1",
+          "target_lock_key": "unknown:production:reth-mainnet-07",
+          "tenant_id": "unknown"
+        },
+        "simulation_context": {
+          "model_binding": "openai-compatible:MiniMax-M2.7",
+          "operator_preferences_ref": "mesh.operator-preferences.v1",
+          "preferred_agents": [
+            "hermes",
+            "goose",
+            "kubernetes"
+          ],
+          "state_slice": "meshapp.run-preflight.v1",
+          "target": {
+            "environment": "pilot",
+            "lockRequired": false,
+            "namespace": "search",
+            "service": "semantic-search"
+          }
+        }
+      },
+      "auto_mode": false,
+      "created_at": "2026-05-28T22:09:53.348506+00:00",
+      "error": "$: unexpected fields ['endpoint']",
+      "evaluation_mode": "native",
+      "goal_id": "goal_default",
+      "latest_event_id": "evt_0007_bd306fa1",
+      "latest_event_sequence": 7,
+      "latest_merkle_root": "dc98db3bce9fc84792533fa187952eea34cf3ef519919311886ab8fe9528169a",
+      "operator_notes": [],
+      "orchestration_mode": "native",
+      "pause_points": [],
+      "pending_pause_stage": null,
+      "run_id": "run_20260528T220953_3d2330fe",
+      "scenario_key": "reth_peer_starvation",
+      "stage": "failed",
+      "status": "failed",
+      "steering_mode": "approval_gate",
+      "updated_at": "2026-05-28T22:20:23.992129+00:00"
+    }
+  ]
+}

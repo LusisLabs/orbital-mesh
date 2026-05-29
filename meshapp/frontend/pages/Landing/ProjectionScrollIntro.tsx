@@ -132,7 +132,7 @@ const ProjectionScrollIntro = ({ onComplete }: ProjectionScrollIntroProps): Reac
   }, []);
 
   return (
-    <main ref={scrollRef} className={`${styles.root} ${exiting ? styles.exiting : ""}`} aria-label="Cerebral Systems landing page">
+    <main ref={scrollRef} className={`${styles.root} ${exiting ? styles.exiting : ""}`} aria-label="Lusis Mesh landing page">
       {onComplete ? (
         <button className={styles.skip} onClick={finishIntro} type="button">
           Enter demo
@@ -142,13 +142,13 @@ const ProjectionScrollIntro = ({ onComplete }: ProjectionScrollIntroProps): Reac
       <section className={styles.projectionHero}>
         <AsciiFlowCanvas progress={progress} />
         <FractureRingCanvas progress={progress} />
-        <div className={styles.heroCopy} aria-label="Cerebral Systems introduction">
+        <div className={styles.heroCopy} aria-label="Lusis Mesh introduction">
           <div>
-            <p className={styles.eyebrow}>Cerebral Systems</p>
+            <p className={styles.eyebrow}>Lusis Mesh</p>
             <h1>A single brain for deployment and maintenance.</h1>
             <p className={styles.summary}>
-              LLMs made code generation faster than the operational work around it. Cerebral Systems handles the infrastructure,
-              deployment, and production maintenance context that still slows teams down.
+              LLMs made code generation faster than the operational work around it. Lusis Mesh handles infrastructure, deployment,
+              and production maintenance context so teams can ship with governed, inspectable action.
             </p>
             <div className={styles.heroActions}>
               <a className={`${styles.button} ${styles.primary}`} href={APP_SIGN_IN_URL}>
@@ -169,11 +169,11 @@ const ProjectionScrollIntro = ({ onComplete }: ProjectionScrollIntroProps): Reac
       <div className={styles.companyHub}>
         <section className={styles.productHero} id="praxis">
           <div>
-            <p className={styles.eyebrow}>Cerebral Systems / Praxis</p>
-            <h2>The operating brain after code is written.</h2>
+            <p className={styles.eyebrow}>Lusis Mesh / Praxis</p>
+            <h2>The operating nervous system after code is written.</h2>
             <p className={styles.lede}>
               Software teams have adopted LLM-powered code generation, but the hard work still piles up around releases, cloud
-              configuration, reliability, and follow-through. Praxis is the Cerebral Systems demo for a proactive brain that carries
+              configuration, reliability, and follow-through. Praxis is the Lusis Mesh entry point for a proactive nervous system that carries
               context across those surfaces and turns scattered operational state into governed action.
             </p>
             <div aria-label="What Praxis is" className={styles.answerGrid}>
@@ -283,7 +283,7 @@ history:  incident-2406 resolved by rollback`}</pre>
         </section>
 
         <section id="products">
-          <p className={styles.kicker}>Cerebral Systems surface</p>
+          <p className={styles.kicker}>Lusis Mesh surface</p>
           <h2>One control plane over the tools teams already use.</h2>
           <div className={styles.stackGrid}>
             {stackItems.map(({ detail, meta, tag, title }) => (

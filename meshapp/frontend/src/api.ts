@@ -1,3 +1,5 @@
+import { normalizeLoopbackBaseUrl } from "./product/api";
+
 import type {
   ApprovalQueuePacket,
   GoalRecord,
@@ -43,13 +45,14 @@ export function resolveBaseUrl(): string {
   if (server) {
     return server.replace(/\/+$/, "");
   }
-  if (DEFAULT_API_BASE_URL) {
-    return DEFAULT_API_BASE_URL.replace(/\/+$/, "");
+  const configured = process.env.NEXT_PUBLIC_MESH_API_URL?.trim();
+  if (configured) {
+    return normalizeLoopbackBaseUrl(configured, window.location);
   }
   if (window.location.protocol === "http:" || window.location.protocol === "https:") {
     return window.location.origin;
   }
-  return DEFAULT_API_BASE_URL;
+  return normalizeLoopbackBaseUrl(DEFAULT_API_BASE_URL, window.location);
 }
 
 function isLocalOperatorSurface(): boolean {
