@@ -9,7 +9,28 @@ from urllib.request import Request, urlopen
 
 from control_plane_server import start_server_in_thread
 from shared.mesh_runtime import RuntimeConfig
-from shared.mesh_runtime.schema_validation import validate_payload
+from shared.mesh_runtime.schema_validation import SchemaValidationError, validate_payload
+
+
+class AgentFlowContractBoundaryTests(unittest.TestCase):
+    def test_confirmation_contract_rejects_executed_side_effects(self) -> None:
+        confirmation = {
+            "schema_version": "mesh.agent_flow.confirmation.v1",
+            "state_slice": "mesh.agent_flow.mutation_preview.v1",
+            "preview_id": "agent-flow-test",
+            "status": "confirmation_recorded",
+            "confirmed_by": "operator@example.com",
+            "reason": "operator reviewed state slice and endpoint",
+            "proposed_resource": "RunSession",
+            "would_touch_state_slice": "mesh.run_admission.v1",
+            "routed_to": "/api/runs",
+            "side_effects_executed": True,
+            "next_step": "Use the named Mesh-owned endpoint to execute after final operator review.",
+            "created_at": "2026-05-25T00:00:00Z",
+        }
+
+        with self.assertRaises(SchemaValidationError):
+            validate_payload("operator-product.schema.json", {"agent_flow_confirmation_response": confirmation})
 
 
 class OperatorProductContractTests(unittest.TestCase):

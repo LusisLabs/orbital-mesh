@@ -62,6 +62,11 @@ def main() -> int:
     release_packet_head = _dig(release, "git", "commit") or repo_head
     release_generated_at = str(release.get("generated_at") or now)
     image_digest = args.image_digest or str(_dig(release, "image", "digest") or "")
+    release_runtime_binding = _verify_release_runtime_binding(
+        copied["release_runtime_binding"],
+        repo_head=repo_head,
+        image_digest=image_digest,
+    )
 
     target_export = str(copied["target_export"])
     repeat_export = str(copied["repeat_export"])
@@ -90,7 +95,11 @@ def main() -> int:
         "release_packet_generated_at": release_generated_at,
         "stale_packet_reused": release_packet_head != repo_head,
         "commands": [
-            _command(args.build_command, now, [str(copied["health"]), str(copied["release_provenance"])]),
+            _command(
+                args.build_command,
+                now,
+                [str(copied["health"]), str(copied["release_provenance"]), str(copied["release_runtime_binding"])],
+            ),
             _command(args.target_run_command, now, [target_export, target_timeline, target_merkle]),
             _command(args.repeat_run_command, now, [repeat_export, repeat_timeline, repeat_merkle]),
         ],
@@ -330,6 +339,7 @@ def main() -> int:
             proof_paths["incident-coverage-proof.json"],
             require_live=True,
         ),
+        "release-runtime-binding-verification.json": release_runtime_binding,
     }
     verifications["production-autonomy-clearance.json"] = verify_production_autonomy_clearance(
         repeatability_proof=proof_paths["repeatability-proof.json"],
@@ -341,6 +351,10 @@ def main() -> int:
         expected_head=repo_head,
         expected_environment=args.environment,
     )
+    manifest_missing = [
+        *list(verifications["production-autonomy-clearance.json"].get("missing", [])),
+        *[f"release_runtime_binding:{name}" for name in release_runtime_binding.get("missing", [])],
+    ]
     for name, payload in verifications.items():
         _write(verifications_dir / name, payload)
 
@@ -352,10 +366,14 @@ def main() -> int:
         "target_run_id": target_run_id,
         "repeat_run_id": repeat_run_id,
         "working_tree_clean": working_tree_clean,
-        "status": "pass" if verifications["production-autonomy-clearance.json"].get("status") == "pass" else "partial",
+        "status": "pass"
+        if verifications["production-autonomy-clearance.json"].get("status") == "pass"
+        and release_runtime_binding.get("status") == "pass"
+        else "partial",
         "proofs": {key: str(path) for key, path in proof_paths.items()},
+        "release_runtime_binding": str(copied["release_runtime_binding"]),
         "verifications": {key: str(verifications_dir / key) for key in verifications},
-        "missing": verifications["production-autonomy-clearance.json"].get("missing", []),
+        "missing": manifest_missing,
     }
     manifest_path = _write(output_dir / "manifest.json", manifest)
     print(json.dumps({"status": manifest["status"], "manifest": str(manifest_path), "missing": manifest["missing"]}, indent=2, sort_keys=True))
@@ -429,6 +447,80 @@ def _copy(raw_path: str, output_dir: Path) -> Path:
 
 def _load(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _verify_release_runtime_binding(path: Path, *, repo_head: str, image_digest: str) -> dict[str, Any]:
+    load_error: str | None = None
+    try:
+        payload = _load(path)
+    except (OSError, json.JSONDecodeError) as exc:
+        payload = {}
+        load_error = str(exc)
+
+    release = _object(payload.get("release"))
+    runtime_env = _object(payload.get("runtime_env"))
+    checks = _object(payload.get("checks"))
+    health = _object(payload.get("health"))
+    image_ref = _object(payload.get("image_ref"))
+    binding_commit = _git_commit(
+        release.get("git_commit") or runtime_env.get("MESH_BUILD_COMMIT") or payload.get("commit")
+    )
+    binding_digest = _digest(
+        release.get("image_digest") or runtime_env.get("MESH_BUILD_IMAGE_DIGEST") or payload.get("image_digest")
+    )
+    expected_digest = _digest(image_digest)
+    verification_checks = {
+        "schema_version": payload.get("schema_version") == "mesh.release_runtime_binding.v1",
+        "status_passed": payload.get("status") == "pass",
+        "missing_empty": payload.get("missing") == [],
+        "embedded_checks_passed": bool(checks) and all(value is True for value in checks.values()),
+        "release_commit_matches_repo_head": bool(repo_head) and binding_commit == repo_head,
+        "release_image_digest_matches_packet": bool(expected_digest) and binding_digest == expected_digest,
+        "runtime_env_commit_matches_repo_head": _git_commit(runtime_env.get("MESH_BUILD_COMMIT")) == repo_head,
+        "runtime_env_image_digest_matches_packet": _digest(runtime_env.get("MESH_BUILD_IMAGE_DIGEST")) == expected_digest,
+        "runtime_release_provenance_path_present": bool(
+            str(runtime_env.get("MESH_RELEASE_PROVENANCE_PATH") or "").strip()
+        ),
+        "runtime_binding_evidence_present": _runtime_binding_evidence_present(health, image_ref),
+    }
+    if load_error:
+        verification_checks["json_readable"] = False
+    missing = [name for name, passed in verification_checks.items() if not passed]
+    return {
+        "schema_version": "mesh.release_runtime_binding_artifact_verification.v1",
+        "generated_at": _timestamp(),
+        "status": "pass" if all(verification_checks.values()) else "fail",
+        "proof_path": str(path),
+        "repo_head": repo_head,
+        "image_digest": expected_digest,
+        "binding_commit": binding_commit,
+        "binding_image_digest": binding_digest,
+        "checks": verification_checks,
+        "missing": missing,
+        "error": load_error,
+    }
+
+
+def _runtime_binding_evidence_present(health: dict[str, Any], image_ref: dict[str, Any]) -> bool:
+    return (
+        bool(health)
+        and health.get("commit_match") is True
+        and health.get("image_digest_match") is True
+    ) or (bool(image_ref) and image_ref.get("digest_match") is True)
+
+
+def _object(raw: Any) -> dict[str, Any]:
+    return raw if isinstance(raw, dict) else {}
+
+
+def _git_commit(raw: Any) -> str:
+    value = str(raw or "").strip()
+    return value if len(value) == 40 else ""
+
+
+def _digest(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    return value if value.startswith("sha256:") and len(value) == 71 else ""
 
 
 def _dig(payload: dict[str, Any], *keys: str) -> Any:

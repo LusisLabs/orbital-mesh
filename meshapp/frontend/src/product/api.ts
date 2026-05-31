@@ -156,6 +156,32 @@ export type HardenedArenaPacketCreateResponse = {
   packet: HardenedArenaPacket;
 };
 
+export type HardenedArenaIntent = {
+  schema_version: string;
+  intent_id: string;
+  generated_at: string;
+  profile_id: string;
+  review_only: boolean;
+  live_deployment_allowed: boolean;
+  secret_values_present: boolean;
+  kubeconfig_material_present: boolean;
+  outputs: Array<{ kind: string; file_name: string; required: boolean; content: Record<string, any> }>;
+  rollback_cleanup_requirements: Array<{ component_id: string; rollback_intent: string[]; cleanup_intent: string[] }>;
+  blockers: string[];
+};
+
+export type HardenedArenaIntentCreateResponse = {
+  schema_version: string;
+  intent_id: string;
+  intent_path: string;
+  operator_id: string;
+  stored_artifact: boolean;
+  live_deployment_allowed: boolean;
+  secret_ingestion_allowed: boolean;
+  kubeconfig_material_present: boolean;
+  intent: HardenedArenaIntent;
+};
+
 export type PraxisSourceInput = {
   source_type: "openapi" | "postman_json" | "sop_markdown" | "redacted_traffic_ref" | string;
   filename?: string;
@@ -175,7 +201,8 @@ export type PraxisMcpRequest = {
   params?: Record<string, any>;
 };
 
-const DEFAULT_API_BASE_URL = process.env.NEXT_PUBLIC_MESH_API_URL?.trim() || "http://127.0.0.1:8787";
+const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_MESH_API_URL?.trim() || "";
+const LOCAL_DEV_API_BASE_URL = "http://127.0.0.1:8787";
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 function isLoopbackHost(hostname: string): boolean {
@@ -195,19 +222,24 @@ export function normalizeLoopbackBaseUrl(baseUrl: string, pageLocation?: Pick<Lo
   }
 }
 
+export function defaultApiBaseUrl(pageLocation?: Pick<Location, "hostname" | "origin" | "protocol">): string {
+  if (CONFIGURED_API_BASE_URL) return CONFIGURED_API_BASE_URL;
+  if (
+    pageLocation &&
+    !isLoopbackHost(pageLocation.hostname) &&
+    (pageLocation.protocol === "http:" || pageLocation.protocol === "https:")
+  ) {
+    return pageLocation.origin;
+  }
+  return LOCAL_DEV_API_BASE_URL;
+}
+
 export function resolveBaseUrl(): string {
-  if (typeof window === "undefined") return DEFAULT_API_BASE_URL;
+  if (typeof window === "undefined") return defaultApiBaseUrl();
   const params = new URLSearchParams(window.location.search);
   const explicitServer = params.get("server");
   if (explicitServer) return explicitServer.replace(/\/+$/, "");
-  const configured = process.env.NEXT_PUBLIC_MESH_API_URL?.trim();
-  if (configured) {
-    return normalizeLoopbackBaseUrl(configured, window.location);
-  }
-  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
-    return window.location.origin;
-  }
-  return normalizeLoopbackBaseUrl(DEFAULT_API_BASE_URL, window.location);
+  return normalizeLoopbackBaseUrl(defaultApiBaseUrl(window.location), window.location);
 }
 
 export function backendUnavailableMessage(): string {
@@ -407,6 +439,12 @@ export const productApi = {
   },
   generateHardenedArenaPacket(profileId: string) {
     return request<HardenedArenaPacketCreateResponse>("/api/hardened-arena/packets", {
+      method: "POST",
+      body: JSON.stringify({ profile_id: profileId }),
+    });
+  },
+  generateHardenedArenaIntent(profileId: string) {
+    return request<HardenedArenaIntentCreateResponse>("/api/hardened-arena/intents", {
       method: "POST",
       body: JSON.stringify({ profile_id: profileId }),
     });

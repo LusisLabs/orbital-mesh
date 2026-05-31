@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import tempfile
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,7 @@ class LockedJsonFile:
         self._file_existed = False
         self._recovered_corrupt_input = False
         self._serialized_on_enter = ""
+        self._payload_on_enter: dict[str, Any] = {}
 
     def __enter__(self) -> dict[str, Any]:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -92,6 +94,7 @@ class LockedJsonFile:
             self._serialized_on_enter = raw
         else:
             self._serialized_on_enter = ""
+        self._payload_on_enter = deepcopy(self.payload)
         return self.payload
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -100,7 +103,8 @@ class LockedJsonFile:
         try:
             if exc_type is None:
                 serialized = _serialize_payload(self.payload)
-                should_write = self._recovered_corrupt_input or serialized != self._serialized_on_enter
+                payload_changed = self.payload != self._payload_on_enter
+                should_write = self._recovered_corrupt_input or payload_changed
                 if not self._file_existed and not self.payload and not self._recovered_corrupt_input:
                     should_write = False
                 if should_write:

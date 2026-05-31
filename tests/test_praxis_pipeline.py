@@ -7,6 +7,7 @@ from pathlib import Path
 
 from shared.mesh_runtime.praxis import (
     PraxisManagedRuntimeStore,
+    _refresh_p10_proof,
     build_praxis_certification_binding,
     build_praxis_demo_proof_packet,
     build_praxis_e2e_proof_packet,
@@ -282,6 +283,24 @@ class PraxisManagedDryRunRuntimeTests(unittest.TestCase):
             self.assertFalse(record["dry_run_runtime"]["managed_runtime_deployed"])
             self.assertEqual(record["dry_run_runtime"]["certified_tool_ids"], ["tool.listorders"])
 
+            with self.assertRaisesRegex(ValueError, "mcp_endpoint_ref must use mcp-dry-run://"):
+                store.start_dry_run_endpoint(
+                    "praxis-request-runtime-001",
+                    {"mcp_endpoint_ref": "https://example.test/mcp"},
+                    operator=operator,
+                    scope=scope,
+                )
+            with self.assertRaisesRegex(
+                ValueError,
+                "docker_dynamic_mcp_gateway_ref must use docker-mcp-gateway://",
+            ):
+                store.start_dry_run_endpoint(
+                    "praxis-request-runtime-001",
+                    {"docker_dynamic_mcp_gateway_ref": "https://example.test/gateway"},
+                    operator=operator,
+                    scope=scope,
+                )
+
             record = store.start_dry_run_endpoint(
                 "praxis-request-runtime-001",
                 {
@@ -340,6 +359,14 @@ class PraxisManagedDryRunRuntimeTests(unittest.TestCase):
             self.assertTrue(record["p10_proof_packet"]["checks"]["dynamic_profile_persistence_blocked"])
             self.assertTrue(record["p10_proof_packet"]["checks"]["docker_code_mode_blocked"])
             self.assertTrue(record["p10_proof_packet"]["checks"]["bridge_catalog_allowlist_bound"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["dry_run_endpoint_ref_bound"])
+            self.assertTrue(record["p10_proof_packet"]["checks"]["docker_gateway_ref_bound"])
+
+            record["dry_run_runtime"]["managed_runtime_deployed"] = True
+            _refresh_p10_proof(record)
+            self.assertEqual(record["p10_proof_packet"]["status"], "blocked")
+            self.assertFalse(record["p10_proof_packet"]["checks"]["managed_runtime_deploy_blocked"])
+            self.assertTrue(record["p10_proof_packet"]["authority"]["managed_runtime_deployed"])
 
             dashboard = store.build_product_dashboard(scope=scope)
             self.assertEqual(dashboard["state_slice"], "praxis.managed-dry-run-runtime.v1")

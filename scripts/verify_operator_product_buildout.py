@@ -27,6 +27,7 @@ CONFIG_TEST_PATH = REPO_ROOT / "tests" / "test_mesh_runtime_config.py"
 INGRESS_DEPLOYMENT_TEST_PATH = REPO_ROOT / "tests" / "test_authenticated_ingress_deployment.py"
 PRODUCT_CONTRACT_TEST_PATH = REPO_ROOT / "tests" / "test_operator_product_contracts.py"
 PRODUCT_E2E_SCRIPT_PATH = REPO_ROOT / "scripts" / "operator_product_e2e.py"
+WEB_E2E_SCRIPT_PATH = REPO_ROOT / "scripts" / "e2e_ui_operator.sh"
 AUTH_PROVIDER_SMOKE_PATH = REPO_ROOT / "scripts" / "operator_auth_provider_smoke.py"
 AUTH_PROVIDER_CAPTURE_PATH = REPO_ROOT / "scripts" / "operator_auth_live_provider_capture.py"
 PRODUCT_GOAL_AUDIT_PATH = REPO_ROOT / "scripts" / "operator_product_goal_audit.py"
@@ -270,6 +271,7 @@ def main() -> int:
         product_api = PRODUCT_API_PATH.read_text(encoding="utf-8")
         product_e2e = PRODUCT_E2E_PATH.read_text(encoding="utf-8")
         product_e2e_script = PRODUCT_E2E_SCRIPT_PATH.read_text(encoding="utf-8")
+        web_e2e_script = WEB_E2E_SCRIPT_PATH.read_text(encoding="utf-8")
         product_contracts = PRODUCT_CONTRACTS_PATH.read_text(encoding="utf-8")
         control_plane = CONTROL_PLANE_PATH.read_text(encoding="utf-8")
         identity = IDENTITY_PATH.read_text(encoding="utf-8")
@@ -295,6 +297,8 @@ def main() -> int:
         _require_markers("meshapp/frontend/src/product/api.ts", product_api, REQUIRED_PRODUCT_API_PATHS)
         _require_markers("meshapp/frontend/e2e/first-run-signup-dashboard.spec.ts", product_e2e, REQUIRED_PRODUCT_E2E_MARKERS)
         _require_no_forbidden_terms("scripts/operator_product_e2e.py", product_e2e_script, ["npm", "tail"])
+        _require_no_forbidden_terms("scripts/e2e_ui_operator.sh", web_e2e_script, ["npm", "tail"])
+        _require_markers("scripts/e2e_ui_operator.sh", web_e2e_script, ["pnpm", "test:e2e:playwright"])
         _require_no_forbidden_terms("meshapp/frontend/e2e/first-run-signup-dashboard.spec.ts", product_e2e, ["npm", "tail"])
         _require_markers("control_plane_server.py", control_plane, REQUIRED_CONTROL_PLANE_PATHS)
         _require_markers(
@@ -340,6 +344,7 @@ def _require_files() -> None:
         INGRESS_DEPLOYMENT_TEST_PATH,
         PRODUCT_CONTRACT_TEST_PATH,
         PRODUCT_E2E_SCRIPT_PATH,
+        WEB_E2E_SCRIPT_PATH,
         AUTH_PROVIDER_SMOKE_PATH,
         AUTH_PROVIDER_CAPTURE_PATH,
         PRODUCT_GOAL_AUDIT_PATH,
@@ -438,6 +443,10 @@ def _require_package_wiring(package: dict[str, object], product_package: dict[st
         raise AssertionError("verify:full must include verify:contracts")
     if "pnpm run test:product:e2e" not in verify_full:
         raise AssertionError("verify:full must include product browser e2e")
+    if "pnpm --dir web run test" not in verify_full:
+        raise AssertionError("verify:full must include web Vitest")
+    if "pnpm --dir web run test:e2e" not in verify_full:
+        raise AssertionError("verify:full must include web browser e2e")
     if "shared/mesh_runtime/operator_identity.py" not in lint_fast:
         raise AssertionError("lint:fast must py_compile operator identity")
     if "shared/mesh_runtime/operator_product_contracts.py" not in lint_fast:

@@ -3853,7 +3853,7 @@ function RunActionPanel({ activeRun, onJumpContext }: { activeRun: RunDetail | n
   );
 }
 
-function DarkharnessPacketPanel({
+export function DarkharnessPacketPanel({
   packet,
   activeRun,
   compact,
@@ -3874,15 +3874,25 @@ function DarkharnessPacketPanel({
   const reservoirs = records?.sensitive_reservoirs ?? [];
   const runExports = evidence?.run_exports ?? [];
   const proofEnvelopes = records?.proof_envelopes ?? [];
-  const implementedClaims = packet?.claim_boundary.implemented ?? [];
-  const proposedClaims = packet?.claim_boundary.proposed ?? [];
-  const notImplementedClaims = packet?.claim_boundary.not_implemented ?? [];
+  const boundaries = packet?.boundaries ?? {
+    raw_reservoir_egress: "unavailable",
+    external_model_calls: "unavailable",
+    production_actions_approval_required: false,
+  };
+  const claimBoundary = packet?.claim_boundary ?? {
+    implemented: [],
+    proposed: [],
+    not_implemented: [],
+  };
+  const implementedClaims = claimBoundary.implemented;
+  const proposedClaims = claimBoundary.proposed;
+  const notImplementedClaims = claimBoundary.not_implemented;
   const state: ConnectorState = !packet ? "disconnected" : packet.status === "blocked" ? "degraded" : "ready";
   const statusLabel = !packet ? "Unavailable" : packet.status === "blocked" ? "Blocked" : "Packet ready";
   const boundaryPasses =
-    packet?.boundaries.raw_reservoir_egress === "deny" &&
-    packet.boundaries.external_model_calls === "deny" &&
-    packet.boundaries.production_actions_approval_required === true;
+    boundaries.raw_reservoir_egress === "deny" &&
+    boundaries.external_model_calls === "deny" &&
+    boundaries.production_actions_approval_required === true;
   const checkedValues = Object.values(packet?.checks ?? {});
   const capabilityRows: Array<{ name: string; detail: string; state: ConnectorState }> = [
     {
@@ -3897,7 +3907,7 @@ function DarkharnessPacketPanel({
     },
     {
       name: "Boundary enforcement",
-      detail: `Raw egress ${packet?.boundaries.raw_reservoir_egress ?? "unavailable"}, external models ${packet?.boundaries.external_model_calls ?? "unavailable"}, approval ${packet ? String(packet.boundaries.production_actions_approval_required) : "unavailable"}`,
+      detail: `Raw egress ${boundaries.raw_reservoir_egress}, external models ${boundaries.external_model_calls}, approval ${packet ? String(boundaries.production_actions_approval_required) : "unavailable"}`,
       state: !packet ? "disconnected" : boundaryPasses ? "ready" : "degraded",
     },
     {
@@ -3945,18 +3955,18 @@ function DarkharnessPacketPanel({
         <div className="gate-matrix compact">
           <DarkharnessBoundaryRow
             label="Raw reservoir egress"
-            value={packet?.boundaries.raw_reservoir_egress}
-            passed={packet?.boundaries.raw_reservoir_egress === "deny"}
+            value={boundaries.raw_reservoir_egress}
+            passed={boundaries.raw_reservoir_egress === "deny"}
           />
           <DarkharnessBoundaryRow
             label="External model calls"
-            value={packet?.boundaries.external_model_calls}
-            passed={packet?.boundaries.external_model_calls === "deny"}
+            value={boundaries.external_model_calls}
+            passed={boundaries.external_model_calls === "deny"}
           />
           <DarkharnessBoundaryRow
             label="Production approval"
-            value={packet ? String(packet.boundaries.production_actions_approval_required) : undefined}
-            passed={packet?.boundaries.production_actions_approval_required === true}
+            value={packet ? String(boundaries.production_actions_approval_required) : undefined}
+            passed={boundaries.production_actions_approval_required === true}
           />
           {checks.map(([name, passed]) => (
             <div key={name} className={`gate-matrix-row ${passed ? "" : "blocked"}`}>
@@ -5101,7 +5111,7 @@ export function AgentMeshPanel({
                     {threadEvents.length > 0 ? <ContextLink label="Events" value={String(threadEvents.length)} /> : null}
                     {threadToolCalls.length > 0 ? <ContextLink label="Tool calls" value={String(threadToolCalls.length)} /> : null}
                     {releaseStatus.released != null ? <ContextLink label="Release" value={releaseStatus.released === true ? "released" : "blocked"} /> : null}
-                    {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="placeholder only" /> : null}
+                    {credentialPolicy.raw_secret_in_sandbox === false ? <ContextLink label="Credentials" value="redacted reference only" /> : null}
                     {authority.mesh_control_plane_authoritative === true ? <ContextLink label="Authority" value="Mesh proposed / Mesh approved" /> : null}
                     {typeof attempt.output?.confidence === "number" && (
                       <ContextLink label="Confidence" value={`${Math.round(attempt.output.confidence * 100)}%`} />

@@ -28,6 +28,11 @@ def main() -> int:
     )
     parser.add_argument("--image-tag", default=os.getenv("MESH_STACK_IMAGE") or os.getenv("MESH_IMAGE") or "")
     parser.add_argument("--image-digest", default=os.getenv("MESH_IMAGE_DIGEST") or os.getenv("MESH_STACK_IMAGE_DIGEST") or "")
+    parser.add_argument(
+        "--source-sha",
+        default=os.getenv("MESH_RELEASE_GIT_COMMIT") or "",
+        help="Release source commit to attest. Defaults to MESH_RELEASE_GIT_COMMIT, then GITHUB_SHA.",
+    )
     parser.add_argument("--build-command", default=os.getenv("MESH_BUILD_COMMAND") or "")
     parser.add_argument(
         "--base-image-digest",
@@ -71,7 +76,8 @@ def build_attestation(args: argparse.Namespace) -> dict[str, Any]:
         "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT") or None,
         "repository": os.getenv("GITHUB_REPOSITORY") or None,
         "ref": os.getenv("GITHUB_REF") or None,
-        "sha": os.getenv("GITHUB_SHA") or None,
+        "sha": args.source_sha or os.getenv("GITHUB_SHA") or None,
+        "run_sha": os.getenv("GITHUB_SHA") or None,
         "actor": os.getenv("GITHUB_ACTOR") or None,
         "server_url": os.getenv("GITHUB_SERVER_URL") or None,
         "image": {

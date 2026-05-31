@@ -719,9 +719,14 @@ class PraxisManagedRuntimeStore:
                 raise ValueError("docker_dynamic_mcp_bridge must be an object")
             runtime = _dry_run_runtime_for_binding(binding, status="running")
             runtime["started_at"] = _timestamp()
-            runtime["mcp_endpoint_ref"] = str(payload.get("mcp_endpoint_ref") or f"mcp-dry-run://{binding['connector_id']}")
+            runtime["mcp_endpoint_ref"] = _dry_run_mcp_endpoint_ref(
+                payload.get("mcp_endpoint_ref"),
+                connector_id=str(binding["connector_id"]),
+            )
             if payload.get("docker_dynamic_mcp_gateway_ref"):
-                runtime["docker_dynamic_mcp_bridge"]["gateway_ref"] = str(payload["docker_dynamic_mcp_gateway_ref"])
+                runtime["docker_dynamic_mcp_bridge"]["gateway_ref"] = _docker_dynamic_mcp_gateway_ref(
+                    payload["docker_dynamic_mcp_gateway_ref"]
+                )
             if isinstance(bridge_payload, dict):
                 runtime["docker_dynamic_mcp_bridge"] = _validated_docker_dynamic_mcp_bridge_payload(
                     bridge_payload,
@@ -1281,10 +1286,15 @@ def _refresh_p10_proof(record: dict[str, Any]) -> None:
         "security_evidence_bound": isinstance(record.get("akto_evidence"), dict),
         "certification_binding_bound": isinstance(record.get("certification_binding"), dict),
         "dry_run_mcp_endpoint_started": "praxis.dry_run_endpoint_started" in event_types,
+        "dry_run_endpoint_ref_bound": (
+            runtime.get("mcp_endpoint_ref") is None
+            or str(runtime.get("mcp_endpoint_ref") or "").startswith("mcp-dry-run://")
+        ),
         "tool_call_audit_event_bound": "praxis.dry_run_tool_called" in event_types,
         "revocation_bound": "praxis.generated_connector_revoked" in event_types,
         "managed_runtime_deploy_blocked": runtime.get("managed_runtime_deployed") is False,
         "docker_dynamic_mcp_bridge_bound": _docker_dynamic_mcp_bridge_is_bound(bridge),
+        "docker_gateway_ref_bound": str(bridge.get("gateway_ref") or "").startswith("docker-mcp-gateway://"),
         "dynamic_servers_session_scoped": bridge.get("session_only") is True,
         "dynamic_profile_persistence_blocked": bridge.get("profile_persisted") is False,
         "docker_code_mode_blocked": bridge.get("code_mode_enabled") is False and "code-mode" in set(bridge.get("blocked_management_tools") or []),
@@ -1308,7 +1318,7 @@ def _refresh_p10_proof(record: dict[str, Any]) -> None:
             "akto_advisory_only": True,
             "mesh_owns_certification": True,
             "mesh_owns_revocation": True,
-            "managed_runtime_deployed": False,
+            "managed_runtime_deployed": runtime.get("managed_runtime_deployed") is True,
         },
     }
 
@@ -1405,6 +1415,20 @@ def _docker_dynamic_mcp_bridge(*, runtime_status: str, connector_id: str | None)
             "dynamically_added_servers_are_candidates_until_certified": True,
         },
     }
+
+
+def _dry_run_mcp_endpoint_ref(value: Any, *, connector_id: str) -> str:
+    endpoint_ref = str(value or f"mcp-dry-run://{connector_id}")
+    if not endpoint_ref.startswith("mcp-dry-run://"):
+        raise ValueError("mcp_endpoint_ref must use mcp-dry-run://")
+    return endpoint_ref
+
+
+def _docker_dynamic_mcp_gateway_ref(value: Any) -> str:
+    gateway_ref = str(value or "")
+    if not gateway_ref.startswith("docker-mcp-gateway://"):
+        raise ValueError("docker_dynamic_mcp_gateway_ref must use docker-mcp-gateway://")
+    return gateway_ref
 
 
 def _validated_docker_dynamic_mcp_bridge_payload(

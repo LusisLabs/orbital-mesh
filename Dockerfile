@@ -1,5 +1,7 @@
 FROM node:22-bookworm-slim AS operator-ui
 WORKDIR /repo
+ARG NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com
+ENV NEXT_PUBLIC_MESH_API_URL=$NEXT_PUBLIC_MESH_API_URL
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 \
   && rm -rf /var/lib/apt/lists/*

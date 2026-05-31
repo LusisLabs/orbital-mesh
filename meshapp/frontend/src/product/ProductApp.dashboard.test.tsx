@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { AgentFlowLiveKitSessionResponse } from "./api";
 import {
   askMesh,
   agentFlowVoiceUnavailableMessage,
@@ -9,6 +10,7 @@ import {
   buildHardenedArenaProfileCards,
   buildDashboardTiles,
   buildAgentFabricObservability,
+  buildConnectorActuatorBoundary,
   buildKeysReadinessRows,
   buildOperatorSetupModel,
   buildPraxisProductModel,
@@ -251,7 +253,7 @@ describe("dashboard section state coverage", () => {
 });
 
 describe("Agent Flow voice helpers", () => {
-  const readySession = {
+  const readySession: AgentFlowLiveKitSessionResponse = {
     schema_version: "mesh.agent_flow.livekit_session.v1",
     state_slice: "mesh.agent_flow.livekit_session.v1",
     agent: { id: "harper-696", name: "Harper-696", source: "Harper-696/src/agent.py" },
@@ -419,6 +421,8 @@ describe("run workbench and keys readiness", () => {
                     authority: {
                       mesh_control_plane_authoritative: true,
                       agent_thread_authoritative: false,
+                      production_actuation_allowed: false,
+                      boundary: "proposal_only",
                     },
                     output: { result_text: "proposal only" },
                   },
@@ -434,7 +438,9 @@ describe("run workbench and keys readiness", () => {
     expect(attempts[0]).toMatchObject({
       adapter: "centaur",
       egress: "placeholder-only",
-      authority: "Mesh approves and executes",
+      authority: "proposal_only",
+      productionActuation: "blocked",
+      threadAuthority: "not authoritative",
       release: "released",
       tools: 1,
       changedFiles: 1,
@@ -463,6 +469,64 @@ describe("run workbench and keys readiness", () => {
     } as any);
     expect(rows.map((row) => row.title)).toEqual(expect.arrayContaining(["Model route", "Agent fabric", "Connector: kubernetes"]));
     expect(JSON.stringify(rows)).not.toContain("site");
+  });
+});
+
+describe("connector actuator boundary", () => {
+  it("keeps Kubernetes as the only production actuator connector", () => {
+    const boundary = buildConnectorActuatorBoundary({
+      mesh: {
+        connectors: {
+          connectors: {
+            kubernetes: {
+              state: "pilot-ready",
+              allowed_scopes: ["operator-proposal", "rollback"],
+              credential_boundary: { production_actuator_credentials_allowed: true },
+            },
+            deepagents: {
+              state: "staging-ready",
+              credential_boundary: { production_actuator_credentials_allowed: false },
+            },
+            langgraph_checkpointing: {
+              state: "proposal-only",
+              credential_boundary: { production_actuator_credentials_allowed: false },
+            },
+          },
+        },
+      },
+    } as any);
+
+    expect(boundary).toMatchObject({
+      stateSlice: "mesh.connector_certification.v1",
+      label: "Kubernetes only",
+      posture: "bounded",
+      productionActuatorConnectorIds: ["kubernetes"],
+      nonKubernetesCredentialConnectorIds: [],
+    });
+    expect(boundary.kubernetesScopes).toEqual(["operator-proposal", "rollback"]);
+  });
+
+  it("flags non-Kubernetes production actuator credential bleed", () => {
+    const boundary = buildConnectorActuatorBoundary({
+      mesh: {
+        connectors: {
+          connectors: {
+            kubernetes: {
+              state: "pilot-ready",
+              credential_boundary: { production_actuator_credentials_allowed: true },
+            },
+            deepagents: {
+              state: "proposal-only",
+              credential_boundary: { production_actuator_credentials_allowed: true },
+            },
+          },
+        },
+      },
+    } as any);
+
+    expect(boundary.posture).toBe("blocked");
+    expect(boundary.nonKubernetesCredentialConnectorIds).toEqual(["deepagents"]);
+    expect(boundary.detail).toContain("deepagents");
   });
 });
 

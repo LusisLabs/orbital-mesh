@@ -7,6 +7,7 @@ const launchOptions: LaunchOptions = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
 export default defineConfig({
   testDir: "./e2e",
   timeout: 60_000,
+  workers: 1,
   expect: {
     timeout: 12_000,
   },
@@ -26,6 +27,14 @@ export default defineConfig({
         channel: undefined,
         launchOptions,
         viewport: { width: 1440, height: 920 },
+      },
+    },
+    {
+      name: "chromium-product-mobile",
+      use: {
+        ...devices["Pixel 7"],
+        channel: undefined,
+        launchOptions,
       },
     },
   ],

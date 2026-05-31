@@ -23,6 +23,7 @@ from services.ingest.webhook_service import (
 from shared.mesh_runtime import RuntimeConfig
 from shared.mesh_runtime.hardened_arena import load_hardened_arena_profiles
 from shared.mesh_runtime.hardened_arena_catalog import load_hardened_arena_catalog
+from shared.mesh_runtime.hardened_arena_intent import generate_hardened_arena_intent, write_hardened_arena_intent
 from shared.mesh_runtime.hardened_arena_packet import generate_hardened_arena_packet, write_hardened_arena_packet
 from shared.mesh_runtime.operator_identity import (
     CaptchaConfig,
@@ -176,6 +177,11 @@ def _agent_flow_preview_signature(*, preview: dict[str, Any], context: dict[str,
         hashlib.sha256,
     ).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _preview_target_run_id(preview: dict[str, Any]) -> str:
+    target = preview.get("target") if isinstance(preview.get("target"), dict) else {}
+    return str(target.get("run_id") or "")
 
 
 def _run_summary(run: dict[str, Any]) -> dict[str, Any]:
@@ -711,6 +717,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/hardened-arena/packets":
             self._handle_hardened_arena_packet_create(payload)
             return
+        if parsed.path == "/api/hardened-arena/intents":
+            self._handle_hardened_arena_intent_create(payload)
+            return
         if parsed.path == "/api/watch/start":
             try:
                 self._authorize({"admin"})
@@ -1034,6 +1043,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
     def _hardened_arena_packet_dir(self) -> Path:
         return Path(self.server.config.state_directory) / "hardened-arena" / "packets"
 
+    def _hardened_arena_intent_dir(self) -> Path:
+        return Path(self.server.config.state_directory) / "hardened-arena" / "intents"
+
     def _handle_hardened_arena_profiles(self) -> None:
         try:
             self._send_json(load_hardened_arena_profiles())
@@ -1080,6 +1092,38 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
                 "live_deployment_allowed": False,
                 "secret_ingestion_allowed": False,
                 "packet": packet,
+            },
+            status=HTTPStatus.CREATED,
+        )
+
+    def _handle_hardened_arena_intent_create(self, payload: dict[str, Any]) -> None:
+        try:
+            operator = self._authorize({"launcher", "admin"})
+        except AuthorizationError as exc:
+            self._send_json({"error": str(exc)}, status=exc.status)
+            return
+        profile_id = str(payload.get("profile_id") or payload.get("profile") or "").strip()
+        if not profile_id:
+            self._send_json({"error": "profile_id is required"}, status=HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            intent = generate_hardened_arena_intent(profile_id)
+            output_dir = self._hardened_arena_intent_dir() / intent["intent_id"]
+            bundle_path = write_hardened_arena_intent(intent, output_dir)
+        except (KeyError, OSError, ValueError, SchemaValidationError) as exc:
+            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json(
+            {
+                "schema_version": "mesh.hardened_arena.intent_create_response.v1",
+                "intent_id": intent["intent_id"],
+                "intent_path": str(bundle_path.relative_to(Path(self.server.config.state_directory))),
+                "operator_id": operator.get("operator_id"),
+                "stored_artifact": True,
+                "live_deployment_allowed": False,
+                "secret_ingestion_allowed": False,
+                "kubeconfig_material_present": False,
+                "intent": intent,
             },
             status=HTTPStatus.CREATED,
         )
@@ -1642,12 +1686,13 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         resource = str(preview.get("proposed_resource") or "")
         endpoint = str(preview.get("endpoint") or "")
         state_slice = str(preview.get("would_touch_state_slice") or "")
+        target_run_id = _preview_target_run_id(preview)
         if resource == "RunSession" and endpoint == "/api/runs" and state_slice == "mesh.run_admission.v1":
             return preview
         if (
             resource == "SteeringCommand"
-            and endpoint.startswith("/api/runs/")
-            and endpoint.endswith("/steer")
+            and bool(target_run_id)
+            and endpoint == f"/api/runs/{target_run_id}/steer"
             and state_slice == "mesh.run_steering.v1"
         ):
             return preview

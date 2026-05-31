@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -123,6 +124,7 @@ def verify_handoff(
         image = _image_ref_record(
             image_ref=image_ref,
             expected_digest=_nested(packet, "image", "digest"),
+            image_archive=image_archive,
             runner=runner or _run,
         )
         result["image_ref"] = image
@@ -263,6 +265,7 @@ def _image_ref_record(
     *,
     image_ref: str,
     expected_digest: Any,
+    image_archive: Path | None,
     runner: Callable[[list[str]], subprocess.CompletedProcess[str]],
 ) -> dict[str, Any]:
     try:
@@ -276,10 +279,15 @@ def _image_ref_record(
         }
     expected = _normalized_digest(expected_digest)
     candidates = _image_digest_candidates(payload)
+    archive = _archive_image_record(image_archive=image_archive, image_ref=image_ref)
+    if archive.get("tag_match") and archive.get("config_digest"):
+        candidates.append(str(archive["config_digest"]))
+    candidates = _dedupe(candidates)
     return {
         "image_ref": image_ref,
         "image_id": _normalized_digest(payload.get("Id")),
         "repo_digests": [item for item in payload.get("RepoDigests", []) if isinstance(item, str)],
+        "archive": archive,
         "digest_candidates": candidates,
         "digest_match": bool(expected and expected in candidates),
     }
@@ -316,6 +324,38 @@ def _image_digest_candidates(payload: dict[str, Any]) -> list[str]:
             if digest:
                 candidates.append(digest)
     return _dedupe(candidates)
+
+
+def _archive_image_record(*, image_archive: Path | None, image_ref: str) -> dict[str, Any]:
+    if image_archive is None or not image_archive.is_file():
+        return {"present": False, "tag_match": False, "config_digest": None}
+    try:
+        with tarfile.open(image_archive, "r:*") as archive:
+            manifest_member = archive.extractfile("manifest.json")
+            if manifest_member is None:
+                return {"present": True, "tag_match": False, "config_digest": None, "error": "manifest.json missing"}
+            manifest = json.load(manifest_member)
+    except (OSError, tarfile.TarError, json.JSONDecodeError) as exc:
+        return {"present": True, "tag_match": False, "config_digest": None, "error": str(exc)}
+    if not isinstance(manifest, list):
+        return {"present": True, "tag_match": False, "config_digest": None, "error": "manifest.json invalid"}
+    normalized_ref = image_ref.strip()
+    for entry in manifest:
+        if not isinstance(entry, dict):
+            continue
+        tags = entry.get("RepoTags")
+        if not isinstance(tags, list) or normalized_ref not in [tag for tag in tags if isinstance(tag, str)]:
+            continue
+        config = entry.get("Config")
+        digest = ""
+        if isinstance(config, str) and config.startswith("blobs/sha256/"):
+            digest = f"sha256:{config.rsplit('/', 1)[-1]}"
+        return {
+            "present": True,
+            "tag_match": True,
+            "config_digest": _normalized_digest(digest),
+        }
+    return {"present": True, "tag_match": False, "config_digest": None}
 
 
 def _complete_release_provenance_record(*, path: Path, packet: dict[str, Any]) -> dict[str, Any]:

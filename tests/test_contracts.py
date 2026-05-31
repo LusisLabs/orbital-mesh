@@ -161,7 +161,34 @@ class ContractValidationTests(unittest.TestCase):
         self.assertTrue(
             matrix["connectors"]["kubernetes"]["credential_boundary"]["production_actuator_credentials_allowed"]
         )
+        actuator_connector_ids = sorted(
+            connector_id
+            for connector_id, connector in matrix["connectors"].items()
+            if connector["credential_boundary"].get("production_actuator_credentials_allowed")
+        )
+        self.assertEqual(actuator_connector_ids, ["kubernetes"])
         self.assertFalse(matrix["connectors"]["deepagents"]["credential_boundary"]["repo_write_credentials_allowed"])
+        validate_payload("connector-certification-matrix.schema.json", matrix)
+
+    def test_connector_certification_blocks_non_kubernetes_production_actuator_credentials(self) -> None:
+        registry_path = Path("config/connector-certification.registry.json")
+        registry = load_connector_certification_registry(str(registry_path))
+        self.assertIsNotNone(registry)
+        mutated_registry = json.loads(json.dumps(registry))
+        for connector in mutated_registry["connectors"]:
+            if connector["connector_id"] == "deepagents":
+                connector["credential_boundary"]["production_actuator_credentials_allowed"] = True
+                break
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            temp_path = Path(tmp_dir) / "connector-certification.registry.json"
+            temp_path.write_text(json.dumps(mutated_registry), encoding="utf-8")
+            matrix = build_connector_certification_matrix(registry_path=str(temp_path))
+
+        self.assertIn(
+            "non_kubernetes_connector_allows_production_actuator_credentials",
+            matrix["connectors"]["deepagents"]["blockers"],
+        )
         validate_payload("connector-certification-matrix.schema.json", matrix)
 
     def test_connector_certification_blocks_proposal_lane_credential_bleed(self) -> None:

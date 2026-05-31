@@ -1,0 +1,394 @@
+name: Self-hosted Release Assurance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-assurance-self-hosted.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/release-image-handoff.yml"
+      - ".github/workflows/security.yml"
+      - "Dockerfile"
+      - "Dockerfile.stack.hermes"
+      - "Dockerfile.latentmas.cpu"
+      - "docker-compose.prod.yml"
+      - "docker-compose.stack.yml"
+      - "config/release-vulnerability-exceptions.json"
+      - "config/policy-lifecycle.manifest.json"
+      - "meshapp/frontend/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "policies/**"
+      - "pyproject.toml"
+      - "scripts/collect_release_image_metadata.py"
+      - "scripts/generate_ci_attestation.py"
+      - "scripts/generate_release_image_assurance.py"
+      - "scripts/generate_release_provenance.py"
+      - "scripts/run_postgres_migration_rehearsal.py"
+      - "scripts/verify_release_cut_list.py"
+      - "scripts/verify_release_runtime_binding.py"
+      - "scripts/verify_security_audit_readiness.py"
+      - "shared/mesh_runtime/**"
+      - "uv.lock"
+      - "web/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: self-hosted-release-assurance-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22.22.3"
+  NODE_LINUX_X64_SHA256: 2e5d13569282d016861fae7c8f935e741693c269101a5bebcf761a5376d1f99f
+  SYFT_VERSION: "1.44.0"
+  SYFT_DEB_SHA256: 82d374ac6179acda9d0b6b3e694ecfda54dfbd9da8e29e02dc81f92d67dc103b
+  GRYPE_VERSION: "0.112.0"
+  GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
+
+jobs:
+  release-assurance:
+    runs-on: [self-hosted, lusislabs-preview]
+    timeout-minutes: 90
+    env:
+      ASSURANCE_IMAGE_TAG: orbital-mesh:selfhosted-${{ github.run_id }}
+      POSTGRES_CONTAINER: mesh-release-assurance-postgres-${{ github.run_id }}
+      POSTGRES_PORT: "55432"
+    steps:
+      - name: Checkout repository without marketplace actions
+        id: checkout
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote remove origin >/dev/null 2>&1 || true
+          scrub_origin() {
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git" >/dev/null 2>&1 || true
+          }
+          trap scrub_origin EXIT
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git fetch --depth=1 origin "$GITHUB_SHA"; then
+            scrub_origin
+            echo "::warning::GITHUB_TOKEN fetch failed; retrying without token"
+            if ! git fetch --depth=1 origin "$GITHUB_SHA"; then
+              echo "::warning::HTTPS fetch failed; retrying with runner SSH credentials"
+              git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+              GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git fetch --depth=1 origin "$GITHUB_SHA"
+            fi
+          fi
+          git checkout --detach --force FETCH_HEAD
+          git reset --hard FETCH_HEAD
+          git clean -ffdx
+          scrub_origin
+          trap - EXIT
+
+      - name: Install Node 22 pnpm toolchain
+        id: node_toolchain
+        run: |
+          set -euo pipefail
+          node_dir="${RUNNER_TEMP:-/tmp}/node-v${NODE_VERSION}-linux-x64"
+          archive="${RUNNER_TEMP:-/tmp}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          if [ ! -x "${node_dir}/bin/node" ]; then
+            rm -rf "$node_dir"
+            curl -fsSLo "$archive" "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+            echo "${NODE_LINUX_X64_SHA256}  ${archive}" | sha256sum -c -
+            mkdir -p "$node_dir"
+            tar -xJf "$archive" -C "$node_dir" --strip-components=1
+          fi
+          echo "${node_dir}/bin" >> "$GITHUB_PATH"
+          export PATH="${node_dir}/bin:${PATH}"
+          node --version
+          corepack enable
+          corepack pnpm --version
+
+      - name: Verify self-hosted toolchain
+        id: toolchain
+        run: |
+          set -euo pipefail
+          command -v python3
+          command -v docker
+          command -v node
+          node --version
+          command -v corepack
+          corepack --version
+          corepack pnpm --version
+          if ! docker version; then
+            if command -v setfacl >/dev/null 2>&1; then
+              sudo setfacl -m "u:$(id -un):rw" /var/run/docker.sock
+            else
+              echo "::error::docker socket is not accessible and setfacl is unavailable"
+              exit 1
+            fi
+          fi
+          docker version
+
+      - name: Install pnpm dependencies
+        id: pnpm_install
+        run: |
+          set -euo pipefail
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm install --frozen-lockfile
+
+      - name: Install Playwright browser runtime
+        id: playwright_install
+        run: |
+          set -euo pipefail
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm --dir meshapp/frontend exec playwright install chromium
+          browser_path="$(find "${HOME}/.cache/ms-playwright" -path "*chrome-headless-shell" -type f -perm -111 -print -quit)"
+          if [ -z "$browser_path" ]; then
+            echo "::error::Playwright Chromium headless shell was not installed"
+            exit 1
+          fi
+          missing_libs="$(ldd "$browser_path" | awk '/not found/ {print $1}' || true)"
+          if [ -n "$missing_libs" ]; then
+            if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
+              echo "::error::Playwright Chromium is missing shared libraries and apt-get/dpkg-deb are unavailable"
+              printf '%s\n' "$missing_libs"
+              exit 1
+            fi
+            lib_root="${RUNNER_TEMP:-/tmp}/playwright-rootless-libs"
+            rm -rf "$lib_root"
+            mkdir -p "$lib_root/downloads"
+            (
+              cd "$lib_root/downloads"
+              for package in \
+                libnspr4 \
+                libnss3 \
+                libatk1.0-0t64 \
+                libatk-bridge2.0-0t64 \
+                libxdamage1 \
+                libasound2t64 \
+                libatspi2.0-0t64
+              do
+                apt-get download "$package"
+              done
+              for archive in ./*.deb; do
+                dpkg-deb -x "$archive" "$lib_root"
+              done
+            )
+            lib_dirs="$(find "$lib_root/usr/lib" -type f -name "*.so*" -exec dirname {} \; | sort -u | paste -sd: -)"
+            if [ -z "$lib_dirs" ]; then
+              echo "::error::downloaded Playwright dependency packages did not contain shared libraries"
+              exit 1
+            fi
+            export LD_LIBRARY_PATH="${lib_dirs}:${LD_LIBRARY_PATH:-}"
+            echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+          fi
+          ldd "$browser_path" | grep "not found" && exit 1 || true
+
+      - name: Run heavy root gate
+        id: root_gate
+        run: |
+          set -euo pipefail
+          run_pnpm() {
+            if command -v corepack >/dev/null 2>&1; then
+              corepack pnpm "$@"
+            else
+              pnpm "$@"
+            fi
+          }
+          run_pnpm run lint
+
+      - name: Build Docker image
+        id: docker_build
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} \
+            --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} \
+            -t "$ASSURANCE_IMAGE_TAG" .
+
+      - name: Collect release image metadata
+        id: image_metadata
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          python3 scripts/collect_release_image_metadata.py \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --output dist/release-image-metadata.json \
+            --github-env "$GITHUB_ENV" \
+            --base-image-args dist/base-image-digest.args
+
+      - name: Start migration rehearsal database
+        id: migration_database
+        run: |
+          set -euo pipefail
+          docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d \
+            --name "$POSTGRES_CONTAINER" \
+            -e POSTGRES_DB=mesh \
+            -e POSTGRES_USER=mesh \
+            -e POSTGRES_PASSWORD=mesh \
+            -p "127.0.0.1:${POSTGRES_PORT}:5432" \
+            postgres:16-alpine
+          for attempt in $(seq 1 30); do
+            if docker exec "$POSTGRES_CONTAINER" pg_isready -U mesh -d mesh >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$POSTGRES_CONTAINER" || true
+          exit 1
+
+      - name: Run Postgres migration rehearsal
+        id: migration_rehearsal
+        env:
+          MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:55432/mesh
+        run: |
+          set -euo pipefail
+          UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . --with "psycopg[binary]>=3.2,<4" python scripts/run_postgres_migration_rehearsal.py \
+            --output dist/migration-rehearsal.json \
+            --operator-id github-actions-self-hosted \
+            --environment ci \
+            --rehearsal-id "selfhosted-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --json
+
+      - name: Stop migration rehearsal database
+        if: always()
+        run: docker rm -f "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+
+      - name: Prune Docker build cache before release scanners
+        run: |
+          docker builder prune --force
+          docker image prune --force
+          df -h
+
+      - name: Install release scanners
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/syft.deb "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.deb"
+          echo "${SYFT_DEB_SHA256}  /tmp/syft.deb" | sha256sum -c -
+          curl -fsSLo /tmp/grype.deb "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.deb"
+          echo "${GRYPE_DEB_SHA256}  /tmp/grype.deb" | sha256sum -c -
+          scanner_root="${RUNNER_TEMP:-/tmp}/release-scanners"
+          rm -rf "$scanner_root"
+          mkdir -p "$scanner_root"
+          dpkg-deb -x /tmp/syft.deb "$scanner_root"
+          dpkg-deb -x /tmp/grype.deb "$scanner_root"
+          echo "${scanner_root}/usr/bin" >> "$GITHUB_PATH"
+          export PATH="${scanner_root}/usr/bin:${PATH}"
+          syft version
+          grype version
+
+      - name: Generate release image assurance artifacts
+        id: release_assurance
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 scripts/generate_release_image_assurance.py \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --image-digest "$MESH_IMAGE_DIGEST" \
+            --raw-output-dir dist/release-assurance-raw \
+            --output-dir dist/release-assurance \
+            --exception-policy config/release-vulnerability-exceptions.json
+
+      - name: Generate CI attestation
+        if: always() && steps.checkout.outcome == 'success'
+        id: ci_attestation
+        env:
+          NODE_TOOLCHAIN_OUTCOME: ${{ steps.node_toolchain.outcome }}
+          TOOLCHAIN_OUTCOME: ${{ steps.toolchain.outcome }}
+          PNPM_INSTALL_OUTCOME: ${{ steps.pnpm_install.outcome }}
+          ROOT_GATE_OUTCOME: ${{ steps.root_gate.outcome }}
+          DOCKER_BUILD_OUTCOME: ${{ steps.docker_build.outcome }}
+          RELEASE_ASSURANCE_OUTCOME: ${{ steps.release_assurance.outcome }}
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          status_from_outcome() {
+            case "${1:-skipped}" in
+              success) echo passed ;;
+              failure) echo failed ;;
+              cancelled) echo cancelled ;;
+              skipped) echo skipped ;;
+              *) echo skipped ;;
+            esac
+          }
+          root_gate_status="$(status_from_outcome "$ROOT_GATE_OUTCOME")"
+          python3 scripts/generate_ci_attestation.py \
+            --output dist/ci-attestation.json \
+            --require-github-actions \
+            --check-status "node-toolchain=$(status_from_outcome "$NODE_TOOLCHAIN_OUTCOME")" \
+            --check-status "toolchain=$(status_from_outcome "$TOOLCHAIN_OUTCOME")" \
+            --check-status "pnpm-install=$(status_from_outcome "$PNPM_INSTALL_OUTCOME")" \
+            --check-status "root-lint=${root_gate_status}" \
+            --check-status "python-test=${root_gate_status}" \
+            --check-status "web=${root_gate_status}" \
+            --check-status "docker-build=$(status_from_outcome "$DOCKER_BUILD_OUTCOME")" \
+            --check-status "release-image-assurance=$(status_from_outcome "$RELEASE_ASSURANCE_OUTCOME")" \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --image-digest "${MESH_IMAGE_DIGEST:-}" \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $ASSURANCE_IMAGE_TAG ." \
+            "${BASE_IMAGE_ARGS[@]}"
+
+      - name: Generate release provenance draft
+        if: always() && steps.checkout.outcome == 'success' && steps.ci_attestation.outcome == 'success'
+        env:
+          MESH_POLICY_SIGNING_KEY: ${{ secrets.MESH_POLICY_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          BASE_IMAGE_ARGS=()
+          if [ -f dist/base-image-digest.args ]; then
+            mapfile -t BASE_IMAGE_ARGS < dist/base-image-digest.args
+          fi
+          python3 scripts/generate_release_provenance.py \
+            --output dist/release-provenance-draft.json \
+            --image-tag "$ASSURANCE_IMAGE_TAG" \
+            --ci-attestation dist/ci-attestation.json \
+            --migration-rehearsal dist/migration-rehearsal.json \
+            --sbom dist/release-assurance/sbom.cdx.json \
+            --vulnerability-scan dist/release-assurance/vulnerability-scan.json \
+            --build-command "docker build --build-arg MESH_BUILD_VERSION=selfhosted-${GITHUB_RUN_NUMBER} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} -t $ASSURANCE_IMAGE_TAG ." \
+            --policy-signing-key "$MESH_POLICY_SIGNING_KEY" \
+            --json \
+            "${BASE_IMAGE_ARGS[@]}"
+
+      - name: Fail on release image assurance errors
+        if: steps.release_assurance.outcome != 'success'
+        run: exit 1
+
+      - name: Preserve runner-local evidence bundle
+        if: always()
+        run: |
+          set -euo pipefail
+          evidence_root="/var/tmp/orbital-mesh-release-assurance/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$evidence_root"
+          if [ -d dist ]; then
+            cp -R dist/. "$evidence_root/"
+          fi
+          {
+            echo "### Self-hosted release assurance evidence"
+            echo
+            echo "- state_slice: \`release-provenance-current-head.v1\`"
+            echo "- git_sha: \`${GITHUB_SHA}\`"
+            echo "- runner_evidence_root: \`${evidence_root}\`"
+            echo
+            echo "| sha256 | path |"
+            echo "| --- | --- |"
+            find "$evidence_root" -type f -print0 | sort -z | while IFS= read -r -d '' path; do
+              digest="$(sha256sum "$path" | awk '{print $1}')"
+              rel="${path#${evidence_root}/}"
+              echo "| \`${digest}\` | \`${rel}\` |"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"

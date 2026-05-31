@@ -464,12 +464,12 @@ export interface DarkharnessPilotPacket {
     governance_commits?: Array<Record<string, any>>;
     proof_envelopes?: Array<Record<string, any>>;
   };
-  boundaries: {
+  boundaries?: {
     raw_reservoir_egress: string;
     external_model_calls: string;
     production_actions_approval_required: boolean;
   };
-  claim_boundary: {
+  claim_boundary?: {
     implemented: string[];
     proposed: string[];
     not_implemented: string[];

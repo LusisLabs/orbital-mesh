@@ -4,8 +4,22 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "source-preview or release-image"
+        required: true
+        default: source-preview
+        type: choice
+        options:
+          - source-preview
+          - release-image
+      handoff_run_id:
+        description: "Release Image Handoff workflow run ID, required for release-image mode"
+        required: false
+        type: string
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
@@ -17,10 +31,36 @@ jobs:
     runs-on: [self-hosted, lusislabs-preview]
     env:
       DEPLOY_SHA: ${{ github.sha }}
+      LUSIS_PUBLIC_URL: https://app.lusislabs.com
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: ${{ env.DEPLOY_SHA }}
+      - name: Checkout repository without marketplace actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git init "$GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
+          git remote remove origin >/dev/null 2>&1 || true
+          scrub_origin() {
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git" >/dev/null 2>&1 || true
+          }
+          trap scrub_origin EXIT
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git fetch --depth=1 origin "$DEPLOY_SHA"; then
+            scrub_origin
+            echo "::warning::GITHUB_TOKEN fetch failed; retrying without token"
+            if ! git fetch --depth=1 origin "$DEPLOY_SHA"; then
+              echo "::warning::HTTPS fetch failed; retrying with runner SSH credentials"
+              git remote set-url origin "git@github.com:${GITHUB_REPOSITORY}.git"
+              GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new" git fetch --depth=1 origin "$DEPLOY_SHA"
+            fi
+          fi
+          git checkout --detach --force FETCH_HEAD
+          git reset --hard FETCH_HEAD
+          git clean -ffdx
+          scrub_origin
+          trap - EXIT
 
       - name: Prepare deployment source metadata
         run: |
@@ -28,7 +68,56 @@ jobs:
           printf '%s\n' "$DEPLOY_SHA" > .deploy-commit
           printf '%s\n' "${GITHUB_REF_NAME:-main}" > .deploy-branch
 
-      - name: Run server deployment
+      - name: Install deployment entrypoint
+        run: |
+          set -euo pipefail
+          chmod +x scripts/deploy_lusislabs_preview.sh
+          if ! sudo install -m 755 scripts/deploy_lusislabs_preview.sh /usr/local/bin/deploy-lusis-mesh-webapp; then
+            echo "::warning::Could not update /usr/local/bin/deploy-lusis-mesh-webapp; using installed entrypoint"
+          fi
+
+      - name: Verify release-image entrypoint support
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'release-image' }}
+        run: |
+          set -euo pipefail
+          if ! sudo /usr/local/bin/deploy-lusis-mesh-webapp --help 2>&1 | grep -q -- '--release-artifact-root'; then
+            echo "installed deploy entrypoint does not support --release-artifact-root" >&2
+            exit 1
+          fi
+
+      - name: Download release image handoff artifact
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'release-image' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HANDOFF_RUN_ID: ${{ inputs.handoff_run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "$HANDOFF_RUN_ID" ]; then
+            echo "handoff_run_id is required for release-image mode" >&2
+            exit 2
+          fi
+          rm -rf dist/release-image-handoff-current
+          mkdir -p dist/release-image-handoff-current
+          gh run download "$HANDOFF_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir dist/release-image-handoff-current
+          manifest="$(find dist/release-image-handoff-current -path '*/release-image-handoff/release-image-handoff.json' -type f -print -quit)"
+          if [ -z "$manifest" ]; then
+            echo "release-image-handoff.json not found in downloaded artifact" >&2
+            exit 1
+          fi
+          artifact_root="$(dirname "$(dirname "$manifest")")"
+          printf '%s\n' "$artifact_root" > dist/release-image-handoff-current/artifact-root.txt
+
+      - name: Run source preview deployment
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy_mode == 'source-preview' }}
         run: |
           set -euo pipefail
           sudo /usr/local/bin/deploy-lusis-mesh-webapp --source "$GITHUB_WORKSPACE"
+
+      - name: Run release image deployment
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy_mode == 'release-image' }}
+        run: |
+          set -euo pipefail
+          artifact_root="$(cat dist/release-image-handoff-current/artifact-root.txt)"
+          sudo /usr/local/bin/deploy-lusis-mesh-webapp --release-artifact-root "$GITHUB_WORKSPACE/$artifact_root"

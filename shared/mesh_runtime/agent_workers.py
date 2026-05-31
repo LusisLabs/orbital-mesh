@@ -38,6 +38,28 @@ MODEL_BOUND_AGENT_WORKERS = (
     "latentmas",
 )
 
+PROPOSAL_ONLY_ATTEMPT_AGENTS = frozenset(
+    {
+        "goose",
+        "hermes",
+        "codex",
+        "claudecode",
+        "openclaw",
+        "deepagents",
+        "airflow",
+        "temporal",
+        "dagster",
+        "prefect",
+        "flyte",
+        "luigi",
+        "oozie",
+        "n8n",
+    }
+)
+ADVISORY_ONLY_ATTEMPT_AGENTS = frozenset({"latentmas"})
+PROPOSAL_ONLY_ADAPTERS = frozenset({"deepagents", "langgraph", "centaur"})
+ADVISORY_ONLY_ADAPTERS = frozenset({"latentmas_http"})
+
 
 def build_agent_task(
     *,
@@ -100,6 +122,11 @@ def build_agent_attempt(
 ) -> AgentAttempt:
     now = _timestamp()
     output_payload = dict(output or {})
+    output_payload["authority"] = _merge_authority_record(
+        output_payload.get("authority"),
+        agent=agent,
+        adapter=adapter,
+    )
     if thread is not None and "thread" not in output_payload:
         output_payload["thread"] = thread.to_dict() if isinstance(thread, AgentAttemptThread) else dict(thread)
     return AgentAttempt(
@@ -191,9 +218,12 @@ def build_agent_attempt_thread(
         test_results=list(test_results or []),
         release_status=dict(release_status or {}),
         authority={
+            "state_slice": "mesh.agent_attempt_thread.v1",
             "mesh_control_plane_authoritative": True,
             "agent_thread_authoritative": False,
             "policy_approval_actuation_allowed": False,
+            "production_actuation_allowed": False,
+            "final_run_state_owned_by_mesh": True,
         },
     )
 
@@ -258,6 +288,45 @@ def _thread_release_status_from_attempt(attempt: AgentAttempt) -> dict[str, Any]
     if isinstance(release, dict):
         return dict(release)
     return {}
+
+
+def _merge_authority_record(
+    existing: Any,
+    *,
+    agent: str,
+    adapter: str,
+) -> dict[str, Any]:
+    authority = {
+        "state_slice": "mesh.agent_attempt_thread.v1",
+        "mesh_control_plane_authoritative": True,
+        "agent_attempt_authoritative": False,
+        "agent_thread_authoritative": False,
+        "policy_approval_actuation_allowed": False,
+        "production_actuation_allowed": False,
+        "final_run_state_owned_by_mesh": True,
+        "boundary": _authority_boundary(agent=agent, adapter=adapter),
+    }
+    if isinstance(existing, dict):
+        authority.update(existing)
+        authority["state_slice"] = "mesh.agent_attempt_thread.v1"
+        authority["mesh_control_plane_authoritative"] = True
+        authority["agent_attempt_authoritative"] = False
+        authority["agent_thread_authoritative"] = False
+        authority["policy_approval_actuation_allowed"] = False
+        authority["production_actuation_allowed"] = False
+        authority["final_run_state_owned_by_mesh"] = True
+        authority["boundary"] = _authority_boundary(agent=agent, adapter=adapter)
+    return authority
+
+
+def _authority_boundary(*, agent: str, adapter: str) -> str:
+    if agent == "kubernetes" and adapter == "native_orchestration_contract":
+        return "kubernetes_bounded_action_candidate_requires_mesh_authority_and_allowlists"
+    if agent in ADVISORY_ONLY_ATTEMPT_AGENTS or adapter in ADVISORY_ONLY_ADAPTERS:
+        return "advisory_only"
+    if agent in PROPOSAL_ONLY_ATTEMPT_AGENTS or adapter in PROPOSAL_ONLY_ADAPTERS or adapter == "native_contract":
+        return "proposal_only"
+    return "mesh_native_projection"
 
 
 def _timestamp() -> str:

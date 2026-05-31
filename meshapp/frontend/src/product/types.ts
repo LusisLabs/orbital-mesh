@@ -66,23 +66,23 @@ export interface AgentFlowLifecycleTask {
 }
 
 export interface AgentFlowMutationPreview {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.mutation_preview.v1";
+  state_slice: "mesh.agent_flow.mutation_preview.v1";
   preview_id: string;
-  status: string;
+  status: "draft_requires_confirmation";
   proposed_resource: string;
   action: string;
   target: Record<string, any>;
   endpoint: string;
   would_touch_state_slice: string;
-  confirmation_required: boolean;
-  side_effects_executed: boolean;
+  confirmation_required: true;
+  side_effects_executed: false;
   issued_scope: string;
   issued_operator_id: string;
   issued_at: string;
   proof: {
-    algorithm: string;
-    bound_state_slice: string;
+    algorithm: "HMAC-SHA256";
+    bound_state_slice: "mesh.agent_flow.mutation_preview.v1";
     signature: string;
   };
 }
@@ -101,30 +101,30 @@ export interface AgentFlowChatResponse {
 }
 
 export interface AgentFlowLiveKitSessionResponse {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.livekit_session.v1";
+  state_slice: "mesh.agent_flow.livekit_session.v1";
   agent: { id: string; name: string; source: string; authority?: string };
-  status: string;
+  status: "unconfigured" | "invalid_token" | "expired" | "ready" | "permission_required";
   livekit_url: string;
   room: string;
   participant_identity: string;
   token: string;
   token_expires_at: string | null;
   required_env: string[];
-  side_effects_executed: boolean;
+  side_effects_executed: false;
 }
 
 export interface AgentFlowConfirmationResponse {
-  schema_version: string;
-  state_slice: string;
+  schema_version: "mesh.agent_flow.confirmation.v1";
+  state_slice: "mesh.agent_flow.mutation_preview.v1";
   preview_id: string;
-  status: string;
+  status: "confirmation_recorded";
   confirmed_by: string;
   reason: string;
   proposed_resource: string;
   would_touch_state_slice: string;
   routed_to: string;
-  side_effects_executed: boolean;
+  side_effects_executed: false;
   next_step: string;
   created_at: string;
 }
