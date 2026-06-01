@@ -2062,6 +2062,366 @@
   gap: 8px;
 }
 
+.meshgraph-shell {
+  width: min(88rem, calc(100vw - 312px));
+  margin: 0 auto;
+  padding: var(--om-space-8) 0 var(--om-space-16);
+}
+
+.meshgraph-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.45fr);
+  align-items: start;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.meshgraph-toolbar > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.meshgraph-toolbar span,
+.meshgraph-filter-row button,
+.meshgraph-metric span,
+.meshgraph-inspector-grid span,
+.meshgraph-node-heading span,
+.meshgraph-canvas-status {
+  color: var(--om-color-text-muted);
+  font-size: var(--om-text-xs);
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.meshgraph-toolbar strong {
+  max-width: 840px;
+  color: var(--om-color-text);
+  font-family: var(--om-font-display);
+  font-size: clamp(1.1rem, 2.2vw, 1.75rem);
+  line-height: 1.18;
+}
+
+.meshgraph-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.meshgraph-actions button,
+.meshgraph-canvas-controls button,
+.meshgraph-filter-row button,
+.meshgraph-alert button {
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  background: var(--om-color-surface);
+  color: var(--om-color-text);
+  min-height: 38px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+  transition: background var(--om-transition-fast), border-color var(--om-transition-fast), transform var(--om-transition-fast);
+}
+
+.meshgraph-actions button:active,
+.meshgraph-canvas-controls button:active,
+.meshgraph-filter-row button:active {
+  transform: translateY(1px);
+}
+
+.meshgraph-search {
+  min-width: 260px;
+  height: 38px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  background: var(--om-color-surface-inset);
+  color: var(--om-color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+
+.meshgraph-search input {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--om-color-text);
+  outline: none;
+  padding: 0;
+  box-shadow: none;
+}
+
+.meshgraph-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.meshgraph-metric {
+  min-height: 92px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-md);
+  background: var(--om-color-surface);
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 12px;
+}
+
+.meshgraph-metric svg {
+  color: var(--om-color-proof);
+}
+
+.meshgraph-metric strong {
+  color: var(--om-color-text);
+  font-family: var(--om-font-mono);
+  font-size: 1.45rem;
+  line-height: 1;
+}
+
+.meshgraph-metric small {
+  color: var(--om-color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.meshgraph-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.meshgraph-filter-row button {
+  min-height: 30px;
+  padding: 0 10px;
+}
+
+.meshgraph-filter-row button.active {
+  border-color: color-mix(in srgb, var(--om-color-proof) 48%, var(--om-color-border));
+  background: color-mix(in srgb, var(--om-color-proof) 14%, var(--om-color-surface));
+  color: var(--om-color-text);
+}
+
+.meshgraph-workspace {
+  min-height: 680px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 10px;
+}
+
+.meshgraph-canvas-panel {
+  min-height: 680px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-md);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #080909;
+  background-size: 64px 64px;
+  overflow: hidden;
+  position: relative;
+}
+
+.meshgraph-canvas-panel canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none;
+}
+
+.meshgraph-canvas-panel canvas:active {
+  cursor: grabbing;
+}
+
+.meshgraph-canvas-controls {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+}
+
+.meshgraph-canvas-controls button {
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  background: color-mix(in srgb, var(--om-color-surface) 88%, transparent);
+}
+
+.meshgraph-canvas-status {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 9px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  background: color-mix(in srgb, var(--om-color-surface) 88%, transparent);
+}
+
+.meshgraph-inspector {
+  min-height: 680px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-md);
+  background: var(--om-color-surface);
+  padding: 14px;
+  overflow: auto;
+}
+
+.meshgraph-node-heading {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--om-color-border);
+}
+
+.meshgraph-node-heading strong {
+  display: block;
+  color: var(--om-color-text);
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.meshgraph-node-icon {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--om-color-surface-inset);
+}
+
+.meshgraph-node-icon.ready {
+  color: var(--om-color-proof);
+}
+
+.meshgraph-node-icon.blocked,
+.meshgraph-node-icon.degraded {
+  color: var(--om-color-warning);
+}
+
+.meshgraph-node-icon.running {
+  color: #98bdd7;
+}
+
+.meshgraph-inspector-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 7px;
+  margin: 12px 0;
+}
+
+.meshgraph-inspector-grid div {
+  border-top: 1px solid var(--om-color-border);
+  padding-top: 7px;
+}
+
+.meshgraph-inspector-grid strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--om-color-text);
+  font-family: var(--om-font-mono);
+  font-size: var(--om-text-xs);
+  overflow-wrap: anywhere;
+}
+
+.meshgraph-inspector p {
+  margin: 0 0 12px;
+  color: var(--om-color-text-secondary);
+  line-height: 1.45;
+}
+
+.meshgraph-json {
+  border-top: 1px solid var(--om-color-border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.meshgraph-json summary {
+  color: var(--om-color-text);
+  font-size: var(--om-text-sm);
+  font-weight: 760;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meshgraph-json pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 9px 0 0;
+  padding: 10px;
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  background: var(--om-color-surface-inset);
+  color: var(--om-color-text-secondary);
+  font-family: var(--om-font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.meshgraph-alert {
+  border: 1px solid #6f5b2d;
+  border-radius: var(--om-radius-md);
+  background: rgba(120, 91, 36, 0.18);
+  color: #f2d492;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px;
+}
+
+.meshgraph-alert.compact {
+  margin: 10px 0;
+  font-size: var(--om-text-sm);
+}
+
+.meshgraph-drill-loading,
+.meshgraph-shell .empty-inline {
+  border: 1px solid var(--om-color-border);
+  border-radius: var(--om-radius-sm);
+  background: var(--om-color-surface-inset);
+  color: var(--om-color-text-muted);
+  padding: 10px;
+  font-size: var(--om-text-sm);
+}
+
+.meshgraph-shell .skeleton {
+  position: relative;
+  overflow: hidden;
+}
+
+.meshgraph-shell .skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
+  animation: meshgraph-shimmer 1.4s infinite;
+}
+
+@keyframes meshgraph-shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .product-alert.success {
   border-color: #315f55;
   background: rgba(49, 95, 85, 0.16);
@@ -3256,6 +3616,7 @@
     display: none;
   }
   .content-stack,
+  .meshgraph-shell,
   .skeleton-panel,
   .state-panel {
     width: min(100% - 32px, 960px);
@@ -3282,6 +3643,16 @@
   .praxis-lanes,
   .agent-flow-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .meshgraph-toolbar,
+  .meshgraph-workspace {
+    grid-template-columns: 1fr;
+  }
+  .meshgraph-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .meshgraph-inspector {
+    min-height: 360px;
   }
   .console-metric:nth-child(2),
   .console-panel:nth-child(2) {
@@ -3359,6 +3730,7 @@
     min-width: 0;
   }
   .product-header,
+  .meshgraph-toolbar,
   .toolbar,
   .quickstart-card,
   .partner-home-hero,
@@ -3395,6 +3767,23 @@
   .env-var-grid,
   .agent-flow-grid {
     grid-template-columns: 1fr;
+  }
+  .meshgraph-shell {
+    width: min(100% - 24px, 720px);
+    padding-top: 16px;
+  }
+  .meshgraph-actions,
+  .meshgraph-search {
+    width: 100%;
+  }
+  .meshgraph-summary {
+    grid-template-columns: 1fr;
+  }
+  .meshgraph-canvas-panel {
+    min-height: 500px;
+  }
+  .meshgraph-workspace {
+    min-height: auto;
   }
   .agent-flow-preview-actions {
     justify-items: stretch;

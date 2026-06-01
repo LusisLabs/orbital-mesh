@@ -25,6 +25,10 @@ from shared.mesh_runtime.hardened_arena import load_hardened_arena_profiles
 from shared.mesh_runtime.hardened_arena_catalog import load_hardened_arena_catalog
 from shared.mesh_runtime.hardened_arena_intent import generate_hardened_arena_intent, write_hardened_arena_intent
 from shared.mesh_runtime.hardened_arena_packet import generate_hardened_arena_packet, write_hardened_arena_packet
+from shared.mesh_runtime.recursive_chaos import (
+    load_recursive_chaos_arena_profiles,
+    verify_recursive_chaos_arena_profiles,
+)
 from shared.mesh_runtime.operator_identity import (
     CaptchaConfig,
     OAuthProviderConfig,

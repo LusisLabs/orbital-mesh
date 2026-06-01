@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import unittest
 from typing import Any
 from unittest import mock
@@ -25,6 +26,100 @@ class _Response:
 
 
 class ComposeChaosRunPollingTests(unittest.TestCase):
+    def test_recursive_chaos_manifest_is_catalog_driven_from_portfolio(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "kubernetes")
+        profile = {
+            "profile_id": "kubernetes_service_platform",
+            "default_safety_class": "staging_owned",
+        }
+
+        manifest = compose_chaos_session._build_recursive_chaos_manifest(
+            arena_profile=profile,
+            arena_environment="local",
+            targets=[target],
+        )
+
+        self.assertEqual(manifest["schema_version"], "mesh.recursive_chaos.experiment_manifest.v1")
+        self.assertEqual(manifest["profile_id"], "kubernetes_service_platform")
+        self.assertEqual(manifest["target_refs"], ["kubernetes://ctx/ns/svc"])
+        self.assertTrue(manifest["safety_gates"]["allow_mutation"])
+        self.assertEqual(len(manifest["experiments"]), len(compose_chaos_session.DEFAULT_PORTFOLIO))
+        self.assertEqual(manifest["mesh_integration"]["seals_packets_before_learning"], True)
+
+    def test_recursive_chaos_manifest_blocks_hetzner_mutating_runner_cycles(self) -> None:
+        target = compose_chaos_session.Target("hetzner", "ns", "svc", "kubernetes")
+        profile = {
+            "profile_id": "kubernetes_service_platform",
+            "default_safety_class": "staging_owned",
+        }
+        manifest = compose_chaos_session._build_recursive_chaos_manifest(
+            arena_profile=profile,
+            arena_environment="hetzner",
+            targets=[target],
+        )
+
+        verdict = compose_chaos_session.recursive_chaos_safety_verdict(
+            safety_class=manifest["safety_class"],
+            mutates_target=compose_chaos_session._experiment_mutates_target(compose_chaos_session.DEFAULT_PORTFOLIO[0]),
+            forbidden_actions=manifest["safety_gates"]["forbidden_actions"],
+        )
+
+        self.assertEqual(manifest["safety_class"], "production_probe_only")
+        self.assertFalse(manifest["safety_gates"]["allow_mutation"])
+        self.assertFalse(verdict["mutation_allowed"])
+        self.assertEqual(verdict["reason"], "production_probe_only_blocks_mutation")
+
+    def test_recursive_chaos_cycle_emits_sealed_packet_bundle(self) -> None:
+        target = compose_chaos_session.Target("ctx", "ns", "svc", "kubernetes")
+        profile = {
+            "profile_id": "kubernetes_service_platform",
+            "default_safety_class": "staging_owned",
+        }
+        manifest = compose_chaos_session._build_recursive_chaos_manifest(
+            arena_profile=profile,
+            arena_environment="local",
+            targets=[target],
+        )
+        event = {
+            "event": "chaos_cycle",
+            "observed_at": "2026-06-01T00:00:00Z",
+            "experiment": "bad_image",
+            "severity": "high",
+            "capability_axes": ["detect_image_pull_failure"],
+            "target": target.__dict__,
+            "safety_verdict": {
+                "safety_class": "staging_owned",
+                "mutation_allowed": True,
+                "forbidden_actions_enforced": True,
+            },
+            "pre_state": {"ready_replicas": 1},
+            "fault_state": {"mode": "bad_image"},
+            "post_revert_ready": {"ready_replicas": 1},
+            "mesh_run": {"run_id": "run-1", "decision_type": "rollback_deployment"},
+            "score": {"passed": True},
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            packet_root = compose_chaos_session.Path(tmp) / "packets"
+            events_path = compose_chaos_session.Path(tmp) / "events.jsonl"
+            refs = compose_chaos_session._emit_recursive_chaos_packets(
+                manifest=manifest,
+                event=event,
+                packet_root=packet_root,
+                events_path=events_path,
+                cycle_number=1,
+            )
+
+            cycle_packet = json.loads(compose_chaos_session.Path(refs["cycle_packet"]).read_text(encoding="utf-8"))
+            bundle = json.loads(compose_chaos_session.Path(refs["evidence_bundle"]).read_text(encoding="utf-8"))
+
+        self.assertEqual(cycle_packet["schema_version"], "mesh.recursive_chaos.cycle_packet.v1")
+        self.assertEqual(cycle_packet["run_id"], "run-1")
+        self.assertTrue(cycle_packet["recovery_packet_id"].startswith("recovery-compose-chaos-"))
+        self.assertTrue(cycle_packet["sealed"])
+        self.assertEqual(bundle["schema_version"], "mesh.recursive_chaos.evidence_bundle.v1")
+        self.assertFalse(bundle["production_readiness_claim"])
+
     def test_run_wait_timeout_returns_stage_and_elapsed_metadata(self) -> None:
         target = compose_chaos_session.Target(
             context="mesh-compose",

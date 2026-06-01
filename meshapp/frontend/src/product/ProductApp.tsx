@@ -41,6 +41,7 @@ import AsciiFlowCanvas from "../landing/AsciiFlowCanvas";
 import OperatorConsole, { type AppView } from "../App";
 import AgentLifecyclePlan from "../../components/ui/agent-lifecycle-plan";
 import { PromptInputBox } from "../../components/ui/prompt-input-box";
+import MeshgraphView from "./MeshgraphView";
 import {
   type AuthConfig,
   type ApprovalCommand,
@@ -86,6 +87,7 @@ export type ViewKey =
   | "praxis"
   | "agent-flow"
   | "hardened-arena"
+  | "meshgraph"
   | "environments"
   | "evaluations"
   | "training"
@@ -119,6 +121,7 @@ const VIEW_KEYS = new Set<ViewKey>([
   "praxis",
   "agent-flow",
   "hardened-arena",
+  "meshgraph",
   "environments",
   "evaluations",
   "training",
@@ -237,6 +240,7 @@ const NAV_GROUPS: { label: string; items: { key: ViewKey; label: string; icon: a
       { key: "praxis", label: "Praxis", icon: Sparkles },
       { key: "agent-flow", label: "Agent Flow", icon: Bot },
       { key: "hardened-arena", label: "Build Arena", icon: ShieldCheck },
+      { key: "meshgraph", label: "Meshgraph", icon: Network },
       { key: "evaluations", label: "Evaluations", icon: BarChart3 },
       { key: "environments", label: "Connectors", icon: Boxes },
       { key: "gpu", label: "Readiness", icon: Cpu },
@@ -1365,6 +1369,7 @@ function pageMetaForView(view: ViewKey): { title: string; group: string; detail:
     praxis: "Upload sources, certify generated tools, start dry-run, and export proof.",
     "agent-flow": "Chat with Harper-696, then drill into the Mesh lifecycle, agent lanes, proof gaps, and mutation preview path.",
     "hardened-arena": "Choose a recipe profile, inspect authority boundaries and blockers, then generate a review-only proof packet.",
+    meshgraph: "High-performance canvas graph for Mesh infra, chaos runs, profiles, catalogs, evidence, and policy surfaces.",
     evaluations: "Choose a scenario, launch through Mesh admission, and inspect proof.",
     environments: "Filter connector status by domain, state, and blocker evidence.",
     settings: "Choose safe defaults for new runs; deployment and CLI parity stay in Advanced.",
@@ -1434,6 +1439,7 @@ function ContentRouter({
   if (view === "praxis") return <PraxisView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "agent-flow") return <AgentFlowView dashboard={dashboard} setView={setView} />;
   if (view === "hardened-arena") return <HardenedArenaView dashboard={dashboard} setView={setView} />;
+  if (view === "meshgraph") return <MeshgraphView dashboard={dashboard} />;
   if (view === "environments") return <EnvironmentView dashboard={dashboard} setView={setView} />;
   if (view === "evaluations") return <EvaluationsView dashboard={dashboard} setView={setView} onDashboardRefresh={onDashboardRefresh} />;
   if (view === "team") return <TeamSettingsView session={session} dashboard={dashboard} onDashboardRefresh={onDashboardRefresh} onDashboardSettingsUpdate={onDashboardSettingsUpdate} onSession={onSession} onLogout={onLogout} loggingOut={loggingOut} />;

@@ -115,7 +115,7 @@ Deep Agents remains proposal-only. It does not receive direct Kubernetes credent
 6. `mesh` starts with live Kubernetes execution enabled, a colon-merged `KUBECONFIG`, allowed contexts `mesh-compose,mesh-compose-vm,mesh-compose-baremetal`, and allowed namespace `search`.
 7. `mesh-agent-operator` waits for Mesh health and starts polling `awaiting_operator` evaluation gates.
 8. `mesh-smoke` waits for Mesh health and the agent operator, verifies required readiness entries, seeds a CrashLoop failure, launches a live Mesh run, and exits non-zero on failure.
-9. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes and uncovered substrates, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON. With `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions do not stop while any known capability axis remains missing or failed unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set, do not stop while any configured substrate lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and do not stop while any multi-fault primitive lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
+9. `mesh-chaos` waits for the smoke run, then schedules reversible chaos across all three contexts, biases selection toward unproven capability axes and uncovered substrates, launches Mesh runs against the affected target after each injection, and writes an events JSONL plus a breakthrough summary JSON. It also writes a recursive chaos manifest and sealed cycle, ghost recovery, learning, and evidence bundle packets for each scored cycle. With `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions do not stop while any known capability axis remains missing or failed unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set, do not stop while any configured substrate lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and do not stop while any multi-fault primitive lacks a passed cycle unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
 
 Non-Kubernetes production-node breakthrough probes run outside the long-lived `mesh-chaos` container:
 
@@ -253,6 +253,8 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_CHAOS_REQUEST_TIMEOUT_SECONDS` | `90` | Per-request timeout for Mesh run launch and polling calls |
 | `MESH_STACK_CHAOS_OPERATOR_ID` | `mesh-compose-chaos` | Operator id stamped onto Mesh run launch and polling requests from the compose chaos harness |
 | `MESH_STACK_CHAOS_OPERATOR_ROLES` | `launcher,viewer` | Operator roles stamped onto Mesh run launch and polling requests from the compose chaos harness |
+| `MESH_STACK_CHAOS_ARENA_PROFILE_ID` | `kubernetes_service_platform` | Recursive chaos arena profile used for compose-cycle manifests and packet bundles |
+| `MESH_STACK_CHAOS_ENVIRONMENT` | `local` | Recursive chaos environment label; `hetzner`, `production`, `prod`, and `pilot` resolve to probe-only mutation blocking |
 | `MESH_STACK_AGENT_FABRIC_MODE` | `deepagents` | `native` or `deepagents` proposal fabric |
 | `MESH_STACK_AGENT_OPERATOR_ENABLED` | `1` | Enables the non-human operator loop in the stack |
 | `MESH_AGENT_OPERATOR_PRIORITY` | `hermes,goose,codex,claudecode,openclaw,temporal,kubernetes,n8n,latentmas` | Ordered operator-agent preference for eligible evaluation overrides |

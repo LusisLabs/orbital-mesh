@@ -2609,7 +2609,7 @@ class RunCoordinator:
                     "recursive_chaos_session": summary,
                     "sealed_learning_packet_refs": list(summary.get("learning_packet_refs") or []),
                     "advisory_only": True,
-                },
+                }
             },
             expected_outcome={
                 "target_metrics": {"p95_latency_ms": "unchanged", "error_rate": "unchanged"},
@@ -6284,6 +6284,43 @@ class RunCoordinator:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _recursive_chaos_mesh_brain_advisory(summary: dict[str, Any], run_id: str) -> dict[str, Any]:
+    learning_packet_refs = [str(ref) for ref in summary.get("learning_packet_refs", [])]
+    cycle_packet_refs = [str(ref) for ref in summary.get("cycle_packet_refs", [])]
+    evidence_bundle_refs = [str(ref) for ref in summary.get("evidence_bundle_refs", [])]
+    packet = {
+        "schema_version": "mesh.mesh_brain_recursive_chaos_advisory.v1",
+        "run_id": run_id,
+        "source": "recursive_chaos_arena",
+        "session_status": summary.get("status"),
+        "cycles_total": summary.get("cycles_total"),
+        "sealed_source_required": True,
+        "sealed_source_packet_refs": cycle_packet_refs + learning_packet_refs + evidence_bundle_refs,
+        "mesh_brain_mode": "recommend_only",
+        "mesh_model_mode": "recommend_only",
+        "advisory_only": True,
+        "training_allowed": False,
+        "mesh_model_training_allowed": False,
+        "production_authority": False,
+        "recommendations": [
+            {
+                "recommendation_type": "arena_scheduler_weight",
+                "summary": "Use sealed recursive chaos packets as future scheduler weighting evidence only.",
+                "confidence": 0.78,
+                "evidence_refs": evidence_bundle_refs,
+            }
+        ],
+        "policy": {
+            "sealed_packets_before_learning": True,
+            "model_training_blocked": True,
+            "mesh_model_training_blocked": True,
+            "production_mutation_authority": False,
+        },
+    }
+    packet["advisory_hash"] = f"sha256:{_canonical_sha256(packet)}"
+    return packet
 
 
 def _meshmodel_benchmark_summary(*, payload: dict[str, Any], run_id: str) -> dict[str, Any]:

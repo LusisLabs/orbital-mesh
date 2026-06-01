@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { AgentFlowLiveKitSessionResponse } from "./api";
+import { buildMeshgraphModel } from "./MeshgraphView";
 import {
   askMesh,
   agentFlowVoiceUnavailableMessage,
@@ -122,6 +123,41 @@ describe("approval and runtime product pages", () => {
     expect(runtimeProductPage("gpu", dashboard)).toMatchObject({ title: "Readiness" });
     expect(runtimeProductPage("clusters", dashboard)).toMatchObject({ title: "Kill Switch" });
     expect(runtimeProductPage("instances", dashboard)).toMatchObject({ title: "Policy State" });
+  });
+
+  it("builds a Meshgraph from infra, chaos, hardened arena, and run read models", () => {
+    const dashboard = {
+      scope: { kind: "solo", team: null },
+      session: { user: { id: "user-1", email: "operator@example.com", display_name: "Operator" } },
+      mesh: {},
+    } as any;
+    const model = buildMeshgraphModel(dashboard, {
+      health: { status: "ok", commit: "abc123", version: "v1" },
+      readiness: { blockers: [] },
+      approvals: { pending_count: 0, blocked_count: 0 },
+      killSwitch: { live_execution_enabled: false },
+      watchers: { watchers: [{ name: "kubernetes", running: true, signal_source: "kubernetes" }] },
+      graphSnapshot: {
+        nodes: [
+          { id: "deployment:mesh:api", kind: "deployment", namespace: "mesh", name: "api" },
+          { id: "service:mesh:api", kind: "service", namespace: "mesh", name: "api" },
+        ],
+        edges: [{ source: "service:mesh:api", target: "deployment:mesh:api", kind: "selects" }],
+      },
+      runs: { runs: [{ run_id: "run-chaos", scenario_key: "recursive_chaos_arena", status: "completed", stage: "completed" }] },
+      recursiveChaosProfiles: {
+        profiles: [{ profile_id: "kubernetes_service_platform", display_name: "Kubernetes Service Platform", priority_phase: "p0", safety_class: "probe_only" }],
+      },
+      hardenedProfiles: { profiles: [{ profile_id: "solo_project_default", display_name: "Solo Project Default", lifecycle_state: "ready", readiness_posture: "review_only" }] },
+      hardenedCatalog: { entries: [{ image_ref: "python:3.13-slim-trixie", kind: "image", source: "docker" }] },
+    });
+
+    expect(model.schemaVersion).toBe("mesh.product.meshgraph.v1");
+    expect(model.stats.infraNodes).toBe(2);
+    expect(model.stats.chaosProfiles).toBe(1);
+    expect(model.stats.hardenedCatalogEntries).toBe(1);
+    expect(model.nodes.some((node) => node.kind === "chaos_run" && node.sourcePath.includes("run-chaos"))).toBe(true);
+    expect(model.edges.some((edge) => edge.kind === "selects")).toBe(true);
   });
 });
 
