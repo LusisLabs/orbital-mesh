@@ -79,6 +79,7 @@ import type {
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
+  RecursiveChaosProfilesResponse,
   RunDetail,
   RunExportPackage,
   RunEventRecord,
@@ -406,6 +407,8 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
   const [trustLadder, setTrustLadder] = useState<TrustLadderEntry[]>([]);
   const [killSwitchStatus, setKillSwitchStatus] = useState<KillSwitchStatus | null>(null);
   const [pilotPacket, setPilotPacket] = useState<PilotGoNoGoPacket | null>(null);
+  const [recursiveChaosProfiles, setRecursiveChaosProfiles] = useState<RecursiveChaosProfilesResponse | null>(null);
+  const [recursiveChaosRun, setRecursiveChaosRun] = useState<RunDetail | null>(null);
   const [activeResearchSessionId, setActiveResearchSessionId] = useState("");
   const [researchDetail, setResearchDetail] = useState<ResearchSessionDetail | null>(null);
   const [activeRun, setActiveRun] = useState<RunDetail | null>(null);
@@ -458,6 +461,7 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
   const [runningSimulation, setRunningSimulation] = useState("");
   const [exportingRun, setExportingRun] = useState(false);
   const [exportingArchive, setExportingArchive] = useState(false);
+  const [runningRecursiveChaos, setRunningRecursiveChaos] = useState(false);
 
   const { toasts, addToast, dismissToast } = useToast();
 
@@ -645,6 +649,7 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
         connectorCertificationRes,
         approvalQueueRes,
         pilotPacketRes,
+        recursiveChaosProfilesRes,
       ] = await Promise.all([
         boot(api.getHealth(baseUrl), null),
         boot(api.getReadiness(baseUrl), null),
@@ -661,6 +666,7 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
         boot(api.getConnectorCertification(baseUrl), null),
         boot(api.getApprovals(baseUrl), null),
         boot(api.getPilotGoNoGo(baseUrl), null),
+        boot(api.getRecursiveChaosProfiles(baseUrl), null),
       ]);
       if (!healthRes) {
         throw new Error("Could not reach control plane health endpoint.");
@@ -680,6 +686,7 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
       setConnectorCertification(connectorCertificationRes);
       setApprovalPacket(approvalQueueRes);
       setPilotPacket(pilotPacketRes);
+      setRecursiveChaosProfiles(recursiveChaosProfilesRes);
       if (!selectedGoalId && goalsRes.goals[0]) setSelectedGoalId(goalsRes.goals[0].goal_id);
       if (!activeRunId && runsRes.runs[0]) setActiveRunId(runsRes.runs[0].run_id);
       void withTimeout(api.getScenarios(baseUrl), 4_000).then((scenariosRes) => {
@@ -871,6 +878,27 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
       addToast({ variant: "error", title: "Failed to launch run", description: error instanceof Error ? error.message : "Unknown error" });
     } finally {
       setLaunching(false);
+    }
+  }
+
+  async function handleRunRecursiveChaos(profileId: string) {
+    setRunningRecursiveChaos(true);
+    try {
+      const run = await api.runRecursiveChaosArenaSession(baseUrl, {
+        profile_ids: [profileId],
+        max_cycles: 1,
+      });
+      setRecursiveChaosRun(run);
+      setActiveRun(run);
+      setActiveRunId(run.run_id);
+      setActiveView("runs");
+      setRunDetailTab("evidence");
+      addToast({ variant: "success", title: "Recursive chaos packet recorded", description: run.run_id });
+      await refreshBootstrap();
+    } catch (error) {
+      addToast({ variant: "error", title: "Recursive chaos run failed", description: error instanceof Error ? error.message : "Unknown error" });
+    } finally {
+      setRunningRecursiveChaos(false);
     }
   }
 
@@ -1614,8 +1642,12 @@ export default function App({ initialView = "overview" }: { initialView?: AppVie
               pilotPacket={pilotPacket}
               serviceAgents={serviceAgents}
               benchmarks={benchmarks}
+              recursiveChaosProfiles={recursiveChaosProfiles}
+              recursiveChaosRun={recursiveChaosRun}
+              runningRecursiveChaos={runningRecursiveChaos}
               killSwitching={killSwitching}
               onApplyKillSwitch={handleApplyKillSwitch}
+              onRunRecursiveChaos={(profileId) => void handleRunRecursiveChaos(profileId)}
             />
           ) : activeView === "simulator" ? (
             <SimulatorView
@@ -2515,8 +2547,12 @@ function ControlPlaneView({
   pilotPacket,
   serviceAgents,
   benchmarks,
+  recursiveChaosProfiles,
+  recursiveChaosRun,
+  runningRecursiveChaos,
   killSwitching,
   onApplyKillSwitch,
+  onRunRecursiveChaos,
 }: {
   health: HealthSnapshot | null;
   readiness: IntegrationReadiness | null;
@@ -2532,8 +2568,12 @@ function ControlPlaneView({
   pilotPacket: PilotGoNoGoPacket | null;
   serviceAgents: ServiceAgentRecord[];
   benchmarks: BenchmarkRecord[];
+  recursiveChaosProfiles: RecursiveChaosProfilesResponse | null;
+  recursiveChaosRun: RunDetail | null;
+  runningRecursiveChaos: boolean;
   killSwitching: boolean;
   onApplyKillSwitch: () => void;
+  onRunRecursiveChaos: (profileId: string) => void;
 }) {
   const requiredChecks = Object.entries(readiness?.required_checks ?? {});
   const optionalChecks = Object.entries(readiness?.optional_checks ?? {});
@@ -2599,6 +2639,12 @@ function ControlPlaneView({
           <ConnectorRow name="Benchmark records" detail={`${benchmarks.length} recorded`} state={benchmarks.length > 0 ? "ready" : "config-only"} />
         </div>
       </section>
+      <RecursiveChaosArenaPanel
+        profiles={recursiveChaosProfiles}
+        lastRun={recursiveChaosRun}
+        running={runningRecursiveChaos}
+        onRun={onRunRecursiveChaos}
+      />
       <section className="mesh-card mesh-card-span">
         <SectionTitle icon={<CircleDot size={15} />} title="Optional Gate Detail" />
         <ReadinessGateList checks={optionalChecks} blockers={[]} compact />
@@ -2620,6 +2666,72 @@ function ControlPlaneView({
         </div>
       </section>
     </div>
+  );
+}
+
+function RecursiveChaosArenaPanel({
+  profiles,
+  lastRun,
+  running,
+  onRun,
+}: {
+  profiles: RecursiveChaosProfilesResponse | null;
+  lastRun: RunDetail | null;
+  running: boolean;
+  onRun: (profileId: string) => void;
+}) {
+  const p0Profiles = profiles?.profiles.filter((profile) => profile.priority_phase === "p0").slice(0, 8) ?? [];
+  const selectedProfile = p0Profiles[0]?.profile_id ?? "kubernetes_service_platform";
+  return (
+    <section className="mesh-card">
+      <SectionTitle icon={<Binary size={15} />} title="Recursive Chaos Arena" />
+      <div className="mesh-stack">
+        <ConnectorRow
+          name="Profile matrix"
+          detail={profiles ? `${profiles.verification.profile_count} profiles / ${profiles.verification.status}` : "Unavailable"}
+          state={profiles?.verification.status === "pass" ? "ready" : "degraded"}
+        />
+        <ConnectorRow
+          name="Safety gate"
+          detail="Hetzner and production targets resolve to probe-only"
+          state="ready"
+        />
+        <ConnectorRow
+          name="MeshBrain learning"
+          detail="Sealed packets, recommend-only"
+          state="proposal-only"
+        />
+        <div className="tag-row">
+          {p0Profiles.map((profile) => (
+            <button
+              key={profile.profile_id}
+              className="action-button compact"
+              type="button"
+              onClick={() => onRun(profile.profile_id)}
+              disabled={running}
+              title={`${profile.display_name}: ${profile.default_safety_class}`}
+            >
+              {humanize(profile.profile_id)}
+            </button>
+          ))}
+        </div>
+        <button
+          className="action-button primary"
+          type="button"
+          onClick={() => onRun(selectedProfile)}
+          disabled={running || !profiles}
+        >
+          {running ? <Loader2 size={15} className="spin" /> : <Play size={15} />}
+          {running ? "Recording" : "Record packet run"}
+        </button>
+        {lastRun ? (
+          <ContextStat
+            label="Last recursive run"
+            value={`${lastRun.run_id.slice(0, 12)} / ${humanize(lastRun.status)}`}
+          />
+        ) : null}
+      </div>
+    </section>
   );
 }
 

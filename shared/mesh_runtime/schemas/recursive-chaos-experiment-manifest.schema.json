@@ -1,0 +1,72 @@
+{
+  "title": "RecursiveChaosExperimentManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "profile_id",
+    "created_at",
+    "runner",
+    "safety_class",
+    "target_refs",
+    "experiments",
+    "safety_gates",
+    "mesh_integration",
+    "environment"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.recursive_chaos.experiment_manifest.v1"]},
+    "manifest_id": {"type": "string"},
+    "profile_id": {"type": "string"},
+    "created_at": {"type": "string"},
+    "runner": {"type": "string"},
+    "safety_class": {
+      "type": "string",
+      "enum": ["local_disposable", "staging_owned", "production_probe_only", "production_mutating_blocked"]
+    },
+    "target_refs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "experiments": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["experiment_id", "fault_family", "target_ref", "mutates_target", "expected_mesh_decision"],
+        "additionalProperties": false,
+        "properties": {
+          "experiment_id": {"type": "string"},
+          "fault_family": {"type": "string"},
+          "target_ref": {"type": "string"},
+          "mutates_target": {"type": "boolean"},
+          "expected_mesh_decision": {"type": "string"}
+        }
+      }
+    },
+    "safety_gates": {
+      "type": "object",
+      "required": ["allow_mutation", "requires_probe_only", "forbidden_actions"],
+      "additionalProperties": false,
+      "properties": {
+        "allow_mutation": {"type": "boolean"},
+        "requires_probe_only": {"type": "boolean"},
+        "forbidden_actions": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "mesh_integration": {
+      "type": "object",
+      "required": ["creates_run", "records_decision", "operator_approval_respected", "seals_packets_before_learning"],
+      "additionalProperties": false,
+      "properties": {
+        "creates_run": {"type": "boolean"},
+        "records_decision": {"type": "boolean"},
+        "operator_approval_respected": {"type": "boolean"},
+        "seals_packets_before_learning": {"type": "boolean"}
+      }
+    },
+    "environment": {"type": "string"}
+  }
+}

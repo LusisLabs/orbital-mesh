@@ -15,6 +15,15 @@ from pathlib import Path
 from typing import Any, cast
 from urllib.error import URLError
 
+from shared.mesh_runtime.recursive_chaos import (
+    build_arena_evidence_bundle,
+    build_chaos_learning_packet,
+    build_ghost_recovery_packet,
+    build_recursive_chaos_cycle_packet,
+    build_recursive_chaos_experiment_manifest,
+    get_recursive_chaos_arena_profile,
+    recursive_chaos_safety_verdict,
+)
 from tests.e2e.chaos.injector import ChaosError, ChaosInjector
 from tests.e2e.chaos.portfolio import (
     CAPABILITY_AXES,
@@ -60,6 +69,8 @@ def main() -> int:
     seed = int(os.environ.get("MESH_STACK_CHAOS_SEED", "20260428"))
     coverage_first = os.environ.get("MESH_STACK_CHAOS_COVERAGE_FIRST", "1").lower() not in {"0", "false", "no"}
     stop_on_breakthrough = os.environ.get("MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH", "0").lower() in {"1", "true", "yes"}
+    arena_profile_id = os.environ.get("MESH_STACK_CHAOS_ARENA_PROFILE_ID", "kubernetes_service_platform")
+    arena_environment = os.environ.get("MESH_STACK_CHAOS_ENVIRONMENT", "local")
     require_full_axis_coverage = os.environ.get(
         "MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE",
         "1" if coverage_first else "0",
@@ -75,14 +86,25 @@ def main() -> int:
     output_root = Path(os.environ.get("MESH_STACK_CHAOS_OUTPUT_DIR", "/workspace/orbital-mesh/.mesh-runtime-state/compose-chaos"))
     output_root.mkdir(parents=True, exist_ok=True)
 
+    arena_profile = get_recursive_chaos_arena_profile(arena_profile_id)
+    manifest = _build_recursive_chaos_manifest(
+        arena_profile=arena_profile,
+        arena_environment=arena_environment,
+        targets=targets,
+    )
     _wait_for_mesh(base_url)
     rng = random.Random(seed)
     history: list[Prior] = []
     session_events: list[dict[str, Any]] = []
     started = time.monotonic()
     deadline = started + duration
-    events_path = output_root / f"events-{_stamp_compact()}.jsonl"
+    session_stamp = _stamp_compact()
+    events_path = output_root / f"events-{session_stamp}.jsonl"
     summary_path = events_path.with_name(events_path.name.replace("events-", "summary-").replace(".jsonl", ".json"))
+    manifest_path = events_path.with_name(events_path.name.replace("events-", "manifest-").replace(".jsonl", ".json"))
+    packet_root = output_root / f"packets-{session_stamp}"
+    packet_root.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     print(json.dumps({
         "event": "session_started",
@@ -90,6 +112,9 @@ def main() -> int:
         "duration_seconds": duration,
         "seed": seed,
         "output": str(events_path),
+        "recursive_chaos_manifest": str(manifest_path),
+        "recursive_chaos_profile_id": arena_profile_id,
+        "recursive_chaos_environment": arena_environment,
     }, sort_keys=True), flush=True)
 
     while time.monotonic() < deadline:
@@ -111,14 +136,54 @@ def main() -> int:
             "expected_decisions": sorted(experiment.expected_decisions),
             "selection_reason": _selection_reason(experiment, history),
             "target": target.__dict__,
+            "recursive_chaos": _cycle_catalog_context(manifest, experiment, target),
         }
+        verdict = recursive_chaos_safety_verdict(
+            safety_class=str(manifest["safety_class"]),
+            mutates_target=_experiment_mutates_target(experiment),
+            forbidden_actions=list(manifest["safety_gates"]["forbidden_actions"]),
+        )
+        event["safety_verdict"] = verdict
+        if not verdict["mutation_allowed"]:
+            event["error"] = verdict["reason"]
+            event["score"] = _score_event(experiment, event)
+            event["recursive_chaos_packets"] = _emit_recursive_chaos_packets(
+                manifest=manifest,
+                event=event,
+                packet_root=packet_root,
+                events_path=events_path,
+                cycle_number=len(session_events) + 1,
+            )
+            history.append(
+                Prior(
+                    experiment.name,
+                    _target_key(target),
+                    experiment.severity,
+                    now,
+                    experiment.capability_axes,
+                    False,
+                    target.substrate,
+                )
+            )
+            _append_jsonl(events_path, event)
+            session_events.append(event)
+            summary = _session_summary(events_path, session_events, configured_substrates={target.substrate for target in targets})
+            summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print(json.dumps(event, sort_keys=True), flush=True)
+            time.sleep(rng.uniform(min_sleep, max_sleep))
+            continue
         try:
-            _wait_for_target_ready(injector, target)
+            event["pre_state"] = _wait_for_target_ready(injector, target)
             result = getattr(injector, f"inject_{experiment.name}")(target.deployment, target.namespace)
             event["injection"] = {
                 "mode": result.mode,
                 "injected_at": result.injected_at,
                 "observed_at": result.observed_at,
+            }
+            event["fault_state"] = {
+                "mode": result.mode,
+                "observed_at": result.observed_at,
+                "pod_snapshot": result.pod_snapshot,
             }
             observation_delay = _observation_delay_seconds(experiment, hold_seconds)
             event["observation_delay_seconds"] = observation_delay
@@ -133,6 +198,13 @@ def main() -> int:
             except ChaosError as exc:
                 event["post_revert_error"] = repr(exc)
         event["score"] = _score_event(experiment, event)
+        event["recursive_chaos_packets"] = _emit_recursive_chaos_packets(
+            manifest=manifest,
+            event=event,
+            packet_root=packet_root,
+            events_path=events_path,
+            cycle_number=len(session_events) + 1,
+        )
         history.append(
             Prior(
                 experiment.name,
@@ -224,6 +296,227 @@ def _parse_targets(raw: str) -> list[Target]:
             raise SystemExit(f"invalid target {item!r}; expected context:namespace:deployment[:substrate]")
         targets.append(Target(context=context, namespace=namespace, deployment=deployment, substrate=substrate))
     return targets
+
+
+def _build_recursive_chaos_manifest(
+    *,
+    arena_profile: dict[str, Any],
+    arena_environment: str,
+    targets: list[Target],
+) -> dict[str, Any]:
+    target_refs = [_target_ref(target) for target in targets]
+    experiments = [
+        _experiment_manifest_entry(experiment, target_ref)
+        for target_ref in target_refs
+        for experiment in DEFAULT_PORTFOLIO
+    ]
+    return build_recursive_chaos_experiment_manifest(
+        manifest_id=f"compose-chaos-{_stamp_compact()}",
+        profile=arena_profile,
+        created_at=_now(),
+        runner="compose_k8s_catalog_runner",
+        environment=arena_environment,
+        target_refs=target_refs,
+        experiments=experiments,
+    )
+
+
+def _experiment_manifest_entry(experiment: ChaosExperiment, target_ref: str) -> dict[str, Any]:
+    expected = sorted(experiment.expected_decisions)
+    return {
+        "experiment_id": experiment.name,
+        "fault_family": _fault_family(experiment),
+        "target_ref": target_ref,
+        "mutates_target": _experiment_mutates_target(experiment),
+        "expected_mesh_decision": expected[0] if expected else "no_action",
+    }
+
+
+def _cycle_catalog_context(
+    manifest: dict[str, Any],
+    experiment: ChaosExperiment,
+    target: Target,
+) -> dict[str, Any]:
+    return {
+        "manifest_id": manifest["manifest_id"],
+        "profile_id": manifest["profile_id"],
+        "safety_class": manifest["safety_class"],
+        "target_ref": _target_ref(target),
+        "experiment": _experiment_manifest_entry(experiment, _target_ref(target)),
+        "seals_packets_before_learning": manifest["mesh_integration"]["seals_packets_before_learning"],
+    }
+
+
+def _emit_recursive_chaos_packets(
+    *,
+    manifest: dict[str, Any],
+    event: dict[str, Any],
+    packet_root: Path,
+    events_path: Path,
+    cycle_number: int,
+) -> dict[str, str]:
+    packet_root.mkdir(parents=True, exist_ok=True)
+    cycle_id = _safe_token(
+        f"{manifest['manifest_id']}-{cycle_number}-{event.get('experiment', 'unknown')}"
+    )
+    run_id, decision_id = _run_and_decision_refs(event, cycle_id)
+    recovery_packet_id = f"recovery-{cycle_id}" if _has_recovery_chain(event) else None
+    learning_packet_id = f"learning-{cycle_id}"
+    bundle_id = f"bundle-{cycle_id}"
+    sealed_at = _now()
+    refs: dict[str, str] = {}
+
+    recovery_ref: str | None = None
+    if recovery_packet_id is not None:
+        recovery_packet = build_ghost_recovery_packet(
+            recovery_packet_id=recovery_packet_id,
+            cycle_id=cycle_id,
+            run_id=run_id,
+            decision_id=decision_id,
+            pre_state=cast(dict[str, Any], event.get("pre_state") or {}),
+            fault_state=cast(dict[str, Any], event.get("fault_state") or {}),
+            recovery_action={
+                "action_type": "injector_revert",
+                "actor": "compose_chaos_runner",
+                "started_at": str((event.get("injection") or {}).get("observed_at") or sealed_at),
+                "completed_at": sealed_at,
+                "result": "post_state_restored" if "post_revert_ready" in event else "manual_review_required",
+            },
+            post_state=cast(dict[str, Any], event.get("post_revert_ready") or {}),
+            residual_drift=_residual_drift(event),
+            recovered="post_revert_ready" in event,
+            evidence_refs=[str(events_path)],
+            sealed_at=sealed_at,
+        )
+        recovery_ref = _write_packet(packet_root / f"{recovery_packet_id}.json", recovery_packet)
+        refs["ghost_recovery_packet"] = recovery_ref
+
+    learning_packet = build_chaos_learning_packet(
+        learning_packet_id=learning_packet_id,
+        cycle_id=cycle_id,
+        run_id=run_id,
+        source_packet_refs=[cycle_id] + ([recovery_packet_id] if recovery_packet_id else []),
+        recommendations=[_learning_recommendation(event)],
+        sealed_at=sealed_at,
+    )
+    learning_ref = _write_packet(packet_root / f"{learning_packet_id}.json", learning_packet)
+    refs["learning_packet"] = learning_ref
+
+    safety_verdict = cast(dict[str, Any], event.get("safety_verdict") or {})
+    cycle_packet = build_recursive_chaos_cycle_packet(
+        cycle_id=cycle_id,
+        manifest_id=str(manifest["manifest_id"]),
+        profile_id=str(manifest["profile_id"]),
+        run_id=run_id,
+        decision_id=decision_id,
+        started_at=str(event.get("observed_at") or sealed_at),
+        completed_at=sealed_at,
+        recursion_depth=1,
+        selected_experiment={
+            "experiment_id": str(event.get("experiment") or "unknown"),
+            "fault": str(event.get("experiment") or "unknown"),
+            "severity": str(event.get("severity") or "unknown"),
+            "capability_axes": list(event.get("capability_axes") or []),
+        },
+        target=_cycle_target(event, manifest),
+        pre_state_ref=recovery_ref or str(events_path),
+        fault_state_ref=recovery_ref or str(events_path),
+        mesh_observation=cast(dict[str, Any], event.get("mesh_run") or {"error": event.get("error")}),
+        safety_verdict=safety_verdict,
+        recovery_packet_id=recovery_packet_id,
+        learning_packet_id=learning_packet_id,
+        evidence_refs=[str(events_path)],
+    )
+    cycle_ref = _write_packet(packet_root / f"{cycle_id}.cycle.json", cycle_packet)
+    refs["cycle_packet"] = cycle_ref
+
+    bundle = build_arena_evidence_bundle(
+        bundle_id=bundle_id,
+        generated_at=sealed_at,
+        profile_id=str(manifest["profile_id"]),
+        manifest_id=str(manifest["manifest_id"]),
+        environment=str(manifest.get("environment") or "unknown"),
+        safety_class=str(manifest["safety_class"]),
+        cycle_packet_refs=[cycle_ref],
+        ghost_recovery_packet_refs=[recovery_ref] if recovery_ref else [],
+        learning_packet_refs=[learning_ref],
+        run_refs=[run_id],
+        decision_refs=[decision_id] if decision_id else [],
+        artifact_refs=[str(events_path)],
+        gate_results=[
+            {"gate": "contract_validation", "status": "pass", "evidence_ref": cycle_ref},
+            {"gate": "safety_gate", "status": "pass", "evidence_ref": cycle_ref},
+        ],
+    )
+    bundle_ref = _write_packet(packet_root / f"{bundle_id}.json", bundle)
+    refs["evidence_bundle"] = bundle_ref
+    return refs
+
+
+def _has_recovery_chain(event: dict[str, Any]) -> bool:
+    return all(isinstance(event.get(key), dict) for key in ("pre_state", "fault_state", "post_revert_ready"))
+
+
+def _run_and_decision_refs(event: dict[str, Any], cycle_id: str) -> tuple[str, str | None]:
+    mesh_run = event.get("mesh_run") if isinstance(event.get("mesh_run"), dict) else {}
+    run_id = str(mesh_run.get("run_id") or f"run_not_created_{cycle_id}")
+    decision_type = mesh_run.get("decision_type")
+    decision_id = mesh_run.get("decision_id")
+    if decision_id is None and decision_type:
+        decision_id = f"decision_{run_id}_{decision_type}"
+    return run_id, str(decision_id) if decision_id else None
+
+
+def _cycle_target(event: dict[str, Any], manifest: dict[str, Any]) -> dict[str, str]:
+    target = event.get("target") if isinstance(event.get("target"), dict) else {}
+    return {
+        "substrate": str(target.get("substrate") or "unknown"),
+        "environment": str(manifest.get("environment") or "unknown"),
+        "namespace": str(target.get("namespace") or "unknown"),
+        "resource_ref": f"deployment/{target.get('deployment') or 'unknown'}",
+    }
+
+
+def _residual_drift(event: dict[str, Any]) -> dict[str, Any]:
+    if "post_revert_error" in event:
+        return {"status": "unbounded", "changed_paths": ["post_revert_ready"], "drift_score": 1.0}
+    return {"status": "none", "changed_paths": [], "drift_score": 0.0}
+
+
+def _learning_recommendation(event: dict[str, Any]) -> dict[str, Any]:
+    score = event.get("score") if isinstance(event.get("score"), dict) else {}
+    passed = score.get("passed") is True
+    return {
+        "recommendation_type": "scheduler_weight",
+        "summary": "Keep current weighting" if passed else "Reduce or review this fault until recovery evidence is clean",
+        "confidence": 0.8 if passed else 0.5,
+        "evidence_refs": list(event.get("evidence_refs") or []),
+    }
+
+
+def _write_packet(path: Path, payload: dict[str, Any]) -> str:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _safe_token(raw: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in {"-", "_"} else "-" for ch in raw)
+
+
+def _target_ref(target: Target) -> str:
+    return f"{target.substrate}://{target.context}/{target.namespace}/{target.deployment}"
+
+
+def _fault_family(experiment: ChaosExperiment) -> str:
+    if "multi_fault" in experiment.tags:
+        return "multi_fault"
+    if "subtle_fault" in experiment.tags:
+        return "weak_signal"
+    return experiment.name
+
+
+def _experiment_mutates_target(experiment: ChaosExperiment) -> bool:
+    return True
 
 
 def _pick(

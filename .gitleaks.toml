@@ -1,17 +1,17 @@
+title = "orbital-mesh gitleaks configuration"
+
 [extend]
 useDefault = true
 
 [[allowlists]]
-description = "Vendored DeepAgents eval fixtures contain deliberate fake secret strings."
+description = "Tracked generated local showcase and Next E2E artifacts are scanned by CI but are not source secrets."
 paths = [
-  '''^deepagents/libs/evals/''',
+  '''^\.showcase-state/''',
+  '''^meshapp/frontend/\.next-(showcase|e2e-[0-9]+)/''',
 ]
 
 [[allowlists]]
-description = "Ignored local runtime and generated artifacts are not part of release source scans."
-paths = [
-  '''^\.hermes-local/''',
-  '''^\.mesh-runtime-state/''',
-  '''^agentic-operator-core-main/''',
-  '''(^|/)__pycache__/''',
-]
+description = "Vendored DeepAgents test fixture asserts a literal placeholder string, not a credential."
+condition = "AND"
+paths = ['''^deepagents/libs/evals/tests/evals/test_memory\.py$''']
+regexes = ['''API_KEY=secret''']

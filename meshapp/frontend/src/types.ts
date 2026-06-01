@@ -216,6 +216,28 @@ export interface SystemSnapshot {
 }
 // </generated-control-plane-contracts>
 
+export interface RecursiveChaosArenaProfile {
+  profile_id: string;
+  display_name: string;
+  priority_phase: string;
+  default_safety_class: string;
+  target_substrates: string[];
+  chaos_families: string[];
+  proof_gates: string[];
+  evidence_requirements: string[];
+}
+
+export interface RecursiveChaosProfilesResponse {
+  schema_version: string;
+  profiles: RecursiveChaosArenaProfile[];
+  verification: {
+    status: string;
+    profile_count: number;
+    p0_profile_ids: string[];
+    blockers: string[];
+  };
+}
+
 export interface ConnectorCredentialBoundary {
   service_account_ref?: string | null;
   credential_mode?: string | null;
