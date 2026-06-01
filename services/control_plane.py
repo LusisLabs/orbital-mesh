@@ -237,6 +237,17 @@ def _positive_float(value: Any, *, default: float, maximum: float) -> float:
     return min(parsed, maximum)
 
 
+def _string_list(value: Any, *, default: list[str]) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = [str(item) for item in value]
+    else:
+        items = list(default)
+    normalized = [item.strip() for item in items if item.strip()]
+    return normalized or list(default)
+
+
 def _operator_context(payload: dict[str, Any]) -> dict[str, Any] | None:
     raw = payload.get("_operator")
     if not isinstance(raw, dict):
@@ -2466,6 +2477,145 @@ class RunCoordinator:
             },
             artifact_key="mesh_brain_model_kernel_run_record",
             integration_name="mesh_brain_model_kernel",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
+    def run_recursive_chaos_arena_session(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from scripts.recursive_chaos_arena_session import (
+            ArenaTarget,
+            _default_targets,
+            run_recursive_chaos_arena_session,
+        )
+
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        raw_profile_ids = payload.get("profile_ids") or payload.get("profile_id") or ["kubernetes_service_platform"]
+        profile_ids = _string_list(raw_profile_ids, default=["kubernetes_service_platform"])
+        targets = [
+            ArenaTarget(
+                profile_id=str(target["profile_id"]),
+                context=str(target.get("context") or "local"),
+                namespace=str(target.get("namespace") or "mesh"),
+                deployment=str(target.get("deployment") or str(target["profile_id"]).replace("_", "-")),
+                substrate=str(target.get("substrate") or "catalog"),
+                environment=str(target.get("environment") or self.config.environment or "local"),
+                image_ref=str(target.get("image_ref") or self.config.build_image_digest or "unknown"),
+            )
+            for target in payload.get("targets", [])
+            if isinstance(target, dict) and target.get("profile_id")
+        ] or _default_targets(profile_ids)
+        max_cycles = _positive_int(payload.get("max_cycles"), default=len(targets), maximum=16)
+        seed = _positive_int(payload.get("seed"), default=20260601, maximum=999999999)
+        execute = bool(payload.get("execute"))
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="recursive_chaos_arena",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="recursive_chaos_arena",
+            orchestration_mode="native",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "profile_ids": profile_ids,
+                "target_count": len(targets),
+                "execute": execute,
+                "operator": operator,
+            },
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "recursive-chaos" / "sessions" / session.run_id
+        summary = run_recursive_chaos_arena_session(
+            targets=targets,
+            output_dir=output_directory,
+            base_url=str(payload.get("base_url") or "http://127.0.0.1:8787"),
+            max_cycles=max_cycles,
+            seed=seed,
+            execute=execute,
+        )
+        decision = Decision(
+            decision_id=f"decision_{session.run_id}",
+            trigger_id=f"recursive-chaos-{session.run_id}",
+            summary="Record recursive chaos arena evidence without granting production mutation authority.",
+            decision_type="no_action",
+            autonomy_tier="approval_required",
+            reasoning={
+                "primary_hypothesis": "Recursive chaos evidence is advisory unless sealed packet gates prove otherwise.",
+                "evidence": ["recursive_chaos_session_summary", "mesh_brain_recursive_chaos_advisory"],
+                "alternatives_considered": ["execute_mutating_recovery_action", "train_mesh_brain_from_unsealed_packets"],
+                "evidence_pack": {
+                    "recursive_chaos_session": summary,
+                    "sealed_learning_packet_refs": list(summary.get("learning_packet_refs") or []),
+                    "advisory_only": True,
+                }
+            },
+            expected_outcome={
+                "target_metrics": {"p95_latency_ms": "unchanged", "error_rate": "unchanged"},
+                "time_to_effect": "immediate advisory record",
+            },
+            risk={
+                "level": "medium" if execute else "low",
+                "blast_radius": "state-directory evidence artifacts only",
+                "customer_impact_if_wrong": "operator may overweight an advisory packet; no production mutation authority is granted",
+            },
+            confidence=0.82,
+            execution_plan={
+                "system": "audit_log_sink",
+                "action": "record_no_action",
+                "parameters": {"execute": execute, "profile_ids": profile_ids},
+                "rollback_plan": "delete local recursive-chaos session artifacts and rerun the session",
+            },
+        )
+        self._set_artifact(session.run_id, "decision", decision.to_dict())
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="decision_ready",
+            event_type=DECISION_READY,
+            payload=decision.to_dict(),
+            summary={"decision_type": decision.decision_type, "advisory_only": True},
+            artifact_key="decision",
+            status="recorded",
+        )
+        advisory = _recursive_chaos_mesh_brain_advisory(summary, session.run_id)
+        self._set_artifact(session.run_id, "recursive_chaos_session_summary", summary)
+        self._set_artifact(session.run_id, "mesh_brain_recursive_chaos_advisory", advisory)
+        self._record_recursive_chaos_artifact_refs(session.run_id, output_directory)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=advisory,
+            summary={
+                "status": summary["status"],
+                "cycles_total": summary["cycles_total"],
+                "sealed_learning_packets": len(summary.get("learning_packet_refs") or []),
+            },
+            artifact_key="mesh_brain_recursive_chaos_advisory",
+            integration_name="recursive_chaos_arena",
+            status="recorded",
+        )
+        final_stage = "completed" if summary["status"] == "pass" else "failed"
+        final_status = "completed" if summary["status"] == "pass" else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if summary["status"] == "pass" else RUN_FAILED,
+            payload=summary,
+            summary={"status": final_status, "cycles_total": summary["cycles_total"]},
+            artifact_key="recursive_chaos_session_summary",
+            integration_name="recursive_chaos_arena",
             status=final_status,
         )
         self._update_session(session.run_id, stage=final_stage, status=final_status)
@@ -5207,6 +5357,32 @@ class RunCoordinator:
                 }
             )
 
+    def _record_recursive_chaos_artifact_refs(self, run_id: str, output_directory: Path) -> None:
+        if not output_directory.exists():
+            return
+        for path in sorted(output_directory.glob("*/*.json")):
+            artifact_key = f"recursive_chaos_{path.parent.name}_{path.stem.replace('-', '_')}"
+            self.state_store.put_artifact(
+                {
+                    "run_id": run_id,
+                    "artifact_key": artifact_key,
+                    "uri": str(path),
+                    "path": str(path),
+                    "content_hash": _file_sha256(path),
+                    "metadata": {
+                        "content_type": "application/json",
+                        "recursive_chaos_artifact": True,
+                        "sealed_source": path.name
+                        in {
+                            "cycle-packet.json",
+                            "ghost-recovery-packet.json",
+                            "learning-packet.json",
+                            "evidence-bundle.json",
+                        },
+                    },
+                }
+            )
+
     def _record_benchmark_if_simulation(self, run_id: str) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -6018,6 +6194,43 @@ class RunCoordinator:
 
 def _timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _recursive_chaos_mesh_brain_advisory(summary: dict[str, Any], run_id: str) -> dict[str, Any]:
+    learning_packet_refs = [str(ref) for ref in summary.get("learning_packet_refs", [])]
+    cycle_packet_refs = [str(ref) for ref in summary.get("cycle_packet_refs", [])]
+    evidence_bundle_refs = [str(ref) for ref in summary.get("evidence_bundle_refs", [])]
+    packet = {
+        "schema_version": "mesh.mesh_brain_recursive_chaos_advisory.v1",
+        "run_id": run_id,
+        "source": "recursive_chaos_arena",
+        "session_status": summary.get("status"),
+        "cycles_total": summary.get("cycles_total"),
+        "sealed_source_required": True,
+        "sealed_source_packet_refs": cycle_packet_refs + learning_packet_refs + evidence_bundle_refs,
+        "mesh_brain_mode": "recommend_only",
+        "mesh_model_mode": "recommend_only",
+        "advisory_only": True,
+        "training_allowed": False,
+        "mesh_model_training_allowed": False,
+        "production_authority": False,
+        "recommendations": [
+            {
+                "recommendation_type": "arena_scheduler_weight",
+                "summary": "Use sealed recursive chaos packets as future scheduler weighting evidence only.",
+                "confidence": 0.78,
+                "evidence_refs": evidence_bundle_refs,
+            }
+        ],
+        "policy": {
+            "sealed_packets_before_learning": True,
+            "model_training_blocked": True,
+            "mesh_model_training_blocked": True,
+            "production_mutation_authority": False,
+        },
+    }
+    packet["advisory_hash"] = f"sha256:{_canonical_sha256(packet)}"
+    return packet
 
 
 def _meshmodel_benchmark_summary(*, payload: dict[str, Any], run_id: str) -> dict[str, Any]:

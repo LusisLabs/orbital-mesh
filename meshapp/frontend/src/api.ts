@@ -18,6 +18,7 @@ import type {
   ResearchCorpusIntelligence,
   ResearchSessionDetail,
   ResearchSessionRecord,
+  RecursiveChaosProfilesResponse,
   RunDetail,
   RunExportPackage,
   RunSessionRecord,
@@ -261,6 +262,26 @@ export const api = {
 
   getRuns(baseUrl: string) {
     return request<{ runs: RunSessionRecord[] }>(baseUrl, "/api/runs");
+  },
+
+  getRecursiveChaosProfiles(baseUrl: string) {
+    return request<RecursiveChaosProfilesResponse>(baseUrl, "/api/recursive-chaos/profiles");
+  },
+
+  runRecursiveChaosArenaSession(
+    baseUrl: string,
+    payload: {
+      profile_ids?: string[];
+      max_cycles?: number;
+      seed?: number;
+      targets?: Array<Record<string, unknown>>;
+      execute?: boolean;
+    } = {},
+  ) {
+    return request<RunDetail>(baseUrl, "/api/recursive-chaos/sessions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   getResearchSessions(baseUrl: string) {

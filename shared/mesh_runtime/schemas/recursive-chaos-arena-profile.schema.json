@@ -1,0 +1,92 @@
+{
+  "title": "RecursiveChaosArenaProfile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "profile_id",
+    "display_name",
+    "arena_domain",
+    "safety_class",
+    "environment",
+    "target_refs",
+    "allowed_faults",
+    "blocked_faults",
+    "max_recursion_depth",
+    "cycle_budget",
+    "recovery_objectives",
+    "evidence_requirements"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.recursive_chaos.arena_profile.v1"]},
+    "profile_id": {"type": "string"},
+    "display_name": {"type": "string"},
+    "arena_domain": {
+      "type": "string",
+      "enum": [
+        "kubernetes_service_platform",
+        "hardened_image_supply_chain",
+        "ai_model_serving_inference",
+        "ai_agent_tool_execution",
+        "durable_data_plane",
+        "vector_rag_retrieval",
+        "observability_signal_trust",
+        "crypto_rpc_node_mesh",
+        "cross_chain_verifier_signer",
+        "queue_event_workflow_plane",
+        "identity_authority_secrets",
+        "network_gateway_service_mesh",
+        "cicd_gitops_release",
+        "multi_region_provider_plane",
+        "capacity_scheduler_finops",
+        "evidence_audit_forensics"
+      ]
+    },
+    "safety_class": {
+      "type": "string",
+      "enum": [
+        "local_disposable",
+        "staging_owned",
+        "production_probe_only",
+        "production_mutating_blocked"
+      ]
+    },
+    "environment": {"type": "string"},
+    "target_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "allowed_faults": {"type": "array", "items": {"type": "string"}},
+    "blocked_faults": {"type": "array", "items": {"type": "string"}},
+    "max_recursion_depth": {"type": "integer"},
+    "cycle_budget": {
+      "type": "object",
+      "required": ["max_cycles", "max_duration_seconds", "max_parallel_faults"],
+      "additionalProperties": false,
+      "properties": {
+        "max_cycles": {"type": "integer"},
+        "max_duration_seconds": {"type": "integer"},
+        "max_parallel_faults": {"type": "integer"}
+      }
+    },
+    "recovery_objectives": {
+      "type": "object",
+      "required": ["max_recovery_seconds", "max_residual_drift", "requires_post_state_probe"],
+      "additionalProperties": false,
+      "properties": {
+        "max_recovery_seconds": {"type": "integer"},
+        "max_residual_drift": {"type": "number"},
+        "requires_post_state_probe": {"type": "boolean"}
+      }
+    },
+    "evidence_requirements": {
+      "type": "object",
+      "required": ["bind_run_id", "bind_decision_id", "bind_environment", "bind_image_digest", "require_recovery_packet"],
+      "additionalProperties": false,
+      "properties": {
+        "bind_run_id": {"type": "boolean"},
+        "bind_decision_id": {"type": "boolean"},
+        "bind_environment": {"type": "boolean"},
+        "bind_image_digest": {"type": "boolean"},
+        "require_recovery_packet": {"type": "boolean"}
+      }
+    }
+  }
+}

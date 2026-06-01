@@ -995,6 +995,24 @@ Exit codes: `0` pass, `1` hypothesis breached, `2` halted by circuit breaker.
 
 Compose-native chaos sessions under `.mesh-runtime-state/compose-chaos/` also emit `summary-<timestamp>.json`. That summary includes `mesh.chaos_breakthrough_probe.v1`, capability-axis pass coverage, substrate coverage, multi-fault coverage, detection rate, correct-decision rate, false-positive rate, and pipeline availability so the run can state whether it produced a breakthrough signal or stayed below threshold. When `MESH_STACK_CHAOS_STOP_ON_BREAKTHROUGH=1`, coverage-first sessions require every known capability axis to be exercised and passed before early stopping unless `MESH_STACK_CHAOS_REQUIRE_FULL_AXIS_COVERAGE=0` is set. They also require every configured substrate to have at least one passed cycle unless `MESH_STACK_CHAOS_REQUIRE_SUBSTRATE_COVERAGE=0` is set, and every multi-fault primitive to pass unless `MESH_STACK_CHAOS_REQUIRE_MULTI_FAULT_BREADTH=0` is set.
 
+### Recursive chaos arena packets
+
+The recursive chaos arena layer binds the existing chaos portfolio to a domain profile registry in `config/recursive-chaos.arena-profiles.json`. The registry covers Kubernetes service platforms, Docker Hardened Image supply chains, AI inference, agent tool execution, durable data planes, vector/RAG retrieval, observability trust, crypto RPC, signer/verifier, queue/workflow, identity/secrets, gateway/service-mesh, CI/CD GitOps, multi-region provider, capacity/FinOps, and evidence/forensics arenas.
+
+The runner is plan-only unless `--execute` is explicitly supplied. Hetzner, production, pilot, and prod environments resolve to `production_probe_only`; mutating faults are blocked while sealed learning and evidence packets are still emitted.
+
+```bash
+UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . python scripts/verify_recursive_chaos_arena_profiles.py --json
+
+UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . python scripts/recursive_chaos_arena_session.py \
+  --profile-id kubernetes_service_platform \
+  --max-cycles 1 \
+  --output-dir .mesh-runtime-state/recursive-chaos \
+  --json
+```
+
+Each cycle writes a validated `mesh.recursive_chaos.experiment_manifest.v1`, `cycle_packet.v1`, `ghost_recovery_packet.v1`, `learning_packet.v1`, and `evidence_bundle.v1`. Compose-native chaos also writes the recursive manifest and packet bundle under `.mesh-runtime-state/compose-chaos/` for every scored cycle.
+
 For non-Kubernetes production-node coverage, run:
 
 ```bash

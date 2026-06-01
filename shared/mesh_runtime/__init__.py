@@ -80,6 +80,28 @@ from .on_call_drill import load_on_call_drill, verify_on_call_drill
 from .postgres_state import PostgresStateStore
 from .public_corpus_cleaner import build_clean_public_corpus_index
 from .reasoning_bank import ReasoningBankService, format_strategy_context
+from .recursive_chaos import (
+    P0_ARENA_PROFILE_IDS,
+    REQUIRED_ARENA_PROFILE_IDS,
+    SAFETY_CLASSES,
+    build_arena_evidence_bundle,
+    build_chaos_learning_packet,
+    build_ghost_recovery_packet,
+    build_recursive_chaos_cycle_packet,
+    build_recursive_chaos_experiment_manifest,
+    get_recursive_chaos_arena_profile,
+    load_recursive_chaos_arena_profiles,
+    recursive_chaos_arena_profiles_ready,
+    recursive_chaos_safety_verdict,
+    resolve_recursive_chaos_safety_class,
+    safety_class_allows_mutation,
+    validate_arena_evidence_bundle,
+    validate_chaos_learning_packet,
+    validate_ghost_state_recovery_packet,
+    validate_recursive_chaos_cycle_packet,
+    validate_recursive_chaos_experiment_manifest,
+    verify_recursive_chaos_arena_profiles,
+)
 from .state_store_factory import build_mesh_state_store
 from .temperature_policy import TemperatureInputs, fixed_temperature, generator_temperature
 from .benchmarking import BenchmarkRecord, BenchmarkStore, SimulationScenario
@@ -99,7 +121,14 @@ from .contracts import (
     MemoryPacket,
     MemoryCompactionRecord,
     ObservationRecord,
+    RECURSIVE_CHAOS_SAFETY_CLASSES,
     RelationshipRecord,
+    RecursiveChaosArenaProfile,
+    RecursiveChaosCyclePacket,
+    RecursiveChaosEvidenceBundle,
+    RecursiveChaosExperimentManifest,
+    RecursiveChaosGhostRecoveryPacket,
+    RecursiveChaosLearningPacket,
     RetrievalRecord,
     ScenarioAnalysis,
     Subdecision,
