@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RecursiveChaosAutomationSummary",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "state_slice",
+    "run_id",
+    "status",
+    "session_status",
+    "operator_id",
+    "profile_source",
+    "profiles_requested",
+    "profiles_executed",
+    "seed",
+    "execute",
+    "intelligence_score"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "mesh.recursive_chaos.automation_summary.v1"
+    },
+    "state_slice": {
+      "const": "mesh.recursive_chaos.automation.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "running", "queued", "http_error"]
+    },
+    "session_status": {
+      "type": ["string", "null"]
+    },
+    "operator_id": {
+      "type": ["string", "null"]
+    },
+    "profile_source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profiles_requested": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "profiles_executed": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "execute": {
+      "type": "boolean"
+    },
+    "intelligence_score": {
+      "$ref": "#/$defs/intelligence_score"
+    }
+  },
+  "$defs": {
+    "intelligence_score": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "state_slice",
+        "score",
+        "profile_coverage",
+        "p0_coverage",
+        "learning_density",
+        "novelty_score",
+        "repeated_advisory_hash_rate",
+        "scheduler_weights",
+        "recommended_next_profiles",
+        "training_allowed",
+        "production_authority"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "mesh.recursive_chaos.intelligence_score.v1"
+        },
+        "state_slice": {
+          "const": "mesh.recursive_chaos.intelligence_score.v1"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "profile_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "p0_coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "learning_density": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "novelty_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "repeated_advisory_hash_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "scheduler_weights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["profile_id", "priority_phase", "weight", "reason"],
+            "properties": {
+              "profile_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "priority_phase": {
+                "type": "string",
+                "minLength": 1
+              },
+              "weight": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "recommended_next_profiles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "training_allowed": {
+          "const": false
+        },
+        "production_authority": {
+          "const": false
+        }
+      }
+    }
+  }
+}

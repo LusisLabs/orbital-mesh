@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RecursiveChaosSandboxExecutionSummary",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "state_slice",
+    "run_id",
+    "status",
+    "session_status",
+    "operator_id",
+    "execute",
+    "target",
+    "cycles_total",
+    "learning_packet_count",
+    "decision_type",
+    "autonomy_tier",
+    "mesh_model_training_allowed",
+    "production_authority"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "mesh.recursive_chaos.sandbox_execution_summary.v1"
+    },
+    "state_slice": {
+      "const": "mesh.recursive_chaos.sandbox_execution.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "running", "queued", "http_error"]
+    },
+    "session_status": {
+      "type": ["string", "null"]
+    },
+    "operator_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "execute": {
+      "const": true
+    },
+    "target": {
+      "type": "object",
+      "required": ["substrate", "environment"],
+      "properties": {
+        "substrate": {
+          "const": "compose_sandbox"
+        },
+        "environment": {
+          "const": "local_disposable"
+        }
+      }
+    },
+    "cycles_total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "learning_packet_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "decision_type": {
+      "type": ["string", "null"]
+    },
+    "autonomy_tier": {
+      "type": ["string", "null"]
+    },
+    "mesh_model_training_allowed": {
+      "const": false
+    },
+    "production_authority": {
+      "const": false
+    }
+  }
+}

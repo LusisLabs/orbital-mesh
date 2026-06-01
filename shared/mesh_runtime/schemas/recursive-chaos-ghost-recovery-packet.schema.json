@@ -1,0 +1,55 @@
+{
+  "title": "RecursiveChaosGhostRecoveryPacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "recovery_packet_id",
+    "cycle_id",
+    "run_id",
+    "decision_id",
+    "pre_state",
+    "fault_state",
+    "recovery_action",
+    "post_state",
+    "residual_drift",
+    "recovered",
+    "evidence_refs",
+    "sealed_at"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.recursive_chaos.ghost_recovery_packet.v1"]},
+    "recovery_packet_id": {"type": "string"},
+    "cycle_id": {"type": "string"},
+    "run_id": {"type": "string"},
+    "decision_id": {"type": ["string", "null"]},
+    "pre_state": {"type": "object"},
+    "fault_state": {"type": "object"},
+    "recovery_action": {
+      "type": "object",
+      "required": ["action_type", "actor", "started_at", "completed_at", "result"],
+      "additionalProperties": false,
+      "properties": {
+        "action_type": {"type": "string"},
+        "actor": {"type": "string"},
+        "started_at": {"type": "string"},
+        "completed_at": {"type": "string"},
+        "result": {"type": "string"}
+      }
+    },
+    "post_state": {"type": "object"},
+    "residual_drift": {
+      "type": "object",
+      "required": ["status", "changed_paths", "drift_score"],
+      "additionalProperties": false,
+      "properties": {
+        "status": {"type": "string", "enum": ["none", "bounded", "unbounded"]},
+        "changed_paths": {"type": "array", "items": {"type": "string"}},
+        "drift_score": {"type": "number"}
+      }
+    },
+    "recovered": {"type": "boolean"},
+    "evidence_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "sealed_at": {"type": "string"}
+  }
+}

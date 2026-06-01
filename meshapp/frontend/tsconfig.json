@@ -44,7 +44,9 @@
     ".next-e2e-51591/types/**/*.ts",
     ".next-e2e-51591/dev/types/**/*.ts",
     ".next-showcase/types/**/*.ts",
-    ".next-showcase/dev/types/**/*.ts"
+    ".next-showcase/dev/types/**/*.ts",
+    ".next-local/types/**/*.ts",
+    ".next-local/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

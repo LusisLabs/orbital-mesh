@@ -35,6 +35,10 @@ from shared.mesh_runtime.operator_identity import (
     write_settings_audit,
 )
 from shared.mesh_runtime.praxis import PraxisManagedRuntimeStore, build_praxis_product_dashboard
+from shared.mesh_runtime.recursive_chaos import (
+    load_recursive_chaos_arena_profiles,
+    verify_recursive_chaos_arena_profiles,
+)
 from shared.mesh_runtime.schema_validation import SchemaValidationError
 
 _LOG = logging.getLogger("mesh.control_plane")
@@ -294,6 +298,9 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/hardened-arena/catalog":
             self._handle_hardened_arena_catalog()
+            return
+        if path == "/api/recursive-chaos/profiles":
+            self._handle_recursive_chaos_profiles()
             return
         if path.startswith("/api/hardened-arena/packets/"):
             packet_id = _safe_segment(path, 3)
@@ -720,6 +727,25 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/hardened-arena/intents":
             self._handle_hardened_arena_intent_create(payload)
             return
+        if parsed.path == "/api/recursive-chaos/sessions":
+            try:
+                payload["_operator"] = self._authorize({"launcher", "admin"})
+                run = self.server.coordinator.run_recursive_chaos_arena_session(payload)
+            except AuthorizationError as exc:
+                self._send_json({"error": str(exc)}, status=exc.status)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except Exception as exc:  # pragma: no cover - defensive; preserve API response shape
+                _LOG.exception("POST /api/recursive-chaos/sessions failed: %s", exc)
+                self._send_json(
+                    {"error": "recursive chaos session failed", "detail": str(exc)},
+                    status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                )
+                return
+            self._send_json(run, status=HTTPStatus.CREATED)
+            return
         if parsed.path == "/api/watch/start":
             try:
                 self._authorize({"admin"})
@@ -1061,6 +1087,17 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
         except (OSError, json.JSONDecodeError, SchemaValidationError) as exc:
             self._send_json(
                 {"error": "hardened arena catalog unavailable", "detail": str(exc)},
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+    def _handle_recursive_chaos_profiles(self) -> None:
+        try:
+            payload = load_recursive_chaos_arena_profiles()
+            payload["verification"] = verify_recursive_chaos_arena_profiles()
+            self._send_json(payload)
+        except (OSError, json.JSONDecodeError, SchemaValidationError) as exc:
+            self._send_json(
+                {"error": "recursive chaos profiles unavailable", "detail": str(exc)},
                 status=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 
@@ -2192,6 +2229,7 @@ class MeshControlPlaneRequestHandler(BaseHTTPRequestHandler):
             "watchers": _safe_dashboard_call(coordinator.watchers_status),
             "graph": _safe_dashboard_call(coordinator.graph_status),
             "runs": {"runs": _safe_dashboard_call(coordinator.list_run_summaries, default=[])},
+            "meshmodel_rgs_evidence": _safe_dashboard_call(coordinator.latest_meshmodel_rgs_evidence_summary),
             "memory": {
                 "active": _safe_dashboard_call(coordinator.get_active_memory),
                 "graph": _safe_dashboard_call(coordinator.get_memory_graph),

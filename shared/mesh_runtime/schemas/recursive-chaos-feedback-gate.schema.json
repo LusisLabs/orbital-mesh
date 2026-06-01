@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RecursiveChaosFeedbackGate",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "state_slice",
+    "run_id",
+    "mesh_brain_mode",
+    "mesh_model_mode",
+    "scheduler_weights",
+    "recommended_next_profiles",
+    "mesh_model_training_allowed",
+    "training_allowed",
+    "production_authority",
+    "promotion_authority",
+    "sandbox_execute_allowed",
+    "sandbox_execute_requires",
+    "feedback_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "mesh.recursive_chaos.feedback_gate.v1"
+    },
+    "state_slice": {
+      "const": "mesh.recursive_chaos.feedback_gate.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "mesh_brain_mode": {
+      "const": "recommend_only"
+    },
+    "mesh_model_mode": {
+      "const": "recommend_only"
+    },
+    "scheduler_weights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["profile_id", "weight", "reason"],
+        "properties": {
+          "profile_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority_phase": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "recommended_next_profiles": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "mesh_model_training_allowed": {
+      "const": false
+    },
+    "training_allowed": {
+      "const": false
+    },
+    "production_authority": {
+      "const": false
+    },
+    "promotion_authority": {
+      "const": false
+    },
+    "sandbox_execute_allowed": {
+      "const": false
+    },
+    "sandbox_execute_requires": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "feedback_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    }
+  }
+}

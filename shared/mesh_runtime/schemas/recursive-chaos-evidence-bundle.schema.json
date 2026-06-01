@@ -1,0 +1,62 @@
+{
+  "title": "RecursiveChaosEvidenceBundle",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "bundle_id",
+    "generated_at",
+    "profile_id",
+    "manifest_id",
+    "environment",
+    "safety_class",
+    "cycle_packet_refs",
+    "ghost_recovery_packet_refs",
+    "learning_packet_refs",
+    "run_refs",
+    "decision_refs",
+    "artifact_refs",
+    "gate_results",
+    "production_readiness_claim",
+    "sealed"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.recursive_chaos.evidence_bundle.v1"]},
+    "bundle_id": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "profile_id": {"type": "string"},
+    "manifest_id": {"type": "string"},
+    "environment": {"type": "string"},
+    "safety_class": {
+      "type": "string",
+      "enum": [
+        "local_disposable",
+        "staging_owned",
+        "production_probe_only",
+        "production_mutating_blocked"
+      ]
+    },
+    "cycle_packet_refs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+    "ghost_recovery_packet_refs": {"type": "array", "items": {"type": "string"}},
+    "learning_packet_refs": {"type": "array", "items": {"type": "string"}},
+    "run_refs": {"type": "array", "items": {"type": "string"}},
+    "decision_refs": {"type": "array", "items": {"type": "string"}},
+    "artifact_refs": {"type": "array", "items": {"type": "string"}},
+    "gate_results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["gate", "status", "evidence_ref"],
+        "additionalProperties": false,
+        "properties": {
+          "gate": {"type": "string"},
+          "status": {"type": "string", "enum": ["pass", "fail", "blocked", "not_run"]},
+          "evidence_ref": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "production_readiness_claim": {"type": "boolean"},
+    "sealed": {"type": "boolean"}
+  }
+}

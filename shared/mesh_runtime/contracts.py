@@ -164,6 +164,129 @@ class RcaReport(ContractModel):
     safety_reason: str
 
 
+RECURSIVE_CHAOS_SAFETY_CLASSES: tuple[str, ...] = (
+    "local_disposable",
+    "staging_owned",
+    "production_probe_only",
+    "production_mutating_blocked",
+)
+
+
+@dataclass
+class RecursiveChaosArenaProfile(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-arena-profile.schema.json"
+    profile_id: str
+    display_name: str
+    arena_domain: str
+    safety_class: str
+    environment: str
+    target_refs: list[str]
+    allowed_faults: list[str]
+    blocked_faults: list[str]
+    max_recursion_depth: int
+    cycle_budget: dict[str, Any]
+    recovery_objectives: dict[str, Any]
+    evidence_requirements: dict[str, Any]
+    schema_version: str = "mesh.recursive_chaos.arena_profile.v1"
+
+
+@dataclass
+class RecursiveChaosExperimentManifest(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-experiment-manifest.schema.json"
+    manifest_id: str
+    profile_id: str
+    created_at: str
+    runner: str
+    safety_class: str
+    target_refs: list[str]
+    experiments: list[dict[str, Any]]
+    safety_gates: dict[str, Any]
+    mesh_integration: dict[str, Any]
+    environment: str
+    schema_version: str = "mesh.recursive_chaos.experiment_manifest.v1"
+
+
+@dataclass
+class RecursiveChaosCyclePacket(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-cycle-packet.schema.json"
+    cycle_id: str
+    manifest_id: str
+    profile_id: str
+    run_id: str
+    decision_id: str | None
+    started_at: str
+    completed_at: str
+    recursion_depth: int
+    selected_experiment: dict[str, Any]
+    target: dict[str, Any]
+    pre_state_ref: str
+    fault_state_ref: str
+    mesh_observation: dict[str, Any]
+    safety_verdict: dict[str, Any]
+    recovery_packet_id: str | None
+    learning_packet_id: str | None
+    evidence_refs: list[str]
+    sealed: bool
+    schema_version: str = "mesh.recursive_chaos.cycle_packet.v1"
+
+
+@dataclass
+class RecursiveChaosGhostRecoveryPacket(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-ghost-recovery-packet.schema.json"
+    recovery_packet_id: str
+    cycle_id: str
+    run_id: str
+    decision_id: str | None
+    pre_state: dict[str, Any]
+    fault_state: dict[str, Any]
+    recovery_action: dict[str, Any]
+    post_state: dict[str, Any]
+    residual_drift: dict[str, Any]
+    recovered: bool
+    evidence_refs: list[str]
+    sealed_at: str
+    schema_version: str = "mesh.recursive_chaos.ghost_recovery_packet.v1"
+
+
+@dataclass
+class RecursiveChaosLearningPacket(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-learning-packet.schema.json"
+    learning_packet_id: str
+    cycle_id: str
+    run_id: str
+    source_packet_refs: list[str]
+    sealed_source_required: bool
+    mesh_brain_mode: str
+    mesh_model_mode: str
+    recommendations: list[dict[str, Any]]
+    training_allowed: bool
+    mesh_model_training_allowed: bool
+    advisory_only: bool
+    sealed_at: str
+    schema_version: str = "mesh.recursive_chaos.learning_packet.v1"
+
+
+@dataclass
+class RecursiveChaosEvidenceBundle(ContractModel):
+    schema_name: ClassVar[str] = "recursive-chaos-evidence-bundle.schema.json"
+    bundle_id: str
+    generated_at: str
+    profile_id: str
+    manifest_id: str
+    environment: str
+    safety_class: str
+    cycle_packet_refs: list[str]
+    ghost_recovery_packet_refs: list[str]
+    learning_packet_refs: list[str]
+    run_refs: list[str]
+    decision_refs: list[str]
+    artifact_refs: list[str]
+    gate_results: list[dict[str, Any]]
+    production_readiness_claim: bool
+    sealed: bool
+    schema_version: str = "mesh.recursive_chaos.evidence_bundle.v1"
+
+
 @dataclass
 class MemoryCompactionRecord(ContractModel):
     schema_name: ClassVar[str] = "memory-compaction.schema.json"

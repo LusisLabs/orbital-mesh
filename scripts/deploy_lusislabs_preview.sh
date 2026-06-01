@@ -15,6 +15,10 @@ PUBLIC_URL="${LUSIS_PUBLIC_URL:-https://app.lusislabs.com}"
 NODE_HOME="${LUSIS_NODE_HOME:-/root/.nvm/versions/node/v22.22.3}"
 KEEP_RELEASES="${LUSIS_KEEP_RELEASES:-5}"
 LOCK_FILE="${LUSIS_DEPLOY_LOCK:-/run/lusis-mesh-webapp-deploy.lock}"
+RECURSIVE_CHAOS_AUTOMATION_ENABLED="${LUSIS_RECURSIVE_CHAOS_AUTOMATION_ENABLED:-1}"
+RECURSIVE_CHAOS_ENV_FILE="${LUSIS_RECURSIVE_CHAOS_ENV_FILE:-/etc/lusis-mesh-recursive-chaos.env}"
+RECURSIVE_CHAOS_SERVICE="${LUSIS_RECURSIVE_CHAOS_SERVICE:-lusis-mesh-recursive-chaos.service}"
+RECURSIVE_CHAOS_TIMER="${LUSIS_RECURSIVE_CHAOS_TIMER:-lusis-mesh-recursive-chaos.timer}"
 
 usage() {
   printf 'Usage: %s [--source PATH] [--release-artifact-root PATH]\n' "$0" >&2
@@ -233,6 +237,50 @@ cleanup_old_releases() {
       done
 }
 
+install_recursive_chaos_automation() {
+  if [ "$RECURSIVE_CHAOS_AUTOMATION_ENABLED" != "1" ]; then
+    log "recursive chaos automation install disabled"
+    return
+  fi
+  if [ ! -x "${CURRENT_LINK}/scripts/run_recursive_chaos_automation.py" ]; then
+    log "recursive chaos automation runner missing; skipping systemd install"
+    return
+  fi
+  if [ ! -f "$RECURSIVE_CHAOS_ENV_FILE" ]; then
+    install -m 0644 "${CURRENT_LINK}/config/recursive-chaos-automation.env.example" "$RECURSIVE_CHAOS_ENV_FILE"
+  fi
+  cat >"/etc/systemd/system/${RECURSIVE_CHAOS_SERVICE}" <<EOF
+[Unit]
+Description=Lusis Mesh recursive chaos arena advisory run
+Wants=${SERVICE_NAME}
+After=${SERVICE_NAME} network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=${RECURSIVE_CHAOS_ENV_FILE}
+ExecStart=/usr/bin/env python3 ${CURRENT_LINK}/scripts/run_recursive_chaos_automation.py
+User=root
+WorkingDirectory=${CURRENT_LINK}
+EOF
+  cat >"/etc/systemd/system/${RECURSIVE_CHAOS_TIMER}" <<EOF
+[Unit]
+Description=Run Lusis Mesh recursive chaos arena hourly
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Persistent=true
+Unit=${RECURSIVE_CHAOS_SERVICE}
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+  systemctl enable --now "$RECURSIVE_CHAOS_TIMER"
+  log "recursive chaos automation timer installed: $RECURSIVE_CHAOS_TIMER"
+}
+
 main() {
   umask 022
   install -d -m 755 "$BASE_DIR" "$RELEASES_DIR" "$SHARED_DIR"
@@ -315,6 +363,7 @@ main() {
     exit 1
   fi
 
+  install_recursive_chaos_automation
   cleanup_old_releases
   log "deployed release $release_id"
 }

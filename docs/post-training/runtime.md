@@ -31,6 +31,14 @@ runtime dependency on external architecture repositories.
 MeshModel work must stay inside the existing Mesh Brain control-plane boundary:
 source-grounded artifacts, tenant/data-policy checks, benchmark packets,
 non-deployment records, and explicit promotion gates before any serving claim.
+Recoverable Ghost States evidence can be attached to
+`POST /api/mesh-brain/meshmodel-probe` as `rgs_repo_root`,
+`rgs_evidence_path`, or inline `rgs_evidence`. The resulting
+`meshmodel-rgs-evidence-binding` state slice is advisory only: it can record
+bounded breakthrough evidence and public metrics, but CL12 live external
+runtime replication remains a blocker unless a strict live packet admits it.
+This path cannot enable Mesh Brain serving, production readiness, or promotion
+authority.
 
 ## End-to-End Reference Flow
 

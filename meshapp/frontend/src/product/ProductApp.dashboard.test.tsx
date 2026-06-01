@@ -28,6 +28,7 @@ import {
   orderDashboardTiles,
   readModelCardPayload,
   readModelSummary,
+  resolveLaunchRunDefaults,
   runtimeProductPage,
   sensitivityBadgesForSource,
   settingsParityRows,
@@ -356,6 +357,45 @@ describe("operator setup and preflight models", () => {
     expect(preflight.connectorScopes).toEqual(["rollback"]);
     expect(preflight.readiness).toBe("ready");
     expect(preflight.blockers).toEqual(["policy_signature_missing", "topology_gate_missing"]);
+  });
+
+  it("uses saved mesh-settings-control launch defaults before scenario fallbacks", () => {
+    const defaults = resolveLaunchRunDefaults({
+      ...dashboard,
+      settings: {
+        default_run_scenario: "search_latency_regression",
+        default_evaluation_mode: "promptfoo",
+        default_orchestration_mode: "goose",
+        default_steering_mode: "approval_gate",
+        default_target_lock: "required",
+      },
+      operator_preferences_state: {
+        ...dashboard.operator_preferences_state,
+        operator_preferences: {
+          ...dashboard.operator_preferences_state.operator_preferences,
+          agent_fabric_mode: "deepagents",
+          approval_policy: "approval_required",
+          run_template: "reth_peer_starvation",
+          target_lock_required: false,
+        },
+      },
+      operator_preferences_schema: {
+        run_template: {
+          kind: "enum",
+          values: ["reth_peer_starvation", "search_latency_regression"],
+          default: "reth_peer_starvation",
+          description: "template",
+        },
+      },
+    } as any);
+
+    expect(defaults).toMatchObject({
+      scenarioKey: "search_latency_regression",
+      evaluationMode: "promptfoo",
+      orchestrationMode: "goose",
+      steeringMode: "approval_gate",
+      requireTargetLock: true,
+    });
   });
 });
 

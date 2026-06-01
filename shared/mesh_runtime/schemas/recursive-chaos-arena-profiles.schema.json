@@ -1,0 +1,81 @@
+{
+  "title": "RecursiveChaosArenaProfiles",
+  "type": "object",
+  "required": ["schema_version", "generated_at", "profiles"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.recursive_chaos.arena_profiles.v1"]},
+    "generated_at": {"type": "string"},
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "profile_id",
+          "display_name",
+          "arena_domain",
+          "priority_phase",
+          "buyer_classes",
+          "domain_value_statement",
+          "target_substrates",
+          "default_safety_class",
+          "production_mutation_allowed",
+          "existing_mesh_surfaces",
+          "target_examples",
+          "chaos_families",
+          "steady_state_checks",
+          "proof_gates",
+          "ghost_state_bindings",
+          "learning_outputs",
+          "evidence_requirements",
+          "environment_hints"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "profile_id": {"type": "string"},
+          "display_name": {"type": "string"},
+          "arena_domain": {
+            "type": "string",
+            "enum": [
+              "kubernetes_service_platform",
+              "hardened_image_supply_chain",
+              "ai_model_serving_inference",
+              "ai_agent_tool_execution",
+              "durable_data_plane",
+              "vector_rag_retrieval",
+              "observability_signal_trust",
+              "crypto_rpc_node_mesh",
+              "cross_chain_verifier_signer",
+              "queue_event_workflow_plane",
+              "identity_authority_secrets",
+              "network_gateway_service_mesh",
+              "cicd_gitops_release",
+              "multi_region_provider_plane",
+              "capacity_scheduler_finops",
+              "evidence_audit_forensics"
+            ]
+          },
+          "priority_phase": {"type": "string", "enum": ["p0", "p1", "p2"]},
+          "buyer_classes": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "domain_value_statement": {"type": "string"},
+          "target_substrates": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "default_safety_class": {
+            "type": "string",
+            "enum": ["local_disposable", "staging_owned", "production_probe_only", "production_mutating_blocked"]
+          },
+          "production_mutation_allowed": {"type": "boolean"},
+          "existing_mesh_surfaces": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "target_examples": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "chaos_families": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "steady_state_checks": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "proof_gates": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "ghost_state_bindings": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "learning_outputs": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "evidence_requirements": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "environment_hints": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

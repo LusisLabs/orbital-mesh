@@ -330,6 +330,30 @@ export const productApi = {
     const query = teamId ? `?team_id=${encodeURIComponent(teamId)}` : "";
     return request<DashboardPayload>(`/api/operator/dashboard${query}`);
   },
+  readiness() {
+    return request<Record<string, any>>("/api/readiness");
+  },
+  approvals() {
+    return request<Record<string, any>>("/api/approvals");
+  },
+  killSwitch() {
+    return request<Record<string, any>>("/api/kill-switch");
+  },
+  watchers() {
+    return request<Record<string, any>>("/api/watchers");
+  },
+  graphStatus() {
+    return request<Record<string, any>>("/api/graph/status");
+  },
+  graphSnapshot() {
+    return request<Record<string, any>>("/api/graph/snapshot");
+  },
+  runsSummary() {
+    return request<{ runs: Array<Record<string, any>> }>("/api/runs?summary=1");
+  },
+  recursiveChaosProfiles() {
+    return request<Record<string, any>>("/api/recursive-chaos/profiles");
+  },
   agentFlowChat(payload: { team_id?: string | null; message: string; attachments?: Array<{ name: string; type: string; size: number }> }) {
     return request<AgentFlowChatResponse>("/api/operator/agent-flow/chat", { method: "POST", body: JSON.stringify(payload) });
   },

@@ -538,6 +538,7 @@ export default function ProductApp() {
   const [session, setSession] = useState<SessionPayload | null>(null);
   const [sessionState, setSessionState] = useState<LoadState<SessionPayload>>({ state: "loading" });
   const [dashboardState, setDashboardState] = useState<LoadState<DashboardPayload>>({ state: "loading" });
+  const [dashboardSettingsOverride, setDashboardSettingsOverride] = useState<Record<string, string>>({});
   const [view, setView] = useState<ViewKey>("home");
   const [onboardingComplete, setOnboardingComplete] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -551,12 +552,14 @@ export default function ProductApp() {
   }
 
   function acceptSession(payload: SessionPayload) {
+    setDashboardSettingsOverride({});
     setSession(payload);
     setSessionState({ state: "ready", data: payload });
     setOnboardingComplete(Boolean(payload.active_team || window.localStorage.getItem(soloOnboardingKey(payload.user.id)) === "1"));
   }
 
   function clearSession(state: LoadState<SessionPayload>) {
+    setDashboardSettingsOverride({});
     setSession(null);
     setSessionState(state);
     setOnboardingComplete(false);
@@ -586,6 +589,7 @@ export default function ProductApp() {
   }
 
   function applyDashboardSettings(settings: Record<string, string>) {
+    setDashboardSettingsOverride((current) => ({ ...current, ...settings }));
     setDashboardState((current) => {
       if (current.state !== "ready") return current;
       return {
@@ -733,7 +737,19 @@ export default function ProductApp() {
     );
   }
 
-  const dashboard = dashboardState.state === "ready" ? dashboardState.data : null;
+  const renderedDashboardState = dashboardState.state === "ready" && Object.keys(dashboardSettingsOverride).length
+    ? {
+      ...dashboardState,
+      data: {
+        ...dashboardState.data,
+        settings: {
+          ...dashboardState.data.settings,
+          ...dashboardSettingsOverride,
+        },
+      },
+    }
+    : dashboardState;
+  const dashboard = renderedDashboardState.state === "ready" ? renderedDashboardState.data : null;
   const consoleMode = isConsoleProductView(view);
   const activePage = pageMetaForView(view);
   const openView = (nextView: ViewKey) => {
@@ -775,7 +791,7 @@ export default function ProductApp() {
           view={view}
           authConfig={authConfig}
           session={session}
-          dashboardState={dashboardState}
+          dashboardState={renderedDashboardState}
           lens={lens}
           setView={openView}
           onDashboardRefresh={refreshDashboard}
@@ -3339,6 +3355,29 @@ const AUDIT_REASON_TEMPLATES = [
   "Regression rehearsal: confirm Mesh admission, approval, and evidence paths.",
 ];
 
+export function resolveLaunchRunDefaults(dashboard: DashboardPayload, setup = buildOperatorSetupModel(dashboard)) {
+  const operatorDefaultTemplate = String(dashboard.operator_preferences_schema?.run_template?.default || "reth_peer_starvation");
+  const settingsDefaultScenario = String(dashboard.settings.default_run_scenario || "");
+  const defaultScenarioKey = [
+    settingsDefaultScenario,
+    setup.runTemplate,
+    operatorDefaultTemplate,
+    "reth_peer_starvation",
+  ].find((candidate) => SCENARIO_PICKER.some((scenario) => scenario.key === candidate)) || "reth_peer_starvation";
+  const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
+    ? setup.agentFabricMode
+    : dashboard.settings.default_orchestration_mode || "auto";
+  return {
+    scenarioKey: defaultScenarioKey,
+    evaluationMode: String(dashboard.settings.default_evaluation_mode || "native"),
+    orchestrationMode: String(preferredOrchestration),
+    steeringMode: setup.approvalPolicy === "interruptible_auto"
+      ? "interruptible_auto"
+      : String(dashboard.settings.default_steering_mode || "approval_gate"),
+    requireTargetLock: setup.target.lockRequired || dashboard.settings.default_target_lock === "required",
+  };
+}
+
 function ProofDrilldownPanel({ dashboard }: { dashboard: DashboardPayload }) {
   const runs = dashboard.mesh.runs?.runs || [];
   const [selectedRunId, setSelectedRunId] = useState(String(runs[0]?.run_id || ""));
@@ -3461,23 +3500,12 @@ function RunWorkbenchSummary({ model }: { model: RunWorkbenchModel }) {
 
 function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: DashboardPayload; onDashboardRefresh: () => Promise<void> }) {
   const setup = buildOperatorSetupModel(dashboard);
-  const operatorDefaultTemplate = String(dashboard.operator_preferences_schema?.run_template?.default || "reth_peer_starvation");
-  const settingsDefaultScenario = String(dashboard.settings.default_run_scenario || "");
-  const defaultScenarioKey = [
-    settingsDefaultScenario,
-    setup.runTemplate,
-    operatorDefaultTemplate,
-    "reth_peer_starvation",
-  ].find((candidate) => SCENARIO_PICKER.some((scenario) => scenario.key === candidate)) || "reth_peer_starvation";
-  const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
-    ? setup.agentFabricMode
-    : dashboard.settings.default_orchestration_mode || "auto";
-  const defaultEvaluationMode = dashboard.settings.default_evaluation_mode || "native";
-  const defaultOrchestrationMode = String(preferredOrchestration);
-  const defaultSteeringMode = setup.approvalPolicy === "interruptible_auto"
-    ? "interruptible_auto"
-    : dashboard.settings.default_steering_mode || "approval_gate";
-  const defaultRequireTargetLock = setup.target.lockRequired || dashboard.settings.default_target_lock === "required";
+  const launchDefaults = resolveLaunchRunDefaults(dashboard, setup);
+  const defaultScenarioKey = launchDefaults.scenarioKey;
+  const defaultEvaluationMode = launchDefaults.evaluationMode;
+  const defaultOrchestrationMode = launchDefaults.orchestrationMode;
+  const defaultSteeringMode = launchDefaults.steeringMode;
+  const defaultRequireTargetLock = launchDefaults.requireTargetLock;
   const launchDefaultsKey = [
     defaultScenarioKey,
     defaultEvaluationMode,
@@ -4469,6 +4497,7 @@ export function runtimeProductPage(view: ViewKey, dashboard: DashboardPayload): 
       cards: [
         { title: "Memory graph", payload: mesh.memory?.graph },
         { title: "Active memory", payload: mesh.memory?.active },
+        { title: "MeshModel RGS evidence", payload: mesh.meshmodel_rgs_evidence },
         { title: "Trust ladder", payload: mesh.trust_ladder },
         { title: "Readiness", payload: readiness },
       ],

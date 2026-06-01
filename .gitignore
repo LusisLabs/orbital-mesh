@@ -20,6 +20,7 @@ __pycache__/
 .mesh-runtime-state
 .mesh-runtime-state/
 .hermes-local/
+.showcase-state/operator-identity.json
 kurtosis/
 agentic-operator-core-main/
 
@@ -65,5 +66,7 @@ e2e-reports/
 web/test-results/
 web/playwright-report/
 meshapp/frontend/out/
+meshapp/frontend/.next-showcase/
+meshapp/frontend/.next-e2e-*/
 meshapp/.zig-cache/
 meshapp/zig-out/

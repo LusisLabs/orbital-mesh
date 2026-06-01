@@ -87,8 +87,12 @@ test("team settings, member invites, provider posture, connector filters, and la
   await expect(page.locator(".sidebar-footer").getByText(teamName)).toBeVisible();
 
   await page.getByRole("navigation").getByRole("button", { name: "Settings", exact: true }).click();
-  await page.locator(".setting-card", { hasText: "Default Run Scenario" }).locator("select").selectOption("search_latency_regression");
-  await page.locator(".setting-card", { hasText: "Default Target Lock" }).locator("select").selectOption("required");
+  const defaultScenarioSelect = page.locator(".setting-card", { hasText: "Default Run Scenario" }).locator("select");
+  const defaultTargetLockSelect = page.locator(".setting-card", { hasText: "Default Target Lock" }).locator("select");
+  await defaultScenarioSelect.selectOption("search_latency_regression");
+  await expect(defaultScenarioSelect).toHaveValue("search_latency_regression");
+  await defaultTargetLockSelect.selectOption("required");
+  await expect(defaultTargetLockSelect).toHaveValue("required");
   await page.getByLabel("Audit reason").fill("e2e settings launch default proof");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByText(/Saved default_evaluation_mode/)).toBeVisible();

@@ -251,6 +251,9 @@ Deliverables:
 
 - `POST /api/mesh-brain/meshmodel-probe`;
 - Mesh run artifacts for benchmark results;
+- `meshmodel-rgs-evidence-binding` artifact when a Recoverable Ghost States
+  evidence packet is provided through `rgs_repo_root`, `rgs_evidence_path`, or
+  inline `rgs_evidence`;
 - non-deployment record;
 - release-readiness blocker until explicit promotion gates pass.
 
@@ -258,6 +261,13 @@ Exit gate:
 
 - MeshModel probe evidence appears in run artifacts, vault, Merkle/proof chain,
   and readiness/go-no-go surfaces as research evidence only.
+
+RGS packets are admitted only as bounded advisory evidence. The control plane
+records the RGS source commit, packet hashes, public metrics summary when
+present, and the CL12 live external runtime state. Missing RGS packets, source
+commit mismatches, or unadmitted CL12 live external runtime replication stay as
+release-readiness blockers. The binding never grants production authority,
+serving authority, or promotion authority.
 
 ## Integration Boundaries
 

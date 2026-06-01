@@ -37,6 +37,7 @@ from mesh_brain.artifact_registry import build_production_artifact_ref
 from mesh_brain.backend_matrix import BackendMatrixTarget, run_backend_matrix_smoke
 from mesh_brain.model_kernel_probe import run_model_kernel_probe
 from mesh_brain.rollback_drill import run_mesh_brain_rollback_drill
+from mesh_brain.rgs_evidence import build_meshmodel_rgs_evidence_binding
 from mesh_brain.run_live_serving_smoke import DEFAULT_BASE_URL, DEFAULT_MODEL, run_live_serving_smoke
 from services.ingest.webhook_service import (
     WebhookIngestService,
@@ -87,6 +88,7 @@ from shared.mesh_runtime import (
     build_operator_handoff,
     build_override_review,
     build_postmortem_review,
+    build_recursive_chaos_feedback_gate,
     load_fixture,
 )
 from shared.mesh_runtime.perennial import (
@@ -235,6 +237,17 @@ def _positive_float(value: Any, *, default: float, maximum: float) -> float:
     if parsed <= 0:
         raise ValueError("value must be a positive number")
     return min(parsed, maximum)
+
+
+def _string_list(value: Any, *, default: list[str]) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, list):
+        items = [str(item) for item in value]
+    else:
+        items = list(default)
+    normalized = [item.strip() for item in items if item.strip()]
+    return normalized or list(default)
 
 
 def _operator_context(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1576,6 +1589,54 @@ class RunCoordinator:
     def list_run_summaries(self, limit: int = 50) -> list[dict[str, Any]]:
         return [_run_session_summary(session) for session in self.state_store.list_run_sessions(limit=limit)]
 
+    def latest_meshmodel_rgs_evidence_summary(self, limit: int = 50) -> dict[str, Any]:
+        for session in self.state_store.list_run_sessions(limit=limit):
+            if session.scenario_key != "mesh_brain_meshmodel_probe":
+                continue
+            record = session.artifacts.get("mesh_brain_meshmodel_run_record")
+            if not isinstance(record, dict):
+                continue
+            binding = record.get("rgs_evidence_binding")
+            if not isinstance(binding, dict):
+                continue
+            readiness = record.get("release_readiness") if isinstance(record.get("release_readiness"), dict) else {}
+            return {
+                "version": "mesh.meshmodel_rgs_evidence_dashboard.v1",
+                "state_slice": "meshmodel-rgs-evidence-binding",
+                "run_id": session.run_id,
+                "updated_at": session.updated_at,
+                "status": binding.get("status"),
+                "advisory_ready": bool(binding.get("advisory_ready")),
+                "source_repository": binding.get("source_repository"),
+                "source_commit": binding.get("source_commit"),
+                "binding_hash": binding.get("binding_hash"),
+                "bounded_breakthrough_evidence_admitted": bool(binding.get("bounded_breakthrough_evidence_admitted")),
+                "threshold_admitted": bool(binding.get("threshold_admitted")),
+                "full_live_external_runtime_threshold_admitted": bool(
+                    binding.get("full_live_external_runtime_threshold_admitted")
+                ),
+                "cl12_live_external_runtime_replication_admitted": bool(
+                    binding.get("cl12_live_external_runtime_replication_admitted")
+                ),
+                "release_decision": record.get("final_release_decision"),
+                "release_effect": binding.get("release_effect"),
+                "blockers": list(readiness.get("blockers") or binding.get("blockers") or []),
+                "public_metrics": binding.get("public_metrics"),
+                "production_authority": False,
+                "serving_authority": False,
+                "promotion_authority": False,
+            }
+        return {
+            "version": "mesh.meshmodel_rgs_evidence_dashboard.v1",
+            "state_slice": "meshmodel-rgs-evidence-binding",
+            "status": "missing",
+            "advisory_ready": False,
+            "blockers": ["meshmodel_rgs_evidence_run_missing"],
+            "production_authority": False,
+            "serving_authority": False,
+            "promotion_authority": False,
+        }
+
     def build_approval_queue(self, limit: int = 100) -> dict[str, Any]:
         sessions = self.state_store.list_run_sessions(limit=limit)
         pending_sessions = [
@@ -2471,6 +2532,176 @@ class RunCoordinator:
         self._update_session(session.run_id, stage=final_stage, status=final_status)
         return self.get_run(session.run_id) or session.to_dict()
 
+    def run_recursive_chaos_arena_session(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        from scripts.recursive_chaos_arena_session import (
+            ArenaTarget,
+            _default_targets,
+            run_recursive_chaos_arena_session,
+        )
+
+        payload = payload or {}
+        operator = _operator_context(payload)
+        goal_id = payload.get("goal_id") or self.state_store.ensure_default_goal().goal_id
+        raw_profile_ids = payload.get("profile_ids") or payload.get("profile_id") or ["kubernetes_service_platform"]
+        profile_ids = _string_list(raw_profile_ids, default=["kubernetes_service_platform"])
+        targets = [
+            ArenaTarget(
+                profile_id=str(target["profile_id"]),
+                context=str(target.get("context") or "local"),
+                namespace=str(target.get("namespace") or "mesh"),
+                deployment=str(target.get("deployment") or str(target["profile_id"]).replace("_", "-")),
+                substrate=str(target.get("substrate") or "catalog"),
+                environment=str(target.get("environment") or self.config.environment or "local"),
+                image_ref=str(target.get("image_ref") or self.config.build_image_digest or "unknown"),
+            )
+            for target in payload.get("targets", [])
+            if isinstance(target, dict) and target.get("profile_id")
+        ] or _default_targets(profile_ids)
+        max_cycles = _positive_int(payload.get("max_cycles"), default=len(targets), maximum=16)
+        seed = _positive_int(payload.get("seed"), default=20260601, maximum=999999999)
+        execute = bool(payload.get("execute"))
+        session = self.state_store.create_run_session(
+            goal_id=goal_id,
+            scenario_key="recursive_chaos_arena",
+            steering_mode="system_probe",
+            auto_mode=False,
+            pause_points=[],
+            evaluation_mode="recursive_chaos_arena",
+            orchestration_mode="native",
+            artifacts={"operator": operator} if operator is not None else {},
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="queued",
+            event_type=RUN_QUEUED,
+            payload={
+                "scenario_key": session.scenario_key,
+                "goal_id": goal_id,
+                "profile_ids": profile_ids,
+                "target_count": len(targets),
+                "execute": execute,
+                "operator": operator,
+            },
+            summary={"status": "queued", "operator_id": operator.get("operator_id") if operator else None},
+            status="queued",
+        )
+        self._update_session(session.run_id, stage="executing", status="running")
+        output_directory = Path(self.config.state_directory) / "recursive-chaos" / "sessions" / session.run_id
+        summary = run_recursive_chaos_arena_session(
+            targets=targets,
+            output_dir=output_directory,
+            base_url=str(payload.get("base_url") or "http://127.0.0.1:8787"),
+            max_cycles=max_cycles,
+            seed=seed,
+            execute=execute,
+        )
+        decision = Decision(
+            decision_id=f"decision_{session.run_id}",
+            trigger_id=f"recursive-chaos-{session.run_id}",
+            summary="Record recursive chaos arena evidence without granting production mutation authority.",
+            decision_type="no_action",
+            autonomy_tier="approval_required",
+            reasoning={
+                "primary_hypothesis": "Recursive chaos evidence is advisory unless sealed packet gates prove otherwise.",
+                "evidence": ["recursive_chaos_session_summary", "mesh_brain_recursive_chaos_advisory"],
+                "alternatives_considered": ["execute_mutating_recovery_action", "train_mesh_brain_from_unsealed_packets"],
+                "evidence_pack": {
+                    "recursive_chaos_session": summary,
+                    "sealed_learning_packet_refs": list(summary.get("learning_packet_refs") or []),
+                    "advisory_only": True,
+                },
+            },
+            expected_outcome={
+                "target_metrics": {"p95_latency_ms": "unchanged", "error_rate": "unchanged"},
+                "time_to_effect": "immediate advisory record",
+            },
+            risk={
+                "level": "medium" if execute else "low",
+                "blast_radius": "state-directory evidence artifacts only",
+                "customer_impact_if_wrong": "operator may overweight an advisory packet; no production mutation authority is granted",
+            },
+            confidence=0.82,
+            execution_plan={
+                "system": "audit_log_sink",
+                "action": "record_no_action",
+                "parameters": {"execute": execute, "profile_ids": profile_ids},
+                "rollback_plan": "delete local recursive-chaos session artifacts and rerun the session",
+            },
+        )
+        self._set_artifact(session.run_id, "decision", decision.to_dict())
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="decision_ready",
+            event_type=DECISION_READY,
+            payload=decision.to_dict(),
+            summary={"decision_type": decision.decision_type, "advisory_only": True},
+            artifact_key="decision",
+            status="recorded",
+        )
+        advisory = _recursive_chaos_mesh_brain_advisory(summary, session.run_id)
+        feedback_gate = build_recursive_chaos_feedback_gate(
+            run_id=session.run_id,
+            summary=summary,
+            advisory=advisory,
+        )
+        self._set_artifact(session.run_id, "recursive_chaos_session_summary", summary)
+        self._set_artifact(session.run_id, "mesh_brain_recursive_chaos_advisory", advisory)
+        self._set_artifact(session.run_id, "mesh_brain_recursive_chaos_feedback_gate", feedback_gate)
+        self._set_artifact(
+            session.run_id,
+            "evidence_graph",
+            _recursive_chaos_evidence_graph(
+                run_id=session.run_id,
+                summary=summary,
+                advisory=advisory,
+                feedback_gate=feedback_gate,
+                decision=decision.to_dict(),
+            ),
+        )
+        self._record_recursive_chaos_artifact_refs(session.run_id, output_directory)
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="evaluation_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=advisory,
+            summary={
+                "status": summary["status"],
+                "cycles_total": summary["cycles_total"],
+                "sealed_learning_packets": len(summary.get("learning_packet_refs") or []),
+            },
+            artifact_key="mesh_brain_recursive_chaos_advisory",
+            integration_name="recursive_chaos_arena",
+            status="recorded",
+        )
+        self.state_store.append_run_event(
+            session.run_id,
+            stage="feedback_ready",
+            event_type=INTEGRATION_ARTIFACT_RECORDED,
+            payload=feedback_gate,
+            summary={
+                "mesh_brain_mode": feedback_gate["mesh_brain_mode"],
+                "mesh_model_training_allowed": feedback_gate["mesh_model_training_allowed"],
+                "recommended_next_profiles": feedback_gate["recommended_next_profiles"][:4],
+            },
+            artifact_key="mesh_brain_recursive_chaos_feedback_gate",
+            integration_name="recursive_chaos_arena",
+            status="recorded",
+        )
+        final_stage = "completed" if summary["status"] == "pass" else "failed"
+        final_status = "completed" if summary["status"] == "pass" else "failed"
+        self.state_store.append_run_event(
+            session.run_id,
+            stage=final_stage,
+            event_type=RUN_COMPLETED if summary["status"] == "pass" else RUN_FAILED,
+            payload=summary,
+            summary={"status": final_status, "cycles_total": summary["cycles_total"]},
+            artifact_key="recursive_chaos_session_summary",
+            integration_name="recursive_chaos_arena",
+            status=final_status,
+        )
+        self._update_session(session.run_id, stage=final_stage, status=final_status)
+        return self.get_run(session.run_id) or session.to_dict()
+
     def run_mesh_brain_meshmodel_probe(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = payload or {}
         operator = _operator_context(payload)
@@ -2501,18 +2732,25 @@ class RunCoordinator:
         output_directory = Path(self.config.state_directory) / "mesh-brain" / "meshmodel-probe" / session.run_id
         output_directory.mkdir(parents=True, exist_ok=True)
         benchmark_summary = _meshmodel_benchmark_summary(payload=payload, run_id=session.run_id)
+        rgs_evidence_binding = build_meshmodel_rgs_evidence_binding(payload, run_id=session.run_id)
         governance_evidence = _meshmodel_governance_evidence(
             payload=payload,
             run_id=session.run_id,
             benchmark_summary=benchmark_summary,
+            rgs_evidence_binding=rgs_evidence_binding,
         )
         research_records = _meshmodel_research_records(
             payload=payload,
             run_id=session.run_id,
             benchmark_summary=benchmark_summary,
             governance_evidence=governance_evidence,
+            rgs_evidence_binding=rgs_evidence_binding,
         )
-        release_readiness = _meshmodel_release_readiness(payload=payload, benchmark_summary=benchmark_summary)
+        release_readiness = _meshmodel_release_readiness(
+            payload=payload,
+            benchmark_summary=benchmark_summary,
+            rgs_evidence_binding=rgs_evidence_binding,
+        )
         deployment_record = {
             "status": "recorded" if release_readiness["release_decision"] == "advisory_governance_candidate" else "blocked",
             "deployed": False,
@@ -2527,6 +2765,7 @@ class RunCoordinator:
         artifact_refs = _write_meshmodel_probe_artifacts(
             output_directory=output_directory,
             benchmark_summary=benchmark_summary,
+            rgs_evidence_binding=rgs_evidence_binding,
             governance_evidence=governance_evidence,
             research_records=research_records,
             release_readiness=release_readiness,
@@ -2537,6 +2776,7 @@ class RunCoordinator:
             tenant_id=str(benchmark_summary.get("tenant_id") or "tenant_a"),
             artifact_refs=artifact_refs,
             benchmark_summary=benchmark_summary,
+            rgs_evidence_binding=rgs_evidence_binding,
             governance_evidence=governance_evidence,
             research_records=research_records,
             release_readiness=release_readiness,
@@ -5207,6 +5447,32 @@ class RunCoordinator:
                 }
             )
 
+    def _record_recursive_chaos_artifact_refs(self, run_id: str, output_directory: Path) -> None:
+        if not output_directory.exists():
+            return
+        for path in sorted(output_directory.glob("*/*.json")):
+            artifact_key = f"recursive_chaos_{path.parent.name}_{path.stem.replace('-', '_')}"
+            self.state_store.put_artifact(
+                {
+                    "run_id": run_id,
+                    "artifact_key": artifact_key,
+                    "uri": str(path),
+                    "path": str(path),
+                    "content_hash": _file_sha256(path),
+                    "metadata": {
+                        "content_type": "application/json",
+                        "recursive_chaos_artifact": True,
+                        "sealed_source": path.name
+                        in {
+                            "cycle-packet.json",
+                            "ghost-recovery-packet.json",
+                            "learning-packet.json",
+                            "evidence-bundle.json",
+                        },
+                    },
+                }
+            )
+
     def _record_benchmark_if_simulation(self, run_id: str) -> None:
         session = self.state_store.get_run_session(run_id)
         if session is None:
@@ -6061,6 +6327,7 @@ def _meshmodel_governance_evidence(
     payload: dict[str, Any],
     run_id: str,
     benchmark_summary: dict[str, Any],
+    rgs_evidence_binding: dict[str, Any],
 ) -> dict[str, Any]:
     raw = payload.get("governance_evidence")
     if isinstance(raw, dict):
@@ -6080,10 +6347,34 @@ def _meshmodel_governance_evidence(
                     "release_authority": "none",
                     "production_serving": False,
                     "policy_bypass": False,
+                    "rgs_evidence_binding_hash": rgs_evidence_binding.get("binding_hash"),
+                    "rgs_evidence_status": rgs_evidence_binding.get("status"),
                 }
             ],
+            "rgs_evidence_binding": {
+                "binding_hash": rgs_evidence_binding.get("binding_hash"),
+                "status": rgs_evidence_binding.get("status"),
+                "source_commit": rgs_evidence_binding.get("source_commit"),
+                "bounded_breakthrough_evidence_admitted": bool(
+                    rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")
+                ),
+                "cl12_live_external_runtime_replication_admitted": bool(
+                    rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted")
+                ),
+                "release_effect": rgs_evidence_binding.get("release_effect"),
+            },
             "policy": _meshmodel_route_policy(),
         }
+    evidence["rgs_evidence_binding"] = {
+        "binding_hash": rgs_evidence_binding.get("binding_hash"),
+        "status": rgs_evidence_binding.get("status"),
+        "source_commit": rgs_evidence_binding.get("source_commit"),
+        "bounded_breakthrough_evidence_admitted": bool(rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")),
+        "cl12_live_external_runtime_replication_admitted": bool(
+            rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted")
+        ),
+        "release_effect": rgs_evidence_binding.get("release_effect"),
+    }
     evidence["evidence_hash"] = f"sha256:{_canonical_sha256(evidence)}"
     return evidence
 
@@ -6094,6 +6385,7 @@ def _meshmodel_research_records(
     run_id: str,
     benchmark_summary: dict[str, Any],
     governance_evidence: dict[str, Any],
+    rgs_evidence_binding: dict[str, Any],
 ) -> dict[str, Any]:
     raw = payload.get("research_records")
     if isinstance(raw, dict):
@@ -6114,15 +6406,35 @@ def _meshmodel_research_records(
                     "production_serving": False,
                     "policy_bypass": False,
                     "research_only": True,
+                    "rgs_evidence_binding_hash": rgs_evidence_binding.get("binding_hash"),
+                    "rgs_source_commit": rgs_evidence_binding.get("source_commit"),
+                    "rgs_bounded_breakthrough_evidence_admitted": bool(
+                        rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")
+                    ),
                 }
             ],
+            "rgs_evidence_binding": {
+                "binding_hash": rgs_evidence_binding.get("binding_hash"),
+                "status": rgs_evidence_binding.get("status"),
+                "blockers": list(rgs_evidence_binding.get("blockers") or []),
+            },
             "policy": _meshmodel_route_policy(),
         }
+    records["rgs_evidence_binding"] = {
+        "binding_hash": rgs_evidence_binding.get("binding_hash"),
+        "status": rgs_evidence_binding.get("status"),
+        "blockers": list(rgs_evidence_binding.get("blockers") or []),
+    }
     records["records_hash"] = f"sha256:{_canonical_sha256(records)}"
     return records
 
 
-def _meshmodel_release_readiness(*, payload: dict[str, Any], benchmark_summary: dict[str, Any]) -> dict[str, Any]:
+def _meshmodel_release_readiness(
+    *,
+    payload: dict[str, Any],
+    benchmark_summary: dict[str, Any],
+    rgs_evidence_binding: dict[str, Any],
+) -> dict[str, Any]:
     raw = payload.get("release_readiness")
     if isinstance(raw, dict):
         readiness = dict(raw)
@@ -6151,6 +6463,7 @@ def _meshmodel_release_readiness(*, payload: dict[str, Any], benchmark_summary: 
                 "policy_bypass": False,
             },
             "benchmark_gates": dict(benchmark_summary.get("gates") or {}),
+            "rgs_evidence_binding": {},
             "policy": _meshmodel_route_policy(),
         }
     release_decision = str(readiness.get("release_decision") or "block")
@@ -6160,7 +6473,32 @@ def _meshmodel_release_readiness(*, payload: dict[str, Any], benchmark_summary: 
     readiness["target"] = "advisory_governance_candidate"
     readiness["production_serving_blocked"] = True
     readiness["production_blockers"] = ["production_serving_disabled"]
-    blockers = sorted(set(list(readiness.get("blockers") or []) + ["production_serving_disabled"]))
+    rgs_blockers = list(rgs_evidence_binding.get("blockers") or [])
+    if not rgs_evidence_binding.get("advisory_ready"):
+        rgs_blockers.append("rgs_evidence_binding_not_advisory_ready")
+    if not rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted"):
+        rgs_blockers.append("rgs_cl12_live_external_runtime_not_admitted")
+    readiness["rgs_evidence_binding"] = {
+        "binding_hash": rgs_evidence_binding.get("binding_hash"),
+        "status": rgs_evidence_binding.get("status"),
+        "source_repository": rgs_evidence_binding.get("source_repository"),
+        "source_commit": rgs_evidence_binding.get("source_commit"),
+        "bounded_breakthrough_evidence_admitted": bool(rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")),
+        "threshold_admitted": bool(rgs_evidence_binding.get("threshold_admitted")),
+        "full_live_external_runtime_threshold_admitted": bool(
+            rgs_evidence_binding.get("full_live_external_runtime_threshold_admitted")
+        ),
+        "cl12_live_external_runtime_replication_admitted": bool(
+            rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted")
+        ),
+        "public_metrics": rgs_evidence_binding.get("public_metrics"),
+        "blockers": sorted(set(rgs_blockers)),
+        "release_effect": "advisory_evidence_only",
+        "production_authority": False,
+        "serving_authority": False,
+        "promotion_authority": False,
+    }
+    blockers = sorted(set(list(readiness.get("blockers") or []) + ["production_serving_disabled"] + rgs_blockers))
     readiness["blockers"] = blockers
     readiness["blocked"] = release_decision == "block"
     readiness["advisory_recorded"] = release_decision == "advisory_governance_candidate"
@@ -6174,6 +6512,7 @@ def _write_meshmodel_probe_artifacts(
     *,
     output_directory: Path,
     benchmark_summary: dict[str, Any],
+    rgs_evidence_binding: dict[str, Any],
     governance_evidence: dict[str, Any],
     research_records: dict[str, Any],
     release_readiness: dict[str, Any],
@@ -6181,6 +6520,7 @@ def _write_meshmodel_probe_artifacts(
 ) -> dict[str, dict[str, Any]]:
     payloads = {
         "mesh_brain_meshmodel_benchmark_summary": ("meshmodel_benchmark_summary.json", benchmark_summary),
+        "mesh_brain_meshmodel_rgs_evidence_binding": ("meshmodel_rgs_evidence_binding.json", rgs_evidence_binding),
         "mesh_brain_meshmodel_governance_evidence": ("meshmodel_governance_evidence.json", governance_evidence),
         "mesh_brain_meshmodel_research_records": ("meshmodel_research_records.json", research_records),
         "mesh_brain_meshmodel_release_readiness": ("meshmodel_release_readiness.json", release_readiness),
@@ -6193,6 +6533,18 @@ def _write_meshmodel_probe_artifacts(
         refs[artifact_key] = _meshmodel_artifact_ref(artifact_key, path)
     probe_summary = {
         "benchmark_summary": benchmark_summary,
+        "rgs_evidence_binding": {
+            "binding_hash": rgs_evidence_binding.get("binding_hash"),
+            "status": rgs_evidence_binding.get("status"),
+            "source_commit": rgs_evidence_binding.get("source_commit"),
+            "bounded_breakthrough_evidence_admitted": bool(
+                rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")
+            ),
+            "cl12_live_external_runtime_replication_admitted": bool(
+                rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted")
+            ),
+            "release_effect": rgs_evidence_binding.get("release_effect"),
+        },
         "governance_evidence": {
             "evidence_hash": governance_evidence.get("evidence_hash"),
             "record_count": len(list(governance_evidence.get("records") or [])),
@@ -6218,6 +6570,7 @@ def _meshmodel_probe_run_record(
     tenant_id: str,
     artifact_refs: dict[str, dict[str, Any]],
     benchmark_summary: dict[str, Any],
+    rgs_evidence_binding: dict[str, Any],
     governance_evidence: dict[str, Any],
     research_records: dict[str, Any],
     release_readiness: dict[str, Any],
@@ -6241,6 +6594,12 @@ def _meshmodel_probe_run_record(
         ],
         "summary_metrics": {
             "strict_passed": bool(benchmark_summary.get("strict_passed")),
+            "rgs_bounded_breakthrough_evidence_admitted": bool(
+                rgs_evidence_binding.get("bounded_breakthrough_evidence_admitted")
+            ),
+            "rgs_cl12_live_external_runtime_replication_admitted": bool(
+                rgs_evidence_binding.get("cl12_live_external_runtime_replication_admitted")
+            ),
             "governance_evidence_records": len(list(governance_evidence.get("records") or [])),
             "research_record_count": len(list(research_records.get("records") or [])),
             "release_blocker_count": len(list(release_readiness.get("blockers") or [])),
@@ -6251,6 +6610,7 @@ def _meshmodel_probe_run_record(
             "evidence_hash": governance_evidence.get("evidence_hash"),
             "record_count": len(list(governance_evidence.get("records") or [])),
         },
+        "rgs_evidence_binding": rgs_evidence_binding,
         "research_records": {
             "records_hash": research_records.get("records_hash"),
             "record_count": len(list(research_records.get("records") or [])),
@@ -6298,6 +6658,128 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _recursive_chaos_mesh_brain_advisory(summary: dict[str, Any], run_id: str) -> dict[str, Any]:
+    learning_packet_refs = [str(ref) for ref in summary.get("learning_packet_refs", [])]
+    cycle_packet_refs = [str(ref) for ref in summary.get("cycle_packet_refs", [])]
+    evidence_bundle_refs = [str(ref) for ref in summary.get("evidence_bundle_refs", [])]
+    packet = {
+        "schema_version": "mesh.mesh_brain_recursive_chaos_advisory.v1",
+        "run_id": run_id,
+        "source": "recursive_chaos_arena",
+        "session_status": summary.get("status"),
+        "cycles_total": summary.get("cycles_total"),
+        "sealed_source_required": True,
+        "sealed_source_packet_refs": cycle_packet_refs + learning_packet_refs + evidence_bundle_refs,
+        "mesh_brain_mode": "recommend_only",
+        "mesh_model_mode": "recommend_only",
+        "advisory_only": True,
+        "training_allowed": False,
+        "mesh_model_training_allowed": False,
+        "production_authority": False,
+        "recommendations": [
+            {
+                "recommendation_type": "arena_scheduler_weight",
+                "summary": "Use sealed recursive chaos packets as future scheduler weighting evidence only.",
+                "confidence": 0.78,
+                "evidence_refs": evidence_bundle_refs,
+            }
+        ],
+        "policy": {
+            "sealed_packets_before_learning": True,
+            "model_training_blocked": True,
+            "mesh_model_training_blocked": True,
+            "production_mutation_authority": False,
+        },
+    }
+    packet["advisory_hash"] = f"sha256:{_canonical_sha256(packet)}"
+    return packet
+
+
+def _recursive_chaos_evidence_graph(
+    *,
+    run_id: str,
+    summary: dict[str, Any],
+    advisory: dict[str, Any],
+    feedback_gate: dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, Any]:
+    nodes = [
+        {
+            "id": f"{run_id}:summary",
+            "type": "summary",
+            "label": "Recursive chaos session summary",
+            "status": summary.get("status"),
+            "cycles_total": summary.get("cycles_total"),
+        },
+        {
+            "id": f"{run_id}:decision",
+            "type": "decision",
+            "label": decision.get("summary") or "No-action decision",
+            "decision_type": decision.get("decision_type"),
+            "autonomy_tier": decision.get("autonomy_tier"),
+        },
+        {
+            "id": f"{run_id}:mesh_brain_advisory",
+            "type": "advisory",
+            "label": "MeshBrain recursive chaos advisory",
+            "hash": advisory.get("advisory_hash"),
+            "mode": advisory.get("mesh_brain_mode"),
+            "training_allowed": advisory.get("training_allowed"),
+            "production_authority": advisory.get("production_authority"),
+        },
+        {
+            "id": f"{run_id}:feedback_gate",
+            "type": "feedback_gate",
+            "label": "MeshBrain/MeshModel feedback gate",
+            "hash": feedback_gate.get("feedback_hash"),
+            "mesh_brain_mode": feedback_gate.get("mesh_brain_mode"),
+            "mesh_model_mode": feedback_gate.get("mesh_model_mode"),
+            "mesh_model_training_allowed": feedback_gate.get("mesh_model_training_allowed"),
+            "production_authority": feedback_gate.get("production_authority"),
+        },
+    ]
+    edges = [
+        {"source": f"{run_id}:summary", "target": f"{run_id}:decision", "kind": "supports"},
+        {"source": f"{run_id}:summary", "target": f"{run_id}:mesh_brain_advisory", "kind": "feeds"},
+        {"source": f"{run_id}:mesh_brain_advisory", "target": f"{run_id}:feedback_gate", "kind": "gated_by"},
+        {"source": f"{run_id}:feedback_gate", "target": f"{run_id}:decision", "kind": "keeps_advisory"},
+    ]
+    for ref in summary.get("cycle_packet_refs") or []:
+        node_id = f"{run_id}:cycle:{ref}"
+        nodes.append({"id": node_id, "type": "cycle_packet", "label": str(ref), "sealed_source": True})
+        edges.append({"source": node_id, "target": f"{run_id}:summary", "kind": "summarized_by"})
+    for ref in summary.get("ghost_recovery_packet_refs") or []:
+        node_id = f"{run_id}:recovery:{ref}"
+        nodes.append({"id": node_id, "type": "ghost_recovery_packet", "label": str(ref), "sealed_source": True})
+        edges.append({"source": node_id, "target": f"{run_id}:summary", "kind": "summarized_by"})
+    for ref in summary.get("learning_packet_refs") or []:
+        node_id = f"{run_id}:learning:{ref}"
+        nodes.append({"id": node_id, "type": "learning_packet", "label": str(ref), "sealed_source": True})
+        edges.append({"source": node_id, "target": f"{run_id}:mesh_brain_advisory", "kind": "feeds"})
+    for ref in summary.get("evidence_bundle_refs") or []:
+        node_id = f"{run_id}:evidence_bundle:{ref}"
+        nodes.append({"id": node_id, "type": "evidence_bundle", "label": str(ref), "sealed_source": True})
+        edges.append({"source": node_id, "target": f"{run_id}:mesh_brain_advisory", "kind": "supports"})
+    graph = {
+        "schema_version": "mesh.recursive_chaos.run_evidence_graph.v1",
+        "state_slice": "mesh.recursive_chaos.run_evidence_graph.v1",
+        "run_id": run_id,
+        "nodes": nodes,
+        "edges": edges,
+        "advisory_only": True,
+        "mesh_model_training_allowed": False,
+        "production_authority": False,
+        "source_artifacts": [
+            "recursive_chaos_session_summary",
+            "mesh_brain_recursive_chaos_advisory",
+            "mesh_brain_recursive_chaos_feedback_gate",
+            "decision",
+        ],
+    }
+    graph["graph_hash"] = f"sha256:{_canonical_sha256(graph)}"
+    return graph
 
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:

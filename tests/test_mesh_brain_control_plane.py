@@ -166,9 +166,13 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertEqual(run["stage"], "failed")
         self.assertEqual(run["status"], "blocked")
         self.assertIn("mesh_brain_meshmodel_run_record", run["artifacts"])
+        self.assertIn("mesh_brain_meshmodel_rgs_evidence_binding", run["artifacts"])
         self.assertIn("mesh_brain_meshmodel_release_readiness", run["artifacts"])
         record = run["artifacts"]["mesh_brain_meshmodel_run_record"]
         self.assertEqual(record["final_release_decision"], "block")
+        self.assertEqual(record["rgs_evidence_binding"]["status"], "blocked")
+        self.assertIn("rgs_evidence_source_not_configured", record["release_readiness"]["blockers"])
+        self.assertIn("rgs_cl12_live_external_runtime_not_admitted", record["release_readiness"]["blockers"])
         self.assertFalse(record["deployment_record"]["deployed"])
         self.assertFalse(record["deployment_record"]["production_serving"])
         self.assertFalse(record["deployment_record"]["policy_bypass"])
@@ -199,6 +203,24 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
                     f"http://127.0.0.1:{server.server_address[1]}/api/mesh-brain/meshmodel-probe",
                     data=json.dumps(
                         {
+                            "rgs_evidence": {
+                                "status": "pass",
+                                "local_repo_commit": "a9ec57b7a74643b27c5b908add21704ebbc26767",
+                                "bounded_breakthrough_evidence_admitted": True,
+                                "threshold_admitted": False,
+                                "full_live_external_runtime_threshold_admitted": False,
+                                "claim_boundary": {
+                                    "cl12_live_external_runtime_replication": False,
+                                    "production_authority": False,
+                                    "serving_authority": False,
+                                },
+                                "blocked_items": [
+                                    {
+                                        "item": "live_external_runtime_replication",
+                                        "state_slice": "breakthrough-threshold-audit",
+                                    }
+                                ],
+                            },
                             "release_readiness": {
                                 "release_decision": "advisory_governance_candidate",
                                 "blockers": [],
@@ -233,7 +255,11 @@ class MeshBrainControlPlaneTests(unittest.TestCase):
         self.assertFalse(record["deployment_record"]["deployed"])
         self.assertFalse(record["deployment_record"]["production_serving"])
         self.assertFalse(record["deployment_record"]["promotion_authority"])
+        self.assertEqual(record["rgs_evidence_binding"]["status"], "advisory_ready")
+        self.assertTrue(record["rgs_evidence_binding"]["bounded_breakthrough_evidence_admitted"])
+        self.assertFalse(record["rgs_evidence_binding"]["cl12_live_external_runtime_replication_admitted"])
         self.assertIn("production_serving_disabled", record["release_readiness"]["blockers"])
+        self.assertIn("rgs_cl12_live_external_runtime_not_admitted", record["release_readiness"]["blockers"])
         self.assertNotIn("mesh_brain_meshmodel_run_ids", go_no_go["observed"])
 
     def test_live_serving_smoke_converts_to_artifact_bundle_and_run_record(self) -> None:
