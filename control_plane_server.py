@@ -39,10 +39,6 @@ from shared.mesh_runtime.operator_identity import (
     write_settings_audit,
 )
 from shared.mesh_runtime.praxis import PraxisManagedRuntimeStore, build_praxis_product_dashboard
-from shared.mesh_runtime.recursive_chaos import (
-    load_recursive_chaos_arena_profiles,
-    verify_recursive_chaos_arena_profiles,
-)
 from shared.mesh_runtime.schema_validation import SchemaValidationError
 
 _LOG = logging.getLogger("mesh.control_plane")
