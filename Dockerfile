@@ -39,9 +39,9 @@ RUN apt-get update \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
   && rm -rf /var/lib/apt/lists/*
 
-FROM golang:1.26.3-bookworm AS kubectl-builder
-ARG KUBECTL_VERSION=v1.36.1
-ARG KUBERNETES_SRC_SHA512=5f2c24638d56895bb3575aff0e25641fd9c25c192e27c6cd5255b888efc041221975cff9df99c1c842b876d3092cb9eaec0fd5b410bd0ec9ea74f3bc437dfaff
+FROM golang:1.26.4-bookworm AS kubectl-builder
+ARG KUBECTL_VERSION=v1.36.2
+ARG KUBERNETES_SRC_SHA512=fad7f78605f87a93199316f7fb3f586e4531c41476c53fedee92fdd5bd641a9128c5cde45b6859e07eb2ab254873f1845236c0a33934cba918ff5b97d0cf571d
 WORKDIR /src
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl make rsync \
@@ -68,17 +68,17 @@ WORKDIR /app
 ARG MESH_BUILD_VERSION=dev
 ARG MESH_BUILD_COMMIT=unknown
 ARG MESH_BUILD_IMAGE_DIGEST=
-ARG HERMES_AGENT_REF=1525624904159e7c2d6ac3feef951e27ad0d23bb
+ARG HERMES_AGENT_REF=7c1a029553d87c43ecff8a3821336bc95872213b
 ARG UV_VERSION=0.11.6
-ARG DOCKER_CLI_VERSION=29.5.2
+ARG DOCKER_CLI_VERSION=29.6.1
 
 RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
   && arch="$(dpkg --print-architecture)" \
   && case "$arch" in \
-    amd64) docker_arch="x86_64"; docker_sha="6d81a5be56232d9cc047e60b7110a087793536ae5a8b465719cd303f05fc56ec" ;; \
-    arm64) docker_arch="aarch64"; docker_sha="d1d9cb857c32c596ea96a9ca6b25d13621a97c83511e667868a33a320b2a707f" ;; \
+    amd64) docker_arch="x86_64"; docker_sha="b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f" ;; \
+    arm64) docker_arch="aarch64"; docker_sha="917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881" ;; \
     *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
   esac \
   && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
