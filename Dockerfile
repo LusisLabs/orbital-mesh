@@ -114,6 +114,7 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
   && git checkout --detach FETCH_HEAD \
   && uv venv venv --python /usr/local/bin/python3 \
   && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install -e ".[cli]" \
+  && VIRTUAL_ENV=/opt/hermes-agent/venv uv --no-cache pip install "cryptography>=48.0.1,<49" "deno>=2.8.1,<3" \
   && mkdir -p /opt/venv/bin /workspace/orbital-mesh/.hermes-local \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /usr/local/bin/hermes \
@@ -139,7 +140,7 @@ COPY services ./services
 COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary,pool]>=3.2,<4" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary,pool]>=3.2,<4" "cryptography>=48.0.1,<49" "deno>=2.8.1,<3" /app/deepagents/libs/deepagents
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies
