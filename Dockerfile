@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS operator-ui
+FROM node:24-bookworm-slim AS operator-ui
 WORKDIR /repo
 ARG NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com
 ENV NEXT_PUBLIC_MESH_API_URL=$NEXT_PUBLIC_MESH_API_URL
@@ -15,10 +15,10 @@ COPY scripts/generate_control_plane_contracts.py /repo/scripts/generate_control_
 COPY shared /repo/shared
 RUN cd meshapp/frontend && pnpm run build
 
-FROM node:22-bookworm-slim AS promptfoo
-RUN npm install -g promptfoo@0.121.3 \
+FROM node:24-bookworm-slim AS promptfoo
+RUN npm install -g promptfoo@0.121.17 \
   && cd /usr/local/lib/node_modules/promptfoo \
-  && npm install @anthropic-ai/sdk@0.86.1 --omit=dev \
+  && npm install @anthropic-ai/sdk@0.101.0 --omit=dev \
   && npm dedupe --omit=dev \
   && npm cache clean --force \
   && rm -rf /root/.npm
@@ -62,7 +62,7 @@ COPY latent-mesh/LatentMAS/Cargo.toml latent-mesh/LatentMAS/Cargo.lock ./
 COPY latent-mesh/LatentMAS/src ./src
 RUN cargo build --release --bin latentmas
 
-FROM python:3.13-slim-trixie
+FROM python:3.13.14-slim-trixie
 WORKDIR /app
 
 ARG MESH_BUILD_VERSION=dev
