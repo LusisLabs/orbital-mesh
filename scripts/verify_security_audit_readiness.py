@@ -21,6 +21,7 @@ REQUIRED_PATHS = (
     "docs/production-hardening-records.md",
     "docs/release-provenance.md",
     "config/procurement-security.package.json",
+    "osv-scanner.toml",
     "latent-mesh/LatentMAS/osv-scanner.toml",
     "scripts/generate_release_provenance.py",
     "scripts/verify_procurement_security_package.py",
@@ -113,6 +114,12 @@ REQUIRED_MARKERS = {
     "latent-mesh/LatentMAS/osv-scanner.toml": (
         "RUSTSEC-2024-0436",
         "tokenizers",
+        "2026-08-06",
+    ),
+    "osv-scanner.toml": (
+        "GHSA-p4gq-832x-fm9v",
+        "PYSEC-2026-597",
+        "optional eval extra",
         "2026-08-06",
     ),
 }
