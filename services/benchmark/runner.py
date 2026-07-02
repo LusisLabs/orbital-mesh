@@ -35,7 +35,7 @@ class BenchmarkRunConfig:
     signal_fixture_root: Path | None = None
     state_directory: Path | None = None
     evaluation_mode: str = "native"
-    orchestration_mode: str = "native"
+    orchestration_mode: str = "native_hermes"
     steering_mode: str = "interruptible_auto"
     agent_fabric_mode: str | None = None
     agent_tasks_mode: str = "blocking"

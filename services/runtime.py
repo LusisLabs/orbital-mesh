@@ -684,7 +684,7 @@ class MeshRuntimeEngine:
             "execution_recorded",
             execution.to_dict(),
             artifact_key="execution",
-            integration_name=self.config.orchestration_mode if self.config.orchestration_mode != "native" else None,
+            integration_name=_orchestration_integration_name(self.config.orchestration_mode),
             status=execution.status,
         )
         review_artifact = _execution_review_artifact(execution)
@@ -767,6 +767,10 @@ def _execution_review_artifact(execution) -> tuple[str, str, dict] | None:
         if isinstance(payload, dict):
             return artifact_key, integration_name, payload
     return None
+
+
+def _orchestration_integration_name(mode: str) -> str | None:
+    return None if mode in {"native", "native_hermes", "native_goose"} else mode
 
 
 def _ranked_hypotheses_from_decision(decision: "Decision") -> list[dict]:

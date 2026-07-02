@@ -1,0 +1,27 @@
+{
+  "action_kind": "repo_patch",
+  "action_proposal_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "actor_ref": {
+    "actor_id": "operator.golden",
+    "team_id": "team.golden"
+  },
+  "attestation_refs": [
+    {
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "kind": "mesh_runtime_proof_packet"
+    }
+  ],
+  "candidate_payload_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "created_at": "2026-07-02T00:01:00Z",
+  "evidence_packet_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "explicit_nonclaims": [],
+  "mesh_action_id": "action_repo_patch_golden_deny",
+  "mesh_policy_id": "mesh_policy://repo-patch/golden",
+  "mesh_run_id": "run_hsai_bridge_golden_deny",
+  "requested_claims": [
+    "no_protected_paths_modified",
+    "patch_applies_cleanly",
+    "tests_passed"
+  ],
+  "schema_version": "mesh.hsai_admission_request.v1"
+}

@@ -98,7 +98,7 @@ def _build_sample_export(coordinator: RunCoordinator) -> dict:
         auto_mode=False,
         pause_points=[],
         evaluation_mode="native",
-        orchestration_mode="native",
+        orchestration_mode="native_hermes",
         artifacts={
             "input_signal": {
                 "service": "search",

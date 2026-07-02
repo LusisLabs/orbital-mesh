@@ -947,7 +947,7 @@ def _launch_mesh_run(base_url: str, target: Target) -> dict[str, Any]:
         "goal_id": "goal_default",
         "chaos_probe": True,
         "evaluation_mode": os.environ.get("MESH_STACK_CHAOS_EVALUATION_MODE", "native"),
-        "orchestration_mode": os.environ.get("MESH_STACK_CHAOS_ORCHESTRATION_MODE", "native"),
+        "orchestration_mode": os.environ.get("MESH_STACK_CHAOS_ORCHESTRATION_MODE", "native_hermes"),
         "steering_mode": os.environ.get("MESH_STACK_CHAOS_STEERING_MODE", "interruptible_auto"),
         "live_signal": {
             "source": "kubernetes",

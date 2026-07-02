@@ -163,7 +163,7 @@ test("submits operator note and Hermes chat through steering", async ({ page }) 
     data: {
       scenario_key: "search_latency_regression",
       evaluation_mode: "native",
-      orchestration_mode: "native",
+      orchestration_mode: "native_hermes",
       steering_mode: "interruptible_auto",
       pause_points: [],
     },

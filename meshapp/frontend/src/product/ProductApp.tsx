@@ -3370,9 +3370,11 @@ export function resolveLaunchRunDefaults(dashboard: DashboardPayload, setup = bu
     operatorDefaultTemplate,
     "reth_peer_starvation",
   ].find((candidate) => SCENARIO_PICKER.some((scenario) => scenario.key === candidate)) || "reth_peer_starvation";
-  const preferredOrchestration = ["native", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
-    ? setup.agentFabricMode
-    : dashboard.settings.default_orchestration_mode || "auto";
+  const preferredOrchestration = setup.agentFabricMode === "native"
+    ? "native_hermes"
+    : ["native_hermes", "hermes", "goose", "auto"].includes(setup.agentFabricMode)
+      ? setup.agentFabricMode
+      : dashboard.settings.default_orchestration_mode || "native_hermes";
   return {
     scenarioKey: defaultScenarioKey,
     evaluationMode: String(dashboard.settings.default_evaluation_mode || "native"),
@@ -3628,7 +3630,7 @@ function LaunchRunPanel({ dashboard, onDashboardRefresh }: { dashboard: Dashboar
         <label>
           Orchestration
           <select value={orchestrationMode} onChange={(event) => setOrchestrationMode(event.target.value)}>
-            {(dashboard.settings_schema.default_orchestration_mode?.values || ["native", "hermes", "goose", "auto"]).map((value) => <option key={value} value={value}>{value}</option>)}
+            {(dashboard.settings_schema.default_orchestration_mode?.values || ["native_hermes", "native", "hermes", "goose", "auto"]).map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
         </label>
         <label>

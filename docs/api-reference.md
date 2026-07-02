@@ -78,7 +78,7 @@ Returns the created goal record.
   "goal_id": "goal_default",
   "scenario_key": "search_latency_regression",
   "evaluation_mode": "native",
-  "orchestration_mode": "native",
+  "orchestration_mode": "native_hermes",
   "steering_mode": "approval_gate"
 }
 ```
@@ -90,14 +90,14 @@ Returns the created goal record.
   "goal_id": "goal_default",
   "signal_payload": { "...": "full signal" },
   "evaluation_mode": "native",
-  "orchestration_mode": "native",
+  "orchestration_mode": "native_hermes",
   "steering_mode": "approval_gate"
 }
 ```
 
 Valid `steering_mode`: `approval_gate`, `interruptible_auto`.
 Valid `evaluation_mode`: `native`, `promptfoo`.
-Valid `orchestration_mode`: `native`, `goose`, `hermes`.
+Valid `orchestration_mode`: `native_hermes` (default), `native` (alias), `native_goose`, `goose`, `hermes`, `auto`.
 
 Returns the created run record (including `run_id`).
 
@@ -449,7 +449,7 @@ with httpx.Client(base_url="http://127.0.0.1:8787") as client:
         "goal_id": "goal_default",
         "scenario_key": "search_latency_regression",
         "evaluation_mode": "native",
-        "orchestration_mode": "native",
+        "orchestration_mode": "native_hermes",
         "steering_mode": "approval_gate",
     }).json()
 
@@ -528,7 +528,7 @@ Programmatic embedding (without the HTTP server) is supported through the runtim
 from shared.mesh_runtime import RuntimeConfig
 from services.runtime import MeshRuntimeEngine
 
-config = RuntimeConfig(state_directory=".mesh-state", evaluation_mode="native", orchestration_mode="native")
+config = RuntimeConfig(state_directory=".mesh-state", evaluation_mode="native", orchestration_mode="native_hermes")
 engine = MeshRuntimeEngine(config=config)
 
 run = engine.run_sync(

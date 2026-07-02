@@ -30,8 +30,8 @@ SETTINGS_SCHEMA: dict[str, dict[str, Any]] = {
         "description": "Default evaluation adapter for new operator-created runs.",
     },
     "default_orchestration_mode": {
-        "values": ["native", "hermes", "goose", "auto"],
-        "default": "native",
+        "values": ["native_hermes", "native", "hermes", "goose", "auto"],
+        "default": "native_hermes",
         "description": "Default proposal lane for new operator-created runs.",
     },
     "default_steering_mode": {

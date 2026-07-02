@@ -63,7 +63,7 @@ def run_proof(database_url: str, *, state_dir: str | None = None) -> dict[str, A
             auto_mode=False,
             pause_points=["evaluation_ready"],
             evaluation_mode="native",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             artifacts={"proof": "postgres_restart"},
         )
         first_event = store.append_run_event(

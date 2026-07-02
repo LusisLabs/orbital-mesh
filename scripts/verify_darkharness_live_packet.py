@@ -187,7 +187,7 @@ def _create_allowed_run(base_url: str) -> dict[str, Any]:
         {
             "signal_payload": _kubernetes_live_signal(),
             "evaluation_mode": "native",
-            "orchestration_mode": "native",
+            "orchestration_mode": "native_hermes",
             "steering_mode": "approval_gate",
         },
         expected_status=HTTPStatus.CREATED,
@@ -213,7 +213,7 @@ def _create_denied_run(base_url: str) -> dict[str, Any]:
         {
             "signal_payload": signal,
             "evaluation_mode": "native",
-            "orchestration_mode": "native",
+            "orchestration_mode": "native_hermes",
             "steering_mode": "interruptible_auto",
         },
         expected_status=HTTPStatus.CREATED,

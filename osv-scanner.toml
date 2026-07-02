@@ -1,0 +1,9 @@
+[[IgnoredVulns]]
+id = "GHSA-p4gq-832x-fm9v"
+ignoreUntil = 2026-08-06
+reason = "nltk 3.9.4 is present only through the optional eval extra via deepeval/llama-index. No stable patched PyPI release is available; revisit when nltk publishes a stable release beyond 3.9.4."
+
+[[IgnoredVulns]]
+id = "PYSEC-2026-597"
+ignoreUntil = 2026-08-06
+reason = "nltk 3.9.4 is present only through the optional eval extra via deepeval/llama-index. No stable patched PyPI release is available; revisit when nltk publishes a stable release beyond 3.9.4."

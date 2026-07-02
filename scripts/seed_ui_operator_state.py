@@ -47,7 +47,7 @@ def main() -> None:
         integrations_config_path=str(state_directory / "integrations.json"),
         research_directory=str(state_directory / "research"),
         evaluation_mode="native",
-        orchestration_mode="native",
+        orchestration_mode="native_hermes",
         promptfoo_command=None,
         hermes_command=None,
         goose_command=None,
@@ -76,7 +76,7 @@ def _seed_from_runtime(state_directory: Path) -> str:
             {
                 "scenario_key": "search_latency_regression",
                 "evaluation_mode": "native",
-                "orchestration_mode": "native",
+                "orchestration_mode": "native_hermes",
                 "steering_mode": "interruptible_auto",
                 "pause_points": [],
             }
@@ -105,7 +105,7 @@ def _runtime_config(state_directory: Path) -> RuntimeConfig:
         integrations_config_path=str(state_directory / "integrations.json"),
         research_directory=str(state_directory / "research"),
         evaluation_mode="native",
-        orchestration_mode="native",
+        orchestration_mode="native_hermes",
         promptfoo_command=None,
         hermes_command=None,
         goose_command=None,

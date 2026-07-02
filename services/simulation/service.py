@@ -34,7 +34,7 @@ class SimulationService:
             "signal_payload": scenario.signal_payload,
             "scenario_key": f"simulation:{scenario.scenario_id}",
             "evaluation_mode": payload.get("evaluation_mode", "native"),
-            "orchestration_mode": payload.get("orchestration_mode", "native"),
+            "orchestration_mode": payload.get("orchestration_mode", "native_hermes"),
             "steering_mode": payload.get("steering_mode", "interruptible_auto"),
             "pause_points": payload.get("pause_points", []),
             "simulation_context": {

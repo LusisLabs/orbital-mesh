@@ -208,7 +208,7 @@ describe("settings parity model", () => {
       },
       settings_schema: {
         default_evaluation_mode: { values: ["native", "promptfoo"], default: "native", description: "eval" },
-        default_orchestration_mode: { values: ["native", "hermes"], default: "native", description: "orch" },
+        default_orchestration_mode: { values: ["native_hermes", "native", "hermes"], default: "native_hermes", description: "orch" },
         default_steering_mode: { values: ["approval_gate"], default: "approval_gate", description: "steer" },
       },
       mesh: { health: { commit: "abc123" }, readiness: { state_backend: "sqlite" } },
@@ -250,12 +250,12 @@ describe("dashboard section state coverage", () => {
     const tiles = buildDashboardTiles({
       settings: {
         default_evaluation_mode: "native",
-        default_orchestration_mode: "native",
+        default_orchestration_mode: "native_hermes",
         default_steering_mode: "approval_gate",
       },
       settings_schema: {
         default_evaluation_mode: { values: ["native", "promptfoo"], default: "native", description: "eval" },
-        default_orchestration_mode: { values: ["native", "hermes"], default: "native", description: "orch" },
+        default_orchestration_mode: { values: ["native_hermes", "native", "hermes"], default: "native_hermes", description: "orch" },
         default_steering_mode: { values: ["approval_gate"], default: "approval_gate", description: "steer" },
       },
       mesh: {
@@ -331,7 +331,7 @@ describe("operator setup and preflight models", () => {
   const dashboard = {
     scope: { kind: "team", team: { id: "team-1", name: "Mesh Ops", display_name: "Mesh Ops" } },
     session: { user: { id: "user-1", email: "operator@example.com" }, active_team: { roles: ["admin", "launcher"] } },
-    settings: { default_orchestration_mode: "native", default_steering_mode: "approval_gate" },
+    settings: { default_orchestration_mode: "native_hermes", default_steering_mode: "approval_gate" },
     settings_schema: {},
     operator_preferences_state: {
       state_slice: "mesh.operator-preferences.v1",

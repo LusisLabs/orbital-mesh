@@ -66,7 +66,7 @@ def run_rehearsal(*, state_dir: str | None = None) -> dict[str, Any]:
             server_host="127.0.0.1",
             server_port=0,
             evaluation_mode="native",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             default_steering_mode="approval_gate",
             operator_identity_required=True,
             operator_header_name=OPERATOR_HEADER,
@@ -86,7 +86,7 @@ def run_rehearsal(*, state_dir: str | None = None) -> dict[str, Any]:
         run_payload = {
             "scenario_key": "search_latency_regression",
             "evaluation_mode": "native",
-            "orchestration_mode": "native",
+            "orchestration_mode": "native_hermes",
             "steering_mode": "approval_gate",
         }
         anonymous_run = _request_json(base_url, "POST", "/api/runs", run_payload)

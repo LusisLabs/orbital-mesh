@@ -6,6 +6,7 @@ import sys
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision
+from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 def main() -> None:
@@ -110,7 +111,8 @@ def main() -> None:
             result = {"status": "failed", "failure": {"reason": "unknown_argocd_action", "detail": action},
                       "external_refs": {}}
     elif execution_plan["system"] == "repo_patch_service":
-        result = repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
+        context_failure = repo_patch_admission_failure(decision)
+        result = context_failure or repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -126,7 +128,6 @@ def main() -> None:
         indent=2,
     )
     sys.stdout.write("\n")
-
 
 if __name__ == "__main__":
     main()

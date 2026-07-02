@@ -7,11 +7,13 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import cast
 
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision, log_runtime_event
 from shared.mesh_runtime.goose_credentials import goose_subprocess_env
+from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
@@ -188,8 +190,12 @@ def main() -> None:
                 "external_refs": {},
             }
     elif execution_plan["system"] == "repo_patch_service":
-        patch_parameters = _resolved_patch_parameters(decision, review)
-        result = repo_patch.execute_patch(patch_parameters, idempotency_key)
+        context_failure = repo_patch_admission_failure(decision)
+        if context_failure is not None:
+            result = context_failure
+        else:
+            patch_parameters = _resolved_patch_parameters(decision, review)
+            result = repo_patch.execute_patch(patch_parameters, idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -301,7 +307,7 @@ def _run_goose_prompt(
     args: argparse.Namespace,
     prompt: str,
     system_prompt: str,
-) -> tuple[dict | None, dict[str, object] | None]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None]:
     last_error: dict[str, object] | None = None
     for provider, model, is_fallback in _profiles_for_prompt(args):
         command = [
@@ -349,7 +355,7 @@ def _run_goose_prompt(
             }
             continue
         try:
-            payload = json.loads(completed.stdout)
+            payload = cast(dict[str, object], json.loads(completed.stdout))
         except json.JSONDecodeError as exc:
             last_error = {
                 "approved": False,
@@ -387,7 +393,7 @@ def _profile_timeout_seconds(provider: str | None, is_fallback: bool) -> int:
 
 
 def _command_env(provider: str | None) -> dict[str, str]:
-    return goose_subprocess_env()
+    return cast(dict[str, str], goose_subprocess_env())
 
 
 def _parse_review_text(text: str) -> dict[str, object]:
@@ -429,38 +435,50 @@ def _parse_review_text(text: str) -> dict[str, object]:
 
 def _parse_json_like_review(text: str) -> dict[str, object]:
     try:
-        return json.loads(text)
+        return cast(dict[str, object], json.loads(text))
     except json.JSONDecodeError:
         fenced_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if fenced_match:
-            return json.loads(fenced_match.group(1))
+            return cast(dict[str, object], json.loads(fenced_match.group(1)))
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
-            return json.loads(text[start : end + 1])
+            return cast(dict[str, object], json.loads(text[start : end + 1]))
         raise
 
 
 def _resolved_patch_parameters(decision: Decision, review: dict[str, object]) -> dict[str, object]:
     parameters = dict(decision.execution_plan["parameters"])
-    if isinstance(review.get("patch"), dict):
+    patch = review.get("patch")
+    if isinstance(patch, dict):
         parameters["patch_template"] = {
-            "target_file": review["patch"].get("target_file"),
-            "find": review["patch"].get("find"),
-            "replace": review["patch"].get("replace"),
+            "target_file": patch.get("target_file"),
+            "find": patch.get("find"),
+            "replace": patch.get("replace"),
         }
-    if isinstance(review.get("test_commands"), list) and review["test_commands"]:
-        parameters["test_commands"] = [str(command) for command in review["test_commands"]]
+    test_commands = review.get("test_commands")
+    if isinstance(test_commands, list) and test_commands:
+        parameters["test_commands"] = [str(command) for command in test_commands]
     return parameters
 
 
-def _assistant_text(payload: dict) -> str:
+def _assistant_text(payload: dict[str, object]) -> str:
     messages = payload.get("messages", [])
+    if not isinstance(messages, list):
+        return ""
     for message in reversed(messages):
+        if not isinstance(message, dict):
+            continue
         if message.get("role") != "assistant":
             continue
         parts = message.get("content", [])
-        text = "".join(part.get("text", "") for part in parts if part.get("type") == "text").strip()
+        if not isinstance(parts, list):
+            continue
+        text = "".join(
+            str(part.get("text", ""))
+            for part in parts
+            if isinstance(part, dict) and part.get("type") == "text"
+        ).strip()
         if text:
             return text
     return ""

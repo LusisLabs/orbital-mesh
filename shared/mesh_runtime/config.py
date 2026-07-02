@@ -82,13 +82,11 @@ def _resolve_relative_path(raw: str, anchor: Path = _REPO_ROOT) -> str:
 @dataclass
 class RuntimeConfig:
     environment: str = "local"
-    # ``auto`` probes integration readiness at startup and uses Promptfoo /
-    # Goose when they can actually run. Falls back to the in-process native
-    # adapters when not ready (offline dev, air-gapped, CI without CLIs). Set
-    # explicitly to ``native`` / ``promptfoo`` / ``goose`` to opt out of the
-    # probe and pin one adapter.
+    # ``native_hermes`` is the default in-process orchestration path. Explicit
+    # ``auto`` still probes external CLIs for compatibility, and explicit
+    # ``goose`` / ``hermes`` still route through their CLI bridge adapters.
     evaluation_mode: str = "auto"
-    orchestration_mode: str = "auto"
+    orchestration_mode: str = "native_hermes"
     feature_flag_credentials_available: bool = True
     incident_credentials_available: bool = True
     audit_logging_available: bool = True
@@ -481,7 +479,7 @@ class RuntimeConfig:
         return cls(
             environment=os.getenv("MESH_ENVIRONMENT", "local"),
             evaluation_mode=os.getenv("MESH_EVALUATION_MODE", "auto"),
-            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "auto"),
+            orchestration_mode=os.getenv("MESH_ORCHESTRATION_MODE", "native_hermes"),
             feature_flag_credentials_available=os.getenv("MESH_FEATURE_FLAG_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             incident_credentials_available=os.getenv("MESH_INCIDENT_CREDENTIALS_AVAILABLE", "true").lower() == "true",
             audit_logging_available=os.getenv("MESH_AUDIT_LOGGING_AVAILABLE", "true").lower() == "true",

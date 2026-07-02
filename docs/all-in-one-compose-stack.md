@@ -283,7 +283,7 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `MESH_STACK_HERMES_EXEC_COMMAND` | `docker exec -w /workspace/orbital-mesh ... orbital-mesh-hermes-stack /opt/venv/bin/hermes` | Mesh-to-sidecar Hermes command |
 | `MESH_STACK_GITNEXUS_URL` | empty | Optional external GitNexus sidecar URL |
 | `MESH_STACK_SMOKE_EVALUATION_MODE` | `native` | Smoke run evaluation mode |
-| `MESH_STACK_SMOKE_ORCHESTRATION_MODE` | `native` | Smoke run orchestration mode |
+| `MESH_STACK_SMOKE_ORCHESTRATION_MODE` | `native_hermes` | Smoke run orchestration mode |
 | `MESH_STACK_SMOKE_STEERING_MODE` | `interruptible_auto` | Smoke run steering mode |
 | `MESH_STACK_RPC_GATEWAY_URL` | `http://rpc-gateway:8080/health` | Smoke probe URL for the Compose-local RPC gateway target |
 | `MESH_STACK_INDEXER_URL` | `http://indexer:8080/health` | Smoke probe URL for the Compose-local indexer target |
@@ -294,11 +294,11 @@ MESH_KUBERNETES_ALLOWED_NAMESPACES=search
 | `E2E_RUN_MAX_WAIT_SECONDS` | `1800` | Hard cap for one smoke run wait, even when progress is observed |
 | `E2E_ACCEPT_AWAITING_OPERATOR` | `0` in stack smoke | Set to `1` only when intentionally testing manual operator gates |
 | `MESH_DOCKER_SOCKET_HOST_PATH` | `/var/run/docker.sock` | Docker socket mount used for Hermes sidecar invocation |
-| `HERMES_AGENT_REF` | `1525624904159e7c2d6ac3feef951e27ad0d23bb` | Pinned Hermes Agent git ref used by mesh and Hermes images |
+| `HERMES_AGENT_REF` | `7c1a029553d87c43ecff8a3821336bc95872213b` | Pinned Hermes Agent git ref used by mesh and Hermes images |
 | `UV_VERSION` | `0.11.6` | Pinned uv installer version used by mesh and Hermes images |
 | `GOOSE_VERSION` | `v1.30.0` | Pinned Goose release used by the mesh image |
 
-Provider variables such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MESH_COMPOSE_GOOSE_PROVIDER`, `MESH_COMPOSE_GOOSE_MODEL`, `MESH_COMPOSE_HERMES_INFERENCE_PROVIDER`, and `MESH_COMPOSE_HERMES_MODEL` are passed through to the relevant containers. The default smoke path does not require model credentials because it runs native evaluation and native orchestration.
+Provider variables such as `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `MESH_COMPOSE_GOOSE_PROVIDER`, `MESH_COMPOSE_GOOSE_MODEL`, `MESH_COMPOSE_HERMES_INFERENCE_PROVIDER`, and `MESH_COMPOSE_HERMES_MODEL` are passed through to the relevant containers. The default smoke path does not require model credentials because it runs native evaluation and native Hermes orchestration.
 
 ## Volumes
 

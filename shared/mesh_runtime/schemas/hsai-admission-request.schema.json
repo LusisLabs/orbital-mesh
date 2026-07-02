@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/hsai-admission-request.schema.json",
+  "title": "HsaiAdmissionRequest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mesh_run_id",
+    "mesh_action_id",
+    "action_kind",
+    "actor_ref",
+    "mesh_policy_id",
+    "action_proposal_digest",
+    "candidate_payload_digest",
+    "evidence_packet_digest",
+    "attestation_refs",
+    "requested_claims",
+    "explicit_nonclaims",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["mesh.hsai_admission_request.v1"] },
+    "mesh_run_id": { "type": "string" },
+    "mesh_action_id": { "type": "string" },
+    "action_kind": { "type": "string" },
+    "actor_ref": {
+      "type": "object",
+      "required": ["actor_id", "team_id"],
+      "properties": {
+        "actor_id": { "type": "string" },
+        "team_id": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "mesh_policy_id": { "type": "string" },
+    "action_proposal_digest": { "type": "string" },
+    "candidate_payload_digest": { "type": "string" },
+    "evidence_packet_digest": { "type": "string" },
+    "attestation_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "digest"],
+        "properties": {
+          "kind": { "type": "string" },
+          "digest": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "requested_claims": { "type": "array", "items": { "type": "string" } },
+    "explicit_nonclaims": { "type": "array", "items": { "type": "string" } },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

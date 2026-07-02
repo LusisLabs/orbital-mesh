@@ -29,7 +29,7 @@ Use this guide before changing `orbital-mesh`. It ranks source material, names a
 - External agents, orchestrators, evaluators, model runtimes, and imported source trees are advisory, proposal, review, or source-input lanes unless current code, connector certification, credentials boundary, and tests prove bounded authority.
 - `agentic-operator-core-main/` is source input only when present. The tracked provenance record remains source-input-only until forked through license, renamed contracts, authority gates, and tests.
 - Promptfoo is a compatibility mode name and advisory integration lane. Mesh-native evaluation decides pass/fail.
-- Hermes is first-class for explanation and interaction. In `auto` orchestration mode the adapter prefers Hermes when ready, then Goose, then native fallback. Hermes does not replace Mesh authority.
+- Hermes is first-class for explanation and interaction. The default orchestration mode is `native_hermes`; explicit `auto` still prefers Hermes when ready, then Goose, then native Hermes fallback. Hermes does not replace Mesh authority.
 - Postgres is the compose production default and required for multi-operator production reliance. File-backed state remains supported and is the library default.
 - HelixDB memory projection is an optional graph-vector overlay for verified memory records, with a replayable projection outbox for failed Helix writes. Do not treat `MESH_MEMORY_GRAPH_BACKEND=helix` as a replacement for `MESH_STATE_BACKEND=postgres` pilot persistence or release proof.
 - Local smoke evidence is not production proof.

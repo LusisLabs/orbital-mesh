@@ -80,7 +80,7 @@ def main() -> int:
 def run_probes() -> list[dict[str, Any]]:
     config = RuntimeConfig(
         evaluation_mode=os.environ.get("MESH_NODE_BREAKTHROUGH_EVALUATION_MODE", "native"),
-        orchestration_mode=os.environ.get("MESH_NODE_BREAKTHROUGH_ORCHESTRATION_MODE", "native"),
+        orchestration_mode=os.environ.get("MESH_NODE_BREAKTHROUGH_ORCHESTRATION_MODE", "native_hermes"),
         state_directory=os.environ.get("MESH_NODE_BREAKTHROUGH_STATE_DIR", "/tmp/mesh-node-breakthrough-state"),
     )
     pipeline = FirstSlicePipeline(config=config)
