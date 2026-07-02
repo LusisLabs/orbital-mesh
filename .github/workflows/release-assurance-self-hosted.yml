@@ -56,6 +56,8 @@ jobs:
       ASSURANCE_IMAGE_TAG: orbital-mesh:selfhosted-${{ github.run_id }}
       POSTGRES_CONTAINER: mesh-release-assurance-postgres-${{ github.run_id }}
       POSTGRES_PORT: "55432"
+      UV_CACHE_DIR: ${{ runner.temp }}/uv-cache-${{ github.run_id }}-${{ github.run_attempt }}
+      UV_TOOL_DIR: ${{ runner.temp }}/uv-tools-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository without marketplace actions
         id: checkout
@@ -198,9 +200,7 @@ jobs:
         id: root_gate
         run: |
           set -euo pipefail
-          # Persistent self-hosted runners can retain partial uv archives between jobs.
-          rm -rf /tmp/uv-cache /tmp/uv-tools
-          mkdir -p /tmp/uv-cache /tmp/uv-tools
+          mkdir -p "$UV_CACHE_DIR" "$UV_TOOL_DIR"
           run_pnpm() {
             if command -v corepack >/dev/null 2>&1; then
               corepack pnpm "$@"
@@ -257,7 +257,7 @@ jobs:
           MESH_MIGRATION_REHEARSAL_DATABASE_URL: postgresql://mesh:mesh@127.0.0.1:55432/mesh
         run: |
           set -euo pipefail
-          UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . --with "psycopg[binary]>=3.2,<4" python scripts/run_postgres_migration_rehearsal.py \
+          uv run --with-editable . --with "psycopg[binary]>=3.2,<4" python scripts/run_postgres_migration_rehearsal.py \
             --output dist/migration-rehearsal.json \
             --operator-id github-actions-self-hosted \
             --environment ci \
