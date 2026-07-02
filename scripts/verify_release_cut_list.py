@@ -1342,9 +1342,10 @@ REQUIRED_MARKERS = {
     ),
     "Dockerfile": (
         "python:3.13-slim-trixie",
-        "golang:1.26.3-bookworm",
-        "DOCKER_CLI_VERSION=29.5.2",
-        "KUBECTL_VERSION=v1.36.1",
+        "golang:1.26.4-bookworm",
+        "DOCKER_CLI_VERSION=29.6.1",
+        "KUBECTL_VERSION=v1.36.2",
+        "HERMES_AGENT_REF=7c1a029553d87c43ecff8a3821336bc95872213b",
         "KUBERNETES_SRC_SHA512",
         "make WHAT=cmd/kubectl",
         "docker_sha",
