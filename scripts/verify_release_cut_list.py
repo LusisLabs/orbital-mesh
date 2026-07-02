@@ -1341,7 +1341,7 @@ REQUIRED_MARKERS = {
         "--require-github-actions",
     ),
     "Dockerfile": (
-        "python:3.13-slim-trixie",
+        "python:3.13.14-slim-trixie",
         "golang:1.26.4-bookworm",
         "DOCKER_CLI_VERSION=29.6.1",
         "KUBECTL_VERSION=v1.36.2",
