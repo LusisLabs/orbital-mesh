@@ -56,8 +56,6 @@ jobs:
       ASSURANCE_IMAGE_TAG: orbital-mesh:selfhosted-${{ github.run_id }}
       POSTGRES_CONTAINER: mesh-release-assurance-postgres-${{ github.run_id }}
       POSTGRES_PORT: "55432"
-      UV_CACHE_DIR: ${{ runner.temp }}/uv-cache-${{ github.run_id }}-${{ github.run_attempt }}
-      UV_TOOL_DIR: ${{ runner.temp }}/uv-tools-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout repository without marketplace actions
         id: checkout
@@ -200,7 +198,11 @@ jobs:
         id: root_gate
         run: |
           set -euo pipefail
+          export UV_CACHE_DIR="${RUNNER_TEMP:-/tmp}/uv-cache-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          export UV_TOOL_DIR="${RUNNER_TEMP:-/tmp}/uv-tools-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           mkdir -p "$UV_CACHE_DIR" "$UV_TOOL_DIR"
+          echo "UV_CACHE_DIR=${UV_CACHE_DIR}" >> "$GITHUB_ENV"
+          echo "UV_TOOL_DIR=${UV_TOOL_DIR}" >> "$GITHUB_ENV"
           run_pnpm() {
             if command -v corepack >/dev/null 2>&1; then
               corepack pnpm "$@"
