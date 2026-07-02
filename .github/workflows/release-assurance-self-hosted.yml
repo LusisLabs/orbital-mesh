@@ -198,6 +198,9 @@ jobs:
         id: root_gate
         run: |
           set -euo pipefail
+          # Persistent self-hosted runners can retain partial uv archives between jobs.
+          rm -rf /tmp/uv-cache /tmp/uv-tools
+          mkdir -p /tmp/uv-cache /tmp/uv-tools
           run_pnpm() {
             if command -v corepack >/dev/null 2>&1; then
               corepack pnpm "$@"
