@@ -140,7 +140,8 @@ COPY services ./services
 COPY mesh_brain ./mesh_brain
 COPY deepagents/libs/deepagents /app/deepagents/libs/deepagents
 # Hermes prepends its venv to PATH; use the image Python for Mesh deps and runtime.
-RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary,pool]>=3.2,<4" "cryptography>=48.0.1,<49" "deno>=2.8.1,<3" /app/deepagents/libs/deepagents
+RUN /usr/local/bin/python3 -m pip install --no-cache-dir "halo-engine" "helix-py" "langchain-openai>=1.1.14,<2.0.0" "psycopg[binary,pool]>=3.2,<4" "cryptography>=48.0.1,<49" /app/deepagents/libs/deepagents \
+  && /usr/local/bin/python3 -m pip install --no-cache-dir --force-reinstall --no-deps "deno>=2.8.1,<3"
 COPY migrations ./migrations
 COPY fixtures ./fixtures
 COPY policies ./policies
