@@ -160,7 +160,7 @@ def _launch_and_complete(
         "goal_id": goal_id,
         "scenario_key": scenario_key,
         "evaluation_mode": "native",
-        "orchestration_mode": "native",
+        "orchestration_mode": "native_hermes",
         "steering_mode": "approval_gate",
     }
     run = _request_json("POST", f"{base_url}/api/runs", headers=headers, body=payload)

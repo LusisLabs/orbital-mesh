@@ -140,7 +140,7 @@ Stdlib `ThreadingHTTPServer` (not FastAPI). 881-line server fronting a 3373-line
 ## Runtime modes
 
 - **Evaluation**: `native` (in-process trajectory + verifier checks) or `promptfoo` (compat mode).
-- **Orchestration**: `native` (in-process actuators) or `goose` / `hermes` (review bridge before actuation).
+- **Orchestration**: `native_hermes` (default in-process native Hermes actuators), `native` (alias), or `goose` / `hermes` (review bridge before actuation).
 - **State backend**: file-backed under `MESH_STATE_DIRECTORY` (default) or Postgres via `MESH_STATE_BACKEND=postgres` + `MESH_DATABASE_URL` (psycopg-pool–backed).
 
 ## Repository layout

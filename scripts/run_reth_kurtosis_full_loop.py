@@ -96,7 +96,7 @@ def _start_server_if_needed(base_url: str, session_dir: Path) -> subprocess.Pope
     env.setdefault("MESH_SERVER_PORT", port)
     env.setdefault("MESH_OBSERVER_ENABLED", "1" if _observer_possible() else "0")
     env.setdefault("MESH_EVALUATION_MODE", "native")
-    env.setdefault("MESH_ORCHESTRATION_MODE", "native")
+    env.setdefault("MESH_ORCHESTRATION_MODE", "native_hermes")
     env.setdefault("MESH_KURTOSIS_EXECUTION_ENABLED", "1")
     env.setdefault("MESH_KURTOSIS_ALLOWED_ENCLAVES", os.environ.get("MESH_KURTOSIS_ENCLAVE", DEFAULT_ENCLAVE))
     env.setdefault("MESH_KURTOSIS_ALLOWED_SERVICES", os.environ.get("MESH_KURTOSIS_SERVICE", DEFAULT_SERVICE))
@@ -329,7 +329,7 @@ def _launch_run(base_url: str, signal_payload: dict[str, Any]) -> dict[str, Any]
         {
             "signal_payload": signal_payload,
             "evaluation_mode": os.environ.get("MESH_EVALUATION_MODE", "native"),
-            "orchestration_mode": os.environ.get("MESH_ORCHESTRATION_MODE", "native"),
+            "orchestration_mode": os.environ.get("MESH_ORCHESTRATION_MODE", "native_hermes"),
             "steering_mode": "interruptible_auto",
         },
         timeout=60,

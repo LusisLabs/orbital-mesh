@@ -239,7 +239,7 @@ def replay_node_events(events_path: Path) -> dict[str, Any]:
     recorded_events = {event.get("probe"): event for event in _read_jsonl(events_path)}
     pipeline = FirstSlicePipeline(config=RuntimeConfig(
         evaluation_mode="native",
-        orchestration_mode="native",
+        orchestration_mode="native_hermes",
         state_directory="/tmp/mesh-node-breakthrough-replay-state",
     ))
     comparisons: list[dict[str, Any]] = []

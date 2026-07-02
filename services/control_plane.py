@@ -215,6 +215,10 @@ def _steering_command_payload_bytes(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, sort_keys=True, default=str).encode("utf-8"))
 
 
+def _orchestration_integration_name(mode: str) -> str | None:
+    return None if mode in {"native", "native_hermes", "native_goose"} else mode
+
+
 def _positive_int(value: Any, *, default: int, maximum: int) -> int:
     if value is None:
         return default
@@ -2469,7 +2473,7 @@ class RunCoordinator:
             auto_mode=False,
             pause_points=[],
             evaluation_mode="mesh_brain_model_kernel",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             artifacts={"operator": operator} if operator is not None else {},
         )
         self.state_store.append_run_event(
@@ -2567,7 +2571,7 @@ class RunCoordinator:
             auto_mode=False,
             pause_points=[],
             evaluation_mode="recursive_chaos_arena",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             artifacts={"operator": operator} if operator is not None else {},
         )
         self.state_store.append_run_event(
@@ -2713,7 +2717,7 @@ class RunCoordinator:
             auto_mode=False,
             pause_points=[],
             evaluation_mode="mesh_brain_meshmodel_probe",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             artifacts={"operator": operator} if operator is not None else {},
         )
         self.state_store.append_run_event(
@@ -3001,7 +3005,7 @@ class RunCoordinator:
             auto_mode=False,
             pause_points=[],
             evaluation_mode="mesh_brain_rollback_drill",
-            orchestration_mode="native",
+            orchestration_mode="native_hermes",
             artifacts={"operator": operator} if operator is not None else {},
         )
         self.state_store.append_run_event(
@@ -3869,7 +3873,7 @@ class RunCoordinator:
                 payload=execution.to_dict(),
                 summary={"status": execution.status},
                 artifact_key="execution",
-                integration_name=run_config.orchestration_mode if run_config.orchestration_mode != "native" else None,
+                integration_name=_orchestration_integration_name(run_config.orchestration_mode),
                 status=execution.status,
             )
             review_artifact = self._execution_review_artifact(execution)

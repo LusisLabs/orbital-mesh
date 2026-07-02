@@ -7,7 +7,7 @@ Mesh is built around a small set of stable contracts that third parties can plug
 | **Diagnostic tool pack** | New read-only tools the LLM can call during investigation (Datadog, Splunk, internal API, …) | `services/investigation/tools/` |
 | **MCP server bridge** | Any tool the Model Context Protocol exposes | `MESH_MCP_SERVERS` env var |
 | **Probe selector / rule pack** | Deterministic probes the harness runs before the LLM (per-trigger logic) | `services/investigation/harness/native_selector.py` |
-| **Orchestration adapter** | A new orchestration mode beyond `native` / `goose` / `hermes` | `services/orchestrator/` |
+| **Orchestration adapter** | A new orchestration mode beyond `native_hermes` / `goose` / `hermes` | `services/orchestrator/` |
 | **Actuator adapter** | A new mutating-action target (Argo, custom load balancer, …) | `services/actuators/` |
 | **Signal ingester** | A new way to ingest signals (Datadog webhook, AWS EventBridge, …) | `services/ingest/` |
 | **Webhook source format** | A new wire format for `POST /api/webhooks/:source_id` | `services/ingest/webhook_service.py` |
@@ -186,7 +186,7 @@ Then wire it into `services/runtime.py:_auto_wire_investigation_harness` in the 
 
 ## 4. Orchestration adapter
 
-Adding a new mode beyond `native` / `goose` / `hermes`:
+Adding a new mode beyond `native_hermes` / `goose` / `hermes`:
 
 1. Add the mode name to `RuntimeConfig.orchestration_mode` (`shared/mesh_runtime/config.py`).
 2. Implement an adapter that looks like the existing ones in `services/orchestrator/`:
@@ -344,7 +344,7 @@ from services.runtime import MeshRuntimeEngine
 config = RuntimeConfig(
     state_directory=".mesh-state",
     evaluation_mode="native",
-    orchestration_mode="native",
+    orchestration_mode="native_hermes",
     prometheus_url="http://prom:9090",      # enables prometheus tool pack
 )
 

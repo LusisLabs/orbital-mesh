@@ -6,16 +6,18 @@ import json
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any, TypeAlias, cast
 
 from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
+from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
 
-HermesExecutionResult = CliExecutionResult
+HermesExecutionResult: TypeAlias = CliExecutionResult
 
 
 class HermesAdapter:
@@ -28,7 +30,7 @@ class HermesAdapter:
     def explain_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
     ) -> dict[str, object]:
         raise NotImplementedError
@@ -36,7 +38,7 @@ class HermesAdapter:
     def chat_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
         history: list[dict[str, str]],
         user_message: str,
@@ -107,7 +109,8 @@ class NativeHermesAdapter(HermesAdapter):
                           "failure": {"reason": "unknown_argocd_action", "detail": action},
                           "external_refs": {}}
         elif execution_plan["system"] == "repo_patch_service":
-            result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
+            context_failure = repo_patch_admission_failure(decision)
+            result = context_failure or self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:
             result = {"status": "succeeded", "external_refs": {}}
 
@@ -128,12 +131,12 @@ class NativeHermesAdapter(HermesAdapter):
                 "reason": failure_reason,
             }
         )
-        return result.get("external_refs", {})
+        return cast(dict[str, str], result.get("external_refs", {}))
 
     def explain_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
     ) -> dict[str, object]:
         recommendation = str(evaluation.get("final_recommendation", "human_review"))
@@ -158,7 +161,7 @@ class NativeHermesAdapter(HermesAdapter):
     def chat_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
         history: list[dict[str, str]],
         user_message: str,
@@ -217,12 +220,12 @@ class HermesCliAdapter(HermesAdapter):
                 "failure_reason": failure_reason,
             }
         )
-        return result.get("external_refs", {})
+        return cast(dict[str, str], result.get("external_refs", {}))
 
     def explain_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
     ) -> dict[str, object]:
         result = self._invoke(
@@ -245,12 +248,12 @@ class HermesCliAdapter(HermesAdapter):
                 "proposed_command": None,
                 "proposed_payload": None,
             }
-        return result
+        return cast(dict[str, object], result)
 
     def chat_blockers(
         self,
         decision: Decision,
-        evaluation: dict,
+        evaluation: dict[str, Any],
         blocking_reasons: list[str],
         history: list[dict[str, str]],
         user_message: str,
@@ -277,9 +280,9 @@ class HermesCliAdapter(HermesAdapter):
                 "proposed_command": None,
                 "proposed_payload": None,
             }
-        return result
+        return cast(dict[str, object], result)
 
-    def _invoke(self, payload: dict) -> dict:
+    def _invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 self._resolve_command(),
@@ -298,7 +301,7 @@ class HermesCliAdapter(HermesAdapter):
             return {"error": stderr}
 
         try:
-            return json.loads(completed.stdout)
+            return cast(dict[str, Any], json.loads(completed.stdout))
         except json.JSONDecodeError as exc:
             return {"error": f"hermes subprocess returned invalid JSON: {exc}"}
 

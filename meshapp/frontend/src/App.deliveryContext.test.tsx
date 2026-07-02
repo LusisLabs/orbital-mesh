@@ -184,7 +184,7 @@ describe("DeliveryContextPanel", () => {
       pause_points: [],
       pending_pause_stage: null,
       evaluation_mode: "native",
-      orchestration_mode: "native",
+      orchestration_mode: "native_hermes",
       latest_event_id: null,
       latest_event_sequence: 0,
       latest_merkle_root: null,

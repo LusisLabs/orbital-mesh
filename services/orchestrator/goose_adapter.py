@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Any, TypeAlias, cast
 
 from services.actuators.load_balancer import LoadBalancerAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
@@ -13,11 +14,12 @@ from services.actuators.repo_patch import RepoPatchAdapter
 from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
 from shared.mesh_runtime.goose_credentials import goose_subprocess_env
+from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
 
-GooseExecutionResult = CliExecutionResult
+GooseExecutionResult: TypeAlias = CliExecutionResult
 
 
 class GooseAdapter:
@@ -117,7 +119,8 @@ class NativeGooseAdapter(GooseAdapter):
                           "failure": {"reason": "unknown_argocd_action", "detail": action},
                           "external_refs": {}}
         elif execution_plan["system"] == "repo_patch_service":
-            result = self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
+            context_failure = repo_patch_admission_failure(decision)
+            result = context_failure or self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:
             result = {"status": "succeeded", "external_refs": {}}
 
@@ -129,7 +132,7 @@ class NativeGooseAdapter(GooseAdapter):
             retryable=result.get("retryable", False),
         )
 
-    def _restart_systemd_with_preflight(self, parameters: dict) -> dict:
+    def _restart_systemd_with_preflight(self, parameters: dict[str, Any]) -> dict[str, Any]:
         fleet_failure = _fleet_preflight_failure(parameters)
         if fleet_failure is not None:
             return fleet_failure
@@ -137,22 +140,22 @@ class NativeGooseAdapter(GooseAdapter):
         lb_target_id = parameters.get("lb_target_id")
         lb_refs: dict[str, object] = {}
         if lb_target_id:
-            drain = self.load_balancer.drain_target(parameters)
+            drain = cast(dict[str, Any], self.load_balancer.drain_target(parameters))
             if drain["status"] != "succeeded":
                 return drain
             lb_refs["lb_drain"] = drain.get("external_refs", {})
-            status = self.load_balancer.target_status(parameters)
+            status = cast(dict[str, Any], self.load_balancer.target_status(parameters))
             if status["status"] != "succeeded":
                 return status
             lb_refs["lb_status_before_restart"] = status.get("external_refs", {})
 
-        restart = self.systemd_ssh.restart_service(parameters)
+        restart = cast(dict[str, Any], self.systemd_ssh.restart_service(parameters))
         restart.setdefault("external_refs", {}).update(lb_refs)
         if restart["status"] != "succeeded":
             return restart
 
         if lb_target_id:
-            restore = self.load_balancer.restore_target(parameters)
+            restore = cast(dict[str, Any], self.load_balancer.restore_target(parameters))
             restart["external_refs"]["lb_restore"] = restore.get("external_refs", {})
             if restore["status"] != "succeeded":
                 return {
@@ -174,10 +177,10 @@ class NativeGooseAdapter(GooseAdapter):
                 "reason": failure_reason,
             }
         )
-        return result.get("external_refs", {})
+        return cast(dict[str, str], result.get("external_refs", {}))
 
 
-def _fleet_preflight_failure(parameters: dict) -> dict | None:
+def _fleet_preflight_failure(parameters: dict[str, Any]) -> dict[str, Any] | None:
     min_healthy = parameters.get("fleet_min_healthy")
     healthy_count = parameters.get("fleet_healthy_count")
     if min_healthy is None or healthy_count is None:
@@ -232,9 +235,9 @@ class GooseCliAdapter(GooseAdapter):
                 "failure_reason": failure_reason,
             }
         )
-        return result.get("external_refs", {})
+        return cast(dict[str, str], result.get("external_refs", {}))
 
-    def _invoke(self, payload: dict) -> dict:
+    def _invoke(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             completed = subprocess.run(
                 self._resolve_command(),
@@ -254,7 +257,7 @@ class GooseCliAdapter(GooseAdapter):
             return {"error": stderr}
 
         try:
-            return json.loads(completed.stdout)
+            return cast(dict[str, Any], json.loads(completed.stdout))
         except json.JSONDecodeError as exc:
             return {"error": f"goose subprocess returned invalid JSON: {exc}"}
 

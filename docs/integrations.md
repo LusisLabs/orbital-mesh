@@ -9,7 +9,9 @@
   - `promptfoo` is legacy-compatible input only. It no longer controls pass/fail; Mesh still evaluates `task -> trace -> verifier -> scorer -> memory`.
   - Native evaluation emits `stage_results.evaluation_stack` for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix. These are advisory lanes mapped to Mesh artifacts, not approval authorities.
 - Orchestration modes:
-  - `native` keeps orchestration in-process through the bounded local actuators.
+  - `native_hermes` is the default in-process orchestration path and uses the native Hermes adapter over bounded local actuators.
+  - `native` is a compatibility alias for `native_hermes`.
+  - `native_goose` keeps the older native Goose adapter available for explicit specialized use.
   - `goose` runs `services/orchestrator/goose_bridge.py`, which invokes the configured Goose command and returns structured review metadata before actuation.
   - `hermes` runs `services/orchestrator/hermes_bridge.py`, which invokes the configured Hermes command and returns structured review metadata before actuation.
 - Proposal lanes:

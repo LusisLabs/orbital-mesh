@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from services.evaluation.service import EvaluationService
-from services.orchestrator.hermes_adapter import HermesCliAdapter
+from services.orchestrator.hermes_adapter import HermesCliAdapter, NativeHermesAdapter
 from services.orchestrator.service import OrchestratorService
 from services.pipeline import FirstSlicePipeline
 from services.trigger.service import TriggerService
@@ -128,6 +129,28 @@ class PipelineTests(unittest.TestCase):
         )
         service = OrchestratorService(config=config)
         self.assertIsInstance(service.adapter, HermesCliAdapter)
+
+    def test_orchestrator_defaults_to_native_hermes_adapter(self) -> None:
+        service = OrchestratorService(config=RuntimeConfig(state_directory=self.temp_dir.name))
+
+        self.assertEqual(service.config.orchestration_mode, "native_hermes")
+        self.assertIsInstance(service.adapter, NativeHermesAdapter)
+
+    def test_runtime_config_from_env_defaults_to_native_hermes(self) -> None:
+        with patch.dict("os.environ", {"MESH_STATE_DIRECTORY": self.temp_dir.name}, clear=True):
+            config = RuntimeConfig.from_env()
+
+        self.assertEqual(config.orchestration_mode, "native_hermes")
+
+    def test_native_orchestration_alias_uses_native_hermes_adapter(self) -> None:
+        config = RuntimeConfig(
+            evaluation_mode="native",
+            orchestration_mode="native",
+            state_directory=self.temp_dir.name,
+        )
+        service = OrchestratorService(config=config)
+
+        self.assertIsInstance(service.adapter, NativeHermesAdapter)
 
 
 if __name__ == "__main__":

@@ -41,7 +41,7 @@ def _scenario_payload(config: RuntimeConfig, scenario_id: str, index: int, *, ra
         scenario_id,
         {
             "evaluation_mode": "native",
-            "orchestration_mode": "native",
+            "orchestration_mode": "native_hermes",
             "steering_mode": "interruptible_auto",
             "pause_points": [],
         },
@@ -155,7 +155,7 @@ def _run_one(
         research_directory=str(state_dir / "research"),
         integrations_config_path=str(state_dir / "integrations.json"),
         evaluation_mode="native",
-        orchestration_mode="native",
+        orchestration_mode="native_hermes",
         simulation_enabled=True,
         simulation_context_allowlist=("mesh-compose",),
         benchmark_export_path=str(export_path),
@@ -230,7 +230,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         profile_key = "|".join(
             [
                 str(profile.get("evaluation_mode") or "native"),
-                str(profile.get("orchestration_mode") or "native"),
+                str(profile.get("orchestration_mode") or "native_hermes"),
                 str(profile.get("agent_fabric_mode") or "native"),
                 str(profile.get("deepagents_model") or "none"),
                 str(profile.get("llm_escalation_model") or "none"),

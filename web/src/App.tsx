@@ -91,7 +91,7 @@ const DEFAULT_GOAL_DRAFT = {
 const DEFAULT_LAUNCH_DRAFT = {
   signalSource: "scenario",
   evaluationMode: "native",
-  orchestrationMode: "native",
+  orchestrationMode: "native_hermes",
   steeringMode: "approval_gate",
   scenarioKey: "",
   customSignal: "",
@@ -944,7 +944,7 @@ export default function App() {
       const run = await api.runSimulation(baseUrl, scenarioId, {
         goal_id: selectedGoalId || goals[0]?.goal_id,
         evaluation_mode: launchDraft.evaluationMode,
-        orchestration_mode: "native",
+        orchestration_mode: "native_hermes",
         steering_mode: "approval_gate",
         pause_points: ["evaluation_ready"],
       });
@@ -3493,7 +3493,8 @@ function AutomationView({
               <option value="promptfoo">Eval: Promptfoo</option>
             </select>
             <select value={launchDraft.orchestrationMode} onChange={(event) => onLaunchDraftChange((draft) => ({ ...draft, orchestrationMode: event.target.value }))}>
-              <option value="native">Orch: Native</option>
+              <option value="native_hermes">Orch: Native Hermes</option>
+              <option value="native">Orch: Native Alias</option>
               <option value="hermes">Orch: Hermes</option>
               <option value="goose">Orch: Goose</option>
             </select>

@@ -95,7 +95,7 @@ Browser path:
 3. Use deployment `semantic-search`.
 4. Use namespace `search`.
 5. Use kube context `mesh-compose`.
-6. Use `native` evaluation and `native` orchestration.
+6. Use `native` evaluation and `native_hermes` orchestration.
 7. Keep `MESH_AGENT_FABRIC_MODE=native` for live Kubernetes validation unless you are explicitly testing proposal lanes only.
 8. Use `interruptible_auto` only in this bounded local e2e environment.
 

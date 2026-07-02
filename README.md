@@ -44,10 +44,15 @@ These are the dimensions this codebase is built to support; they match a discipl
   - `native` Mesh trajectory evaluation
   - `promptfoo` legacy-compatible mode name; pass/fail still uses Mesh trajectory evaluation
 - Emits a native evaluation stack manifest for Promptfoo, LangSmith, DeepEval / Confident AI, RAGAS, TruLens, Braintrust, Opik, Weave, Maxim AI, ZenML, and Arize Phoenix as advisory lanes.
-- Supports three orchestration modes:
-  - `native`
+- Supports orchestration modes:
+  - `native_hermes` (default local path)
+  - `native` (compatibility alias for `native_hermes`)
+  - `native_goose` (explicit legacy local path)
   - `goose`
   - `hermes`
+- Gates the `repo_patch_service` / `investigate_and_patch` path through the
+  narrow HSAI admission bridge, with schema-backed golden fixtures and local
+  combined proof-packet verification.
 - Includes `mesh_brain`, the post-training and model-lifecycle plane extracted from Mesh, with data refinery, training job, eval, serving, model-management, and hardware-routing primitives.
 
 ## Runtime Model
@@ -101,9 +106,9 @@ Default local evaluation path. Uses deterministic contract checks, task traces, 
 
 Legacy-compatible mode name. Promptfoo readiness may still be reported for older stacks, but Promptfoo is now one advisory lane inside the native evaluation stack. Evaluation pass/fail is Mesh-native: `task -> trace -> verifier -> scorer -> memory`.
 
-### Orchestration: `native`
+### Orchestration: `native_hermes`
 
-Default local orchestration path. Uses in-process bounded actuators with the same audit and persistence semantics as the bridged modes.
+Default local orchestration path. Uses the native Hermes adapter over in-process bounded actuators with the same audit and persistence semantics as the bridged modes. `native` remains a compatibility alias.
 
 ### Orchestration: `goose`
 
@@ -246,7 +251,7 @@ Use the left rail to:
 - select or create a goal
 - choose a fixture scenario or paste a raw signal JSON payload
 - select an evaluation mode: `native` or `promptfoo`
-- select an orchestration mode: `native`, `goose`, or `hermes`
+- select an orchestration mode: `native_hermes`, `goose`, or `hermes`
 - choose `approval_gate` or `interruptible_auto`
 
 ## Operator App
@@ -330,7 +335,7 @@ Implemented routes:
   "goal_id": "goal_default",
   "scenario_key": "search_latency_regression",
   "evaluation_mode": "native",
-  "orchestration_mode": "native",
+  "orchestration_mode": "native_hermes",
   "steering_mode": "approval_gate"
 }
 ```
@@ -344,7 +349,7 @@ Raw signal payloads are also supported:
     "...": "full signal payload"
   },
   "evaluation_mode": "native",
-  "orchestration_mode": "native",
+  "orchestration_mode": "native_hermes",
   "steering_mode": "interruptible_auto",
   "pause_points": []
 }
@@ -356,7 +361,7 @@ Live Kubernetes deployment harvesting is also supported:
 {
   "goal_id": "goal_default",
   "evaluation_mode": "native",
-  "orchestration_mode": "native",
+  "orchestration_mode": "native_hermes",
   "steering_mode": "interruptible_auto",
   "live_signal": {
     "source": "kubernetes",
@@ -615,7 +620,7 @@ python3 run_tui.py
 Mode toggles now use:
 
 - evaluation: `native` / `promptfoo`
-- orchestration: `native` / `goose` / `hermes`
+- orchestration: `native_hermes` / `goose` / `hermes`
 
 The TUI is no longer the primary operator interface.
 
@@ -1064,7 +1069,7 @@ The current implementation is verified by:
 
 The stable local path is:
 
-1. `native` evaluation + `native` orchestration
+1. `native` evaluation + `native_hermes` orchestration
 2. browser operator approval gate
 3. vault and Merkle inspection
 4. optional Promptfoo / Goose / Hermes CLI enablement through `setup_integrations.py`
@@ -1080,6 +1085,7 @@ The stable local path is:
 - [docs/production-readiness-validation.md](./docs/production-readiness-validation.md)
 - [docs/research-intelligence.md](./docs/research-intelligence.md)
 - [docs/production-live-runbook.md](./docs/production-live-runbook.md)
+- [docs/hsai-admission-bridge.md](./docs/hsai-admission-bridge.md)
 - [docs/ui-auto-canvas-workspace.md](./docs/ui-auto-canvas-workspace.md)
 - [docs/small-business-thesis.md](./docs/small-business-thesis.md)
 - [first-closed-loop-contract.md](./first-closed-loop-contract.md)

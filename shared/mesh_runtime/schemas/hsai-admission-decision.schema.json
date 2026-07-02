@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/hsai-admission-decision.schema.json",
+  "title": "HsaiAdmissionDecision",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "decision_id",
+    "mesh_run_id",
+    "mesh_action_id",
+    "action_kind",
+    "request_digest",
+    "candidate_digest",
+    "decision",
+    "admission_policy_id",
+    "gate_results",
+    "accepted_claims",
+    "enforced_nonclaims",
+    "formal_evidence_metadata",
+    "reason_codes",
+    "decision_digest",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["mesh.hsai_admission_decision.v1"] },
+    "decision_id": { "type": "string" },
+    "mesh_run_id": { "type": "string" },
+    "mesh_action_id": { "type": "string" },
+    "action_kind": { "type": "string" },
+    "request_digest": { "type": "string" },
+    "candidate_digest": { "type": "string" },
+    "decision": { "type": "string", "enum": ["allow", "deny", "needs_human", "error"] },
+    "admission_policy_id": { "type": "string" },
+    "gate_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gate", "result"],
+        "properties": {
+          "gate": { "type": "string" },
+          "result": { "type": "string" },
+          "metadata_digest": { "type": "string" }
+        }
+      }
+    },
+    "accepted_claims": { "type": "array", "items": { "type": "string" } },
+    "enforced_nonclaims": { "type": "array", "items": { "type": "string" } },
+    "formal_evidence_metadata": { "type": "object" },
+    "reason_codes": { "type": "array", "items": { "type": "string" } },
+    "decision_digest": { "type": "string" },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

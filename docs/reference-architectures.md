@@ -328,7 +328,7 @@ Active paths:
 
 Deployment shape:
 
-- run native evaluation and native orchestration by default;
+- run native evaluation and native Hermes orchestration by default;
 - disable external model providers and remote proposal lanes unless they are hosted inside the boundary;
 - preload Docker images, Python wheels, Node artifacts, policies, and fixture packs;
 - use private OTel or webhook ingress only;
@@ -337,7 +337,7 @@ Deployment shape:
 Validation:
 
 ```bash
-MESH_EVALUATION_MODE=native MESH_ORCHESTRATION_MODE=native ./scripts/prod_smoke.sh
+MESH_EVALUATION_MODE=native MESH_ORCHESTRATION_MODE=native_hermes ./scripts/prod_smoke.sh
 python3 scripts/verify_release_cut_list.py --json
 ```
 

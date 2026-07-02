@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/combined-proof-packet.schema.json",
+  "title": "CombinedProofPacket",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "mesh_run_id",
+    "mesh_action_id",
+    "mesh_policy_id",
+    "hsai_request_digest",
+    "hsai_decision_digest",
+    "hsai_candidate_digest",
+    "hsai_decision",
+    "nonclaims",
+    "action_execution_result",
+    "executor_receipt_digest",
+    "audit_export_metadata",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["mesh.combined_proof_packet.v1"] },
+    "mesh_run_id": { "type": "string" },
+    "mesh_action_id": { "type": "string" },
+    "mesh_policy_id": { "type": "string" },
+    "hsai_request_digest": { "type": "string" },
+    "hsai_decision_digest": { "type": "string" },
+    "hsai_candidate_digest": { "type": "string" },
+    "hsai_decision": { "type": "string", "enum": ["allow", "deny", "needs_human", "error"] },
+    "nonclaims": { "type": "array", "items": { "type": "string" } },
+    "action_execution_result": { "type": "object" },
+    "executor_receipt_digest": { "type": ["string", "null"] },
+    "audit_export_metadata": { "type": "object" },
+    "created_at": { "type": "string" }
+  },
+  "additionalProperties": false
+}

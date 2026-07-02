@@ -1,0 +1,37 @@
+{
+  "accepted_claims": [],
+  "action_kind": "repo_patch",
+  "admission_policy_id": "mesh_policy://repo-patch/golden",
+  "candidate_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "created_at": "2026-07-02T00:01:00Z",
+  "decision": "deny",
+  "decision_digest": "sha256:8a6919521f812b020fd7867369ba26865ddfe488e1ca3e202e1e21458017cdf6",
+  "decision_id": "hsai_decision_action_repo_patch_golden_deny",
+  "enforced_nonclaims": [],
+  "formal_evidence_metadata": {
+    "backend": "hsai-local-adapter",
+    "backend_run_id": "local_metadata_only",
+    "metadata_digest": "sha256:2a3f2185bd3138cd5c3aba74d87f4eaecd25a76ff329a122b4d6e7956012f164",
+    "nonclaim": "local metadata only; not formal proof, accepted evidence, or production certification",
+    "phase_range": "265-277"
+  },
+  "gate_results": [
+    {
+      "gate": "candidate_evidence",
+      "metadata_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "result": "fail"
+    },
+    {
+      "gate": "nonclaim_enforcement",
+      "metadata_digest": "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "result": "fail"
+    }
+  ],
+  "mesh_action_id": "action_repo_patch_golden_deny",
+  "mesh_run_id": "run_hsai_bridge_golden_deny",
+  "reason_codes": [
+    "missing_explicit_nonclaims"
+  ],
+  "request_digest": "sha256:68e890e5e33a951ee6905b2032d5da2dd323ed1281f4788072346a3c4626cda2",
+  "schema_version": "mesh.hsai_admission_decision.v1"
+}
