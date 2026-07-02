@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -131,15 +132,22 @@ class RecursiveChaosArenaSessionTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(arena.shutil, "which", return_value="/usr/bin/docker"):
-                with mock.patch.object(arena, "_docker_compose", side_effect=fake_compose) as docker_compose:
-                    summary = arena.run_recursive_chaos_arena_session(
-                        targets=[target],
-                        output_dir=tmp,
-                        max_cycles=1,
-                        execute=True,
-                    )
+                with mock.patch.dict(
+                    os.environ,
+                    {
+                        "MESH_RECURSIVE_CHAOS_SANDBOX_ROOT": str(Path(tmp) / "sandbox"),
+                        "MESH_RECURSIVE_CHAOS_SANDBOX_IMAGE": target.image_ref,
+                    },
+                ):
+                    with mock.patch.object(arena, "_docker_compose", side_effect=fake_compose) as docker_compose:
+                        summary = arena.run_recursive_chaos_arena_session(
+                            targets=[target],
+                            output_dir=tmp,
+                            max_cycles=1,
+                            execute=True,
+                        )
 
-        self.assertEqual(summary["status"], "pass")
+        self.assertEqual(summary["status"], "pass", summary)
         self.assertEqual(summary["cycles_total"], 1)
         commands = [" ".join(call.args[2:]) for call in docker_compose.call_args_list]
         self.assertIn("up -d --wait", commands)
