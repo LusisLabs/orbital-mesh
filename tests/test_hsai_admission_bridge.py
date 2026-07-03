@@ -33,6 +33,7 @@ from shared.mesh_runtime.hsai_bridge import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLDEN_HSAI_BRIDGE_FIXTURES = REPO_ROOT / "fixtures" / "hsai_bridge"
+HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE = GOLDEN_HSAI_BRIDGE_FIXTURES / "formal_backend_notrun_bundle"
 
 
 class CountingExecutionAdapter:
@@ -272,6 +273,32 @@ class HsaiAdmissionBridgeTests(unittest.TestCase):
         self.assertEqual(payload["checks"]["deny_contract"]["status"], "pass")
         self.assertEqual(payload["checks"]["allow_packet"]["status"], "pass")
         self.assertEqual(payload["checks"]["deny_packet"]["status"], "pass")
+        self.assertEqual(payload["checks"]["formal_backend_bundle"]["status"], "pass")
+
+    def test_committed_hsai_formal_backend_bundle_fixture_loads(self) -> None:
+        metadata = load_hsai_formal_backend_run_metadata(HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE)
+
+        self.assertEqual(metadata["backend"], "hsai-formal-backend-run-bundle")
+        self.assertEqual(metadata["backend_run_id"], "hsai-formal-run-1")
+        self.assertEqual(metadata["execution_mode"], "NotRun")
+        self.assertEqual(metadata["exit_status"], "NotRun")
+        self.assertEqual(metadata["checker_status"], "NotRun")
+        self.assertEqual(metadata["state_slice"], "phase-276-hsai-gateway-formal-backend-run-inert-artifact-metadata")
+        self.assertIn("not accepted evidence", metadata["nonclaims"])
+        self.assertIn("not formal proof evidence", metadata["nonclaims"])
+        self.assertIn("not formal proof", metadata["nonclaim"])
+
+    def test_local_adapter_binds_committed_hsai_formal_backend_bundle_fixture(self) -> None:
+        adapter = CountingExecutionAdapter()
+        hsai = LocalHsaiAdmissionAdapter(formal_backend_bundle_path=str(HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE))
+        execution = self._service(adapter, hsai).execute(_decision(), _evaluation())
+
+        self.assertEqual(execution.status, "succeeded")
+        self.assertEqual(adapter.calls, 1)
+        metadata = execution.external_refs["combined_proof_packet"]["audit_export_metadata"]["formal_evidence_metadata"]
+        self.assertEqual(metadata["backend_run_id"], "hsai-formal-run-1")
+        self.assertEqual(metadata["execution_mode"], "NotRun")
+        self.assertIn("not accepted evidence", metadata["nonclaims"])
 
     def test_native_hermes_subprocess_hsai_repo_patch_end_to_end_verifies_packet(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

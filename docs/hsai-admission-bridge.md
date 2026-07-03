@@ -33,11 +33,18 @@ Canonical bridge fixtures live under `fixtures/hsai_bridge/`:
 - `golden_allow_decision.json`
 - `golden_deny_request.json`
 - `golden_deny_decision.json`
+- `formal_backend_notrun_bundle/gateway-formal-backend-run/*`
 
 The allow fixture preserves accepted claims and explicit nonclaims. The denial
 fixture preserves the HSAI reason code `missing_explicit_nonclaims`. These
 fixtures are the shared request / decision contract; Mesh and HSAI should not
 independently invent compatible-looking payloads.
+
+The formal-backend bundle fixture is a committed conformance bundle for the
+current HSAI `phase-276-hsai-gateway-formal-backend-run-inert-artifact-metadata`
+contract. Mesh verifies the declared file set, SHA-256 sidecars, schema
+versions, `NotRun` statuses, redaction report, and required nonclaims before it
+can be bound into admission metadata.
 
 Mesh builds the admission request from the repo-patch decision, evaluation
 record, policy id, actor context, proposal digest, candidate digest, evidence
@@ -132,14 +139,16 @@ MESH_HSAI_FORMAL_BACKEND_RUN_BUNDLE_PATH=/path/to/hsai/output-root
 
 Mesh readback verifies the declared HSAI bundle files, `.sha256` sidecars,
 schema versions, nonpromotion flags, redaction report, and required nonclaims.
-Drift or escalation fails closed before repo-patch execution.
+Drift or escalation fails closed before repo-patch execution. The committed
+fixture is also checked by `scripts/mesh.py verify-hsai-bridge-fixtures`.
 
 This is metadata binding only. The current accepted bundle state is `NotRun`;
 Mesh does not run Lean, SMT, COBALT, Rust-to-Lean, or any formal backend, and
 does not treat the bundle as accepted HSAI evidence, Level2+ evidence,
-production certification, or authority to execute an action. The combined proof
-packet includes the bounded metadata so audit/export consumers can inspect the
-HSAI formal-backend context without upgrading its claim boundary.
+production certification, executed formal proof, or authority to execute an
+action. The combined proof packet includes the bounded metadata so audit/export
+consumers can inspect the HSAI formal-backend context without upgrading its
+claim boundary.
 
 ## Proof Packet Verification
 

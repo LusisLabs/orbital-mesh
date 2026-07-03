@@ -1,0 +1,28 @@
+- not attestation evidence
+- not proof
+- not live provider evidence
+- not accepted Evidence Ledger mutation
+- not benchmark evidence
+- not SOTA status
+- not breakthrough status
+- not production readiness
+- not semantic correctness
+- not authority to execute an action
+- not formal proof evidence
+- no formal backend was run
+- metadata adapter only
+- not full security
+- not Level2+ evidence
+- not score-axis population
+- not proof of HSAI
+- not source proof
+- correspondence metadata only
+- backend adapter metadata only
+- not backend checked
+- not proof artifact evidence
+- candidate metadata only
+- backend run artifact metadata only
+- backend not run
+- no proof artifact retained
+- no checker transcript retained
+- not accepted evidence

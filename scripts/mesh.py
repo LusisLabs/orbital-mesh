@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from shared.mesh_runtime.hsai_bridge import (
     build_combined_proof_packet,
+    load_hsai_formal_backend_run_metadata,
     validate_hsai_decision,
     verify_combined_proof_packet_payload,
 )
@@ -23,6 +24,7 @@ HSAI_BRIDGE_FIXTURE_NAMES = (
     "golden_deny_request.json",
     "golden_deny_decision.json",
 )
+HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE = "formal_backend_notrun_bundle"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,6 +85,9 @@ def verify_hsai_bridge_fixtures(fixtures_dir: Path) -> dict[str, Any]:
         checks["deny_contract"] = _decision_check(deny_decision, "deny", ["missing_explicit_nonclaims"])
         checks["allow_packet"] = _verify_fixture_packet(allow_request, allow_decision, status="executed")
         checks["deny_packet"] = _verify_fixture_packet(deny_request, deny_decision, status="blocked")
+        checks["formal_backend_bundle"] = _verify_formal_backend_bundle_fixture(
+            fixtures_dir / HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE
+        )
     except Exception as exc:
         issues.append(str(exc))
     for key, check in checks.items():
@@ -94,6 +99,7 @@ def verify_hsai_bridge_fixtures(fixtures_dir: Path) -> dict[str, Any]:
         "issues": issues,
         "fixtures_dir": str(fixtures_dir),
         "fixture_names": list(HSAI_BRIDGE_FIXTURE_NAMES),
+        "formal_backend_bundle_fixture": HSAI_FORMAL_BACKEND_BUNDLE_FIXTURE,
         "checks": checks,
     }
 
@@ -125,6 +131,32 @@ def _verify_fixture_packet(request: dict[str, Any], decision: dict[str, Any], *,
     )
     result = verify_combined_proof_packet_payload(packet=packet, request=request, decision=decision)
     return {"status": result["status"], "summary": result["issues"] or status}
+
+
+def _verify_formal_backend_bundle_fixture(bundle_root: Path) -> dict[str, Any]:
+    metadata = load_hsai_formal_backend_run_metadata(bundle_root)
+    expected = {
+        "backend": "hsai-formal-backend-run-bundle",
+        "backend_run_id": "hsai-formal-run-1",
+        "state_slice": "phase-276-hsai-gateway-formal-backend-run-inert-artifact-metadata",
+        "execution_mode": "NotRun",
+        "exit_status": "NotRun",
+        "checker_status": "NotRun",
+    }
+    mismatches = [
+        f"{field}={metadata.get(field)!r}"
+        for field, value in expected.items()
+        if metadata.get(field) != value
+    ]
+    if "not accepted evidence" not in metadata.get("nonclaims", []):
+        mismatches.append("missing not accepted evidence nonclaim")
+    if "not formal proof evidence" not in metadata.get("nonclaims", []):
+        mismatches.append("missing not formal proof evidence nonclaim")
+    return {
+        "status": "pass" if not mismatches else "fail",
+        "summary": mismatches or "formal backend bundle verified",
+        "metadata_digest": metadata.get("metadata_digest"),
+    }
 
 
 def _fixture_action_result(decision: dict[str, Any], *, status: str) -> dict[str, Any]:
