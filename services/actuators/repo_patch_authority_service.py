@@ -915,6 +915,8 @@ class RepoPatchAuthorityService:
                 "patched_files": [promoted.target_path],
                 "preflight_receipt": preflight_receipt,
                 "test_results": preflight_receipt["test_results"],
+                "verifier_receipt": promoted.verifier_receipt,
+                "verifier_receipt_digest": canonical_digest(promoted.verifier_receipt),
             },
             "retryable": False,
         }
@@ -999,7 +1001,14 @@ class RepoPatchAuthorityService:
                 candidate_binding=candidate_binding,
                 commands=authorized_commands,
             )
-            prepared.accept_verifier_results(executed_commands, test_results)
+            verifier_receipt = self.verifier_client.last_verified_receipt
+            if not isinstance(verifier_receipt, dict):
+                raise ValueError("repo patch verifier omitted its verified terminal receipt")
+            prepared.accept_verifier_results(
+                executed_commands,
+                test_results,
+                verifier_receipt=verifier_receipt,
+            )
             return prepared
         except BaseException:
             prepared.close()

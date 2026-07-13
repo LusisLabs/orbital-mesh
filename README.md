@@ -53,10 +53,13 @@ These are the dimensions this codebase is built to support; they match a discipl
 - Gates the `repo_patch_service` / `investigate_and_patch` path through the
   narrow HSAI admission bridge, with schema-backed golden fixtures and local
   single-consumption `mesh.repo_patch_execution_permit.v1` enforcement at the
-  actuator boundary. Repository verification is delegated to a keyless,
-  network-none sidecar that runs commands under a distinct UID and returns a
-  manifest-bound receipt; the authority independently rechecks the canonical
-  worktree before promotion. See `docs/evidence-carrying-agent-actions-trial.md`
+  actuator boundary. Repository verification is delegated to a minimal,
+  network-none sidecar whose root supervisor signs every terminal receipt with
+  a verifier-only Ed25519 key while commands run keyless under a distinct UID.
+  The authority pins the verifier public key, exports the verified receipt, and
+  independently rechecks the canonical worktree before promotion. The control
+  plane, authority, and verifier use distinct images; only the authority image
+  retains Git. See `docs/evidence-carrying-agent-actions-trial.md`
   for the deterministic local trial, Docker adversarial proof, and exact claim
   ceiling, and `docs/evidence-carrying-agent-actions-threat-model.md` for the
   repository-grounded security boundaries and residual risks.

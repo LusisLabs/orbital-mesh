@@ -10,13 +10,18 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 
 RUNNER_UID = 6000
 RUNNER_GID = 6000
 AUTHORITY_UID = 3000
 AUTHORITY_GID = 4000
+VERIFIER_KEY_ID = "mesh-repo-patch-verifier-os-proof"
 
 
 def main() -> int:
@@ -39,6 +44,9 @@ def run_proof(image: str) -> dict[str, object]:
     input_volume = f"mesh_repo_patch_verifier_input_{suffix}"
     socket_volume = f"mesh_repo_patch_verifier_socket_{suffix}"
     ledger_volume = f"mesh_repo_patch_verifier_ledger_{suffix}"
+    key_volume = f"mesh_repo_patch_verifier_key_{suffix}"
+    key_directory = TemporaryDirectory()
+    verifier_private_key, verifier_public_key = _write_key_pair(Path(key_directory.name))
     image_digest = _docker("image", "inspect", image, "--format", "{{.Id}}").stdout.strip()
     if not image_digest.startswith("sha256:"):
         raise RuntimeError("proof image does not have a Docker content digest")
@@ -55,10 +63,11 @@ def run_proof(image: str) -> dict[str, object]:
         "runner_gid": RUNNER_GID,
     }
     sandbox_digest = _canonical_digest(sandbox_profile)
-    for volume in (input_volume, socket_volume, ledger_volume):
+    for volume in (input_volume, socket_volume, ledger_volume, key_volume):
         _docker("volume", "create", volume)
     try:
         _seed_input_volume(image, input_volume)
+        _seed_key_volume(image, key_volume, verifier_private_key)
         _docker(
             "run",
             "--detach",
@@ -98,6 +107,8 @@ def run_proof(image: str) -> dict[str, object]:
             f"{socket_volume}:/run/mesh-verifier",
             "--volume",
             f"{ledger_volume}:/var/lib/mesh-verifier/ledger",
+            "--volume",
+            f"{key_volume}:/run/verifier-key:ro",
             "--env",
             "MESH_REPO_PATCH_VERIFIER_SOCKET_PATH=/run/mesh-verifier/repo-patch-verifier.sock",
             "--env",
@@ -118,8 +129,13 @@ def run_proof(image: str) -> dict[str, object]:
             f"MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST={image_digest}",
             "--env",
             f"MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST={sandbox_digest}",
-            image,
+            "--env",
+            "MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_PATH=/run/verifier-key/repo_patch_verifier_private_key.pem",
+            "--env",
+            f"MESH_REPO_PATCH_VERIFIER_KEY_ID={VERIFIER_KEY_ID}",
+            "--entrypoint",
             "python3",
+            image,
             "-m",
             "services.actuators.repo_patch_verifier_service",
         )
@@ -130,6 +146,7 @@ def run_proof(image: str) -> dict[str, object]:
             socket_volume,
             image_digest=image_digest,
             sandbox_digest=sandbox_digest,
+            verifier_public_key=verifier_public_key,
         )
         inspect = json.loads(_docker("inspect", verifier_name).stdout)[0]
         runner_processes = _docker("top", verifier_name, "-eo", "uid,pid,cmd").stdout.splitlines()[1:]
@@ -145,6 +162,9 @@ def run_proof(image: str) -> dict[str, object]:
             "pids_limit_64": inspect["HostConfig"]["PidsLimit"] == 64,
             "memory_limit_256m": inspect["HostConfig"]["Memory"] == 256 * 1024 * 1024,
             "input_mount_read_only": mounts["/var/lib/mesh-verifier/input"]["RW"] is False,
+            "signing_key_mount_read_only": mounts[
+                "/run/verifier-key"
+            ]["RW"] is False,
             "authority_assets_absent": all(
                 path not in mounts
                 for path in (
@@ -156,6 +176,8 @@ def run_proof(image: str) -> dict[str, object]:
                 )
             ),
             "deployed_image_digest_bound": inspect["Image"] == image_digest,
+            "receipt_signature_verified": controller["receipt_key_id"] == VERIFIER_KEY_ID,
+            "receipt_state_slice_v2": controller["receipt_state_slice"] == "mesh.repo_patch_verifier_receipt.v2",
         }
         return {
             "schema_version": "mesh.repo_patch_isolated_verifier_os_proof.v1",
@@ -169,15 +191,17 @@ def run_proof(image: str) -> dict[str, object]:
             "checks": effective_checks,
             "status": "pass" if all(effective_checks.values()) else "fail",
             "claim_ceiling": (
-                "disposable Docker Linux-VM regression evidence for the keyless verifier sidecar; "
+                "disposable Docker Linux-VM regression evidence for the signed verifier sidecar; "
+                "the root supervisor holds a local receipt-signing key while the command runner is keyless; "
                 "not production-host proof, not protection from host or container-runtime compromise, "
                 "not arbitrary repository compatibility, and not semantic correctness"
             ),
         }
     finally:
         subprocess.run(["docker", "rm", "--force", verifier_name], check=False, capture_output=True, text=True)
-        for volume in (input_volume, socket_volume, ledger_volume):
+        for volume in (input_volume, socket_volume, ledger_volume, key_volume):
             subprocess.run(["docker", "volume", "rm", "--force", volume], check=False, capture_output=True, text=True)
+        key_directory.cleanup()
 
 
 def _seed_input_volume(image: str, input_volume: str) -> None:
@@ -204,8 +228,42 @@ root.chmod(0o700)
         "0:0",
         "--volume",
         f"{input_volume}:/input",
-        image,
+        "--entrypoint",
         "python3",
+        image,
+        "-c",
+        seed_code,
+    )
+
+
+def _seed_key_volume(image: str, key_volume: str, private_key: Path) -> None:
+    seed_code = """
+import os
+from pathlib import Path
+source = Path('/source/verifier-private.pem')
+target = Path('/staged/repo_patch_verifier_private_key.pem')
+payload = source.read_bytes()
+descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+with os.fdopen(descriptor, 'wb') as handle:
+    handle.write(payload)
+    handle.flush()
+    os.fsync(handle.fileno())
+os.chmod(target, 0o600)
+"""
+    _docker(
+        "run",
+        "--rm",
+        "--user",
+        "0:0",
+        "--network",
+        "none",
+        "--volume",
+        f"{private_key}:/source/verifier-private.pem:ro",
+        "--volume",
+        f"{key_volume}:/staged",
+        "--entrypoint",
+        "python3",
+        image,
         "-c",
         seed_code,
     )
@@ -226,8 +284,9 @@ def _wait_for_socket(image: str, socket_volume: str, verifier_name: str) -> None
                 "--rm",
                 "--volume",
                 f"{socket_volume}:/run/mesh-verifier:ro",
-                image,
+                "--entrypoint",
                 "python3",
+                image,
                 "-c",
                 probe,
             ],
@@ -251,6 +310,7 @@ def _run_controller(
     *,
     image_digest: str,
     sandbox_digest: str,
+    verifier_public_key: Path,
 ) -> dict[str, object]:
     controller_code = r"""
 import hashlib
@@ -265,6 +325,8 @@ client = RepoPatchVerifierClient(
     expected_verifier_uid=0,
     verifier_image_digest=os.environ['PROOF_IMAGE_DIGEST'],
     sandbox_profile_digest=os.environ['PROOF_SANDBOX_DIGEST'],
+    verifier_public_key_pem=Path('/run/verifier-public.pem').read_text(encoding='utf-8'),
+    verifier_key_id=os.environ['PROOF_VERIFIER_KEY_ID'],
 )
 identity = RepoPatchTestCommandPolicy((('python3', '-c', 'pass'),)).authorize(('python3 -c pass',))[0]
 candidate = {
@@ -305,39 +367,48 @@ positive_code = r'''
 import os
 import socket
 from pathlib import Path
-assert os.geteuid() == 6000
+if os.geteuid() != 6000:
+    raise SystemExit(11)
 capabilities = next(line for line in Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:'))
-assert int(capabilities.split()[1], 16) == 0
+if int(capabilities.split()[1], 16) != 0:
+    raise SystemExit(12)
 try:
     Path.cwd().chmod(0)
 except PermissionError:
     pass
 else:
-    raise AssertionError('runner owns the supervisor cleanup root')
-for path in (
+    raise SystemExit(13)
+for index, path in enumerate((
     '/workspace/target',
     '/run/mesh-authority/repo-patch-authority.sock',
     '/run/secrets/repo-patch/authority-private.pem',
+    '/run/verifier-key/repo_patch_verifier_private_key.pem',
     '/var/lib/mesh-authority/repo_patch_authority_store.json',
     '/var/run/docker.sock',
-):
+)):
     try:
         Path(path).read_bytes()
     except (FileNotFoundError, PermissionError, IsADirectoryError):
         pass
     else:
-        raise AssertionError(path)
+        raise SystemExit(20 + index)
 try:
     os.kill(1, 0)
 except PermissionError:
     pass
 else:
-    raise AssertionError('runner can signal verifier init')
+    raise SystemExit(30)
 probe = socket.socket()
 probe.settimeout(0.2)
-assert probe.connect_ex(('1.1.1.1', 53)) != 0
+if probe.connect_ex(('1.1.1.1', 53)) == 0:
+    raise SystemExit(31)
 '''
-positive = verify('positive', positive_code)
+try:
+    positive = verify('positive', positive_code)
+except Exception:
+    positive = ()
+positive_receipt = client.last_verified_receipt
+assert isinstance(positive_receipt, dict)
 try:
     verify('timeout', "import os,time; pid=os.fork(); os.setsid() if pid == 0 else None; time.sleep(10)", timeout=1)
     timeout_rejected = False
@@ -350,9 +421,12 @@ except Exception as exc:
     output_rejected = 'output_limit_exceeded' in str(exc)
 print(json.dumps({
     'positive_succeeded': len(positive) == 1 and positive[0]['returncode'] == 0,
+    'positive_returncode': positive_receipt['test_results'][0]['returncode'],
     'runner_uid_observed': 6000,
     'timeout_rejected': timeout_rejected,
     'output_limit_rejected': output_rejected,
+    'receipt_key_id': positive_receipt['authorization_proof']['key_id'],
+    'receipt_state_slice': positive_receipt['state_slice'],
 }, sort_keys=True))
 """
     completed = _docker(
@@ -367,15 +441,26 @@ print(json.dumps({
         f"{input_volume}:/input:ro",
         "--volume",
         f"{socket_volume}:/run/mesh-verifier:ro",
+        "--volume",
+        f"{verifier_public_key}:/run/verifier-public.pem:ro",
         "--env",
         f"PROOF_IMAGE_DIGEST={image_digest}",
         "--env",
         f"PROOF_SANDBOX_DIGEST={sandbox_digest}",
-        image,
+        "--env",
+        f"PROOF_VERIFIER_KEY_ID={VERIFIER_KEY_ID}",
+        "--entrypoint",
         "python3",
+        image,
         "-c",
         controller_code,
+        check=False,
     )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            "verifier proof controller failed: "
+            f"returncode={completed.returncode}; stderr={completed.stderr[-4000:]!r}"
+        )
     payload = json.loads(completed.stdout)
     if not isinstance(payload, dict):
         raise RuntimeError("verifier controller returned a non-object")
@@ -385,6 +470,28 @@ print(json.dumps({
 def _canonical_digest(payload: object) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _write_key_pair(root: Path) -> tuple[Path, Path]:
+    key = Ed25519PrivateKey.generate()
+    private_path = root / "verifier-private.pem"
+    public_path = root / "verifier-public.pem"
+    private_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    public_path.write_bytes(
+        key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    private_path.chmod(0o600)
+    public_path.chmod(0o644)
+    return private_path, public_path
 
 
 def _docker(*arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:

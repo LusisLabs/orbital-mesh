@@ -51,6 +51,7 @@ from shared.mesh_runtime.repo_patch_authority import (
     receive_json_frame,
     send_json_frame,
 )
+from shared.mesh_runtime.repo_patch_permits import canonical_digest
 from shared.mesh_runtime.repo_patch_test_policy import AuthorizedTestCommand
 
 
@@ -70,6 +71,15 @@ class _EligibleHsaiAdapter:
 
 
 class _SuccessfulVerifier:
+    @property
+    def last_verified_receipt(self) -> dict[str, object]:
+        return {
+            "schema_version": "mesh.repo_patch_verifier_response.v2",
+            "state_slice": "mesh.repo_patch_verifier_receipt.v2",
+            "status": "succeeded",
+            "authorization_proof": {"key_id": "test-verifier"},
+        }
+
     def verify(
         self,
         *,
@@ -116,6 +126,12 @@ class RepoPatchAuthorityServiceTests(unittest.TestCase):
 
         self.assertEqual(response["status"], "completed")
         self.assertEqual(response["execution_result"]["status"], "succeeded")
+        verifier_receipt = response["execution_result"]["external_refs"]["verifier_receipt"]
+        self.assertEqual(verifier_receipt["state_slice"], "mesh.repo_patch_verifier_receipt.v2")
+        self.assertEqual(
+            response["execution_result"]["external_refs"]["verifier_receipt_digest"],
+            canonical_digest(verifier_receipt),
+        )
         self.assertEqual(response["receipt"]["state_slice"], AUTHORITY_STATE_SLICE)
         self.assertEqual(response["receipt"]["authenticated_client_key_id"], CLIENT_KEY_ID)
         self.assertEqual(response["receipt"]["peer_uid"], os.geteuid())

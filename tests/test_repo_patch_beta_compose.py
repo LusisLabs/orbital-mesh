@@ -19,6 +19,8 @@ from services.orchestrator.beta_loopback_ingress import (
 
 
 COMPOSE_PATH = Path("docker-compose.repo-patch-beta.yml")
+AUTHORITY_DOCKERFILE_PATH = Path("docker/repo-patch-authority.Dockerfile")
+VERIFIER_DOCKERFILE_PATH = Path("docker/repo-patch-verifier.Dockerfile")
 
 
 def _mapping_block(source: str, key: str, *, indent: int = 2) -> str:
@@ -47,6 +49,7 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         services = cls.compose.split("services:\n", 1)[1].split("\nvolumes:\n", 1)[0]
         cls.mesh = _mapping_block(services, "mesh")
         cls.authority = _mapping_block(services, "repo_patch_authority")
+        cls.verifier_key_init = _mapping_block(services, "repo_patch_verifier_key_init")
         cls.verifier = _mapping_block(services, "repo_patch_verifier")
         cls.volumes = cls.compose.split("\nvolumes:\n", 1)[1]
         environment = {
@@ -67,6 +70,10 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
             "MESH_REPO_PATCH_BETA_POLICY_ID": "beta-policy-v1",
             "MESH_HSAI_LINUX_CLI_SHA256": "a" * 64,
             "MESH_REPO_PATCH_TARGET_HOST_PATH": "/tmp/disposable-target",
+            "MESH_REPO_PATCH_AUTHORITY_IMAGE": "registry.invalid/repo-patch-authority@sha256:" + ("d" * 64),
+            "MESH_REPO_PATCH_VERIFIER_IMAGE": "registry.invalid/repo-patch-verifier@sha256:" + ("e" * 64),
+            "MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_HOST_PATH": "/tmp/verifier-private.pem",
+            "MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_HOST_PATH": "/tmp/verifier-public.pem",
             "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": "sha256:" + ("b" * 64),
             "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": "sha256:" + ("c" * 64),
         }
@@ -90,21 +97,86 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         cls.rendered = json.loads(rendered.stdout)
         cls.rendered_mesh = cls.rendered["services"]["mesh"]
         cls.rendered_authority = cls.rendered["services"]["repo_patch_authority"]
+        cls.rendered_verifier_key_init = cls.rendered["services"]["repo_patch_verifier_key_init"]
         cls.rendered_verifier = cls.rendered["services"]["repo_patch_verifier"]
         cls.rendered_ingress = cls.rendered["services"]["repo_patch_beta_ingress"]
 
-    def test_production_image_retains_git_for_authority_worktrees(self) -> None:
-        dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    def test_authority_and_verifier_use_distinct_digest_pinnable_images(self) -> None:
+        self.assertEqual(
+            self.rendered_authority["image"],
+            "registry.invalid/repo-patch-authority@sha256:" + ("d" * 64),
+        )
+        self.assertEqual(
+            self.rendered_verifier["image"],
+            "registry.invalid/repo-patch-verifier@sha256:" + ("e" * 64),
+        )
+        self.assertNotEqual(self.rendered_authority["image"], self.rendered_verifier["image"])
+        self.assertIn("MESH_REPO_PATCH_AUTHORITY_IMAGE", self.authority)
+        self.assertIn("MESH_REPO_PATCH_VERIFIER_IMAGE", self.verifier)
 
-        self.assertIn("apt-get install -y --no-install-recommends ca-certificates curl git", dockerfile)
-        self.assertNotIn("apt-get purge -y --auto-remove curl git git-man", dockerfile)
-        self.assertIn("apt-get purge -y --auto-remove curl", dockerfile)
+    def test_authority_and_verifier_use_dedicated_build_contracts(self) -> None:
+        self.assertEqual(
+            self.rendered_authority["build"]["dockerfile"],
+            str(AUTHORITY_DOCKERFILE_PATH),
+        )
+        self.assertEqual(
+            self.rendered_verifier["build"]["dockerfile"],
+            str(VERIFIER_DOCKERFILE_PATH),
+        )
+        self.assertEqual(
+            self.rendered_authority["build"]["args"]["REPO_PATCH_PYTHON_BASE"],
+            "python:3.13.14-alpine3.24",
+        )
+        self.assertEqual(
+            self.rendered_verifier["build"]["args"]["REPO_PATCH_PYTHON_BASE"],
+            "python:3.13.14-alpine3.24",
+        )
+
+    def test_authority_image_retains_only_the_declared_runtime_tool_surface(self) -> None:
+        dockerfile = AUTHORITY_DOCKERFILE_PATH.read_text(encoding="utf-8")
+
+        self.assertIn("apk add --no-cache ca-certificates git", dockerfile)
+        self.assertIn('python3 -m pip install --no-cache-dir "cryptography==${CRYPTOGRAPHY_VERSION}"', dockerfile)
+        self.assertIn("repo-patch-verifier-response-v2.schema.json", dockerfile)
+        self.assertIn('ENTRYPOINT ["python3", "-m", "services.actuators.repo_patch_authority_service"]', dockerfile)
+        for forbidden_copy in (
+            "COPY services/ ./services/",
+            "COPY shared/ ./shared/",
+            "COPY deepagents",
+            "COPY mesh_brain",
+            "COPY meshapp",
+            "COPY web",
+        ):
+            self.assertNotIn(forbidden_copy, dockerfile)
+        for forbidden_runtime in ("docker/docker", "kubectl", "goose", "hermes", "langchain", "openai"):
+            self.assertNotIn(forbidden_runtime, dockerfile.lower())
+
+    def test_verifier_image_contains_no_package_manager_or_prohibited_assets(self) -> None:
+        dockerfile = VERIFIER_DOCKERFILE_PATH.read_text(encoding="utf-8")
+        final_stage = dockerfile.rsplit("FROM ${REPO_PATCH_PYTHON_BASE}", 1)[1]
+
+        self.assertIn('ENTRYPOINT ["python3", "-m", "services.actuators.repo_patch_verifier_service"]', dockerfile)
+        self.assertIn('"cryptography==${CRYPTOGRAPHY_VERSION}"', dockerfile)
+        self.assertIn("COPY --from=verifier-python-dependencies /opt/verifier-python /opt/verifier-python", dockerfile)
+        self.assertIn("repo-patch-verifier-response-v2.schema.json", dockerfile)
+        for forbidden_install in ("apt-get", "pip install", "curl ", " git "):
+            self.assertNotIn(forbidden_install, final_stage.lower())
+        for forbidden_copy in (
+            "COPY services/ ./services/",
+            "COPY shared/ ./shared/",
+            "COPY deepagents",
+            "COPY mesh_brain",
+            "COPY meshapp",
+            "COPY web",
+        ):
+            self.assertNotIn(forbidden_copy, dockerfile)
+        for forbidden_runtime in ("docker/docker", "kubectl", "goose", "hermes", "langchain", "openai"):
+            self.assertNotIn(forbidden_runtime, dockerfile.lower())
 
     def test_authority_service_is_an_isolated_explicit_identity(self) -> None:
         for marker in (
             'user: "${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID}:${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"',
             "network_mode: none",
-            'command: ["python3", "-m", "services.actuators.repo_patch_authority_service"]',
             "read_only: true",
             "- ALL",
             "- no-new-privileges:true",
@@ -113,10 +185,14 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
             self.assertIn(marker, self.authority)
         self.assertNotIn("ports:", self.authority)
         self.assertNotIn("networks:", self.authority)
+        self.assertNotIn("command:", self.authority)
+        self.assertIsNone(self.rendered_authority.get("command"))
 
     def test_verifier_sidecar_has_no_authority_assets_or_network(self) -> None:
         self.assertEqual(self.rendered_verifier["user"], "0:0")
         self.assertEqual(self.rendered_verifier["network_mode"], "none")
+        self.assertNotIn("command:", self.verifier)
+        self.assertIsNone(self.rendered_verifier.get("command"))
         self.assertTrue(self.rendered_verifier["read_only"])
         self.assertEqual(self.rendered_verifier["cap_drop"], ["ALL"])
         self.assertEqual(
@@ -129,15 +205,19 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         mounts = {mount["target"]: mount for mount in self.rendered_verifier["volumes"]}
         self.assertEqual(set(mounts), {
             "/run/mesh-verifier",
+            "/run/verifier-key",
             "/var/lib/mesh-verifier/input",
             "/var/lib/mesh-verifier/ledger",
         })
         self.assertTrue(mounts["/var/lib/mesh-verifier/input"]["read_only"])
+        self.assertTrue(mounts["/run/verifier-key"]["read_only"])
         verifier_text = json.dumps(self.rendered_verifier, sort_keys=True)
         for forbidden in (
             "/workspace/target",
             "/run/mesh-authority",
             "/run/secrets",
+            "/run/secrets/repo-patch/authority-private.pem",
+            "/run/mesh-verifier-keys/repo_patch_verifier_public_key.pem",
             "/var/lib/mesh-authority",
             "/opt/hsai",
             "/var/run/docker.sock",
@@ -161,6 +241,41 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
             self.rendered_authority["depends_on"]["repo_patch_verifier"]["condition"],
             "service_healthy",
         )
+
+    def test_verifier_signing_keys_are_split_by_service_identity(self) -> None:
+        authority_mounts = {mount["target"]: mount for mount in self.rendered_authority["volumes"]}
+        key_init_mounts = {mount["target"]: mount for mount in self.rendered_verifier_key_init["volumes"]}
+        verifier_mounts = {mount["target"]: mount for mount in self.rendered_verifier["volumes"]}
+
+        public_key_path = "/run/mesh-verifier-keys/repo_patch_verifier_public_key.pem"
+        private_key_path = "/run/verifier-key/repo_patch_verifier_private_key.pem"
+        self.assertEqual(self.rendered_authority["environment"]["MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_PATH"], public_key_path)
+        self.assertEqual(self.rendered_verifier["environment"]["MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_PATH"], private_key_path)
+        self.assertEqual(
+            self.rendered_authority["environment"]["MESH_REPO_PATCH_VERIFIER_KEY_ID"],
+            self.rendered_verifier["environment"]["MESH_REPO_PATCH_VERIFIER_KEY_ID"],
+        )
+        self.assertTrue(authority_mounts[public_key_path]["read_only"])
+        self.assertTrue(verifier_mounts["/run/verifier-key"]["read_only"])
+        self.assertNotIn(private_key_path, authority_mounts)
+        self.assertNotIn(public_key_path, verifier_mounts)
+        self.assertEqual(key_init_mounts["/source/repo_patch_verifier_private_key.pem"]["type"], "bind")
+        self.assertTrue(key_init_mounts["/source/repo_patch_verifier_private_key.pem"]["read_only"])
+        self.assertEqual(key_init_mounts["/staged"]["source"], "mesh_repo_patch_verifier_key")
+        self.assertEqual(verifier_mounts["/run/verifier-key"]["source"], "mesh_repo_patch_verifier_key")
+        self.assertEqual(
+            self.rendered_verifier["depends_on"]["repo_patch_verifier_key_init"]["condition"],
+            "service_completed_successfully",
+        )
+        self.assertEqual(self.rendered_verifier_key_init["network_mode"], "none")
+        self.assertEqual(self.rendered_verifier_key_init["cap_drop"], ["ALL"])
+        self.assertIn("remove the key volume before rotation", self.verifier_key_init)
+        self.assertIn(
+            "${MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_HOST_PATH:?set mode-0600 verifier private-key host path}",
+            self.verifier_key_init,
+        )
+        self.assertNotIn("MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_HOST_PATH", self.verifier)
+        self.assertIn("mesh_repo_patch_verifier_key:", self.volumes)
 
     def test_merged_mesh_identity_and_hardening_are_explicit(self) -> None:
         self.assertEqual(self.rendered_mesh["user"], "2000:2000")

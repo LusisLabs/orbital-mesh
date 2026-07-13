@@ -1,4 +1,4 @@
-"""Keyless sidecar that executes repo-patch checks outside the authority boundary."""
+"""Receipt-signing sidecar that executes repo-patch checks outside authority."""
 
 from __future__ import annotations
 
@@ -16,16 +16,18 @@ import time
 from pathlib import Path
 from typing import Any
 
+from shared.mesh_runtime.perennial.signing import build_ed25519_signature_proof
 from shared.mesh_runtime.repo_patch_authority import receive_json_frame, send_json_frame
 from shared.mesh_runtime.repo_patch_verifier import (
     MAX_VERIFIER_FRAME_BYTES,
+    VERIFIER_RECEIPT_SIGNING_PROFILE,
     VERIFIER_RECEIPT_STATE_SLICE,
     VERIFIER_RESPONSE_VERSION,
     canonical_digest,
+    validate_signed_verifier_response,
     validate_verifier_request,
     workspace_manifest_digest,
 )
-from shared.mesh_runtime.schema_validation import validate_payload
 
 
 VERIFIER_WORKER_STATE_SLICE = "mesh.repo_patch_verifier_worker.v1"
@@ -47,6 +49,8 @@ class RepoPatchVerifierService:
         runner_gid: int,
         verifier_image_digest: str,
         sandbox_profile_digest: str,
+        verifier_private_key_pem: str,
+        verifier_key_id: str,
         socket_gid: int | None = None,
         max_frame_bytes: int = MAX_VERIFIER_FRAME_BYTES,
         require_identity_separation: bool = True,
@@ -60,6 +64,8 @@ class RepoPatchVerifierService:
         self.runner_gid = runner_gid
         self.verifier_image_digest = verifier_image_digest
         self.sandbox_profile_digest = sandbox_profile_digest
+        self.verifier_private_key_pem = verifier_private_key_pem.strip() + "\n"
+        self.verifier_key_id = verifier_key_id.strip()
         self.socket_gid = socket_gid
         self.max_frame_bytes = max_frame_bytes
         self.require_identity_separation = require_identity_separation
@@ -83,6 +89,15 @@ class RepoPatchVerifierService:
         ):
             if not _is_digest(digest):
                 raise ValueError(f"repo patch verifier {label} digest is invalid")
+        if not self.verifier_key_id or len(self.verifier_key_id) > 128:
+            raise ValueError("repo patch verifier signing key id is invalid")
+        key_probe = build_ed25519_signature_proof(
+            {"state_slice": VERIFIER_RECEIPT_STATE_SLICE},
+            key_id=self.verifier_key_id,
+            private_key_pem=self.verifier_private_key_pem,
+            signing_profile=VERIFIER_RECEIPT_SIGNING_PROFILE,
+        )
+        self.verifier_public_key_pem = str(key_probe["public_key_pem"])
 
     def start(self) -> None:
         if self._listener is not None:
@@ -130,7 +145,9 @@ class RepoPatchVerifierService:
     def handle_request(self, request: dict[str, Any], *, peer_uid: int) -> dict[str, Any]:
         base = self._response_base(request)
         if peer_uid not in self.allowed_authority_uids:
-            return {**base, "status": "rejected", "code": "authority_peer_rejected", "test_results": []}
+            return self._sign_response(
+                {**base, "status": "rejected", "code": "authority_peer_rejected", "test_results": []}
+            )
         try:
             validate_verifier_request(request)
             if request["verifier_image_digest"] != self.verifier_image_digest:
@@ -152,19 +169,23 @@ class RepoPatchVerifierService:
                 terminal = _read_json_file(terminal_path)
                 if terminal.get("request_digest") != request["request_digest"]:
                     raise ValueError("repo patch verifier replay binding mismatch")
-                validate_payload("repo-patch-verifier-response.schema.json", terminal)
+                self._validate_signed_response(terminal)
                 return terminal
             running_path = self._running_path(request["job_id"])
             self._create_running_record(running_path, request)
         except (KeyError, OSError, TypeError, ValueError):
-            return {**base, "status": "rejected", "code": "request_contract_rejected", "test_results": []}
+            return self._sign_response(
+                {**base, "status": "rejected", "code": "request_contract_rejected", "test_results": []}
+            )
 
         try:
             response = self._verify(request)
         except (OSError, RuntimeError, TypeError, ValueError):
-            response = {**base, "status": "rejected", "code": "verifier_internal_failure", "test_results": []}
+            response = self._sign_response(
+                {**base, "status": "rejected", "code": "verifier_internal_failure", "test_results": []}
+            )
         try:
-            validate_payload("repo-patch-verifier-response.schema.json", response)
+            self._validate_signed_response(response)
             _write_json_atomic(self._terminal_path(request["job_id"]), response)
             return response
         finally:
@@ -338,28 +359,52 @@ class RepoPatchVerifierService:
         status_value: str,
         code: str,
     ) -> dict[str, Any]:
-        return {
-            **self._response_base(request),
-            "status": status_value,
-            "code": code,
-            "workspace_manifest_before": before,
-            "workspace_manifest_after": after,
-            "test_results": results,
-        }
+        return self._sign_response(
+            {
+                **self._response_base(request),
+                "status": status_value,
+                "code": code,
+                "workspace_manifest_before": before,
+                "workspace_manifest_after": after,
+                "test_results": results,
+            }
+        )
 
     def _response_base(self, request: dict[str, Any]) -> dict[str, Any]:
         return {
             "schema_version": VERIFIER_RESPONSE_VERSION,
             "state_slice": VERIFIER_RECEIPT_STATE_SLICE,
             "job_id": str(request.get("job_id") or "invalid"),
-            "request_digest": str(request.get("request_digest") or _EMPTY_DIGEST),
+            "request_digest": _digest_or_empty(request.get("request_digest")),
             "verifier_uid": os.geteuid(),
             "runner_uid": self.runner_uid,
             "verifier_image_digest": self.verifier_image_digest,
             "sandbox_profile_digest": self.sandbox_profile_digest,
-            "workspace_manifest_before": str(request.get("workspace_manifest_digest") or _EMPTY_DIGEST),
-            "workspace_manifest_after": str(request.get("workspace_manifest_digest") or _EMPTY_DIGEST),
+            "workspace_manifest_before": _digest_or_empty(request.get("workspace_manifest_digest")),
+            "workspace_manifest_after": _digest_or_empty(request.get("workspace_manifest_digest")),
         }
+
+    def _sign_response(self, response: dict[str, Any]) -> dict[str, Any]:
+        if "authorization_proof" in response:
+            raise ValueError("repo patch verifier refuses to re-sign an existing proof")
+        signed = {
+            **response,
+            "authorization_proof": build_ed25519_signature_proof(
+                response,
+                key_id=self.verifier_key_id,
+                private_key_pem=self.verifier_private_key_pem,
+                signing_profile=VERIFIER_RECEIPT_SIGNING_PROFILE,
+            ),
+        }
+        self._validate_signed_response(signed)
+        return signed
+
+    def _validate_signed_response(self, response: dict[str, Any]) -> None:
+        validate_signed_verifier_response(
+            response,
+            expected_key_id=self.verifier_key_id,
+            public_key_pem=self.verifier_public_key_pem,
+        )
 
     def _create_running_record(self, path: Path, request: dict[str, Any]) -> None:
         payload = json.dumps(request, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -380,14 +425,16 @@ class RepoPatchVerifierService:
                     terminal = _read_json_file(terminal_path)
                     if terminal.get("request_digest") != request.get("request_digest"):
                         raise ValueError("repo patch verifier recovery binding mismatch")
-                    validate_payload("repo-patch-verifier-response.schema.json", terminal)
+                    self._validate_signed_response(terminal)
                 else:
-                    response = {
-                        **self._response_base(request),
-                        "status": "rejected",
-                        "code": "aborted_by_worker_restart",
-                        "test_results": [],
-                    }
+                    response = self._sign_response(
+                        {
+                            **self._response_base(request),
+                            "status": "rejected",
+                            "code": "aborted_by_worker_restart",
+                            "test_results": [],
+                        }
+                    )
                     _write_json_atomic(terminal_path, response)
             finally:
                 running_path.unlink(missing_ok=True)
@@ -443,6 +490,11 @@ def _file_digest(path: Path) -> str:
 
 def _is_digest(value: str) -> bool:
     return len(value) == 71 and value.startswith("sha256:") and all(character in "0123456789abcdef" for character in value[7:])
+
+
+def _digest_or_empty(value: object) -> str:
+    candidate = str(value or "")
+    return candidate if _is_digest(candidate) else _EMPTY_DIGEST
 
 
 def _prepare_directory(path: Path, mode: int, *, gid: int | None = None) -> None:
@@ -518,6 +570,18 @@ def _required_absolute_path(name: str) -> Path:
     return path
 
 
+def _read_private_key(path: Path) -> str:
+    metadata = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 64 * 1024:
+        raise RuntimeError("repo patch verifier private signing key path rejected")
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise RuntimeError("repo patch verifier private signing key permissions are too broad")
+    private_key = path.read_text(encoding="utf-8").strip()
+    if not private_key:
+        raise RuntimeError("repo patch verifier private signing key is empty")
+    return private_key + "\n"
+
+
 def main() -> int:
     if os.geteuid() != 0:
         raise RuntimeError("repo patch verifier supervisor must run as root to drop the command identity")
@@ -536,6 +600,10 @@ def main() -> int:
         runner_gid=int(os.environ["MESH_REPO_PATCH_VERIFIER_RUNNER_GID"]),
         verifier_image_digest=os.environ["MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST"].strip(),
         sandbox_profile_digest=os.environ["MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST"].strip(),
+        verifier_private_key_pem=_read_private_key(
+            _required_absolute_path("MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_PATH")
+        ),
+        verifier_key_id=os.environ["MESH_REPO_PATCH_VERIFIER_KEY_ID"].strip(),
         socket_gid=int(os.environ["MESH_REPO_PATCH_VERIFIER_SOCKET_GID"]),
     )
     try:

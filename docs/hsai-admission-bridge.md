@@ -105,9 +105,11 @@ gate result, and only then creates its internal single-consumption
 `mesh.repo_patch_execution_permit.v1`. Shell-form verification is rejected.
 The authority sends exact allowlisted argv vectors, executable digests, the
 candidate, and a manifest-bound read-only handoff to a peer-pinned verifier
-sidecar. Commands execute there as keyless UID 6000 without `/bin/sh`, network,
-authority assets, the target mount, or the HSAI binary. The authority rechecks
-the canonical changed path and postimage after the verifier returns.
+sidecar. Its root supervisor signs terminal v2 receipts with a verifier-only
+Ed25519 key; commands execute as keyless UID 6000 without `/bin/sh`, network,
+authority assets, the target mount, the HSAI binary, or access to that key. The
+authority pins the verifier public key, exports the execute-time signed receipt,
+and rechecks the canonical changed path and postimage after the verifier returns.
 
 `services.actuators.repo_patch.RepoPatchAdapter` remains self-enforcing, but the
 authority service is the only runtime module permitted to import or construct
@@ -208,11 +210,15 @@ MESH_REPO_PATCH_AUTHORITY_CLIENT_PRIVATE_KEY_PATH=/run/mesh/orchestrator-client.
 MESH_REPO_PATCH_AUTHORITY_CLIENT_KEY_ID=mesh-orchestrator-client
 MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_PATH=/run/mesh/repo-patch-authority-public.pem
 MESH_REPO_PATCH_AUTHORITY_KEY_ID=mesh-repo-patch-authority
+MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_PATH=/run/mesh/repo-patch-verifier-public.pem
+MESH_REPO_PATCH_VERIFIER_KEY_ID=mesh-repo-patch-verifier
 ```
 
 After Mesh policy approval and the authority-eligible-adapter check,
 orchestration performs a signed, non-mutating disposable-worktree preflight.
-The receipt feeds the HSAI v2 request. Only a matching HSAI allow decision and
+The exact disposable-worktree receipt feeds the unchanged HSAI v2 request. The
+signed verifier receipt is a separate Mesh execution reference; HSAI v2 does
+not carry verifier image, sandbox, or signer identity. Only a matching HSAI allow decision and
 unchanged review result may feed the signed execution request. The authority
 reruns both preflight and the pinned HSAI gate before promotion. Once execution is marked dispatched, a
 transport error, malformed response, or lost response becomes
@@ -232,12 +238,15 @@ disables local model CLI commands, applies read-only roots, drops capabilities,
 sets no-new-privileges and resource bounds, gives only the authority target
 write access, and mounts the pinned Linux HSAI binary only in the Mesh and
 authority processes. Verification is fixed to `python3 -c pass` and runs in a
-separate keyless, network-none verifier sidecar as UID 6000. The sidecar receives
-only a read-only manifest-bound handoff, has a read-only root, and cannot mount
-the target, keys, authority state/socket, HSAI binary, database URL, or Docker
-socket. The production image retains Git for detached worktrees. Operators must
+separate minimal, network-none verifier sidecar; only the command child is
+keyless UID 6000. The sidecar receives a read-only manifest-bound handoff and a
+staged verifier-only signing key, has a read-only root, and cannot mount the
+target, authority keys/state/socket, HSAI binary, database URL, or Docker socket. Operators must
 provide every declared key, identity, target, state path, binary digest, sandbox
-profile digest, and policy id. PostgreSQL migration 006 has a local Docker
+profile digest, signer key pair, and policy id. The control plane, authority,
+and verifier use separate images; only the authority image retains Git. A
+one-shot initializer copies the mode-0600 host verifier key into a Linux-owned
+volume, and only that staged read-only volume reaches the verifier. PostgreSQL migration 006 has a local Docker
 restart/concurrency rehearsal, not managed multi-host availability proof.
 
 This file is an overlay, not a standalone Compose project. Render or launch it

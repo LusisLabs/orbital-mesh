@@ -9,19 +9,25 @@
     "output_limit_failed_closed": true,
     "pids_limit_64": true,
     "positive_adversarial_command_succeeded": true,
+    "receipt_signature_verified": true,
+    "receipt_state_slice_v2": true,
     "root_filesystem_read_only": true,
     "runner_uid_was_distinct": true,
+    "signing_key_mount_read_only": true,
     "timeout_failed_closed": true
   },
-  "claim_ceiling": "disposable Docker Linux-VM regression evidence for the keyless verifier sidecar; not production-host proof, not protection from host or container-runtime compromise, not arbitrary repository compatibility, and not semantic correctness",
+  "claim_ceiling": "disposable Docker Linux-VM regression evidence for the signed verifier sidecar; the root supervisor holds a local receipt-signing key while the command runner is keyless; not production-host proof, not protection from host or container-runtime compromise, not arbitrary repository compatibility, and not semantic correctness",
   "controller": {
     "output_limit_rejected": true,
+    "positive_returncode": 0,
     "positive_succeeded": true,
+    "receipt_key_id": "mesh-repo-patch-verifier-os-proof",
+    "receipt_state_slice": "mesh.repo_patch_verifier_receipt.v2",
     "runner_uid_observed": 6000,
     "timeout_rejected": true
   },
-  "image": "orbital-mesh:repo-patch-verifier-proof",
-  "image_digest": "sha256:58202136d98b4aa8a2c69f8fe198b35acfff807145aaf5bec36a4df843eb299b",
+  "image": "orbital-mesh-repo-patch-verifier:current-local",
+  "image_digest": "sha256:fc8e941ecba710fa8412dd804de9965a59101665ecb177c9f90c10b57f79c54a",
   "platform": "docker-linux-vm",
   "sandbox_profile": {
     "cap_add": [

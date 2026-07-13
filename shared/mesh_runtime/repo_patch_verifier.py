@@ -4,23 +4,28 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import socket
 import stat
 import struct
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Sequence
 
+from .perennial.signing import verify_ed25519_signature_proof
 from .repo_patch_authority import receive_json_frame, send_json_frame
 from .repo_patch_test_policy import AuthorizedTestCommand
 from .schema_validation import validate_payload
 
 
 VERIFIER_REQUEST_VERSION = "mesh.repo_patch_verifier_request.v1"
-VERIFIER_RESPONSE_VERSION = "mesh.repo_patch_verifier_response.v1"
+VERIFIER_RESPONSE_VERSION = "mesh.repo_patch_verifier_response.v2"
 VERIFIER_PROTOCOL_STATE_SLICE = "mesh.repo_patch_verifier_protocol.v1"
-VERIFIER_RECEIPT_STATE_SLICE = "mesh.repo_patch_verifier_receipt.v1"
+VERIFIER_RECEIPT_STATE_SLICE = "mesh.repo_patch_verifier_receipt.v2"
 VERIFIER_HANDOFF_STATE_SLICE = "mesh.repo_patch_verifier_workspace_handoff.v1"
+VERIFIER_RESPONSE_SCHEMA = "repo-patch-verifier-response-v2.schema.json"
+VERIFIER_RECEIPT_SIGNING_PROFILE = "mesh-repo-patch-verifier-receipt-ed25519-v2"
 MAX_VERIFIER_FRAME_BYTES = 1024 * 1024
 MAX_WORKSPACE_FILES = 10_000
 MAX_WORKSPACE_BYTES = 64 * 1024 * 1024
@@ -86,7 +91,7 @@ def workspace_manifest_digest(root: str | Path) -> str:
 
 
 class RepoPatchVerifierClient:
-    """Peer-UID-pinned client for the keyless verifier sidecar."""
+    """Peer-UID- and signing-key-pinned client for the verifier sidecar."""
 
     def __init__(
         self,
@@ -95,6 +100,8 @@ class RepoPatchVerifierClient:
         expected_verifier_uid: int,
         verifier_image_digest: str,
         sandbox_profile_digest: str,
+        verifier_public_key_pem: str | None = None,
+        verifier_key_id: str | None = None,
         timeout_seconds: float = 35.0,
         max_frame_bytes: int = MAX_VERIFIER_FRAME_BYTES,
     ) -> None:
@@ -102,8 +109,11 @@ class RepoPatchVerifierClient:
         self.expected_verifier_uid = expected_verifier_uid
         self.verifier_image_digest = verifier_image_digest
         self.sandbox_profile_digest = sandbox_profile_digest
+        self.verifier_public_key_pem = _resolve_verifier_public_key(verifier_public_key_pem)
+        self.verifier_key_id = _resolve_verifier_key_id(verifier_key_id)
         self.timeout_seconds = timeout_seconds
         self.max_frame_bytes = max_frame_bytes
+        self._last_verified_receipt: dict[str, Any] | None = None
         if not self.socket_path.is_absolute():
             raise ValueError("repo patch verifier socket path must be absolute")
         if expected_verifier_uid < 0:
@@ -117,6 +127,12 @@ class RepoPatchVerifierClient:
         if timeout_seconds <= 0 or not 1024 <= max_frame_bytes <= MAX_VERIFIER_FRAME_BYTES:
             raise ValueError("repo patch verifier client limits are invalid")
 
+    @property
+    def last_verified_receipt(self) -> dict[str, Any] | None:
+        """Return a defensive copy of the current request's verified terminal receipt."""
+
+        return deepcopy(self._last_verified_receipt)
+
     def verify(
         self,
         *,
@@ -127,6 +143,7 @@ class RepoPatchVerifierClient:
         timeout_seconds: int = 30,
         output_limit_bytes: int = 64 * 1024,
     ) -> tuple[dict[str, Any], ...]:
+        self._last_verified_receipt = None
         if not _WORKSPACE_ID_PATTERN.fullmatch(workspace_id):
             raise RepoPatchVerifierError("repo patch verifier workspace id rejected")
         if not _DIGEST_PATTERN.fullmatch(workspace_manifest):
@@ -170,7 +187,11 @@ class RepoPatchVerifierClient:
         except (OSError, TimeoutError, ValueError) as exc:
             raise RepoPatchVerifierError(f"repo patch verifier transport failed: {type(exc).__name__}") from exc
         try:
-            validate_payload("repo-patch-verifier-response.schema.json", response)
+            validate_signed_verifier_response(
+                response,
+                expected_key_id=self.verifier_key_id,
+                public_key_pem=self.verifier_public_key_pem,
+            )
             if response["job_id"] != job_id or response["request_digest"] != request["request_digest"]:
                 raise ValueError("verifier response request binding mismatch")
             if response["workspace_manifest_before"] != workspace_manifest:
@@ -179,6 +200,7 @@ class RepoPatchVerifierClient:
                 raise ValueError("verifier response image binding mismatch")
             if response["sandbox_profile_digest"] != self.sandbox_profile_digest:
                 raise ValueError("verifier response sandbox binding mismatch")
+            self._last_verified_receipt = deepcopy(response)
             if response["status"] != "succeeded":
                 raise RepoPatchVerifierError(f"repo patch verifier rejected: {response['code']}")
             if response["workspace_manifest_after"] != workspace_manifest:
@@ -194,6 +216,41 @@ class RepoPatchVerifierClient:
             raise
         except (KeyError, TypeError, ValueError) as exc:
             raise RepoPatchVerifierError("repo patch verifier response contract rejected") from exc
+
+
+def verifier_receipt_signed_payload(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the exact terminal fields bound by the verifier signature."""
+
+    return {key: value for key, value in response.items() if key != "authorization_proof"}
+
+
+def validate_signed_verifier_response(
+    response: dict[str, Any],
+    *,
+    expected_key_id: str,
+    public_key_pem: str,
+) -> None:
+    """Validate a v2 terminal receipt against an authority-pinned verifier key."""
+
+    validate_payload(VERIFIER_RESPONSE_SCHEMA, response)
+    proof = response.get("authorization_proof")
+    if not isinstance(proof, dict):
+        raise ValueError("repo patch verifier receipt signature is missing")
+    if (
+        proof.get("signing_profile") != VERIFIER_RECEIPT_SIGNING_PROFILE
+        or proof.get("algorithm") != "ed25519"
+        or proof.get("key_id") != expected_key_id
+        or proof.get("status") != "verified"
+        or proof.get("verifier") != "orbital_mesh_ed25519_v1"
+        or str(proof.get("public_key_pem") or "").strip() != public_key_pem.strip()
+    ):
+        raise ValueError("repo patch verifier receipt signer identity rejected")
+    if not verify_ed25519_signature_proof(
+        verifier_receipt_signed_payload(response),
+        proof,
+        public_key_pem=public_key_pem,
+    ):
+        raise ValueError("repo patch verifier receipt signature rejected")
 
 
 def validate_verifier_request(request: dict[str, Any]) -> None:
@@ -248,6 +305,34 @@ def validate_verifier_request(request: dict[str, Any]) -> None:
     unsigned = {key: value for key, value in request.items() if key != "request_digest"}
     if supplied_digest != canonical_digest(unsigned):
         raise ValueError("repo patch verifier request digest mismatch")
+
+
+def _resolve_verifier_public_key(explicit: str | None) -> str:
+    if explicit is not None:
+        public_key = explicit.strip()
+    else:
+        raw_path = os.environ.get("MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_PATH", "").strip()
+        path = Path(raw_path)
+        if not raw_path or not path.is_absolute():
+            raise ValueError("repo patch verifier public key path must be absolute")
+        metadata = path.lstat()
+        if path.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 64 * 1024:
+            raise ValueError("repo patch verifier public key path rejected")
+        public_key = path.read_text(encoding="utf-8").strip()
+    if not public_key or "BEGIN PUBLIC KEY" not in public_key or "END PUBLIC KEY" not in public_key:
+        raise ValueError("repo patch verifier public key is invalid")
+    return public_key + "\n"
+
+
+def _resolve_verifier_key_id(explicit: str | None) -> str:
+    key_id = (
+        explicit
+        if explicit is not None
+        else os.environ.get("MESH_REPO_PATCH_VERIFIER_KEY_ID", "")
+    ).strip()
+    if not key_id or len(key_id) > 128:
+        raise ValueError("repo patch verifier key id is invalid")
+    return key_id
 
 
 def _peer_uid(connection: socket.socket) -> int:

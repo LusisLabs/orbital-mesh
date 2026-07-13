@@ -2,7 +2,7 @@
   "authority_receipt": {
     "authenticated_client_key_id": "mesh-os-proof-client",
     "authority_key_id": "mesh-os-proof-authority",
-    "execution_result_digest": "sha256:287d0f5160ef4b19a3bf86d4da171785287c5debf8cf9163f98fcc7af5a04c93",
+    "execution_result_digest": "sha256:9286979327596ee140fa62d48ee183947751c418d71bd256d7b76f707ad91a58",
     "hsai_adapter_identity": "mesh.hsai.rust_evidence_v2_cli_identity.v1:sha256:bf3ced1a2ab941df5198be0a6370c1691bc744330f39c27f4bc4a6283d36a790:mesh_policy://repo-patch/os-boundary-proof",
     "hsai_authority_eligible": true,
     "hsai_executable_sha256": "sha256:bf3ced1a2ab941df5198be0a6370c1691bc744330f39c27f4bc4a6283d36a790",
@@ -12,7 +12,7 @@
     "peer_uid": 2000,
     "preflight_receipt": {
       "authorized_diff_digest": "sha256:cdd12c661338df1d4a7b00f6f80e4d82de14c509631edfdd6d8551041456b518",
-      "base_commit": "8fad3ffbc17ad27d5da74394951e353d58234595",
+      "base_commit": "1708aa1dc42ded387881e7e54cbf06d4c70761f3",
       "base_tree": "b5a3e3976003b8abebd13d408ee0ad7902a11174",
       "changed_paths": [
         "app/search.py"
@@ -34,8 +34,48 @@
         }
       ]
     },
-    "request_digest": "sha256:539fc30885fc1c28e15559b269bb02d5eac3549fb3b4d930abdc8a1d19a29448",
-    "status": "succeeded"
+    "request_digest": "sha256:77dac5378b5e4b9701a3d3b33d6277617c6a85886fd7662c29a148303c179f25",
+    "status": "succeeded",
+    "verifier_receipt": {
+      "authorization_proof": {
+        "algorithm": "ed25519",
+        "key_id": "mesh-os-proof-verifier",
+        "payload_sha256": "fd965780f87ff6770c3078806abcf33ae8ffe8fc8367b3b035b88a6f4629ee88",
+        "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAaLZE0cVfd7TK6SAxgUE22EaTBNRbLyqi79Qz54xpGOU=\n-----END PUBLIC KEY-----\n",
+        "signature": "GWXSEjQij7tjYm4FEIYzOf3FEnUn0V7mluOispJH4uv6uH+/78GZOPazQD5ow6EEF2+wXX0ZJo/Mt85nSEDEAA==",
+        "signing_profile": "mesh-repo-patch-verifier-receipt-ed25519-v2",
+        "status": "verified",
+        "verifier": "orbital_mesh_ed25519_v1"
+      },
+      "code": "verified",
+      "job_id": "verifier_job_0a0f03a1eefdf6fb4b0edb9351898a36e39f586c0fa1ff7e38e2cfbd87e36ec2",
+      "request_digest": "sha256:26a990caea76bb1dc4bdd7ae9e4eac9c55f82722daede168fdb1129d19566b27",
+      "runner_uid": 6000,
+      "sandbox_profile_digest": "sha256:6a41ec44886cb5616e3861a8cdf0dee05cbb95db69619ab60fcd2c6f20821024",
+      "schema_version": "mesh.repo_patch_verifier_response.v2",
+      "state_slice": "mesh.repo_patch_verifier_receipt.v2",
+      "status": "succeeded",
+      "test_results": [
+        {
+          "argv": [
+            "/usr/local/bin/python3.13",
+            "-c",
+            "raise SystemExit(__import__('os').geteuid() != 6000)"
+          ],
+          "output_limit_exceeded": false,
+          "returncode": 0,
+          "stderr_bytes": 0,
+          "stderr_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "stdout_bytes": 0,
+          "stdout_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "timed_out": false
+        }
+      ],
+      "verifier_image_digest": "sha256:487a8e715e53b43e1d04757c04c5a7445480b97a465094bdc30b0d418ed0aa95",
+      "verifier_uid": 0,
+      "workspace_manifest_after": "sha256:63f825febedb7f49c13887ade90ccc60e3320d784dce34e3ae6d158347e8a853",
+      "workspace_manifest_before": "sha256:63f825febedb7f49c13887ade90ccc60e3320d784dce34e3ae6d158347e8a853"
+    }
   },
   "checks": {
     "agent_direct_write_denied": true,
@@ -46,7 +86,8 @@
     "orchestrator_direct_write_denied": true,
     "real_pinned_hsai_evidence_v2_allowed": true,
     "signed_orchestrator_request_succeeded": true,
-    "target_mutated_only_after_authority_request": true
+    "target_mutated_only_after_authority_request": true,
+    "verifier_receipt_signature_exported": true
   },
   "claim_ceiling": "disposable Linux-container kernel-UID enforcement proof; not production deployment, not semantic correctness, and not proof against a compromised root or authority process",
   "identities": {

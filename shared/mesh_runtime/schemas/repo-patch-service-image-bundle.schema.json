@@ -1,0 +1,252 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-patch-service-image-bundle.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "state_slice",
+    "generated_at",
+    "git_commit",
+    "roles",
+    "bundle_sha256"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "enum": ["mesh.repo_patch_service_image_bundle.v1"]
+    },
+    "state_slice": {
+      "type": "string",
+      "enum": ["mesh.repo_patch_service_image_bundle.v1"]
+    },
+    "generated_at": {"type": "string"},
+    "git_commit": {"type": "string"},
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mesh_control_plane",
+        "repo_patch_authority",
+        "repo_patch_verifier"
+      ],
+      "properties": {
+        "mesh_control_plane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "dockerfile",
+            "image",
+            "sbom",
+            "vulnerability_scan",
+            "ci_attestation"
+          ],
+          "properties": {
+            "role": {"type": "string", "enum": ["mesh_control_plane"]},
+            "dockerfile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string", "enum": ["Dockerfile"]},
+                "sha256": {"type": "string"}
+              }
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tag", "digest"],
+              "properties": {
+                "tag": {"type": "string"},
+                "digest": {"type": "string"}
+              }
+            },
+            "sbom": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
+            "vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "status"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"},
+                "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "ci_attestation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            }
+          }
+        },
+        "repo_patch_authority": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "dockerfile",
+            "image",
+            "sbom",
+            "vulnerability_scan",
+            "ci_attestation"
+          ],
+          "properties": {
+            "role": {"type": "string", "enum": ["repo_patch_authority"]},
+            "dockerfile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "enum": ["docker/repo-patch-authority.Dockerfile"]
+                },
+                "sha256": {"type": "string"}
+              }
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tag", "digest"],
+              "properties": {
+                "tag": {"type": "string"},
+                "digest": {"type": "string"}
+              }
+            },
+            "sbom": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
+            "vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "status"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"},
+                "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "ci_attestation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            }
+          }
+        },
+        "repo_patch_verifier": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "role",
+            "dockerfile",
+            "image",
+            "sbom",
+            "vulnerability_scan",
+            "ci_attestation",
+            "verifier_policy"
+          ],
+          "properties": {
+            "role": {"type": "string", "enum": ["repo_patch_verifier"]},
+            "dockerfile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "enum": ["docker/repo-patch-verifier.Dockerfile"]
+                },
+                "sha256": {"type": "string"}
+              }
+            },
+            "image": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["tag", "digest"],
+              "properties": {
+                "tag": {"type": "string"},
+                "digest": {"type": "string"}
+              }
+            },
+            "sbom": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
+            "vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256", "status"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"},
+                "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "ci_attestation": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
+            "verifier_policy": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sandbox_profile_digest",
+                "receipt_signing_profile",
+                "signature_algorithm",
+                "key_id",
+                "public_key_sha256"
+              ],
+              "properties": {
+                "sandbox_profile_digest": {"type": "string"},
+                "receipt_signing_profile": {
+                  "type": "string",
+                  "enum": ["mesh-repo-patch-verifier-receipt-ed25519-v2"]
+                },
+                "signature_algorithm": {
+                  "type": "string",
+                  "enum": ["ed25519"]
+                },
+                "key_id": {"type": "string"},
+                "public_key_sha256": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "bundle_sha256": {"type": "string"}
+  }
+}

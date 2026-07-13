@@ -19,7 +19,7 @@ State slices:
 - `mesh.repo_patch_beta_loopback_ingress.v1`
 - `mesh.repo_patch_verifier_protocol.v1`
 - `mesh.repo_patch_verifier_worker.v1`
-- `mesh.repo_patch_verifier_receipt.v1`
+- `mesh.repo_patch_verifier_receipt.v2`
 - `mesh.repo_patch_verifier_workspace_handoff.v1`
 
 ## Verdict
@@ -58,9 +58,12 @@ proof with five observed process identities. Agent UID 1000 cannot write the
 target or connect to the authority socket. Orchestrator UID 2000 cannot write
 the target but can submit a signed request through authority group 4000.
 Authority UID 3000 alone owns the mutable repository and observes the
-orchestrator peer UID before acting. A root verifier supervisor copies the
-bounded handoff into tmpfs, while the admitted command runs as keyless,
-capability-free UID 6000.
+orchestrator peer UID before acting. A root verifier supervisor in a separate
+minimal image copies the bounded handoff into tmpfs and signs every terminal v2
+receipt with a verifier-only Ed25519 key, while the admitted command runs as
+keyless, capability-free UID 6000. A one-shot initializer stages that key into a
+Linux-owned volume so Docker Desktop host-file sharing cannot expose the direct
+bind mount to the command UID.
 
 HSAI remains admission-only. Mesh and the authority independently invoke the
 same caller-pinned Phase 747 Rust Evidence V2 executable. HSAI evaluates an
@@ -81,8 +84,10 @@ consume the internal execution permit.
    verifier image digest, and sandbox-profile digest to the separate verifier.
    The verifier rechecks those identities, executes as UID 6000, rejects output,
    timeout, nonzero exit, workspace mutation, restart, or replay drift, and
-   returns only terminal results. The authority independently rechecks the
-   canonical worktree and emits the existing HSAI-compatible preflight receipt.
+   returns a signed terminal v2 receipt. The authority pins its public key,
+   retains the verified execute-time receipt in Mesh execution references,
+   independently rechecks the canonical worktree, and emits the unchanged
+   HSAI-compatible preflight receipt.
 5. Mesh builds `mesh.hsai_admission_request.v2` from the decision, evaluation,
    and preflight receipt, then invokes the pinned Rust HSAI executable.
 6. The beta's deterministic native adapter records a non-actuating review. Any
@@ -133,10 +138,11 @@ The targeted regression suites produced more than 200 passing tests. They includ
   drift, symlink handoff, nonzero exit, workspace mutation, streaming output
   limit, timeout, terminal replay, restart terminalization, and preservation of
   an already durable terminal receipt when a stale running marker survives;
-- a production-image Docker Linux-VM adversarial proof showing UID 6000 command
-  execution, absent authority assets, `network=none`, read-only input/root,
-  effective PID/memory limits, timeout/output rejection, and cleanup of a
-  session-escaped descendant.
+- a minimal-verifier-image Docker Linux-VM adversarial proof showing UID 6000
+  command execution, signer-key denial to that UID, verified Ed25519 receipt,
+  absent authority assets, `network=none`, read-only input/root, effective
+  PID/memory limits, timeout/output rejection, and cleanup of a session-escaped
+  descendant.
 
 The materialized OS proof is
 [`docs/evidence/repo-patch-authority-os-boundary-proof.json`](./evidence/repo-patch-authority-os-boundary-proof.json).
@@ -157,6 +163,17 @@ The five-action closed-beta campaign and the final credential-free ingress,
 wrong-UID, replay, egress-blocking, restart, and cleanup checks are recorded at
 [`docs/evidence/repo-patch-authority-beta-campaign.json`](./evidence/repo-patch-authority-beta-campaign.json).
 
+Role-level release evidence uses the additive
+`mesh.repo_patch_service_image_bundle.v1` contract. Generate it with
+`scripts/generate_repo_patch_service_image_bundle.py` and verify it with
+`scripts/verify_repo_patch_service_image_bundle.py`. It requires exact
+commit-bound records for `mesh_control_plane`, `repo_patch_authority`, and
+`repo_patch_verifier`: immutable image digests, Dockerfile hashes, CycloneDX
+SBOMs, zero-unaccepted-blocker normalized scans, GitHub Actions attestations,
+and the verifier sandbox/signer public-key policy. It does not replace
+`mesh.release_provenance.v1`; it closes the role-level evidence gap introduced
+by splitting privileged services into independent images.
+
 ## NIST Relationship
 
 The design is directionally aligned with NIST's February 2026
@@ -175,7 +192,7 @@ This is local regression evidence plus disposable Docker Linux-VM kernel-UID
 and mount/network regression proofs. It supports the tested claim that the
 bounded repo-patch path fails closed across API, signed protocol, durable
 lifecycle, HSAI evidence binding, replay, concurrency, crash, authority identity,
-and the keyless verifier boundary.
+and the signed-supervisor/keyless-command verifier boundary.
 
 It is not a production deployment, independent security audit, formal proof,
 semantic-correctness proof, production-host isolation proof, protection against
@@ -183,6 +200,7 @@ compromised root, verifier supervisor, authority, host, or container runtime,
 arbitrary repository compatibility, global software-agent identity, accepted
 HSAI evidence, benchmark evidence, or certification. Production use still
 requires managed key custody, per-job PID/mount/cgroup isolation or a microVM,
-immutable verifier image admission and signed receipts, operator provisioning
+immutable verifier image admission, current-head role-level image bundles,
+operator provisioning
 and rotation, managed-database backup/failover evidence, monitoring, and an
 independent review.

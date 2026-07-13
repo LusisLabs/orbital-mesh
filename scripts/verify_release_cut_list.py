@@ -41,6 +41,7 @@ REQUIRED_TESTS = (
     "tests/test_darkharness_policy.py",
     "tests/test_darkharness_export_path.py",
     "tests/test_darkharness_live_verifier.py",
+    "tests/test_repo_patch_service_image_bundle.py",
 )
 
 REQUIRED_SCRIPTS = (
@@ -59,6 +60,8 @@ REQUIRED_SCRIPTS = (
     "scripts/normalize_release_assurance_artifacts.py",
     "scripts/verify_release_artifact_bundle.py",
     "scripts/verify_release_runtime_binding.py",
+    "scripts/generate_repo_patch_service_image_bundle.py",
+    "scripts/verify_repo_patch_service_image_bundle.py",
     "scripts/verify_pilot_clearance.py",
     "scripts/verify_authenticated_ingress.py",
     "scripts/verify_authenticated_ingress_deployment.py",
@@ -1356,6 +1359,28 @@ REQUIRED_MARKERS = {
         "deno>=2.8.1,<3",
         "rm -f /usr/local/bin/uv /usr/local/bin/uvx",
         "apt-get purge -y --auto-remove curl git git-man",
+    ),
+    "docker/repo-patch-authority.Dockerfile": (
+        "python:3.13.14-alpine3.24",
+        "ca-certificates git",
+        "cryptography==${CRYPTOGRAPHY_VERSION}",
+        "repo-patch-verifier-response-v2.schema.json",
+        "services.actuators.repo_patch_authority_service",
+    ),
+    "docker/repo-patch-verifier.Dockerfile": (
+        "verifier-python-dependencies",
+        "cryptography==${CRYPTOGRAPHY_VERSION}",
+        "repo-patch-verifier-response-v2.schema.json",
+        "services.actuators.repo_patch_verifier_service",
+    ),
+    "shared/mesh_runtime/repo_patch_service_image_bundle.py": (
+        "mesh.repo_patch_service_image_bundle.v1",
+        "mesh_control_plane",
+        "repo_patch_authority",
+        "repo_patch_verifier",
+        "mesh-repo-patch-verifier-receipt-ed25519-v2",
+        "unaccepted_blocking_finding_count",
+        "provider\") == \"github-actions",
     ),
     "docs/darkharness-operator-runbook.md": (
         "/api/runs/{run_id}/darkharness-packet",

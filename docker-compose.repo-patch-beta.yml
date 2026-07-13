@@ -120,14 +120,18 @@ services:
       start_period: 10s
 
   repo_patch_authority:
-    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
+    image: "${MESH_REPO_PATCH_AUTHORITY_IMAGE:-orbital-mesh-repo-patch-authority:${MESH_BUILD_VERSION:-dev}}"
+    build:
+      context: .
+      dockerfile: docker/repo-patch-authority.Dockerfile
+      args:
+        REPO_PATCH_PYTHON_BASE: "${MESH_REPO_PATCH_PYTHON_BASE:-python:3.13.14-alpine3.24}"
     init: true
     depends_on:
       repo_patch_verifier:
         condition: service_healthy
     user: "${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID}:${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"
     network_mode: none
-    command: ["python3", "-m", "services.actuators.repo_patch_authority_service"]
     environment:
       HOME: /var/lib/mesh-authority
       MESH_STATE_BACKEND: file
@@ -148,6 +152,8 @@ services:
       MESH_REPO_PATCH_VERIFIER_UID: "0"
       MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST:?set immutable verifier image digest}"
       MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST:?set reviewed verifier sandbox profile digest}"
+      MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_PATH: /run/mesh-verifier-keys/repo_patch_verifier_public_key.pem
+      MESH_REPO_PATCH_VERIFIER_KEY_ID: "${MESH_REPO_PATCH_VERIFIER_KEY_ID:-mesh-repo-patch-verifier}"
       MESH_HSAI_ADMISSION_COMMAND: "/opt/hsai/bin/hsai-mesh-admission --current-policy-id ${MESH_REPO_PATCH_BETA_POLICY_ID:?set beta repo-patch policy id}"
       MESH_HSAI_ADMISSION_AUTHORITY_MODE: "rust_evidence_v2"
       MESH_HSAI_ADMISSION_EXECUTABLE_SHA256: "${MESH_HSAI_LINUX_CLI_SHA256:?set pinned Linux HSAI CLI SHA-256}"
@@ -190,6 +196,10 @@ services:
         source: "${MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_HOST_PATH:?set authority permit-key host path}"
         target: /run/secrets/repo-patch/permit-hmac.key
         read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_HOST_PATH:?set verifier public-key host path}"
+        target: /run/mesh-verifier-keys/repo_patch_verifier_public_key.pem
+        read_only: true
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
@@ -208,12 +218,70 @@ services:
       retries: 6
       start_period: 10s
 
-  repo_patch_verifier:
-    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
-    init: true
+  repo_patch_verifier_key_init:
+    image: "${MESH_REPO_PATCH_VERIFIER_IMAGE:-orbital-mesh-repo-patch-verifier:${MESH_BUILD_VERSION:-dev}}"
+    build:
+      context: .
+      dockerfile: docker/repo-patch-verifier.Dockerfile
+      args:
+        REPO_PATCH_PYTHON_BASE: "${MESH_REPO_PATCH_PYTHON_BASE:-python:3.13.14-alpine3.24}"
     user: "0:0"
     network_mode: none
-    command: ["python3", "-m", "services.actuators.repo_patch_verifier_service"]
+    entrypoint: ["python3", "-c"]
+    command:
+      - |
+        import os, stat
+        from pathlib import Path
+        source = Path('/source/repo_patch_verifier_private_key.pem')
+        target = Path('/staged/repo_patch_verifier_private_key.pem')
+        metadata = source.lstat()
+        if source.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 65536 or stat.S_IMODE(metadata.st_mode) & 0o077:
+            raise SystemExit('verifier private key source rejected')
+        payload = source.read_bytes()
+        if not payload:
+            raise SystemExit('verifier private key source is empty')
+        if target.exists():
+            target_metadata = target.lstat()
+            if target.is_symlink() or not stat.S_ISREG(target_metadata.st_mode) or stat.S_IMODE(target_metadata.st_mode) & 0o077 or target.read_bytes() != payload:
+                raise SystemExit('staged verifier private key differs; remove the key volume before rotation')
+        else:
+            descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(descriptor, 'wb') as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+        os.chmod(target, 0o600)
+    volumes:
+      - type: bind
+        source: "${MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_HOST_PATH:?set mode-0600 verifier private-key host path}"
+        target: /source/repo_patch_verifier_private_key.pem
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_verifier_key
+        target: /staged
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 16
+    mem_limit: 64m
+    cpus: 0.1
+    restart: "no"
+
+  repo_patch_verifier:
+    image: "${MESH_REPO_PATCH_VERIFIER_IMAGE:-orbital-mesh-repo-patch-verifier:${MESH_BUILD_VERSION:-dev}}"
+    build:
+      context: .
+      dockerfile: docker/repo-patch-verifier.Dockerfile
+      args:
+        REPO_PATCH_PYTHON_BASE: "${MESH_REPO_PATCH_PYTHON_BASE:-python:3.13.14-alpine3.24}"
+    init: true
+    depends_on:
+      repo_patch_verifier_key_init:
+        condition: service_completed_successfully
+    user: "0:0"
+    network_mode: none
     environment:
       HOME: /var/empty
       MESH_REPO_PATCH_VERIFIER_SOCKET_PATH: /run/mesh-verifier/repo-patch-verifier.sock
@@ -226,6 +294,8 @@ services:
       MESH_REPO_PATCH_VERIFIER_RUNNER_GID: "${MESH_REPO_PATCH_VERIFIER_RUNNER_GID:-6000}"
       MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST:?set immutable verifier image digest}"
       MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST:?set reviewed verifier sandbox profile digest}"
+      MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_PATH: /run/verifier-key/repo_patch_verifier_private_key.pem
+      MESH_REPO_PATCH_VERIFIER_KEY_ID: "${MESH_REPO_PATCH_VERIFIER_KEY_ID:-mesh-repo-patch-verifier}"
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -239,6 +309,10 @@ services:
       - type: volume
         source: mesh_repo_patch_verifier_ledger
         target: /var/lib/mesh-verifier/ledger
+      - type: volume
+        source: mesh_repo_patch_verifier_key
+        target: /run/verifier-key
+        read_only: true
     read_only: true
     tmpfs:
       - /var/lib/mesh-verifier/scratch:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0700
@@ -296,6 +370,7 @@ volumes:
       device: tmpfs
       o: "uid=${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID},gid=${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID},mode=0700,size=128m"
   mesh_repo_patch_verifier_ledger:
+  mesh_repo_patch_verifier_key:
   mesh_repo_patch_empty_workspace:
   mesh_repo_patch_empty_hermes_home:
   mesh_repo_patch_empty_goose_config:

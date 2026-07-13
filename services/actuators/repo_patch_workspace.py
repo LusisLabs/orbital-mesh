@@ -8,6 +8,7 @@ import shutil
 import stat
 import subprocess
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Sequence
@@ -62,6 +63,7 @@ class PreparedPatchReceipt:
     authorized_diff_digest: str
     changed_paths: tuple[str, ...]
     test_results: tuple[dict[str, Any], ...]
+    verifier_receipt: dict[str, Any] | None = None
 
 
 class PreparedRepoPatch:
@@ -92,6 +94,7 @@ class PreparedRepoPatch:
         self.target_postimage_digest = _sha256_bytes(updated_bytes)
         self.authorized_diff_digest = _sha256_bytes(original_bytes + b"\0" + updated_bytes)
         self.test_results: list[dict[str, Any]] = []
+        self.verifier_receipt: dict[str, Any] | None = None
         self.changed_paths: tuple[str, ...] = ()
         self.verified = False
         self.promoted = False
@@ -101,6 +104,8 @@ class PreparedRepoPatch:
         self,
         commands: Sequence[Sequence[str]],
         results: Sequence[dict[str, Any]],
+        *,
+        verifier_receipt: dict[str, Any] | None = None,
     ) -> PreparedPatchReceipt:
         """Accept bound sidecar results, then independently verify the canonical worktree."""
 
@@ -110,6 +115,14 @@ class PreparedRepoPatch:
             raise ValueError("repo patch workspace was already verified")
         if len(commands) != len(results):
             raise ValueError("repo patch verifier result count mismatch")
+        if verifier_receipt is not None:
+            if (
+                verifier_receipt.get("schema_version") != "mesh.repo_patch_verifier_response.v2"
+                or verifier_receipt.get("state_slice") != "mesh.repo_patch_verifier_receipt.v2"
+                or verifier_receipt.get("status") != "succeeded"
+                or not isinstance(verifier_receipt.get("authorization_proof"), dict)
+            ):
+                raise ValueError("repo patch verifier receipt binding rejected")
         for command, result in zip(commands, results, strict=True):
             arguments = [str(value) for value in command]
             if not arguments or any(not value for value in arguments):
@@ -143,6 +156,7 @@ class PreparedRepoPatch:
             raise ValueError("repo patch verification did not produce exactly the authorized target change")
         if _file_digest(self.workspace, self.relative_target, "workspace target") != self.target_postimage_digest:
             raise ValueError("repo patch workspace postimage drifted from the authorized bytes")
+        self.verifier_receipt = deepcopy(verifier_receipt)
         self.verified = True
         return self.receipt()
 
@@ -183,6 +197,7 @@ class PreparedRepoPatch:
             authorized_diff_digest=self.authorized_diff_digest,
             changed_paths=self.changed_paths,
             test_results=tuple(self.test_results),
+            verifier_receipt=deepcopy(self.verifier_receipt),
         )
 
     def close(self) -> None:

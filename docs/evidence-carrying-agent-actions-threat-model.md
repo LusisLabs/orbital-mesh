@@ -7,11 +7,12 @@ under its narrow deployment contract: one trusted host, loopback ingress,
 deterministic native review, a disposable non-secret repository, distinct Linux
 UIDs, and a fixed verification command. Repository-controlled verification no
 longer executes in the authority process or asset namespace: the authority hands
-a manifest-bound worktree to a keyless, network-none verifier sidecar, and the
-sidecar drops each command to UID 6000. The highest residual risks are same-UID
+a manifest-bound worktree to a minimal, network-none verifier sidecar, the root
+supervisor signs terminal receipts with a verifier-only Ed25519 key, and the
+sidecar drops each command to keyless UID 6000. The highest residual risks are same-UID
 CLI agents recovering the client signing key if re-enabled, the trusted root
 verifier supervisor and shared per-service PID/mount namespace, missing verifier
-identity in the HSAI-carried receipt, and host/Docker/authority compromise. Those
+identity in the unchanged HSAI v2 receipt, and host/Docker/authority compromise. Those
 boundaries block production claims.
 
 ## Scope and assumptions
@@ -62,7 +63,7 @@ Open questions that change risk ranking:
 - Which managed key or signing service will replace bind-mounted client and
   authority keys?
 - Which production verifier substrate will add per-job PID/mount namespaces,
-  immutable image admission, and independent receipt signing?
+  immutable image admission, and managed signing-key custody?
 - Which authenticated ingress and tenant-isolation model will precede any
   external or multi-tenant deployment?
 
@@ -97,7 +98,9 @@ with the explicit assumptions above instead of pausing for an answer.
 - Isolated verifier: accepts a peer-UID-pinned, digest-bound request through a
   separate Unix socket, copies a bounded regular-file handoff without Git
   metadata, rechecks executable/command/image/profile identities, streams
-  bounded output, and executes as capability-free UID 6000. It has no authority keys, state,
+  bounded output, signs every terminal v2 receipt, and executes as capability-free
+  UID 6000. Its signing key is staged into a Linux-owned volume before startup
+  and is unreadable by the command UID. It has no authority keys, state,
   target, HSAI binary, authority socket, database URL, network, or Docker socket.
   Evidence: `shared/mesh_runtime/repo_patch_verifier.py` and
   `services/actuators/repo_patch_verifier_service.py`.
@@ -223,10 +226,10 @@ flowchart LR
 | Authority socket | Unix socket with configured authority group | Mesh UID → authority UID | Signed frames plus `SO_PEERCRED` | `repo_patch_authority.py`; `RepoPatchAuthorityService._peer_credentials` |
 | HSAI subprocess | stdin/stdout | Mesh or authority → pinned executable | Exact digest and policy identity | `hsai_bridge_adapter.py` / `PinnedRustEvidenceV2HsaiAdmissionAdapter` |
 | Git target | Authority bind mount | Repository bytes → privileged worktree logic | Symlink, hard-link, path, clean-tree, and blob-mode checks | `repo_patch_workspace.py` / `prepare` |
-| Verification command | Exact argv | Repository/worktree → keyless verifier command UID | Separate service, no authority assets/network, streamed output and timeout bounds | `repo_patch_verifier_service.py`; beta Compose environment |
+| Verification command | Exact argv | Repository/worktree → signed verifier supervisor → keyless command UID | Separate minimal image, no authority assets/network, signed terminal receipts, streamed output and timeout bounds | `repo_patch_verifier_service.py`; beta Compose environment |
 | File lifecycle store | Authority state mount | Authority process → durable file | Locked, fail-closed JSON; host storage trusted | `repo_patch_authority_store.py` / `FileRepoPatchAuthorityStore` |
 | PostgreSQL store | Database connection | Authority → database | Parameterized SQL, CAS, row locks, append-only trigger | `PostgresRepoPatchAuthorityStore`; migration 006 |
-| Key files | Read-only bind mounts | Operator provisioning → process identity | Ownership and mode checks; no managed custody | `repo_patch_authority_adapter.py` / `_read_key_file` |
+| Key files | Read-only bind mounts plus Linux-volume staging for the verifier signer | Operator provisioning → process identity | Ownership and mode checks; the verifier host key is exposed only to the one-shot initializer and its staged copy is read-only to the supervisor; no managed custody | `repo_patch_authority_adapter.py` / `_read_key_file`; beta Compose key initializer |
 
 ## Top abuse paths
 
@@ -262,9 +265,9 @@ flowchart LR
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | TM-001 | Local model CLI or plugin | CLI mode re-enabled in Mesh UID namespace | Read client key and call authority directly | Bypass review provenance | Client key, receipts, target | Beta empties CLI commands and uses native review; read-only root and distinct authority UID (`docker-compose.repo-patch-beta.yml`) | Same-UID CLI isolation is not solved generically | Run model CLIs in separate worker containers with no key/socket mounts; use a signing proxy or managed signer | Alert if beta mode is not native or CLI command variables are nonempty | Low in beta; high if re-enabled | High | high |
 | TM-002 | Malicious Git repository | Repository contains a symlinked parent or component-swap attempt | Redirect preflight/promotion outside the repo | Corrupt authority state or arbitrary authority-writable file | Target, lifecycle, keys | Stage-zero blob requirement and descriptor-relative `O_NOFOLLOW` operations (`repo_patch_workspace.py`) | Backup recovery still assumes trusted authority-owned target path against hostile host races | Reuse the descriptor-relative helper for all restoration paths; consider Linux `openat2` with `RESOLVE_BENEATH` | Record path-containment rejection codes and external digest invariants | Low | High | low |
-| TM-003 | Repository-controlled test code | Generalized command policy authorizes a build/test runner | Execute hostile code in the verifier command identity | Verifier DoS or container escape; authority assets remain outside the service | Verifier availability; indirectly target admission | Keyless network-none sidecar, separate UID, read-only input/root, exact command/image/profile digests, output/timeout limits, descendant cleanup, authority recheck (`repo_patch_verifier*`; Docker proof) | Root supervisor and command share the verifier service PID/mount namespace; no per-job OCI/microVM or independent signed receipt | Add one-shot rootless OCI/microVM jobs, immutable image admission, per-job cgroups/seccomp, and independent receipt signature | Audit effective mounts/caps/image; alert on restarts, descendants, limits, and unexpected verifier files | Low in fixed beta; medium if generalized | High | medium |
+| TM-003 | Repository-controlled test code | Generalized command policy authorizes a build/test runner | Execute hostile code in the verifier command identity | Verifier DoS or container escape; authority assets remain outside the service | Verifier availability; indirectly target admission | Minimal network-none sidecar, keyless command UID, Linux-volume-staged signer key inaccessible to UID 6000, read-only input/root, exact command/image/profile digests, signed receipts, output/timeout limits, descendant cleanup, authority recheck (`repo_patch_verifier*`; Docker proof) | Root supervisor and command share the verifier service PID/mount namespace; no per-job OCI/microVM | Add one-shot rootless OCI/microVM jobs, immutable image admission, and per-job cgroups/seccomp | Audit effective mounts/caps/image; alert on restarts, descendants, limits, signer-key access, and unexpected verifier files | Low in fixed beta; medium if generalized | High | medium |
 | TM-004 | Crash or replay | Crash after permit terminal state but before lifecycle terminal state | Convert known mutation into permanent unknown | Incorrect recovery and operator decisions | Lifecycle, target, receipt | Binding-validated terminal permit reconciliation before unknown (`RepoPatchAuthorityService._reconcile_dispatched_terminal_permit`) | No deterministic answer remains possible before permit terminalization | Fence root on unresolved state; require explicit operator reconciliation | Metric for dispatched-without-terminal and reconciliation result | Low | High | low |
-| TM-005 | Executable or image drift | Tool changes while argv remains allowed | Admit evidence not bound to exact verifier identity | Evidence ambiguity | Preflight, HSAI decision | Internal verifier request binds executable path/digest, command digest, image digest, sandbox-profile digest, candidate, and manifests (`repo_patch_verifier.py`) | The existing exact HSAI preflight receipt carries output digests but not the new verifier identities | Version Mesh/HSAI schemas before carrying the additional identities; keep the current HSAI v2 contract unchanged until explicitly authorized | Compare internal digests at both preflights; alert on configured-versus-runtime image drift | Medium outside fixed beta image | Medium | medium |
+| TM-005 | Executable or image drift | Tool changes while argv remains allowed | Admit evidence not bound to exact verifier identity | Evidence ambiguity | Preflight, HSAI decision | Verifier request binds executable path/digest, command digest, image digest, sandbox-profile digest, candidate, and manifests; signed v2 receipt binds those results and is exported in Mesh execution refs (`repo_patch_verifier.py`) | The exact HSAI v2 preflight receipt still carries output digests but not verifier image, sandbox, or signer identity | Add a separately authorized HSAI schema version before carrying those identities; keep HSAI v2 unchanged | Compare internal digests at both preflights; alert on configured-versus-runtime image drift and signer mismatch | Medium outside digest-pinned beta images | Medium | medium |
 | TM-006 | Authenticated local client or hostile verifier command | Allowed UID can connect or command consumes resources | Slow-send frames, fork, sleep, or emit output | Authority or verifier denial of service | Socket and service availability | Frame/timeout bounds, streamed 64 KiB output, process-group and runner-UID cleanup, target cap, Compose CPU/memory/PID limits | Authority and verifier each serve one connection at a time; no per-UID quota or per-job cgroup | Add bounded concurrency, quotas, and one-shot job cgroups | Connection duration, timeout, output-limit, restart, RSS, and descendant counters | Medium | Medium | medium |
 | TM-007 | Misconfiguration with multiple clients | More than one UID/key becomes allowed | Use any accepted key from any accepted UID | Client attribution ambiguity | Client identity and audit | Single beta UID and key, signature plus peer UID checks | UID and key id are not explicitly paired | Configure and enforce key-id → UID/GID mapping | Log peer UID, GID, key id, and mismatch counters | Low under beta | Medium | low |
 | TM-008 | Host root, Docker daemon, or authority process compromise | Trusted infrastructure boundary fails | Read keys, alter mounts/state/target, forge evidence | Full system compromise | All assets | Distinct UIDs, read-only roots, dropped capabilities, no-new-privileges, network-none authority | Same host and Docker daemon remain root of trust | Managed key custody, hardened host, rootless/runtime isolation, independent log anchoring | Host integrity monitoring, Docker event audit, key-use audit | Low by assumption | High | high |

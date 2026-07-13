@@ -36,6 +36,7 @@ VERIFIER_RUNNER_UID = 6000
 VERIFIER_RUNNER_GID = 6000
 CLIENT_KEY_ID = "mesh-os-proof-client"
 AUTHORITY_KEY_ID = "mesh-os-proof-authority"
+VERIFIER_KEY_ID = "mesh-os-proof-verifier"
 HSAI_EXECUTABLE_PATH = Path("/opt/hsai/bin/hsai-mesh-admission")
 POLICY_ID = "mesh_policy://repo-patch/os-boundary-proof"
 VERIFIER_TEST_COMMAND = (
@@ -101,6 +102,7 @@ def _root_mode() -> int:
 
     client_private, client_public = _write_key_pair(keys, "client")
     authority_private, authority_public = _write_key_pair(keys, "authority")
+    verifier_private, verifier_public = _write_key_pair(keys, "verifier")
     permit_key = keys / "permit.key"
     permit_key.write_text("mesh-os-proof-permit-hmac-key", encoding="utf-8")
     client_registry = keys / "clients.json"
@@ -115,10 +117,12 @@ def _root_mode() -> int:
     os.chown(client_private, ORCHESTRATOR_UID, AUTHORITY_GID)
     client_private.chmod(0o600)
     authority_private.chmod(0o600)
+    verifier_private.chmod(0o600)
     permit_key.chmod(0o600)
     client_registry.chmod(0o600)
     client_public.chmod(0o644)
     authority_public.chmod(0o644)
+    verifier_public.chmod(0o644)
     state.chmod(0o700)
     socket_dir.chmod(0o750)
     verifier_socket_dir.chmod(0o750)
@@ -171,6 +175,8 @@ def _root_mode() -> int:
         "MESH_REPO_PATCH_VERIFIER_RUNNER_GID": str(VERIFIER_RUNNER_GID),
         "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": verifier_image_digest,
         "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": verifier_sandbox_digest,
+        "MESH_REPO_PATCH_VERIFIER_PRIVATE_KEY_PATH": str(verifier_private),
+        "MESH_REPO_PATCH_VERIFIER_KEY_ID": VERIFIER_KEY_ID,
     }
     verifier_service = subprocess.Popen(
         [sys.executable, "-m", "services.actuators.repo_patch_verifier_service"],
@@ -198,6 +204,8 @@ def _root_mode() -> int:
         "MESH_REPO_PATCH_VERIFIER_UID": str(VERIFIER_UID),
         "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": verifier_image_digest,
         "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": verifier_sandbox_digest,
+        "MESH_REPO_PATCH_VERIFIER_PUBLIC_KEY_PATH": str(verifier_public),
+        "MESH_REPO_PATCH_VERIFIER_KEY_ID": VERIFIER_KEY_ID,
         "MESH_HSAI_ADMISSION_COMMAND": (
             f"{shlex.quote(str(hsai_executable))} "
             f"--current-policy-id {shlex.quote(hsai_policy_id)}"
@@ -274,6 +282,12 @@ def _root_mode() -> int:
                 "isolated_verifier_command_succeeded": (
                     client_result["preflight_receipt"]["test_results"][0]["returncode"] == 0
                 ),
+                "verifier_receipt_signature_exported": (
+                    client_result["verifier_receipt"]["state_slice"]
+                    == "mesh.repo_patch_verifier_receipt.v2"
+                    and client_result["verifier_receipt"]["authorization_proof"]["key_id"]
+                    == VERIFIER_KEY_ID
+                ),
                 "real_pinned_hsai_evidence_v2_allowed": (
                     client_result["hsai_gate_allowed"] is True
                     and client_result["hsai_authority_eligible"] is True
@@ -337,6 +351,7 @@ def _client_mode() -> int:
         raise RuntimeError(f"real pinned HSAI evidence-v2 admission rejected: {gate.get('reason_codes')}")
     response = client.execute(decision, evaluation, gate, idempotency_key, preflight_receipt)
     receipt = response["receipt"]
+    verifier_receipt = response["execution_result"]["external_refs"]["verifier_receipt"]
     print(
         json.dumps(
             {
@@ -348,6 +363,7 @@ def _client_mode() -> int:
                 "request_digest": receipt["request_digest"],
                 "execution_result_digest": receipt["execution_result_digest"],
                 "preflight_receipt": preflight_receipt,
+                "verifier_receipt": verifier_receipt,
                 "hsai_gate_allowed": gate["allowed"],
                 "hsai_authority_eligible": gate["authority_eligible"],
                 "hsai_adapter_identity": hsai_adapter.adapter_identity,

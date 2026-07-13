@@ -81,6 +81,15 @@ class _UnavailableHsaiAdapter(_EligibleHsaiAdapter):
 
 
 class _SuccessfulVerifier:
+    @property
+    def last_verified_receipt(self) -> dict[str, object]:
+        return {
+            "schema_version": "mesh.repo_patch_verifier_response.v2",
+            "state_slice": "mesh.repo_patch_verifier_receipt.v2",
+            "status": "succeeded",
+            "authorization_proof": {"key_id": "test-verifier"},
+        }
+
     def verify(
         self,
         *,
