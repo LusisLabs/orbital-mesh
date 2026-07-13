@@ -1,9 +1,6 @@
 name: Repo patch service image release
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -23,13 +20,15 @@ env:
   GRYPE_VERSION: "0.112.0"
   GRYPE_DEB_SHA256: 434bae8af635b6308d7a33ea842c6216dc382d4ec49fe3873f927b7805cc69e2
   RELEASE_ROOT: dist/repo-patch-service-release
+  REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED: ${{ vars.REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED }}
+  REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY: ${{ vars.REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY }}
   REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST: ${{ vars.REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST }}
   REPO_PATCH_VERIFIER_KEY_ID: ${{ vars.REPO_PATCH_VERIFIER_KEY_ID }}
   REPO_PATCH_VERIFIER_PUBLIC_KEY_PEM: ${{ vars.REPO_PATCH_VERIFIER_PUBLIC_KEY_PEM }}
 
 jobs:
   build-scan-publish:
-    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -45,6 +44,13 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test -z "$(git status --porcelain)"
+
+      - name: Verify release platform preconditions before build
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED" = "true"
+          test "$REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY" = "true"
 
       - name: Install locked workspace
         run: pnpm install --frozen-lockfile
@@ -240,17 +246,23 @@ jobs:
             --mesh-control-plane-image-tag "${{ steps.publish.outputs.mesh_control_plane_ref }}" \
             --mesh-control-plane-image-digest "${{ steps.publish.outputs.mesh_control_plane_digest }}" \
             --mesh-control-plane-sbom "${RELEASE_ROOT}/published/mesh_control_plane/normalized/sbom.cdx.json" \
+            --mesh-control-plane-raw-vulnerability-scan "${RELEASE_ROOT}/published/mesh_control_plane/raw/raw-vulnerability-scan.grype.json" \
             --mesh-control-plane-vulnerability-scan "${RELEASE_ROOT}/published/mesh_control_plane/normalized/vulnerability-scan.json" \
+            --mesh-control-plane-vulnerability-evidence "${RELEASE_ROOT}/published/mesh_control_plane/raw/release-vulnerability-evidence.json" \
             --mesh-control-plane-ci-attestation "${RELEASE_ROOT}/published/mesh_control_plane/ci-attestation.json" \
             --repo-patch-authority-image-tag "${{ steps.publish.outputs.repo_patch_authority_ref }}" \
             --repo-patch-authority-image-digest "${{ steps.publish.outputs.repo_patch_authority_digest }}" \
             --repo-patch-authority-sbom "${RELEASE_ROOT}/published/repo_patch_authority/normalized/sbom.cdx.json" \
+            --repo-patch-authority-raw-vulnerability-scan "${RELEASE_ROOT}/published/repo_patch_authority/raw/raw-vulnerability-scan.grype.json" \
             --repo-patch-authority-vulnerability-scan "${RELEASE_ROOT}/published/repo_patch_authority/normalized/vulnerability-scan.json" \
+            --repo-patch-authority-vulnerability-evidence "${RELEASE_ROOT}/published/repo_patch_authority/raw/release-vulnerability-evidence.json" \
             --repo-patch-authority-ci-attestation "${RELEASE_ROOT}/published/repo_patch_authority/ci-attestation.json" \
             --repo-patch-verifier-image-tag "${{ steps.publish.outputs.repo_patch_verifier_ref }}" \
             --repo-patch-verifier-image-digest "${{ steps.publish.outputs.repo_patch_verifier_digest }}" \
             --repo-patch-verifier-sbom "${RELEASE_ROOT}/published/repo_patch_verifier/normalized/sbom.cdx.json" \
+            --repo-patch-verifier-raw-vulnerability-scan "${RELEASE_ROOT}/published/repo_patch_verifier/raw/raw-vulnerability-scan.grype.json" \
             --repo-patch-verifier-vulnerability-scan "${RELEASE_ROOT}/published/repo_patch_verifier/normalized/vulnerability-scan.json" \
+            --repo-patch-verifier-vulnerability-evidence "${RELEASE_ROOT}/published/repo_patch_verifier/raw/release-vulnerability-evidence.json" \
             --repo-patch-verifier-ci-attestation "${RELEASE_ROOT}/published/repo_patch_verifier/ci-attestation.json" \
             --verifier-sandbox-profile-digest "$REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST" \
             --verifier-key-id "$REPO_PATCH_VERIFIER_KEY_ID" \

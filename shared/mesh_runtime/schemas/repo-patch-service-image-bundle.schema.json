@@ -39,7 +39,9 @@
             "dockerfile",
             "image",
             "sbom",
+            "raw_vulnerability_scan",
             "vulnerability_scan",
+            "vulnerability_evidence",
             "ci_attestation"
           ],
           "properties": {
@@ -71,6 +73,15 @@
                 "sha256": {"type": "string"}
               }
             },
+            "raw_vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
             "vulnerability_scan": {
               "type": "object",
               "additionalProperties": false,
@@ -79,6 +90,15 @@
                 "path": {"type": "string"},
                 "sha256": {"type": "string"},
                 "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "vulnerability_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "ci_attestation": {
@@ -100,7 +120,9 @@
             "dockerfile",
             "image",
             "sbom",
+            "raw_vulnerability_scan",
             "vulnerability_scan",
+            "vulnerability_evidence",
             "ci_attestation"
           ],
           "properties": {
@@ -135,6 +157,15 @@
                 "sha256": {"type": "string"}
               }
             },
+            "raw_vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
             "vulnerability_scan": {
               "type": "object",
               "additionalProperties": false,
@@ -143,6 +174,15 @@
                 "path": {"type": "string"},
                 "sha256": {"type": "string"},
                 "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "vulnerability_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "ci_attestation": {
@@ -164,7 +204,9 @@
             "dockerfile",
             "image",
             "sbom",
+            "raw_vulnerability_scan",
             "vulnerability_scan",
+            "vulnerability_evidence",
             "ci_attestation",
             "verifier_policy"
           ],
@@ -200,6 +242,15 @@
                 "sha256": {"type": "string"}
               }
             },
+            "raw_vulnerability_scan": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
+              }
+            },
             "vulnerability_scan": {
               "type": "object",
               "additionalProperties": false,
@@ -208,6 +259,15 @@
                 "path": {"type": "string"},
                 "sha256": {"type": "string"},
                 "status": {"type": "string", "enum": ["pass"]}
+              }
+            },
+            "vulnerability_evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "ci_attestation": {

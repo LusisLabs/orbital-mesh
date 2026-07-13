@@ -16,6 +16,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from .schema_validation import SchemaValidationError, validate_payload
+from .release_vulnerability_evidence import (
+    SCHEMA_VERSION as RELEASE_VULNERABILITY_EVIDENCE_VERSION,
+    classify_supported_grype_match,
+    file_sha256,
+    grype_match_sha256,
+    valid_verified_vex_summary,
+    validate_release_vulnerability_evidence,
+)
 
 
 REPO_PATCH_SERVICE_IMAGE_BUNDLE_VERSION = "mesh.repo_patch_service_image_bundle.v1"
@@ -38,7 +46,9 @@ ROLE_INPUT_FIELDS = frozenset(
         "image_tag",
         "image_digest",
         "sbom_path",
+        "raw_vulnerability_scan_path",
         "vulnerability_scan_path",
+        "vulnerability_evidence_path",
         "ci_attestation_path",
     }
 )
@@ -96,10 +106,14 @@ def build_repo_patch_service_image_bundle(
         dockerfile_path = ROLE_DOCKERFILES[role]
         dockerfile = _resolve_recorded_file(root, dockerfile_path)
         sbom_path = _require_portable_path(str(role_input["sbom_path"]))
+        raw_scan_path = _require_portable_path(str(role_input["raw_vulnerability_scan_path"]))
         scan_path = _require_portable_path(str(role_input["vulnerability_scan_path"]))
+        evidence_path = _require_portable_path(str(role_input["vulnerability_evidence_path"]))
         ci_path = _require_portable_path(str(role_input["ci_attestation_path"]))
         sbom = _resolve_recorded_file(root, sbom_path)
+        raw_scan = _resolve_recorded_file(root, raw_scan_path)
         scan = _resolve_recorded_file(root, scan_path)
+        evidence = _resolve_recorded_file(root, evidence_path)
         ci_attestation = _resolve_recorded_file(root, ci_path)
 
         record: dict[str, Any] = {
@@ -107,10 +121,18 @@ def build_repo_patch_service_image_bundle(
             "dockerfile": {"path": dockerfile_path, "sha256": _file_sha256(dockerfile)},
             "image": {"tag": image_tag, "digest": image_digest},
             "sbom": {"path": sbom_path, "sha256": _file_sha256(sbom)},
+            "raw_vulnerability_scan": {
+                "path": raw_scan_path,
+                "sha256": _file_sha256(raw_scan),
+            },
             "vulnerability_scan": {
                 "path": scan_path,
                 "sha256": _file_sha256(scan),
                 "status": "pass",
+            },
+            "vulnerability_evidence": {
+                "path": evidence_path,
+                "sha256": _file_sha256(evidence),
             },
             "ci_attestation": {"path": ci_path, "sha256": _file_sha256(ci_attestation)},
         }
@@ -247,12 +269,30 @@ def verify_repo_patch_service_image_bundle(
             sbom_path = _verify_recorded_file(checks, errors, f"{prefix}.sbom", root, sbom_record)
             scan_value = record.get("vulnerability_scan")
             scan_record = scan_value if isinstance(scan_value, dict) else {}
+            raw_scan_value = record.get("raw_vulnerability_scan")
+            raw_scan_record = raw_scan_value if isinstance(raw_scan_value, dict) else {}
+            raw_scan_path = _verify_recorded_file(
+                checks,
+                errors,
+                f"{prefix}.raw_vulnerability_scan",
+                root,
+                raw_scan_record,
+            )
             scan_path = _verify_recorded_file(
                 checks,
                 errors,
                 f"{prefix}.vulnerability_scan",
                 root,
                 scan_record,
+            )
+            evidence_value = record.get("vulnerability_evidence")
+            evidence_record = evidence_value if isinstance(evidence_value, dict) else {}
+            evidence_path = _verify_recorded_file(
+                checks,
+                errors,
+                f"{prefix}.vulnerability_evidence",
+                root,
+                evidence_record,
             )
             ci_value = record.get("ci_attestation")
             ci_record = ci_value if isinstance(ci_value, dict) else {}
@@ -276,6 +316,18 @@ def verify_repo_patch_service_image_bundle(
                 scan_path,
                 lambda path: _scan_bound(path, image_digest),
             )
+            if raw_scan_path is None or scan_path is None or evidence_path is None:
+                checks[f"{prefix}.vulnerability_evidence.binding"] = False
+            else:
+                check(
+                    f"{prefix}.vulnerability_evidence.binding",
+                    lambda: _vulnerability_evidence_bound(
+                        raw_scan_path,
+                        scan_path,
+                        evidence_path,
+                        image_digest,
+                    ),
+                )
             checks[f"{prefix}.vulnerability_scan.status"] = scan_record.get("status") == "pass"
             check_path_binding(
                 f"{prefix}.ci_attestation.binding",
@@ -413,14 +465,131 @@ def _sbom_bound(path: Path, image_digest: str) -> bool:
 
 def _scan_bound(path: Path, image_digest: str) -> bool:
     payload = _load_json_object(path)
+    findings = payload.get("findings")
+    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+        return False
+    blocking = [item for item in findings if _severity_rank(str(item.get("severity") or "")) >= 3]
+    accepted = [item for item in blocking if _valid_accepted_exception(item)]
+    verified = [
+        item
+        for item in blocking
+        if valid_verified_vex_summary(
+            item.get("verified_vex"),
+            finding=item,
+            image_digest=image_digest,
+        )
+    ]
+    if any(_valid_accepted_exception(item) and item in verified for item in blocking):
+        return False
+    unaccepted = [item for item in blocking if item not in accepted and item not in verified]
     return (
         payload.get("schema_version") == "mesh.normalized_vulnerability_scan.v1"
         and payload.get("image_digest") == image_digest
         and isinstance(payload.get("scanner"), str)
         and bool(str(payload.get("scanner") or "").strip())
-        and isinstance(payload.get("findings"), list)
-        and payload.get("unaccepted_blocking_finding_count") == 0
+        and payload.get("blocking_finding_count") == len(blocking)
+        and payload.get("accepted_exception_count") == len(accepted)
+        and payload.get("verified_vex_count") == len(verified)
+        and payload.get("unaccepted_blocking_finding_count") == len(unaccepted) == 0
     )
+
+
+def _vulnerability_evidence_bound(
+    raw_scan_path: Path,
+    normalized_scan_path: Path,
+    evidence_path: Path,
+    image_digest: str,
+) -> bool:
+    raw_scan = _load_json_object(raw_scan_path)
+    normalized_scan = _load_json_object(normalized_scan_path)
+    evidence = _load_json_object(evidence_path)
+    raw_scan_sha256 = file_sha256(raw_scan_path)
+    records = validate_release_vulnerability_evidence(
+        evidence,
+        image_digest=image_digest,
+        raw_scan_sha256=raw_scan_sha256,
+    )
+    matches = raw_scan.get("matches")
+    if not isinstance(matches, list):
+        return False
+    supported_matches = {
+        grype_match_sha256(match): (match, classify_supported_grype_match(match))
+        for match in matches
+        if isinstance(match, dict) and classify_supported_grype_match(match)
+    }
+    for record in records:
+        match_value = supported_matches.get(str(record.get("raw_match_sha256") or ""))
+        if match_value is None:
+            return False
+        match, profile = match_value
+        vulnerability = match.get("vulnerability")
+        artifact = match.get("artifact")
+        if not isinstance(vulnerability, dict) or not isinstance(artifact, dict):
+            return False
+        if (
+            profile != record.get("profile")
+            or vulnerability.get("id") != record.get("vulnerability_id")
+            or artifact.get("name") != record.get("package")
+            or artifact.get("version") != record.get("version")
+        ):
+            return False
+
+    findings = normalized_scan.get("findings")
+    if not isinstance(findings, list):
+        return False
+    verified_fingerprints = {
+        str(item.get("raw_match_sha256") or "")
+        for item in findings
+        if isinstance(item, dict)
+        and valid_verified_vex_summary(
+            item.get("verified_vex"),
+            finding=item,
+            image_digest=image_digest,
+        )
+    }
+    record_fingerprints = {str(record.get("raw_match_sha256") or "") for record in records}
+    summary = normalized_scan.get("vulnerability_evidence")
+    return (
+        verified_fingerprints == record_fingerprints
+        and isinstance(summary, dict)
+        and summary.get("schema_version") == RELEASE_VULNERABILITY_EVIDENCE_VERSION
+        and summary.get("image_digest") == image_digest
+        and summary.get("raw_scan_sha256") == raw_scan_sha256
+        and summary.get("record_count") == len(records)
+    )
+
+
+def _valid_accepted_exception(finding: Mapping[str, Any]) -> bool:
+    exception = finding.get("accepted_exception")
+    if not isinstance(exception, dict):
+        return False
+    for key in ("owner", "decision", "reason"):
+        if not isinstance(exception.get(key), str) or not str(exception[key]).strip():
+            return False
+    controls = exception.get("compensating_controls")
+    if not isinstance(controls, list) or not controls or not all(
+        isinstance(control, str) and control.strip() for control in controls
+    ):
+        return False
+    try:
+        expires_at = time.strptime(str(exception.get("expires_at") or ""), "%Y-%m-%d")
+    except ValueError:
+        return False
+    today = time.strptime(time.strftime("%Y-%m-%d", time.gmtime()), "%Y-%m-%d")
+    return expires_at >= today
+
+
+def _severity_rank(severity: str) -> int:
+    normalized = severity.strip().lower()
+    if normalized in {"critical", "crit"}:
+        return 4
+    if normalized == "high":
+        return 3
+    if normalized == "medium":
+        return 2
+    if normalized == "low":
+        return 1
+    return 0
 
 
 def _ci_attestation_bound(

@@ -11,9 +11,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared.mesh_runtime.release_vulnerability_evidence import (  # noqa: E402
+    valid_verified_vex_summary,
+)
 
 DEFAULT_IMAGE_TAG = "orbital-mesh-stack:dev"
 REHEARSAL_SCANNER = "release-assurance-rehearsal"
@@ -666,12 +670,28 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
     blocking_findings = [
         finding
         for finding in findings
-        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high") and not _valid_accepted_exception(finding)
+        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
+        and not _valid_accepted_exception(finding)
+        and not valid_verified_vex_summary(
+            finding.get("verified_vex"),
+            finding=finding,
+            image_digest=image_digest,
+        )
     ]
     accepted_blocking_findings = [
         finding
         for finding in findings
         if _severity_rank(_finding_severity(finding)) >= _severity_rank("high") and _valid_accepted_exception(finding)
+    ]
+    verified_vex_findings = [
+        finding
+        for finding in findings
+        if _severity_rank(_finding_severity(finding)) >= _severity_rank("high")
+        and valid_verified_vex_summary(
+            finding.get("verified_vex"),
+            finding=finding,
+            image_digest=image_digest,
+        )
     ]
     valid = bool(record.get("exists") and scanner and not blocking_findings and not rehearsal and image_digest_matches)
     record.update(
@@ -684,6 +704,7 @@ def _vulnerability_scan_record(raw_path: str, image_digest: str) -> dict[str, An
             "finding_count": len(findings),
             "blocking_finding_count": len(blocking_findings),
             "accepted_exception_count": len(accepted_blocking_findings),
+            "verified_vex_count": len(verified_vex_findings),
             "missing": []
             if valid
             else _missing_vulnerability_scan_fields(

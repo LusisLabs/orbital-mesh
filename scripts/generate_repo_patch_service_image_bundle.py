@@ -53,10 +53,22 @@ def main() -> int:
             help="Portable CycloneDX SBOM path under --artifact-root.",
         )
         parser.add_argument(
+            f"--{flag}-raw-vulnerability-scan",
+            dest=f"{destination}_raw_vulnerability_scan",
+            required=True,
+            help="Portable raw Grype vulnerability-scan path under --artifact-root.",
+        )
+        parser.add_argument(
             f"--{flag}-vulnerability-scan",
             dest=f"{destination}_vulnerability_scan",
             required=True,
             help="Portable normalized vulnerability-scan path under --artifact-root.",
+        )
+        parser.add_argument(
+            f"--{flag}-vulnerability-evidence",
+            dest=f"{destination}_vulnerability_evidence",
+            required=True,
+            help="Portable mesh.release_vulnerability_evidence.v1 path under --artifact-root.",
         )
         parser.add_argument(
             f"--{flag}-ci-attestation",
@@ -82,7 +94,9 @@ def main() -> int:
             "image_tag": getattr(args, f"{role}_image_tag"),
             "image_digest": getattr(args, f"{role}_image_digest"),
             "sbom_path": getattr(args, f"{role}_sbom"),
+            "raw_vulnerability_scan_path": getattr(args, f"{role}_raw_vulnerability_scan"),
             "vulnerability_scan_path": getattr(args, f"{role}_vulnerability_scan"),
+            "vulnerability_evidence_path": getattr(args, f"{role}_vulnerability_evidence"),
             "ci_attestation_path": getattr(args, f"{role}_ci_attestation"),
         }
         for role in ROLE_ORDER

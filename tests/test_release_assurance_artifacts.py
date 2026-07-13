@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from shared.mesh_runtime import release_vulnerability_evidence as vulnerability_evidence
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 NORMALIZER = "scripts/normalize_release_assurance_artifacts.py"
@@ -16,6 +18,22 @@ IMAGE_ASSURANCE = "scripts/generate_release_image_assurance.py"
 
 
 class ReleaseAssuranceArtifactTests(unittest.TestCase):
+    def test_release_cli_help_does_not_depend_on_repo_pythonpath(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            environment = os.environ.copy()
+            environment.pop("PYTHONPATH", None)
+            for script in (IMAGE_ASSURANCE, NORMALIZER, PROVENANCE):
+                with self.subTest(script=script):
+                    result = subprocess.run(
+                        [sys.executable, str(REPO_ROOT / script), "--help"],
+                        cwd=tmp,
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
     def test_rehearsal_input_generator_feeds_normalizer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -195,9 +213,11 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             self.assertTrue((raw_dir / "binary-identity-corrections.json").exists())
             self.assertTrue((raw_dir / "raw-sbom.cdx.json").exists())
             self.assertTrue((raw_dir / "raw-vulnerability-scan.grype.json").exists())
+            self.assertTrue((raw_dir / "release-vulnerability-evidence.json").exists())
             normalized_scan = json.loads((output_dir / "vulnerability-scan.json").read_text(encoding="utf-8"))
             self.assertEqual(normalized_scan["scanner"], "grype")
             self.assertEqual(normalized_scan["image_digest"], image_digest)
+            self.assertEqual(normalized_scan["verified_vex_count"], 0)
 
             provenance = subprocess.run(
                 [
@@ -421,6 +441,195 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("expired on 2000-01-01", result.stderr + result.stdout)
 
+    def test_normalizer_accepts_only_digest_bound_exact_verified_vex(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sbom = tmp_path / "raw-sbom.json"
+            scan = tmp_path / "raw-scan.json"
+            evidence = tmp_path / "release-vulnerability-evidence.json"
+            output_dir = tmp_path / "dist"
+            image_digest = f"sha256:{'e' * 64}"
+            matches = [_python_grype_match(), _perl_grype_match()]
+            sbom.write_text('{"bomFormat":"CycloneDX","components":[]}\n', encoding="utf-8")
+            scan.write_text(json.dumps({"matches": matches}, sort_keys=True) + "\n", encoding="utf-8")
+            scan_sha256 = vulnerability_evidence.file_sha256(scan)
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "schema_version": vulnerability_evidence.SCHEMA_VERSION,
+                        "scanner": "grype",
+                        "image_digest": image_digest,
+                        "raw_scan_sha256": scan_sha256,
+                        "records": [
+                            _python_vex_record(matches[0], image_digest),
+                            _perl_vex_record(matches[1], image_digest),
+                        ],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    NORMALIZER,
+                    "--sbom-input",
+                    str(sbom),
+                    "--scan-input",
+                    str(scan),
+                    "--scanner",
+                    "grype",
+                    "--output-dir",
+                    str(output_dir),
+                    "--image-digest",
+                    image_digest,
+                    "--vulnerability-evidence",
+                    str(evidence),
+                    "--fail-on-blocking",
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["blocking_finding_count"], 2)
+            self.assertEqual(payload["verified_vex_count"], 2)
+            self.assertEqual(payload["accepted_exception_count"], 0)
+            self.assertEqual(payload["unaccepted_blocking_finding_count"], 0)
+            normalized_scan = json.loads((output_dir / "vulnerability-scan.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                {item["verified_vex"]["analysis_state"] for item in normalized_scan["findings"]},
+                {"fixed", "not_affected"},
+            )
+
+            provenance = subprocess.run(
+                [
+                    sys.executable,
+                    PROVENANCE,
+                    "--json",
+                    "--allow-dirty",
+                    "--image-digest",
+                    image_digest,
+                    "--sbom",
+                    str(output_dir / "sbom.cdx.json"),
+                    "--vulnerability-scan",
+                    str(output_dir / "vulnerability-scan.json"),
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(provenance.returncode, 0, provenance.stderr + provenance.stdout)
+            provenance_payload = json.loads(provenance.stdout)
+            self.assertTrue(provenance_payload["vulnerability_scan"]["valid"])
+            self.assertEqual(provenance_payload["vulnerability_scan"]["verified_vex_count"], 2)
+
+    def test_normalizer_rejects_tampered_verified_vex_proof(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sbom = tmp_path / "raw-sbom.json"
+            scan = tmp_path / "raw-scan.json"
+            evidence = tmp_path / "release-vulnerability-evidence.json"
+            image_digest = f"sha256:{'f' * 64}"
+            match = _python_grype_match()
+            sbom.write_text('{"bomFormat":"CycloneDX","components":[]}\n', encoding="utf-8")
+            scan.write_text(json.dumps({"matches": [match]}, sort_keys=True) + "\n", encoding="utf-8")
+            record = _python_vex_record(match, image_digest)
+            record["evidence"]["installed_sha256"] = "0" * 64
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "schema_version": vulnerability_evidence.SCHEMA_VERSION,
+                        "scanner": "grype",
+                        "image_digest": image_digest,
+                        "raw_scan_sha256": vulnerability_evidence.file_sha256(scan),
+                        "records": [record],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    NORMALIZER,
+                    "--sbom-input",
+                    str(sbom),
+                    "--scan-input",
+                    str(scan),
+                    "--output-dir",
+                    str(tmp_path / "dist"),
+                    "--image-digest",
+                    image_digest,
+                    "--vulnerability-evidence",
+                    str(evidence),
+                    "--fail-on-blocking",
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid installed_sha256", result.stderr + result.stdout)
+
+    def test_normalizer_rejects_vex_when_scanner_match_contract_drifts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            sbom = tmp_path / "raw-sbom.json"
+            scan = tmp_path / "raw-scan.json"
+            evidence = tmp_path / "release-vulnerability-evidence.json"
+            image_digest = f"sha256:{'1' * 64}"
+            match = _python_grype_match()
+            match["matchDetails"][0]["fix"]["suggestedVersion"] = "3.14.0"
+            sbom.write_text('{"bomFormat":"CycloneDX","components":[]}\n', encoding="utf-8")
+            scan.write_text(json.dumps({"matches": [match]}, sort_keys=True) + "\n", encoding="utf-8")
+            evidence.write_text(
+                json.dumps(
+                    {
+                        "schema_version": vulnerability_evidence.SCHEMA_VERSION,
+                        "scanner": "grype",
+                        "image_digest": image_digest,
+                        "raw_scan_sha256": vulnerability_evidence.file_sha256(scan),
+                        "records": [_python_vex_record(match, image_digest)],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    NORMALIZER,
+                    "--sbom-input",
+                    str(sbom),
+                    "--scan-input",
+                    str(scan),
+                    "--output-dir",
+                    str(tmp_path / "dist"),
+                    "--image-digest",
+                    image_digest,
+                    "--vulnerability-evidence",
+                    str(evidence),
+                    "--fail-on-blocking",
+                ],
+                cwd=REPO_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("profile mismatch", result.stderr + result.stdout)
+
     def test_normalizer_writes_release_provenance_compatible_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -579,6 +788,124 @@ def _write_fake_syft(path: Path) -> None:
         "    print(json.dumps({'artifacts': [], 'artifactRelationships': []}))\n",
         encoding="utf-8",
     )
+
+
+def _python_grype_match() -> dict[str, object]:
+    version = vulnerability_evidence.PYTHON_VERSION
+    vulnerability_id = vulnerability_evidence.PYTHON_VULNERABILITY_ID
+    return {
+        "vulnerability": {
+            "id": vulnerability_id,
+            "namespace": "nvd:cpe",
+            "severity": "High",
+            "urls": [vulnerability_evidence.PYTHON_BACKPORT_URL],
+        },
+        "artifact": {
+            "name": "python",
+            "version": version,
+            "type": "binary",
+            "purl": f"pkg:generic/python@{version}",
+        },
+        "matchDetails": [
+            {
+                "type": "cpe-match",
+                "matcher": "stock-matcher",
+                "searchedBy": {
+                    "namespace": "nvd:cpe",
+                    "cpes": [f"cpe:2.3:a:python:python:{version}:*:*:*:*:*:*:*"],
+                    "package": {"name": "python", "version": version},
+                },
+                "found": {
+                    "vulnerabilityID": vulnerability_id,
+                    "versionConstraint": "< 3.15.0 (unknown)",
+                },
+                "fix": {"suggestedVersion": "3.15.0"},
+            }
+        ],
+    }
+
+
+def _perl_grype_match() -> dict[str, object]:
+    return {
+        "vulnerability": {
+            "id": vulnerability_evidence.PERL_VULNERABILITY_ID,
+            "namespace": "debian:distro:debian:13",
+            "severity": "High",
+        },
+        "artifact": {
+            "name": vulnerability_evidence.PERL_PACKAGE,
+            "version": vulnerability_evidence.PERL_VERSION,
+            "type": "deb",
+            "purl": (
+                "pkg:deb/debian/perl-base@5.40.1-6?arch=arm64&distro=debian-13&upstream=perl"
+            ),
+            "upstreams": [{"name": "perl"}],
+        },
+        "matchDetails": [
+            {
+                "type": "exact-indirect-match",
+                "matcher": "dpkg-matcher",
+                "searchedBy": {
+                    "distro": {"type": "debian", "version": "13"},
+                    "package": {"name": "perl", "version": vulnerability_evidence.PERL_VERSION},
+                    "namespace": "debian:distro:debian:13",
+                },
+                "found": {
+                    "vulnerabilityID": vulnerability_evidence.PERL_VULNERABILITY_ID,
+                    "versionConstraint": "none (unknown)",
+                },
+            }
+        ],
+    }
+
+
+def _python_vex_record(match: dict[str, object], image_digest: str) -> dict[str, object]:
+    return {
+        "profile": vulnerability_evidence.PYTHON_PROFILE,
+        "vulnerability_id": vulnerability_evidence.PYTHON_VULNERABILITY_ID,
+        "package": "python",
+        "version": vulnerability_evidence.PYTHON_VERSION,
+        "analysis_state": "fixed",
+        "justification": "code_fixed",
+        "image_digest": image_digest,
+        "raw_match_sha256": vulnerability_evidence.grype_match_sha256(match),
+        "evidence": {
+            "runtime_version": vulnerability_evidence.PYTHON_VERSION,
+            "installed_path": vulnerability_evidence.PYTHON_PARSER_PATH,
+            "installed_sha256": vulnerability_evidence.PYTHON_PARSER_SHA256,
+            "source_commit": vulnerability_evidence.PYTHON_BACKPORT_COMMIT,
+            "source_url": vulnerability_evidence.PYTHON_BACKPORT_URL,
+            "regression_status": "pass",
+            "regression_cases": vulnerability_evidence.PYTHON_REGRESSION_CASES,
+            "regression_iterations": vulnerability_evidence.PYTHON_REGRESSION_ITERATIONS,
+            "regression_chunk_size": vulnerability_evidence.PYTHON_REGRESSION_CHUNK_SIZE,
+            "execution_profile": vulnerability_evidence.ISOLATED_EXECUTION_PROFILE,
+        },
+    }
+
+
+def _perl_vex_record(match: dict[str, object], image_digest: str) -> dict[str, object]:
+    return {
+        "profile": vulnerability_evidence.PERL_PROFILE,
+        "vulnerability_id": vulnerability_evidence.PERL_VULNERABILITY_ID,
+        "package": vulnerability_evidence.PERL_PACKAGE,
+        "version": vulnerability_evidence.PERL_VERSION,
+        "analysis_state": "not_affected",
+        "justification": "vulnerable_code_not_present",
+        "image_digest": image_digest,
+        "raw_match_sha256": vulnerability_evidence.grype_match_sha256(match),
+        "evidence": {
+            "distro": "debian-13",
+            "package": vulnerability_evidence.PERL_PACKAGE,
+            "package_version": vulnerability_evidence.PERL_VERSION,
+            "package_status": f"install ok installed\t{vulnerability_evidence.PERL_VERSION}",
+            "absent_packages": ["perl-modules-5.40", "libhttp-tiny-perl"],
+            "http_tiny_paths": [],
+            "http_tiny_import_status": "absent",
+            "perl_base_file_manifest_contains_http_tiny": False,
+            "execution_profile": vulnerability_evidence.ISOLATED_EXECUTION_PROFILE,
+        },
+    }
 
 
 if __name__ == "__main__":

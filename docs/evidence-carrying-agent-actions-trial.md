@@ -169,8 +169,11 @@ Role-level release evidence uses the additive
 `scripts/verify_repo_patch_service_image_bundle.py`. It requires exact
 commit-bound records for `mesh_control_plane`, `repo_patch_authority`, and
 `repo_patch_verifier`: immutable image digests, Dockerfile hashes, CycloneDX
-SBOMs, zero-unaccepted-blocker normalized scans, GitHub Actions attestations,
-and the verifier sandbox/signer public-key policy. It does not replace
+SBOMs, complete raw Grype scans, digest-bound vulnerability-evidence records,
+zero-unaccepted-blocker normalized scans, GitHub Actions attestations, and the
+verifier sandbox/signer public-key policy. The verifier recomputes normalized
+finding counts and rejects altered raw scans, evidence records, scanner-match
+fingerprints, or VEX proof bindings even when the outer bundle is rehashed. It does not replace
 `mesh.release_provenance.v1`; it closes the role-level evidence gap introduced
 by splitting privileged services into independent images.
 
@@ -190,8 +193,9 @@ This trial therefore makes no NIST-compliance claim.
 
 State slice: `mesh.repo_patch_service_image_bundle.v1`.
 
-The exact-commit release workflow builds the control-plane, authority, and
-verifier images separately. It scans all three before registry authentication,
+The manual-dispatch-only exact-commit release workflow first requires explicit
+attestation-entitlement and artifact-storage readiness declarations, then builds
+the control-plane, authority, and verifier images separately. It scans all three before registry authentication,
 requires zero unaccepted high or critical findings, publishes only commit-bound
 GHCR tags, resolves immutable registry digests, rescans the published subjects,
 creates GitHub OIDC provenance attestations, then generates and independently
@@ -199,10 +203,12 @@ verifies the three-role bundle. Verifier sandbox and public-key policy enter
 through repository variables; neither the private receipt-signing key nor an
 HSAI evidence-signing key enters the build or publication job.
 
-This boundary is implemented and statically tested, but current role scans fail
-closed before publication. It is not live registry evidence until one clean
-committed SHA completes the workflow and the generated bundle verifies against
-the externally resolved digests and pinned verifier policy.
+This boundary is implemented and statically tested. Current same-database local
+role scans have zero unaccepted findings under the existing policy plus exact,
+digest-bound verified VEX, but platform preconditions still fail closed before
+publication. It is not live registry evidence until one clean committed SHA
+completes the workflow and the generated bundle verifies against externally
+resolved digests and pinned verifier policy.
 
 ## Claim Ceiling
 

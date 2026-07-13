@@ -49,7 +49,9 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
             directory = self.root / "release-artifacts" / role
             directory.mkdir(parents=True)
             sbom = directory / "sbom.cdx.json"
+            raw_scan = directory / "raw-vulnerability-scan.grype.json"
             scan = directory / "vulnerability-scan.json"
+            vulnerability_evidence = directory / "release-vulnerability-evidence.json"
             ci_attestation = directory / "ci-attestation.json"
             sbom.write_text(
                 json.dumps(
@@ -65,6 +67,21 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            raw_scan.write_text(json.dumps({"matches": []}, sort_keys=True), encoding="utf-8")
+            raw_scan_sha256 = _file_sha256(raw_scan)
+            vulnerability_evidence.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.release_vulnerability_evidence.v1",
+                        "scanner": "grype",
+                        "image_digest": digest,
+                        "raw_scan_sha256": raw_scan_sha256,
+                        "records": [],
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
             scan.write_text(
                 json.dumps(
                     {
@@ -74,7 +91,15 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                         "findings": [],
                         "blocking_finding_count": 0,
                         "accepted_exception_count": 0,
+                        "verified_vex_count": 0,
                         "unaccepted_blocking_finding_count": 0,
+                        "vulnerability_evidence": {
+                            "schema_version": "mesh.release_vulnerability_evidence.v1",
+                            "path": vulnerability_evidence.relative_to(self.root).as_posix(),
+                            "image_digest": digest,
+                            "raw_scan_sha256": raw_scan_sha256,
+                            "record_count": 0,
+                        },
                     },
                     sort_keys=True,
                 ),
@@ -91,12 +116,16 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                 "image_tag": image_tag,
                 "image_digest": digest,
                 "sbom_path": sbom.relative_to(self.root).as_posix(),
+                "raw_vulnerability_scan_path": raw_scan.relative_to(self.root).as_posix(),
                 "vulnerability_scan_path": scan.relative_to(self.root).as_posix(),
+                "vulnerability_evidence_path": vulnerability_evidence.relative_to(self.root).as_posix(),
                 "ci_attestation_path": ci_attestation.relative_to(self.root).as_posix(),
             }
             self.artifact_paths[role] = {
                 "sbom": sbom,
+                "raw_scan": raw_scan,
                 "scan": scan,
+                "vulnerability_evidence": vulnerability_evidence,
                 "ci_attestation": ci_attestation,
             }
 
@@ -196,6 +225,21 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
         self.assertEqual(result["status"], "fail")
         self.assertIn("roles.repo_patch_authority.vulnerability_scan.exists", result["missing"])
         self.assertIn("roles.repo_patch_authority.vulnerability_scan.binding", result["missing"])
+
+    def test_rejects_semantically_tampered_vulnerability_evidence_after_rehash(self) -> None:
+        role = "mesh_control_plane"
+        evidence_path = self.artifact_paths[role]["vulnerability_evidence"]
+        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence["image_digest"] = f"sha256:{'9' * 64}"
+        evidence_path.write_text(json.dumps(evidence, sort_keys=True), encoding="utf-8")
+        tampered = deepcopy(self.bundle)
+        tampered["roles"][role]["vulnerability_evidence"]["sha256"] = _file_sha256(evidence_path)
+        _rehash(tampered)
+
+        result = self._verify(tampered)
+
+        self.assertNotIn(f"roles.{role}.vulnerability_evidence.sha256", result["missing"])
+        self.assertIn(f"roles.{role}.vulnerability_evidence.binding", result["missing"])
 
     def test_rejects_wrong_commit_even_when_bundle_hash_is_current(self) -> None:
         tampered = deepcopy(self.bundle)
@@ -317,8 +361,12 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                     values["image_digest"],
                     f"--{flag}-sbom",
                     values["sbom_path"],
+                    f"--{flag}-raw-vulnerability-scan",
+                    values["raw_vulnerability_scan_path"],
                     f"--{flag}-vulnerability-scan",
                     values["vulnerability_scan_path"],
+                    f"--{flag}-vulnerability-evidence",
+                    values["vulnerability_evidence_path"],
                     f"--{flag}-ci-attestation",
                     values["ci_attestation_path"],
                 ]

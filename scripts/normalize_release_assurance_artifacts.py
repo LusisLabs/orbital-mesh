@@ -3,9 +3,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from shared.mesh_runtime.release_vulnerability_evidence import (  # noqa: E402
+    classify_supported_grype_match,
+    file_sha256,
+    grype_match_sha256,
+    validate_release_vulnerability_evidence,
+    verified_vex_summary,
+)
 
 
 def main() -> int:
@@ -17,6 +30,11 @@ def main() -> int:
     parser.add_argument("--image-digest", default="", help="Release image digest these artifacts describe.")
     parser.add_argument("--require-scan", action="store_true", help="Fail when no vulnerability scan input is provided.")
     parser.add_argument("--fail-on-blocking", action="store_true", help="Fail when high or critical findings are present.")
+    parser.add_argument(
+        "--vulnerability-evidence",
+        default="",
+        help="Optional digest-bound Mesh vulnerability evidence generated from the exact release image and raw Grype scan.",
+    )
     parser.add_argument(
         "--exception-policy",
         default="",
@@ -46,7 +64,13 @@ def main() -> int:
         path = Path(raw_input)
         payload = _load_json(path)
         source_files.append(str(path))
-        findings.extend(_extract_findings(payload, source=str(path)))
+        findings.extend(_extract_findings(payload, source=str(path), source_sha256=file_sha256(path)))
+    vulnerability_evidence = _load_vulnerability_evidence(
+        args.vulnerability_evidence,
+        image_digest=args.image_digest,
+        scan_inputs=[Path(item) for item in args.scan_input],
+    )
+    _apply_verified_vex(findings, vulnerability_evidence)
     _apply_exception_policy(findings, exception_policy)
 
     blocking_findings = [
@@ -55,8 +79,14 @@ def main() -> int:
     accepted_blocking_findings = [
         finding for finding in blocking_findings if isinstance(finding.get("accepted_exception"), dict)
     ]
+    verified_vex_findings = [
+        finding for finding in blocking_findings if isinstance(finding.get("verified_vex"), dict)
+    ]
     unaccepted_blocking_findings = [
-        finding for finding in blocking_findings if not isinstance(finding.get("accepted_exception"), dict)
+        finding
+        for finding in blocking_findings
+        if not isinstance(finding.get("accepted_exception"), dict)
+        and not isinstance(finding.get("verified_vex"), dict)
     ]
 
     normalized_scan = {
@@ -66,9 +96,14 @@ def main() -> int:
         "image_digest": args.image_digest or None,
         "source_files": source_files,
         "exception_policy": _exception_policy_summary(exception_policy),
+        "vulnerability_evidence": _vulnerability_evidence_summary(
+            args.vulnerability_evidence,
+            vulnerability_evidence,
+        ),
         "findings": findings,
         "blocking_finding_count": len(blocking_findings),
         "accepted_exception_count": len(accepted_blocking_findings),
+        "verified_vex_count": len(verified_vex_findings),
         "unaccepted_blocking_finding_count": len(unaccepted_blocking_findings),
     }
     scan_output.write_text(json.dumps(normalized_scan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -89,6 +124,7 @@ def main() -> int:
                 "finding_count": len(findings),
                 "blocking_finding_count": normalized_scan["blocking_finding_count"],
                 "accepted_exception_count": normalized_scan["accepted_exception_count"],
+                "verified_vex_count": normalized_scan["verified_vex_count"],
                 "unaccepted_blocking_finding_count": normalized_scan["unaccepted_blocking_finding_count"],
             },
             indent=2,
@@ -135,9 +171,9 @@ def _attach_sbom_image_digest(payload: dict[str, Any], image_digest: str) -> Non
     properties.append({"name": "mesh:image_digest", "value": image_digest})
 
 
-def _extract_findings(payload: dict[str, Any], *, source: str) -> list[dict[str, Any]]:
+def _extract_findings(payload: dict[str, Any], *, source: str, source_sha256: str) -> list[dict[str, Any]]:
     if isinstance(payload.get("matches"), list):
-        return _extract_grype_findings(payload, source=source)
+        return _extract_grype_findings(payload, source=source, source_sha256=source_sha256)
     if isinstance(payload.get("vulnerabilities"), dict):
         return _extract_npm_audit_findings(payload, source=source)
     if isinstance(payload.get("results"), list):
@@ -147,22 +183,31 @@ def _extract_findings(payload: dict[str, Any], *, source: str) -> list[dict[str,
     return []
 
 
-def _extract_grype_findings(payload: dict[str, Any], *, source: str) -> list[dict[str, Any]]:
+def _extract_grype_findings(
+    payload: dict[str, Any],
+    *,
+    source: str,
+    source_sha256: str,
+) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     for item in payload.get("matches", []):
         if not isinstance(item, dict):
             continue
         vulnerability = item.get("vulnerability") if isinstance(item.get("vulnerability"), dict) else {}
         artifact = item.get("artifact") if isinstance(item.get("artifact"), dict) else {}
-        findings.append(
-            _finding(
-                vulnerability_id=str(vulnerability.get("id") or ""),
-                severity=str(vulnerability.get("severity") or ""),
-                package=str(artifact.get("name") or ""),
-                version=str(artifact.get("version") or ""),
-                source=source,
-            )
+        finding = _finding(
+            vulnerability_id=str(vulnerability.get("id") or ""),
+            severity=str(vulnerability.get("severity") or ""),
+            package=str(artifact.get("name") or ""),
+            version=str(artifact.get("version") or ""),
+            source=source,
         )
+        finding["raw_scan_sha256"] = source_sha256
+        finding["raw_match_sha256"] = grype_match_sha256(item)
+        profile = classify_supported_grype_match(item)
+        if profile:
+            finding["vex_profile"] = profile
+        findings.append(finding)
     return findings
 
 
@@ -267,6 +312,84 @@ def _load_exception_policy(raw_path: str) -> dict[str, Any] | None:
     return payload
 
 
+def _load_vulnerability_evidence(
+    raw_path: str,
+    *,
+    image_digest: str,
+    scan_inputs: list[Path],
+) -> dict[str, Any] | None:
+    if not raw_path:
+        return None
+    if not image_digest:
+        raise SystemExit("--vulnerability-evidence requires --image-digest")
+    path = Path(raw_path)
+    payload = _load_json(path)
+    raw_scan_sha256 = str(payload.get("raw_scan_sha256") or "")
+    scan_digests = {file_sha256(scan_path) for scan_path in scan_inputs}
+    if raw_scan_sha256 not in scan_digests:
+        raise SystemExit("release vulnerability evidence does not bind to a supplied raw scan")
+    try:
+        records = validate_release_vulnerability_evidence(
+            payload,
+            image_digest=image_digest,
+            raw_scan_sha256=raw_scan_sha256,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    resolved = dict(payload)
+    resolved["records"] = records
+    resolved["_path"] = str(path)
+    return resolved
+
+
+def _apply_verified_vex(findings: list[dict[str, Any]], evidence: dict[str, Any] | None) -> None:
+    if not evidence:
+        return
+    records = evidence.get("records")
+    if not isinstance(records, list):
+        return
+    raw_scan_sha256 = str(evidence.get("raw_scan_sha256") or "")
+    unmatched = {str(record["raw_match_sha256"]): record for record in records}
+    for finding in findings:
+        fingerprint = str(finding.get("raw_match_sha256") or "")
+        record = unmatched.get(fingerprint)
+        if record is None:
+            continue
+        if finding.get("raw_scan_sha256") != raw_scan_sha256:
+            raise SystemExit(f"release vulnerability evidence scan binding mismatch for {finding.get('id')}")
+        if finding.get("vex_profile") != record.get("profile"):
+            raise SystemExit(f"release vulnerability evidence profile mismatch for {finding.get('id')}")
+        if (
+            finding.get("id") != record.get("vulnerability_id")
+            or finding.get("package") != record.get("package")
+            or finding.get("version") != record.get("version")
+        ):
+            raise SystemExit(f"release vulnerability evidence finding mismatch for {finding.get('id')}")
+        finding["verified_vex"] = verified_vex_summary(record, raw_scan_sha256=raw_scan_sha256)
+        unmatched.pop(fingerprint)
+    if unmatched:
+        raise SystemExit(
+            "release vulnerability evidence contains records without exact supported scanner matches: "
+            + ", ".join(sorted(unmatched))
+        )
+
+
+def _vulnerability_evidence_summary(
+    raw_path: str,
+    evidence: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not evidence:
+        return None
+    records = evidence.get("records")
+    return {
+        "schema_version": evidence.get("schema_version"),
+        "path": raw_path,
+        "image_digest": evidence.get("image_digest"),
+        "raw_scan_sha256": evidence.get("raw_scan_sha256"),
+        "record_count": len(records) if isinstance(records, list) else 0,
+    }
+
+
 def _resolve_exception_defaults(policy: dict[str, Any], item: dict[str, Any], *, index: int) -> dict[str, Any]:
     resolved = dict(item)
     for key in ("owner", "expires_at", "decision", "reason"):
@@ -310,6 +433,8 @@ def _apply_exception_policy(findings: list[dict[str, Any]], policy: dict[str, An
         return
     for finding in findings:
         if _severity_rank(str(finding.get("severity") or "")) < 3:
+            continue
+        if isinstance(finding.get("verified_vex"), dict):
             continue
         for exception in exceptions:
             if not isinstance(exception, dict):

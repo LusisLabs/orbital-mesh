@@ -9,10 +9,24 @@ RUN python3 -m pip install \
       "cryptography==${CRYPTOGRAPHY_VERSION}" \
     && find /opt/verifier-python -type d -name __pycache__ -prune -exec rm -rf {} +
 
+FROM ${REPO_PATCH_PYTHON_BASE} AS verifier-python-backport
+ARG PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced
+ARG PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae
+
+RUN apk add --no-cache curl \
+    && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL \
+      -o /tmp/python-html-parser.py \
+      "https://raw.githubusercontent.com/python/cpython/${PYTHON_HTML_PARSER_BACKPORT_COMMIT}/Lib/html/parser.py" \
+    && echo "${PYTHON_HTML_PARSER_BACKPORT_SHA256}  /tmp/python-html-parser.py" | sha256sum -c - \
+    && install -m 0644 /tmp/python-html-parser.py /usr/local/lib/python3.13/html/parser.py \
+    && rm -f /tmp/python-html-parser.py \
+    && apk del curl
+
 FROM ${REPO_PATCH_PYTHON_BASE}
 
 WORKDIR /app
 
+COPY --from=verifier-python-backport /usr/local/lib/python3.13/html/parser.py /usr/local/lib/python3.13/html/parser.py
 COPY --from=verifier-python-dependencies /opt/verifier-python /opt/verifier-python
 
 COPY services/__init__.py ./services/__init__.py

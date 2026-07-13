@@ -14,12 +14,28 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    def test_is_main_or_manual_release_only(self) -> None:
+    def test_is_manual_release_only(self) -> None:
         workflow = self.workflow
-        self.assertIn("push:\n    branches:\n      - main", workflow)
         self.assertIn("workflow_dispatch:", workflow)
+        trigger_block = workflow.split("permissions:", 1)[0]
+        self.assertNotIn("\n  push:", trigger_block)
         self.assertNotIn("pull_request:", workflow)
-        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertNotIn("github.ref == 'refs/heads/main'", workflow)
+        self.assertIn("if: github.event_name == 'workflow_dispatch'", workflow)
+
+    def test_release_platform_preconditions_precede_build_and_authentication(self) -> None:
+        workflow = self.workflow
+        preflight = workflow.index("Verify release platform preconditions before build")
+        build = workflow.index("Build and scan all three local role images before publication")
+        authenticate = workflow.index("Authenticate to GHCR only after all scans pass")
+        self.assertLess(preflight, build)
+        self.assertLess(preflight, authenticate)
+        for variable in (
+            "REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED",
+            "REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY",
+        ):
+            self.assertIn(f"vars.{variable}", workflow)
+            self.assertIn(f'test "${variable}" = "true"', workflow)
 
     def test_checks_out_exact_sha_and_requires_clean_tree(self) -> None:
         workflow = self.workflow
@@ -86,7 +102,9 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
             self.assertIn(f"--{role_flag}-image-tag", workflow)
             self.assertIn(f"--{role_flag}-image-digest", workflow)
             self.assertIn(f"--{role_flag}-sbom", workflow)
+            self.assertIn(f"--{role_flag}-raw-vulnerability-scan", workflow)
             self.assertIn(f"--{role_flag}-vulnerability-scan", workflow)
+            self.assertIn(f"--{role_flag}-vulnerability-evidence", workflow)
             self.assertIn(f"--{role_flag}-ci-attestation", workflow)
             self.assertIn(f"--expected-{role_flag}-image-tag", workflow)
             self.assertIn(f"--expected-{role_flag}-image-digest", workflow)
@@ -104,6 +122,8 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("docker compose", lowered)
         self.assertNotIn("deploy", lowered)
         self.assertIn("vars.REPO_PATCH_VERIFIER_PUBLIC_KEY_PEM", workflow)
+        self.assertIn("vars.REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED", workflow)
+        self.assertIn("vars.REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY", workflow)
         self.assertIn("${{ github.token }}", workflow)
 
 

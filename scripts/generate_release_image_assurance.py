@@ -13,10 +13,17 @@ import time
 from pathlib import Path
 from typing import Any
 
-from normalize_syft_binary_identity import (
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from normalize_syft_binary_identity import (  # noqa: E402
     SYNTHETIC_DENO_VERSION,
     BinaryIdentityCorrectionError,
     normalize_syft_binary_identity_file,
+)
+from shared.mesh_runtime.release_vulnerability_evidence import (  # noqa: E402
+    generate_release_vulnerability_evidence,
 )
 
 
@@ -47,6 +54,7 @@ def main() -> int:
     correction_path = raw_output_dir / "binary-identity-corrections.json"
     sbom_path = raw_output_dir / "raw-sbom.cdx.json"
     scan_path = raw_output_dir / "raw-vulnerability-scan.grype.json"
+    vulnerability_evidence_path = raw_output_dir / "release-vulnerability-evidence.json"
 
     _run_to_file(
         [syft_bin, args.image_tag, "-o", "syft-json"],
@@ -79,6 +87,19 @@ def main() -> int:
         output_path=scan_path,
         failure_context="Grype vulnerability scan failed",
     )
+    try:
+        vulnerability_evidence = generate_release_vulnerability_evidence(
+            docker_bin=args.docker_bin,
+            image_tag=args.image_tag,
+            image_digest=args.image_digest,
+            raw_scan_path=scan_path,
+        )
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"release vulnerability evidence generation failed: {exc}") from exc
+    vulnerability_evidence_path.write_text(
+        json.dumps(vulnerability_evidence, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
     normalizer = Path(__file__).resolve().with_name("normalize_release_assurance_artifacts.py")
     normalized = subprocess.run(
@@ -97,6 +118,8 @@ def main() -> int:
             args.image_digest,
             "--require-scan",
             "--fail-on-blocking",
+            "--vulnerability-evidence",
+            str(vulnerability_evidence_path),
             *(["--exception-policy", args.exception_policy] if args.exception_policy else []),
         ],
         check=False,
@@ -127,6 +150,7 @@ def main() -> int:
                     "binary_identity_corrections": str(correction_path),
                     "sbom": str(sbom_path),
                     "vulnerability_scan": str(scan_path),
+                    "vulnerability_evidence": str(vulnerability_evidence_path),
                 },
                 "binary_identity_correction": correction,
                 "normalized_artifacts": {
@@ -136,6 +160,7 @@ def main() -> int:
                 "finding_count": normalized_payload["finding_count"],
                 "blocking_finding_count": normalized_payload["blocking_finding_count"],
                 "accepted_exception_count": normalized_payload.get("accepted_exception_count", 0),
+                "verified_vex_count": normalized_payload.get("verified_vex_count", 0),
                 "unaccepted_blocking_finding_count": normalized_payload.get("unaccepted_blocking_finding_count", 0),
             },
             indent=2,
@@ -290,6 +315,8 @@ def _blocking_findings_summary(scan_path: Path) -> str:
         if severity not in {"high", "critical"}:
             continue
         if isinstance(item.get("accepted_exception"), dict):
+            continue
+        if isinstance(item.get("verified_vex"), dict):
             continue
         blocking.append(
             (

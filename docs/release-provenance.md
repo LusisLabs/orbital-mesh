@@ -177,6 +177,8 @@ The SBOM artifact must be JSON with `bomFormat: "CycloneDX"`. The vulnerability 
 
 `config/release-vulnerability-exceptions.json` is the only in-repo release-image exception policy. It must use `mesh.release_vulnerability_exceptions.v1`; each accepted finding needs an owner, expiry, decision, reason, and compensating control. The normalizer annotates matching findings with `accepted_exception` metadata and still records the total `blocking_finding_count`. Expired, ownerless, or unmatched high/critical findings remain blocking.
 
+`mesh.release_vulnerability_evidence.v1` is a separate evidence path, not an exception policy. `scripts/generate_release_image_assurance.py` may emit a `verified_vex` determination only for a hard-coded reviewed scanner profile after binding the determination to the exact image digest, complete raw Grype file SHA-256, and canonical raw-match SHA-256. The normalizer rejects an unknown vulnerability, package, version, scanner namespace, match type, fixed-version constraint, source-package mapping, image digest, raw scan, or proof value. A finding with absent, altered, or unsupported evidence remains blocking.
+
 Normalize raw CI scanner output before generating the release packet:
 
 ```bash
@@ -217,6 +219,22 @@ raw Syft file remains an artifact; the evidence-derived Syft file is converted
 to CycloneDX and scanned by Grype. This is a scanner-identity correction, not a
 VEX statement or vulnerability exception.
 
+After Grype runs, `shared/mesh_runtime/release_vulnerability_evidence.py` evaluates two
+narrow profiles. For Python `3.13.14` and `CVE-2026-15308`, every role image
+installs the exact CPython 3.13 backport commit
+`7933f4bf7131aa4140750f9404f5de0aa2969ced`; the build checks the reviewed
+`Lib/html/parser.py` SHA-256, and the assurance generator rechecks that installed
+file plus the upstream six-case, 200,000-increment regression in an isolated
+container before recording `analysis_state=fixed`. For Debian 13 `perl-base`
+`5.40.1-6` and `CVE-2026-7017`, the generator requires the exact Grype indirect
+source-package match and proves that `HTTP::Tiny` is not importable, no
+`HTTP/Tiny.pm` exists, the vulnerable module packages are absent, and the
+`perl-base` file manifest does not contain that module before recording
+`analysis_state=not_affected` with
+`justification=vulnerable_code_not_present`. The complete raw scan and
+`release-vulnerability-evidence.json` remain in the raw artifact set. Neither
+profile is a waiver, and any predicate or runtime-proof drift fails closed.
+
 The generator uses Grype as the real release-image scanner, normalizes the
 resulting CycloneDX and Grype artifacts, binds them to `MESH_IMAGE_DIGEST`, and
 fails on unaccepted high or critical findings.
@@ -232,12 +250,18 @@ State slice: `mesh.repo_patch_service_image_bundle.v1`.
 
 `.github/workflows/repo-patch-service-image-release.yml` is the only automated
 publication path for the repo-patch control-plane, authority, and verifier role
-bundle. On `main` push or explicit dispatch it:
+bundle. It is manual-dispatch-only. Before installing dependencies or building
+an image, it requires repository administrators to set both
+`REPO_PATCH_GITHUB_ATTESTATIONS_ENABLED=true` and
+`REPO_PATCH_ACTIONS_ARTIFACT_STORAGE_READY=true`. These declarations are release
+preconditions, not substitutes for checking the repository plan or storage
+state. Once those preconditions pass, the workflow:
 
 1. checks out `github.sha`, requires the exact clean source state, installs the
    frozen pnpm workspace, and runs the heavy root lint gate;
 2. builds and locally scans every role before GHCR authentication, requiring
-   zero unaccepted high or critical findings;
+   zero unaccepted high or critical findings while retaining the exact raw
+   Grype scan and digest-bound vulnerability-evidence file;
 3. requires the verifier sandbox digest, key id, and public key from repository
    variables, without receiving any private signing key;
 4. publishes commit-only tags, resolves registry manifest digests, pulls and
@@ -246,11 +270,15 @@ bundle. On `main` push or explicit dispatch it:
    generates exact-commit Mesh CI attestations, and generates the three-role
    service-image bundle; and
 6. re-resolves every registry digest and verifies the bundle against the exact
-   commit, role references, digests, and external verifier policy.
+   commit, role references, digests, raw and normalized scan chain, and external
+   verifier policy.
 
 The job uploads bounded evidence even after a failure. It does not deploy a
-runtime. A failed prepublication scan is evidence that the release was blocked,
-not a releasable or attested image bundle.
+runtime. A failed platform preflight or prepublication scan is evidence that the
+release was blocked, not a releasable or attested image bundle. Automatic
+`main` publication must remain disabled until one manually dispatched release
+completes with registry attestations, durable artifact upload, and a verified
+three-role bundle.
 
 `scripts/generate_release_provenance.py` requires the `mesh.ci_attestation.v1` image digest to match the release packet image digest. A packet that supplies a local or explicit image digest while reusing a CI attestation for a different image remains incomplete with `ci_attestation` missing.
 

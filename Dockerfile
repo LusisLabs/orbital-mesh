@@ -92,10 +92,18 @@ ARG MESH_BUILD_COMMIT=unknown
 ARG MESH_BUILD_IMAGE_DIGEST=
 ARG HERMES_AGENT_REF=7c1a029553d87c43ecff8a3821336bc95872213b
 ARG UV_VERSION=0.11.6
+ARG PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced
+ARG PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae
 
 RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL \
+    -o /tmp/python-html-parser.py \
+    "https://raw.githubusercontent.com/python/cpython/${PYTHON_HTML_PARSER_BACKPORT_COMMIT}/Lib/html/parser.py" \
+  && echo "${PYTHON_HTML_PARSER_BACKPORT_SHA256}  /tmp/python-html-parser.py" | sha256sum -c - \
+  && install -m 0644 /tmp/python-html-parser.py /usr/local/lib/python3.13/html/parser.py \
+  && rm -f /tmp/python-html-parser.py \
   && python3 -m pip install --no-cache-dir --upgrade pip \
   && rm -rf /var/lib/apt/lists/*
 

@@ -135,7 +135,10 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
     def test_authority_image_retains_only_the_declared_runtime_tool_surface(self) -> None:
         dockerfile = AUTHORITY_DOCKERFILE_PATH.read_text(encoding="utf-8")
 
-        self.assertIn("apk add --no-cache ca-certificates git", dockerfile)
+        self.assertIn("apk add --no-cache ca-certificates curl git", dockerfile)
+        self.assertIn("apk del curl", dockerfile)
+        self.assertIn("PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced", dockerfile)
+        self.assertIn("PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae", dockerfile)
         self.assertIn('python3 -m pip install --no-cache-dir "cryptography==${CRYPTOGRAPHY_VERSION}"', dockerfile)
         self.assertIn("repo-patch-verifier-response-v2.schema.json", dockerfile)
         self.assertIn('ENTRYPOINT ["python3", "-m", "services.actuators.repo_patch_authority_service"]', dockerfile)
@@ -158,6 +161,9 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         self.assertIn('ENTRYPOINT ["python3", "-m", "services.actuators.repo_patch_verifier_service"]', dockerfile)
         self.assertIn('"cryptography==${CRYPTOGRAPHY_VERSION}"', dockerfile)
         self.assertIn("COPY --from=verifier-python-dependencies /opt/verifier-python /opt/verifier-python", dockerfile)
+        self.assertIn("COPY --from=verifier-python-backport", dockerfile)
+        self.assertIn("PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced", dockerfile)
+        self.assertIn("PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae", dockerfile)
         self.assertIn("repo-patch-verifier-response-v2.schema.json", dockerfile)
         for forbidden_install in ("apt-get", "pip install", "curl ", " git "):
             self.assertNotIn(forbidden_install, final_stage.lower())
