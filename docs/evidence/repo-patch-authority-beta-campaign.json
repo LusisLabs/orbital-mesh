@@ -1,0 +1,130 @@
+{
+  "state_slice": "mesh.repo_patch_beta_campaign_evidence.v1",
+  "captured_on": "2026-07-13",
+  "result": "passed",
+  "claim_boundary": "Bounded local closed-beta deployment evidence on one trusted Docker host; not production evidence, external authentication evidence, semantic-correctness proof, or protection from host root and Docker-daemon compromise.",
+  "final_campaign": {
+    "project": "meshbetaaudit5",
+    "image_id": "sha256:e80c05829c40a7ee992688f1d364aeb1e3bcd8760aa9d1ca946e609706bdf121",
+    "proxy_source_sha256": "486ff5eb79cac496d73f1ead5b09b935c1d2e3787b3441941dd4169c27350fe2",
+    "proxy_source_matched_image": true,
+    "compose_and_proxy_tests": {
+      "passed": 18,
+      "failed": 0
+    },
+    "identities": {
+      "mesh": {"uid": 2000, "gid": 2000, "groups": [2000, 3000]},
+      "authority": {"uid": 3000, "gid": 3000, "groups": [3000]},
+      "loopback_ingress": {"uid": 65534, "gid": 65534, "groups": [65534]}
+    },
+    "network_boundary": {
+      "published_host_endpoint": "127.0.0.1:18891",
+      "published_container_endpoint": "repo_patch_beta_ingress:8787",
+      "mesh_published_ports": 0,
+      "mesh_internal_control_network_only": true,
+      "mesh_network_has_gateway": false,
+      "mesh_host_gateway_present": false,
+      "authority_network_mode": "none",
+      "proxy_only_service_spanning_control_and_ingress_networks": true,
+      "mesh_external_tcp_probe": {
+        "destination": "1.1.1.1:443",
+        "before_restart_connected": false,
+        "after_restart_connected": false,
+        "errno": 101,
+        "exception": "OSError"
+      }
+    },
+    "proxy_boundary": {
+      "read_only_root": true,
+      "all_capabilities_dropped": true,
+      "no_new_privileges": true,
+      "mount_count": 0,
+      "run_secrets_present": false,
+      "provider_or_api_credentials_present": false,
+      "public_base_image_gpg_key_present": true,
+      "fixed_upstream": "mesh:8787"
+    },
+    "authority_boundary": {
+      "mesh_can_see_target": false,
+      "mesh_can_see_authority_private_key": false,
+      "mesh_can_see_permit_key": false,
+      "socket_directory_mode": "0750",
+      "socket_directory_owner": "3000:3000",
+      "socket_mode": "0660",
+      "socket_owner": "3000:3000",
+      "authority_state_mode": "0700",
+      "authority_state_owner": "3000:3000"
+    },
+    "host_ingress": {
+      "health_status": "ok",
+      "health_environment": "production",
+      "health_version": "dev",
+      "goals_read_succeeded": true
+    },
+    "signed_mutation": {
+      "decision_id": "decision-beta-final-1",
+      "idempotency_key": "decision-beta-final-1:investigate_and_patch",
+      "preflight_base_commit": "fa30c083060b270c6857c8ccece233ef7ed8b206",
+      "preflight_test_return_codes": [0],
+      "hsai_allowed": true,
+      "hsai_authority_eligible": true,
+      "initial_authority_status": "completed",
+      "initial_execution_status": "succeeded",
+      "replay_authority_status": "completed",
+      "replay_execution_status": "succeeded",
+      "exact_terminal_execution_result_equality": true,
+      "observed_peer_uid": 2000,
+      "observed_peer_gid": 2000,
+      "authenticated_client": "mesh-orchestrator-client",
+      "resulting_target_content": "VALUE = \"beta-final-1\"",
+      "only_expected_worktree_change": "M app/search.py"
+    },
+    "wrong_uid_negative": {
+      "process_uid": 1000,
+      "process_gid": 1000,
+      "process_groups": [1000, 3000],
+      "signed_response_key_id": "mesh-repo-patch-authority",
+      "status": "rejected",
+      "code": "peer_identity_rejected",
+      "retryable": false
+    },
+    "restart_durability": {
+      "all_services_healthy_after_restart": true,
+      "loopback_health_available_after_restart": true,
+      "exact_before_after_hashes": {
+        "authority_store": "010bed87cb223526a43e3136f066e35bb447f0394a3492eb3339d239962209c5",
+        "authority_ledger": "a23566d6f9d92d621005287f91bca0b61dee0e6d911cb33b878df00296323bd0",
+        "mesh_integrations": "31dd978b3a259ec6ead99e7f67fa9d10e8cb7650523b060c59a234e16d0d59c7",
+        "mesh_goals": "623dcd90e4dff75da724d15c4465cce54beb6c4558d465965a8fb62ee35f98b9"
+      }
+    }
+  },
+  "five_cycle_campaign": {
+    "project": "meshbetaaudit4",
+    "image_id": "sha256:091dc197a45decc54c08a8e84566fa9aa9c57f60a891433c3d4699be12b87adc",
+    "authorized_mutations_succeeded": 5,
+    "authorized_mutations_attempted": 5,
+    "exact_terminal_replays_succeeded": 5,
+    "exact_terminal_replays_attempted": 5,
+    "all_hsai_gates_allowed_and_authority_eligible": true,
+    "all_observed_peer_uid_gid": "2000:2000",
+    "clean_baseline_committed_between_cycles": true,
+    "restart_after_cycle": 3,
+    "cycle_three_restart_exact_before_after_hashes": {
+      "authority_store": "8ab072faa9df2c4791dd4a92184590032292c207f7acd524543846e263a414f9",
+      "authority_ledger": "b4649884cb5d7d51c4216e5b42cb4a581f78954061843c00edbc8455b26def5b",
+      "mesh_integrations": "31dd978b3a259ec6ead99e7f67fa9d10e8cb7650523b060c59a234e16d0d59c7",
+      "mesh_goals": "7fa00b8e1f5d0aaeebc35113e58924a98a5573799039d4fbb6a1e4d16fc83187"
+    },
+    "final_target_content": "VALUE = \"beta-cycle-5\"",
+    "final_disposable_commit": "274a90cd807583e003ed0ec6714a26c221311b40"
+  },
+  "cleanup": {
+    "audit_containers_remaining": 0,
+    "audit_volumes_remaining": 0,
+    "audit_networks_remaining": 0,
+    "audit_image_tags_remaining": 0,
+    "final_audit_image_object_removed": true,
+    "temporary_targets_states_keys_hsai_fixtures_caches_and_compose_material_remaining": 0
+  }
+}

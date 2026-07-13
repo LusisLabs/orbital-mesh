@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -10,6 +11,7 @@ from .contracts import Decision, EvaluationResult
 from .schema_validation import SchemaValidationError, validate_payload
 
 HSAI_ADMISSION_REQUEST_VERSION = "mesh.hsai_admission_request.v1"
+HSAI_ADMISSION_REQUEST_V2_VERSION = "mesh.hsai_admission_request.v2"
 HSAI_ADMISSION_DECISION_VERSION = "mesh.hsai_admission_decision.v1"
 COMBINED_PROOF_PACKET_VERSION = "mesh.combined_proof_packet.v1"
 COMBINED_PROOF_PACKET_VERIFICATION_VERSION = "mesh.combined_proof_packet_verification.v1"
@@ -31,6 +33,7 @@ DEFAULT_REQUESTED_CLAIMS = (
     "tests_passed",
     "no_protected_paths_modified",
 )
+DEFAULT_PROTECTED_REPO_PATHS = (".git", ".github", "AGENTS.md")
 HSAI_FORMAL_BACKEND_REQUIRED_NONCLAIMS = (
     "not attestation evidence",
     "not proof",
@@ -145,6 +148,160 @@ def build_hsai_admission_request(
     return request
 
 
+def build_hsai_admission_request_v2(
+    decision: Decision,
+    evaluation: EvaluationResult,
+    preflight_receipt: dict[str, Any],
+    *,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    parameters = _dict(decision.execution_plan.get("parameters"))
+    candidate_payload = _normalized_repo_patch_candidate(
+        decision,
+        evaluation,
+        preflight_receipt,
+    )
+    candidate_digest = sha256_digest(candidate_payload)
+    stage_results = _dict(evaluation.stage_results)
+    pre_execution_evidence = {
+        "schema_version": "mesh.repo_patch_pre_execution_evidence.v1",
+        "decision_id": decision.decision_id,
+        "evaluation_id": evaluation.evaluation_id,
+        "evaluation_passed": evaluation.passed,
+        "final_recommendation": evaluation.final_recommendation,
+        "blocking_reasons": list(evaluation.blocking_reasons),
+        "stage_results": stage_results,
+        "stage_results_digest": sha256_digest(stage_results),
+        "preflight_receipt": preflight_receipt,
+    }
+    evidence_digest = sha256_digest(pre_execution_evidence)
+    actor_ref = candidate_payload["execution_plan"]["parameters"]["actor_ref"]
+    explicit_nonclaims = (
+        _string_list(parameters.get("explicit_nonclaims"))
+        if "explicit_nonclaims" in parameters
+        else list(DEFAULT_EXPLICIT_NONCLAIMS)
+    )
+    requested_claims = (
+        _string_list(parameters.get("requested_claims"))
+        if "requested_claims" in parameters
+        else list(DEFAULT_REQUESTED_CLAIMS)
+    )
+    action_proposal = {
+        "decision_id": candidate_payload["decision_id"],
+        "execution_plan": candidate_payload["execution_plan"],
+        "risk": candidate_payload["risk"],
+    }
+    request = {
+        "schema_version": HSAI_ADMISSION_REQUEST_V2_VERSION,
+        "mesh_run_id": candidate_payload["execution_plan"]["parameters"]["mesh_run_id"],
+        "mesh_action_id": decision.decision_id,
+        "action_kind": "repo_patch",
+        "actor_ref": actor_ref,
+        "mesh_policy_id": candidate_payload["execution_plan"]["parameters"]["mesh_policy_id"],
+        "action_proposal_digest": sha256_digest(action_proposal),
+        "candidate_payload_digest": candidate_digest,
+        "evidence_packet_digest": evidence_digest,
+        "attestation_refs": [
+            {
+                "kind": "mesh_repo_patch_preflight_receipt",
+                "digest": evidence_digest,
+            }
+        ],
+        "requested_claims": requested_claims,
+        "explicit_nonclaims": explicit_nonclaims,
+        "created_at": created_at or _now(),
+        "candidate_payload": candidate_payload,
+        "pre_execution_evidence": pre_execution_evidence,
+    }
+    validate_payload("hsai-admission-request-v2.schema.json", request)
+    return request
+
+
+def _normalized_repo_patch_candidate(
+    decision: Decision,
+    evaluation: EvaluationResult,
+    preflight_receipt: dict[str, Any],
+) -> dict[str, Any]:
+    parameters = _dict(decision.execution_plan.get("parameters"))
+    if decision.execution_plan.get("system") != "repo_patch_service" or decision.execution_plan.get(
+        "action"
+    ) != "investigate_and_patch":
+        raise ValueError("HSAI v2 candidate is not the bounded repo-patch action")
+    declared_action_id = parameters.get("mesh_action_id")
+    if declared_action_id is not None and str(declared_action_id) != decision.decision_id:
+        raise ValueError("HSAI v2 candidate mesh action id must equal the decision id")
+    actor = _dict(parameters.get("actor_ref"))
+    actor_ref = {
+        "actor_id": str(actor.get("actor_id") or parameters.get("actor_id") or "mesh.orchestrator"),
+        "team_id": str(actor.get("team_id") or parameters.get("team_id") or "mesh.default"),
+    }
+    patch_template = _dict(parameters.get("patch_template"))
+    test_commands = parameters.get("test_commands")
+    if not isinstance(test_commands, list) or not test_commands:
+        raise ValueError("HSAI v2 candidate requires verification commands")
+    declared_command_vectors: list[list[str]] = []
+    for command in test_commands:
+        if not isinstance(command, str):
+            raise ValueError("HSAI v2 candidate verification command must be a string")
+        argv = shlex.split(command)
+        if not argv or any(not argument for argument in argv):
+            raise ValueError("HSAI v2 candidate verification command is empty")
+        declared_command_vectors.append(argv)
+    raw_test_results = preflight_receipt.get("test_results")
+    if not isinstance(raw_test_results, list) or len(raw_test_results) != len(declared_command_vectors):
+        raise ValueError("HSAI v2 preflight commands do not match the declared verification commands")
+    command_vectors: list[list[str]] = []
+    for declared_argv, raw_result in zip(declared_command_vectors, raw_test_results, strict=True):
+        if not isinstance(raw_result, dict):
+            raise ValueError("HSAI v2 preflight test result must be an object")
+        executed_argv = raw_result.get("argv")
+        if (
+            not isinstance(executed_argv, list)
+            or not executed_argv
+            or any(not isinstance(argument, str) or not argument for argument in executed_argv)
+        ):
+            raise ValueError("HSAI v2 preflight test argv is invalid")
+        if not Path(executed_argv[0]).is_absolute() or executed_argv[1:] != declared_argv[1:]:
+            raise ValueError("HSAI v2 preflight argv is not bound to the declared verification command")
+        command_vectors.append(list(executed_argv))
+    mesh_policy_id = _mesh_policy_id(decision, evaluation, parameters)
+    return {
+        "decision_id": decision.decision_id,
+        "trigger_id": decision.trigger_id,
+        "decision_type": decision.decision_type,
+        "autonomy_tier": decision.autonomy_tier,
+        "summary": decision.summary,
+        "reasoning": decision.reasoning,
+        "expected_outcome": decision.expected_outcome,
+        "risk": decision.risk,
+        "confidence": decision.confidence,
+        "execution_plan": {
+            "system": "repo_patch_service",
+            "action": "investigate_and_patch",
+            "parameters": {
+                "repo_path": str(parameters.get("repo_path") or ""),
+                "allowed_paths": _string_list(parameters.get("allowed_paths")),
+                "protected_paths": (
+                    _string_list(parameters.get("protected_paths"))
+                    if "protected_paths" in parameters
+                    else list(DEFAULT_PROTECTED_REPO_PATHS)
+                ),
+                "patch_template": {
+                    "target_file": str(patch_template.get("target_file") or ""),
+                    "find": str(patch_template.get("find") or ""),
+                    "replace": str(patch_template.get("replace") or ""),
+                },
+                "test_commands": command_vectors,
+                "mesh_run_id": expected_mesh_run_id(decision),
+                "mesh_action_id": decision.decision_id,
+                "mesh_policy_id": mesh_policy_id,
+                "actor_ref": actor_ref,
+            },
+            "rollback_plan": str(decision.execution_plan.get("rollback_plan") or ""),
+        },
+    }
+
+
 def evaluate_hsai_gate(
     request: dict[str, Any],
     adapter: HsaiAdmissionAdapter,
@@ -163,6 +320,7 @@ def evaluate_hsai_gate(
 
     gate = {
         "allowed": decision["decision"] == "allow",
+        "authority_eligible": getattr(adapter, "authority_eligible", False) is True,
         "request": request,
         "decision": decision,
         "request_digest": sha256_digest(request),
@@ -175,7 +333,7 @@ def evaluate_hsai_gate(
 
 
 def validate_hsai_decision(request: dict[str, Any], decision: dict[str, Any]) -> None:
-    validate_payload("hsai-admission-request.schema.json", request)
+    _validate_hsai_request_payload(request)
     validate_payload("hsai-admission-decision.schema.json", decision)
     expected_request_digest = sha256_digest(request)
     _require_digest("hsai request digest", decision["request_digest"])
@@ -234,18 +392,34 @@ def validate_bridge_gate(
     if request.get("action_kind") != "repo_patch":
         raise ValueError("bridge gate action kind mismatch")
     if expected_decision is not None:
-        expected_candidate_digest = sha256_digest(decision_payload_without_hsai_context(expected_decision))
+        if request.get("schema_version") == HSAI_ADMISSION_REQUEST_V2_VERSION:
+            candidate_payload = _dict(request.get("candidate_payload"))
+            if request["candidate_payload_digest"] != sha256_digest(candidate_payload):
+                raise ValueError("bridge gate v2 candidate payload digest mismatch")
+            evidence = _dict(request.get("pre_execution_evidence"))
+            if request["evidence_packet_digest"] != sha256_digest(evidence):
+                raise ValueError("bridge gate v2 evidence packet digest mismatch")
+            expected_candidate_digest = request["candidate_payload_digest"]
+        else:
+            expected_candidate_digest = sha256_digest(
+                decision_payload_without_hsai_context(expected_decision)
+            )
         if request["mesh_run_id"] != expected_mesh_run_id(expected_decision):
             raise ValueError("bridge gate mesh run id mismatch")
         if request["mesh_action_id"] != expected_mesh_action_id(expected_decision):
             raise ValueError("bridge gate mesh action id mismatch")
         if request["candidate_payload_digest"] != expected_candidate_digest:
             raise ValueError("bridge gate current candidate digest mismatch")
+        proposal_candidate = (
+            _dict(request.get("candidate_payload"))
+            if request.get("schema_version") == HSAI_ADMISSION_REQUEST_V2_VERSION
+            else expected_decision.to_dict()
+        )
         expected_proposal_digest = sha256_digest(
             {
-                "decision_id": expected_decision.decision_id,
-                "execution_plan": expected_decision.execution_plan,
-                "risk": expected_decision.risk,
+                "decision_id": proposal_candidate["decision_id"],
+                "execution_plan": proposal_candidate["execution_plan"],
+                "risk": proposal_candidate["risk"],
             }
         )
         if request["action_proposal_digest"] != expected_proposal_digest:
@@ -259,6 +433,31 @@ def validate_bridge_gate(
             )
             if request["mesh_policy_id"] != expected_policy_id:
                 raise ValueError("bridge gate mesh policy id mismatch")
+            if request.get("schema_version") == HSAI_ADMISSION_REQUEST_V2_VERSION:
+                expected_candidate = _normalized_repo_patch_candidate(
+                    expected_decision,
+                    expected_evaluation,
+                    _dict(request.get("pre_execution_evidence")).get("preflight_receipt", {}),
+                )
+                if request.get("candidate_payload") != expected_candidate:
+                    raise ValueError("bridge gate v2 current candidate payload mismatch")
+                evidence = _dict(request.get("pre_execution_evidence"))
+                if evidence.get("decision_id") != expected_decision.decision_id:
+                    raise ValueError("bridge gate v2 evidence decision mismatch")
+                if evidence.get("evaluation_id") != expected_evaluation.evaluation_id:
+                    raise ValueError("bridge gate v2 evaluation id mismatch")
+                if evidence.get("evaluation_passed") is not expected_evaluation.passed:
+                    raise ValueError("bridge gate v2 evaluation verdict mismatch")
+                if evidence.get("final_recommendation") != expected_evaluation.final_recommendation:
+                    raise ValueError("bridge gate v2 recommendation mismatch")
+                if evidence.get("blocking_reasons") != list(expected_evaluation.blocking_reasons):
+                    raise ValueError("bridge gate v2 blocking reasons mismatch")
+                if evidence.get("stage_results") != expected_evaluation.stage_results:
+                    raise ValueError("bridge gate v2 stage results mismatch")
+                if evidence.get("stage_results_digest") != sha256_digest(
+                    expected_evaluation.stage_results
+                ):
+                    raise ValueError("bridge gate v2 stage results digest mismatch")
         mesh_allowed = mesh_policy_allows(expected_evaluation)
         if require_mesh_policy_approved is True and not mesh_allowed:
             raise ValueError("bridge gate Mesh policy is not approved")
@@ -270,6 +469,17 @@ def validate_bridge_gate(
 
 def mesh_policy_allows(evaluation: EvaluationResult) -> bool:
     return bool(evaluation.passed and evaluation.final_recommendation == "execute")
+
+
+def _validate_hsai_request_payload(request: dict[str, Any]) -> None:
+    schema_version = request.get("schema_version")
+    if schema_version == HSAI_ADMISSION_REQUEST_VERSION:
+        validate_payload("hsai-admission-request.schema.json", request)
+        return
+    if schema_version == HSAI_ADMISSION_REQUEST_V2_VERSION:
+        validate_payload("hsai-admission-request-v2.schema.json", request)
+        return
+    raise ValueError("unsupported HSAI admission request schema version")
 
 
 def build_combined_proof_packet(
@@ -439,12 +649,16 @@ def _validate_combined_proof_claim_adequacy(
         raise ValueError("combined proof packet formal metadata must preserve nonclaim boundary")
 
 
-def attach_hsai_execution_context(decision: Decision, gate: dict[str, Any]) -> Decision:
+def attach_hsai_execution_context(
+    decision: Decision,
+    gate: dict[str, Any],
+    execution_permit: dict[str, Any] | None = None,
+) -> Decision:
     validate_bridge_gate(gate, expected_decision=decision)
     payload = decision_payload_without_hsai_context(decision)
     plan = dict(payload["execution_plan"])
     parameters = dict(plan.get("parameters") or {})
-    parameters[HSAI_EXECUTION_CONTEXT_KEY] = {
+    context = {
         "schema_version": HSAI_EXECUTION_CONTEXT_VERSION,
         "request": gate["request"],
         "decision": gate["decision"],
@@ -452,6 +666,10 @@ def attach_hsai_execution_context(decision: Decision, gate: dict[str, Any]) -> D
         "decision_digest": gate["decision_digest"],
         "candidate_digest": gate["candidate_digest"],
     }
+    if execution_permit is not None:
+        validate_payload("repo-patch-execution-permit.schema.json", execution_permit)
+        context["execution_permit"] = execution_permit
+    parameters[HSAI_EXECUTION_CONTEXT_KEY] = context
     plan["parameters"] = parameters
     payload["execution_plan"] = plan
     return Decision.from_dict(payload)
@@ -475,7 +693,12 @@ def validate_hsai_execution_context(decision: Decision) -> dict[str, Any]:
         raise ValueError("HSAI execution context decision digest mismatch")
     if context.get("candidate_digest") != request["candidate_payload_digest"]:
         raise ValueError("HSAI execution context candidate digest mismatch")
-    if request["candidate_payload_digest"] != sha256_digest(decision_payload_without_hsai_context(decision)):
+    if request.get("schema_version") == HSAI_ADMISSION_REQUEST_V2_VERSION:
+        validate_bridge_gate(
+            _gate_from_verified_contracts(request, admission_decision),
+            expected_decision=decision,
+        )
+    elif request["candidate_payload_digest"] != sha256_digest(decision_payload_without_hsai_context(decision)):
         raise ValueError("HSAI execution context decision payload mismatch")
     if admission_decision["decision"] != "allow":
         raise ValueError("HSAI execution context is not allow")

@@ -1,0 +1,24 @@
+{
+  "schema_version": "mesh.repo_patch_authority_postgres_rehearsal.v1",
+  "recorded_date": "2026-07-13",
+  "command": "pnpm run verify:repo-patch-postgres",
+  "postgres_image": "postgres:16-alpine",
+  "result": "passed",
+  "test_cases_run": 1,
+  "assertions": {
+    "migration_applied_twice_idempotently": true,
+    "records_and_events_tables_present": true,
+    "append_only_event_trigger_present": true,
+    "idempotent_issue_replay": true,
+    "conflicting_reissue_rejected": true,
+    "concurrent_lease_single_winner": true,
+    "wrong_fencing_token_rejected": true,
+    "dispatched_state_survived_restart": true,
+    "committed_terminal_survived_restart": true,
+    "rejected_terminal_survived_restart": true,
+    "event_digest_chain_valid": true,
+    "direct_event_update_rejected": true,
+    "container_cleanup_registered": true
+  },
+  "claim_ceiling": "Local Docker-backed PostgreSQL lifecycle, concurrency, trigger, and restart rehearsal evidence. This is not a managed-database failover, backup-restore, multi-host, or production-availability proof."
+}

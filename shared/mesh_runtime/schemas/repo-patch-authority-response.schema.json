@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/repo-patch-authority-response.schema.json",
+  "title": "RepoPatchAuthorityResponse",
+  "type": "object",
+  "required": ["body", "authorization_proof"],
+  "properties": {
+    "body": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "request_id",
+        "idempotency_key",
+        "status",
+        "execution_result",
+        "receipt",
+        "rejection",
+        "issued_at",
+        "expires_at"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "enum": ["mesh.repo_patch_authority_response.v1"] },
+        "request_id": { "type": "string" },
+        "idempotency_key": { "type": "string" },
+        "status": { "type": "string", "enum": ["completed", "rejected"] },
+        "execution_result": { "type": "object" },
+        "receipt": { "type": "object" },
+        "rejection": { "type": ["object", "null"] },
+        "issued_at": { "type": "string" },
+        "expires_at": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "authorization_proof": {
+      "type": "object",
+      "required": [
+        "signing_profile",
+        "algorithm",
+        "key_id",
+        "signature",
+        "payload_sha256",
+        "public_key_pem",
+        "status",
+        "verifier"
+      ],
+      "properties": {
+        "signing_profile": { "type": "string", "enum": ["mesh-repo-patch-authority-response-ed25519-v1"] },
+        "algorithm": { "type": "string", "enum": ["ed25519"] },
+        "key_id": { "type": "string" },
+        "signature": { "type": "string" },
+        "payload_sha256": { "type": "string" },
+        "public_key_pem": { "type": "string" },
+        "status": { "type": "string", "enum": ["verified"] },
+        "verifier": { "type": "string", "enum": ["orbital_mesh_ed25519_v1"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

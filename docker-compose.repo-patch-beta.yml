@@ -1,0 +1,222 @@
+services:
+  mesh:
+    depends_on:
+      repo_patch_authority:
+        condition: service_healthy
+    user: "${MESH_REPO_PATCH_CLIENT_UID:?set distinct Mesh client UID}:${MESH_REPO_PATCH_CLIENT_GID:?set distinct Mesh client GID}"
+    group_add:
+      - "${MESH_REPO_PATCH_AUTHORITY_GID:?set authority socket group GID}"
+    ports: !override []
+    networks: !override
+      - repo_patch_beta_control
+    extra_hosts: !override []
+    environment:
+      HOME: /tmp/mesh-home
+      MESH_ORCHESTRATION_MODE: native_hermes
+      MESH_HERMES_COMMAND: ""
+      MESH_GOOSE_COMMAND: ""
+      MESH_EVO_COMMAND: ""
+      OPENAI_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      GOOGLE_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      OPENAI_BASE_URL: ""
+      OPENAI_HOST: ""
+      ANTHROPIC_BASE_URL: ""
+      ANTHROPIC_HOST: ""
+      OLLAMA_HOST: ""
+      MESH_HSAI_ADMISSION_COMMAND: "/opt/hsai/bin/hsai-mesh-admission --current-policy-id ${MESH_REPO_PATCH_BETA_POLICY_ID:?set beta repo-patch policy id}"
+      MESH_HSAI_ADMISSION_AUTHORITY_MODE: "rust_evidence_v2"
+      MESH_HSAI_ADMISSION_EXECUTABLE_SHA256: "${MESH_HSAI_LINUX_CLI_SHA256:?set pinned Linux HSAI CLI SHA-256}"
+      MESH_REPO_PATCH_AUTHORITY_SOCKET_PATH: /run/mesh-authority/repo-patch-authority.sock
+      MESH_REPO_PATCH_AUTHORITY_CLIENT_PRIVATE_KEY_PATH: /run/secrets/repo-patch/orchestrator-client-private.pem
+      MESH_REPO_PATCH_AUTHORITY_CLIENT_KEY_ID: "${MESH_REPO_PATCH_AUTHORITY_CLIENT_KEY_ID:-mesh-orchestrator-client}"
+      MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_PATH: /run/secrets/repo-patch/authority-public.pem
+      MESH_REPO_PATCH_AUTHORITY_KEY_ID: "${MESH_REPO_PATCH_AUTHORITY_KEY_ID:-mesh-repo-patch-authority}"
+    volumes:
+      - type: volume
+        source: mesh_repo_patch_runtime_state
+        target: /app/.mesh-runtime-state
+      - type: volume
+        source: mesh_repo_patch_empty_workspace
+        target: /workspace/orbital-mesh
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_empty_hermes_home
+        target: /workspace/orbital-mesh/.hermes-local
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_empty_goose_config
+        target: /root/.config/goose
+        read_only: true
+      - type: bind
+        source: /dev/null
+        target: /root/.kube/config
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_authority_socket
+        target: /run/mesh-authority
+        read_only: true
+      - type: bind
+        source: "${MESH_HSAI_LINUX_CLI_HOST_PATH:?set real Linux HSAI CLI host path}"
+        target: /opt/hsai/bin/hsai-mesh-admission
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_ORCHESTRATOR_CLIENT_PRIVATE_KEY_HOST_PATH:?set orchestrator client private-key host path}"
+        target: /run/secrets/repo-patch/orchestrator-client-private.pem
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_HOST_PATH:?set authority public-key host path}"
+        target: /run/secrets/repo-patch/authority-public.pem
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,uid=${MESH_REPO_PATCH_CLIENT_UID:?set distinct Mesh client UID},gid=${MESH_REPO_PATCH_CLIENT_GID:?set distinct Mesh client GID},mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          pids: 128
+
+  repo_patch_beta_ingress:
+    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
+    init: true
+    user: "65534:65534"
+    depends_on:
+      mesh:
+        condition: service_healthy
+    command: ["python3", "-m", "services.orchestrator.beta_loopback_ingress"]
+    environment:
+      MESH_BETA_INGRESS_HOST: "0.0.0.0"
+      MESH_BETA_INGRESS_PORT: "8787"
+      MESH_BETA_INGRESS_UPSTREAM_HOST: mesh
+      MESH_BETA_INGRESS_UPSTREAM_PORT: "8787"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "127.0.0.1:${MESH_REPO_PATCH_BETA_PUBLISH_PORT:-8787}:8787"
+    networks:
+      - repo_patch_beta_control
+      - repo_patch_beta_ingress
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,uid=65534,gid=65534,mode=0700
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.25
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/api/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  repo_patch_authority:
+    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
+    init: true
+    user: "${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID}:${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"
+    network_mode: none
+    command: ["python3", "-m", "services.actuators.repo_patch_authority_service"]
+    environment:
+      HOME: /var/lib/mesh-authority
+      MESH_STATE_BACKEND: file
+      MESH_STATE_DIRECTORY: /var/lib/mesh-authority
+      MESH_REPO_PATCH_AUTHORITY_STORE_BACKEND: file
+      MESH_REPO_PATCH_AUTHORITY_STATE_DIRECTORY: /var/lib/mesh-authority
+      MESH_REPO_PATCH_AUTHORITY_SOCKET_PATH: /run/mesh-authority/repo-patch-authority.sock
+      MESH_REPO_PATCH_AUTHORITY_PRIVATE_KEY_PATH: /run/secrets/repo-patch/authority-private.pem
+      MESH_REPO_PATCH_AUTHORITY_CLIENT_KEYS_PATH: /run/secrets/repo-patch/clients.json
+      MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_PATH: /run/secrets/repo-patch/permit-hmac.key
+      MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_ID: "${MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_ID:-repo-patch-permit-hmac}"
+      MESH_REPO_PATCH_AUTHORITY_KEY_ID: "${MESH_REPO_PATCH_AUTHORITY_KEY_ID:-mesh-repo-patch-authority}"
+      MESH_REPO_PATCH_AUTHORITY_ALLOWED_UIDS: "${MESH_REPO_PATCH_CLIENT_UID:?set Mesh client UID visible through SO_PEERCRED}"
+      MESH_REPO_PATCH_AUTHORITY_SOCKET_GID: "${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"
+      MESH_REPO_PATCH_ALLOWED_TEST_COMMANDS_JSON: '[["python3","-c","pass"]]'
+      MESH_HSAI_ADMISSION_COMMAND: "/opt/hsai/bin/hsai-mesh-admission --current-policy-id ${MESH_REPO_PATCH_BETA_POLICY_ID:?set beta repo-patch policy id}"
+      MESH_HSAI_ADMISSION_AUTHORITY_MODE: "rust_evidence_v2"
+      MESH_HSAI_ADMISSION_EXECUTABLE_SHA256: "${MESH_HSAI_LINUX_CLI_SHA256:?set pinned Linux HSAI CLI SHA-256}"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: volume
+        source: mesh_repo_patch_authority_state
+        target: /var/lib/mesh-authority
+      - type: volume
+        source: mesh_repo_patch_authority_socket
+        target: /run/mesh-authority
+      - type: bind
+        source: "${MESH_REPO_PATCH_TARGET_HOST_PATH:?set authority-owned beta target repository host path}"
+        target: /workspace/target
+      - type: bind
+        source: "${MESH_HSAI_LINUX_CLI_HOST_PATH:?set real Linux HSAI CLI host path}"
+        target: /opt/hsai/bin/hsai-mesh-admission
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_AUTHORITY_PRIVATE_KEY_HOST_PATH:?set authority private-key host path}"
+        target: /run/secrets/repo-patch/authority-private.pem
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_AUTHORITY_CLIENT_KEYS_REGISTRY_HOST_PATH:?set authority client-key registry host path}"
+        target: /run/secrets/repo-patch/clients.json
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_ORCHESTRATOR_CLIENT_PUBLIC_KEY_HOST_PATH:?set orchestrator client public-key host path}"
+        target: /run/secrets/repo-patch/orchestrator-client-public.pem
+        read_only: true
+      - type: bind
+        source: "${MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_HOST_PATH:?set authority permit-key host path}"
+        target: /run/secrets/repo-patch/permit-hmac.key
+        read_only: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 1g
+    cpus: 1.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,stat; assert stat.S_ISSOCK(os.stat('/run/mesh-authority/repo-patch-authority.sock').st_mode)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+volumes:
+  mesh_repo_patch_runtime_state:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${MESH_REPO_PATCH_MESH_STATE_HOST_PATH:?set Mesh-client-owned durable state host path}"
+  mesh_repo_patch_authority_state:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: "${MESH_REPO_PATCH_AUTHORITY_STATE_HOST_PATH:?set authority-owned durable state host path}"
+  mesh_repo_patch_authority_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID},gid=${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID},mode=0750"
+  mesh_repo_patch_empty_workspace:
+  mesh_repo_patch_empty_hermes_home:
+  mesh_repo_patch_empty_goose_config:
+
+networks:
+  repo_patch_beta_control:
+    internal: true
+  repo_patch_beta_ingress:

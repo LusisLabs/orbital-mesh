@@ -7,16 +7,16 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision, log_runtime_event
 from shared.mesh_runtime.goose_credentials import goose_subprocess_env
-from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
+HSAI_EXECUTION_CONTEXT_KEY = "_mesh_hsai_admission_context"
+REPO_PATCH_REVIEW_ONLY_STATE_SLICE = "mesh.repo_patch_review_only_boundary.v1"
 GOOSE_SYSTEM_PROMPT = (
     "Reply with only compact JSON matching this shape: "
     '{"approved": boolean, "summary": string, "risk_flags": string[], "next_action": string}. '
@@ -57,12 +57,11 @@ def main() -> None:
 
     payload = json.load(sys.stdin)
     mode = payload["mode"]
-    decision = Decision.from_dict(payload["decision"])
+    decision = Decision.from_dict(_review_only_decision_payload(payload["decision"]))
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
     kubernetes = KubernetesAdapter()
     audit_logs = AuditLogAdapter()
-    repo_patch = RepoPatchAdapter()
     # Bare-metal SSH adapter. Mock-by-default; real SSH requires the full
     # four-part safety envelope (ssh_execution_enabled + host/service/
     # command allowlists). See services/actuators/systemd_ssh.py.
@@ -112,13 +111,21 @@ def main() -> None:
         log_runtime_event("goose_bridge_incident_completed", review=review)
         return
 
+    repo_patch_review_only = decision.execution_plan["system"] == "repo_patch_service"
     review = _review_execution(args, payload["idempotency_key"], decision)
+    if repo_patch_review_only:
+        review = _repo_patch_review_metadata(review)
     if not review["approved"]:
         log_runtime_event("goose_bridge_execution_rejected", review=review)
+        review_refs = (
+            _repo_patch_review_refs(review)
+            if repo_patch_review_only
+            else {"goose_review": review}
+        )
         json.dump(
             {
                 "status": "failed",
-                "external_refs": {"goose_review": review},
+                "external_refs": review_refs,
                 "failure": {"reason": "goose_rejected_execution_request", "goose_review": review},
                 "retryable": False,
             },
@@ -126,6 +133,21 @@ def main() -> None:
             indent=2,
         )
         sys.stdout.write("\n")
+        return
+
+    if repo_patch_review_only:
+        result = {
+            "status": "succeeded",
+            "external_refs": _repo_patch_review_refs(review),
+            "retryable": False,
+        }
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        log_runtime_event(
+            "goose_bridge_repo_patch_review_completed",
+            status="succeeded",
+            review=review,
+        )
         return
 
     idempotency_key = payload["idempotency_key"]
@@ -189,13 +211,6 @@ def main() -> None:
                 },
                 "external_refs": {},
             }
-    elif execution_plan["system"] == "repo_patch_service":
-        context_failure = repo_patch_admission_failure(decision)
-        if context_failure is not None:
-            result = context_failure
-        else:
-            patch_parameters = _resolved_patch_parameters(decision, review)
-            result = repo_patch.execute_patch(patch_parameters, idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -447,19 +462,42 @@ def _parse_json_like_review(text: str) -> dict[str, object]:
         raise
 
 
-def _resolved_patch_parameters(decision: Decision, review: dict[str, object]) -> dict[str, object]:
-    parameters = dict(decision.execution_plan["parameters"])
-    patch = review.get("patch")
-    if isinstance(patch, dict):
-        parameters["patch_template"] = {
-            "target_file": patch.get("target_file"),
-            "find": patch.get("find"),
-            "replace": patch.get("replace"),
-        }
-    test_commands = review.get("test_commands")
-    if isinstance(test_commands, list) and test_commands:
-        parameters["test_commands"] = [str(command) for command in test_commands]
-    return parameters
+def _review_only_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(payload)
+    execution_plan = sanitized.get("execution_plan")
+    if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
+        return sanitized
+    sanitized_plan = dict(execution_plan)
+    parameters = sanitized_plan.get("parameters")
+    if isinstance(parameters, dict):
+        sanitized_parameters = dict(parameters)
+        sanitized_parameters.pop(HSAI_EXECUTION_CONTEXT_KEY, None)
+        sanitized_plan["parameters"] = sanitized_parameters
+    sanitized["execution_plan"] = sanitized_plan
+    return sanitized
+
+
+def _repo_patch_review_metadata(review: dict[str, object]) -> dict[str, object]:
+    return {
+        **review,
+        "repo_patch_review_only": True,
+        "final_parameters_unchanged": True,
+        "model_parameter_changes_ignored": True,
+        "authority_invoked": False,
+        "authority_credentials_forwarded": False,
+    }
+
+
+def _repo_patch_review_refs(review: dict[str, object]) -> dict[str, object]:
+    return {
+        "goose_review": review,
+        "repo_patch_review_only": True,
+        "repo_patch_final_parameters_unchanged": True,
+        "repo_patch_model_parameter_changes_ignored": True,
+        "repo_patch_authority_invoked": False,
+        "repo_patch_authority_credentials_forwarded": False,
+        "repo_patch_review_state_slice": REPO_PATCH_REVIEW_ONLY_STATE_SLICE,
+    }
 
 
 def _assistant_text(payload: dict[str, object]) -> str:

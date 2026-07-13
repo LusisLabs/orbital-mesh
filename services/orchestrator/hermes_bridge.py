@@ -8,15 +8,16 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
-from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision, log_runtime_event
-from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
+from shared.mesh_runtime.goose_credentials import model_subprocess_env
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
+HSAI_EXECUTION_CONTEXT_KEY = "_mesh_hsai_admission_context"
+REPO_PATCH_REVIEW_ONLY_STATE_SLICE = "mesh.repo_patch_review_only_boundary.v1"
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 HERMES_SYSTEM_PROMPT = (
     "Reply with only compact JSON matching this shape: "
@@ -72,12 +73,11 @@ def main() -> None:
 
     payload = json.load(sys.stdin)
     mode = payload["mode"]
-    decision = Decision.from_dict(payload["decision"])
+    decision = Decision.from_dict(_review_only_decision_payload(payload["decision"]))
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
     kubernetes = KubernetesAdapter()
     audit_logs = AuditLogAdapter()
-    repo_patch = RepoPatchAdapter()
 
     if mode == "incident":
         review = _review(
@@ -143,13 +143,21 @@ def main() -> None:
         log_runtime_event("hermes_bridge_blocker_chat_completed", chat=chat)
         return
 
+    repo_patch_review_only = decision.execution_plan["system"] == "repo_patch_service"
     review = _review_execution(args, payload["idempotency_key"], decision)
+    if repo_patch_review_only:
+        review = _repo_patch_review_metadata(review)
     if not review["approved"]:
         log_runtime_event("hermes_bridge_execution_rejected", review=review)
+        review_refs = (
+            _repo_patch_review_refs(review)
+            if repo_patch_review_only
+            else {"hermes_review": review}
+        )
         json.dump(
             {
                 "status": "failed",
-                "external_refs": {"hermes_review": review},
+                "external_refs": review_refs,
                 "failure": {"reason": "hermes_rejected_execution_request", "hermes_review": review},
                 "retryable": False,
             },
@@ -157,6 +165,21 @@ def main() -> None:
             indent=2,
         )
         sys.stdout.write("\n")
+        return
+
+    if repo_patch_review_only:
+        result = {
+            "status": "succeeded",
+            "external_refs": _repo_patch_review_refs(review),
+            "retryable": False,
+        }
+        json.dump(result, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        log_runtime_event(
+            "hermes_bridge_repo_patch_review_completed",
+            status="succeeded",
+            review=review,
+        )
         return
 
     idempotency_key = payload["idempotency_key"]
@@ -189,13 +212,6 @@ def main() -> None:
             result = kubernetes.rollback_deployment(execution_plan["parameters"])
         else:
             result = kubernetes.restart_deployment(execution_plan["parameters"])
-    elif execution_plan["system"] == "repo_patch_service":
-        context_failure = repo_patch_admission_failure(decision)
-        if context_failure is not None:
-            result = context_failure
-        else:
-            patch_parameters = _resolved_patch_parameters(decision, review)
-            result = repo_patch.execute_patch(patch_parameters, idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -220,6 +236,7 @@ def _passthrough(args: argparse.Namespace, extra_args: list[str]) -> int:
         cwd=MESH_ROOT,
         check=False,
         text=True,
+        env=model_subprocess_env(),
     )
     return completed.returncode
 
@@ -238,6 +255,7 @@ def _review(args: argparse.Namespace, prompt: str) -> dict[str, object]:
             text=True,
             check=False,
             timeout=_hermes_chat_timeout_seconds(),
+            env=model_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -289,6 +307,7 @@ def _review_code_patch(args: argparse.Namespace, prompt: str) -> dict[str, objec
             text=True,
             check=False,
             timeout=_hermes_chat_timeout_seconds(),
+            env=model_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -340,6 +359,7 @@ def _explain_blockers(
             text=True,
             check=False,
             timeout=_hermes_chat_timeout_seconds(),
+            env=model_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -443,6 +463,7 @@ def _chat_blockers(
             text=True,
             check=False,
             timeout=_hermes_chat_timeout_seconds(),
+            env=model_subprocess_env(),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {
@@ -571,19 +592,42 @@ def _parse_json_like_review(text: str) -> dict[str, object]:
         raise
 
 
-def _resolved_patch_parameters(decision: Decision, review: dict[str, object]) -> dict[str, object]:
-    parameters = dict(decision.execution_plan["parameters"])
-    patch = review.get("patch")
-    if isinstance(patch, dict):
-        parameters["patch_template"] = {
-            "target_file": patch.get("target_file"),
-            "find": patch.get("find"),
-            "replace": patch.get("replace"),
-        }
-    test_commands = review.get("test_commands")
-    if isinstance(test_commands, list) and test_commands:
-        parameters["test_commands"] = [str(command) for command in test_commands]
-    return parameters
+def _review_only_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(payload)
+    execution_plan = sanitized.get("execution_plan")
+    if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
+        return sanitized
+    sanitized_plan = dict(execution_plan)
+    parameters = sanitized_plan.get("parameters")
+    if isinstance(parameters, dict):
+        sanitized_parameters = dict(parameters)
+        sanitized_parameters.pop(HSAI_EXECUTION_CONTEXT_KEY, None)
+        sanitized_plan["parameters"] = sanitized_parameters
+    sanitized["execution_plan"] = sanitized_plan
+    return sanitized
+
+
+def _repo_patch_review_metadata(review: dict[str, object]) -> dict[str, object]:
+    return {
+        **review,
+        "repo_patch_review_only": True,
+        "final_parameters_unchanged": True,
+        "model_parameter_changes_ignored": True,
+        "authority_invoked": False,
+        "authority_credentials_forwarded": False,
+    }
+
+
+def _repo_patch_review_refs(review: dict[str, object]) -> dict[str, object]:
+    return {
+        "hermes_review": review,
+        "repo_patch_review_only": True,
+        "repo_patch_final_parameters_unchanged": True,
+        "repo_patch_model_parameter_changes_ignored": True,
+        "repo_patch_authority_invoked": False,
+        "repo_patch_authority_credentials_forwarded": False,
+        "repo_patch_review_state_slice": REPO_PATCH_REVIEW_ONLY_STATE_SLICE,
+    }
 
 
 def _assistant_text(output: str) -> str:

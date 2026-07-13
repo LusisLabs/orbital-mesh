@@ -119,7 +119,7 @@ RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /opt/venv/bin/hermes \
   && ln -sf /opt/hermes-agent/venv/bin/hermes /usr/local/bin/hermes \
   && rm -f /usr/local/bin/uv /usr/local/bin/uvx \
-  && apt-get purge -y --auto-remove curl git git-man \
+  && apt-get purge -y --auto-remove curl \
   && rm -rf /var/lib/apt/lists/* /root/.cache
 
 ENV MESH_SERVER_HOST=0.0.0.0 \

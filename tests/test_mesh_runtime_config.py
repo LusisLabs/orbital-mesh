@@ -444,6 +444,40 @@ class RuntimeConfigPathTests(unittest.TestCase):
         self.assertEqual(cfg.darkharness_signing_key, "local-secret")
         self.assertEqual(cfg.darkharness_signing_key_id, "local-key")
 
+    def test_repo_patch_permit_authority_config_loads_inline_key_and_identity(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "MESH_REPO_PATCH_PERMIT_SIGNING_KEY": "permit-secret",
+                "MESH_REPO_PATCH_PERMIT_SIGNING_KEY_ID": "permit-key-v2",
+                "MESH_REPO_PATCH_PERMIT_ISSUER": "mesh.test.issuer",
+                "MESH_REPO_PATCH_PERMIT_EXECUTOR_AUDIENCE": "mesh.test.executor",
+            },
+            clear=True,
+        ):
+            cfg = RuntimeConfig.from_env()
+
+        self.assertEqual(cfg.repo_patch_permit_signing_key, "permit-secret")
+        self.assertEqual(cfg.repo_patch_permit_signing_key_id, "permit-key-v2")
+        self.assertEqual(cfg.repo_patch_permit_issuer, "mesh.test.issuer")
+        self.assertEqual(cfg.repo_patch_permit_executor_audience, "mesh.test.executor")
+
+    def test_repo_patch_permit_authority_key_loads_from_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            key_path = Path(tmp) / "repo-patch-permit.key"
+            key_path.write_text("file-permit-secret", encoding="utf-8")
+            with patch.dict(
+                "os.environ",
+                {"MESH_REPO_PATCH_PERMIT_SIGNING_KEY_PATH": str(key_path)},
+                clear=True,
+            ):
+                cfg = RuntimeConfig.from_env()
+
+        self.assertEqual(cfg.repo_patch_permit_signing_key, "file-permit-secret")
+        self.assertEqual(cfg.repo_patch_permit_signing_key_id, "repo-patch-permit-hmac")
+        self.assertEqual(cfg.repo_patch_permit_issuer, "mesh.orchestrator")
+        self.assertEqual(cfg.repo_patch_permit_executor_audience, "mesh.repo_patch_actuator")
+
     def test_darkharness_classical_signing_key_can_load_from_env_or_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             key_path = Path(tmp) / "darkharness-ed25519.pem"

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mesh.local/contracts/repo-patch-authority-request.schema.json",
+  "title": "RepoPatchAuthorityRequest",
+  "type": "object",
+  "required": ["body", "authorization_proof"],
+  "properties": {
+    "body": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "operation",
+        "request_id",
+        "idempotency_key",
+        "issued_at",
+        "expires_at",
+        "client_key_id",
+        "decision",
+        "evaluation",
+        "hsai_gate",
+        "preflight_receipt"
+      ],
+      "properties": {
+        "schema_version": { "type": "string", "enum": ["mesh.repo_patch_authority_request.v1"] },
+        "operation": { "type": "string", "enum": ["preflight", "execute"] },
+        "request_id": { "type": "string" },
+        "idempotency_key": { "type": "string" },
+        "issued_at": { "type": "string" },
+        "expires_at": { "type": "string" },
+        "client_key_id": { "type": "string" },
+        "decision": { "type": "object" },
+        "evaluation": { "type": "object" },
+        "hsai_gate": { "type": ["object", "null"] },
+        "preflight_receipt": {
+          "type": ["object", "null"],
+          "required": [
+            "state_slice",
+            "base_commit",
+            "base_tree",
+            "target_path",
+            "target_preimage_digest",
+            "target_postimage_digest",
+            "authorized_diff_digest",
+            "changed_paths",
+            "test_results"
+          ],
+          "properties": {
+            "state_slice": { "type": "string", "enum": ["mesh.repo_patch_disposable_worktree.v1"] },
+            "base_commit": { "type": "string" },
+            "base_tree": { "type": "string" },
+            "target_path": { "type": "string" },
+            "target_preimage_digest": { "type": "string" },
+            "target_postimage_digest": { "type": "string" },
+            "authorized_diff_digest": { "type": "string" },
+            "changed_paths": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "test_results": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["argv", "returncode", "stdout_digest", "stderr_digest"],
+                "properties": {
+                  "argv": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": { "type": "string" }
+                  },
+                  "returncode": { "type": "integer" },
+                  "stdout_digest": { "type": "string" },
+                  "stderr_digest": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "authorization_proof": {
+      "type": "object",
+      "required": [
+        "signing_profile",
+        "algorithm",
+        "key_id",
+        "signature",
+        "payload_sha256",
+        "public_key_pem",
+        "status",
+        "verifier"
+      ],
+      "properties": {
+        "signing_profile": { "type": "string", "enum": ["mesh-repo-patch-authority-client-ed25519-v1"] },
+        "algorithm": { "type": "string", "enum": ["ed25519"] },
+        "key_id": { "type": "string" },
+        "signature": { "type": "string" },
+        "payload_sha256": { "type": "string" },
+        "public_key_pem": { "type": "string" },
+        "status": { "type": "string", "enum": ["verified"] },
+        "verifier": { "type": "string", "enum": ["orbital_mesh_ed25519_v1"] }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

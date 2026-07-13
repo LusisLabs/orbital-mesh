@@ -10,14 +10,14 @@ from typing import Any, TypeAlias, cast
 
 from services.actuators.load_balancer import LoadBalancerAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
-from services.actuators.repo_patch import RepoPatchAdapter
 from services.orchestrator.adapters_common import CliExecutionResult
 from shared.mesh_runtime import Decision, RuntimeConfig
 from shared.mesh_runtime.goose_credentials import goose_subprocess_env
-from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
 
 
 MESH_ROOT = Path(__file__).resolve().parents[2]
+HSAI_EXECUTION_CONTEXT_KEY = "_mesh_hsai_admission_context"
+REPO_PATCH_REVIEW_ONLY_STATE_SLICE = "mesh.repo_patch_review_only_boundary.v1"
 
 GooseExecutionResult: TypeAlias = CliExecutionResult
 
@@ -34,19 +34,18 @@ class NativeGooseAdapter(GooseAdapter):
     def __init__(self, config: RuntimeConfig | None = None) -> None:
         from services.actuators.argocd import ArgoCDAdapter
         from services.actuators.systemd_ssh import SystemdSshAdapter
-        self.config = config
+        self.config = config or RuntimeConfig.from_env()
         self.feature_flags = FeatureFlagAdapter()
         self.incidents = IncidentAdapter()
-        self.kubernetes = KubernetesAdapter(config=config)
+        self.kubernetes = KubernetesAdapter(config=self.config)
         self.audit_logs = AuditLogAdapter()
-        self.repo_patch = RepoPatchAdapter()
         # Bare-metal SSH adapter — constructed unconditionally because it's
         # cheap and mock-by-default. The config's ssh_execution_enabled flag
         # gates real side effects; without it the adapter returns mock
         # results. This keeps test environments hermetic.
-        self.systemd_ssh = SystemdSshAdapter(config=config)
-        self.load_balancer = LoadBalancerAdapter(config=config)
-        cfg = config or RuntimeConfig()
+        self.systemd_ssh = SystemdSshAdapter(config=self.config)
+        self.load_balancer = LoadBalancerAdapter(config=self.config)
+        cfg = self.config
         self.argocd = ArgoCDAdapter(
             url=cfg.argocd_url,
             token=cfg.argocd_token,
@@ -55,6 +54,20 @@ class NativeGooseAdapter(GooseAdapter):
         )
 
     def execute_decision(self, decision: Decision, idempotency_key: str) -> GooseExecutionResult:
+        if decision.execution_plan["system"] == "repo_patch_service":
+            return GooseExecutionResult(
+                status="succeeded",
+                external_refs=_repo_patch_review_refs(
+                    {
+                        "mode": "native",
+                        "approved": True,
+                        "summary": "native repo-patch review completed without actuation",
+                        "risk_flags": [],
+                        "next_action": "authority_service_review_required",
+                    }
+                ),
+            )
+
         audit_result = self.audit_logs.write_record(decision, idempotency_key)
         if audit_result["status"] != "succeeded":
             return GooseExecutionResult(
@@ -118,9 +131,6 @@ class NativeGooseAdapter(GooseAdapter):
                 result = {"status": "failed",
                           "failure": {"reason": "unknown_argocd_action", "detail": action},
                           "external_refs": {}}
-        elif execution_plan["system"] == "repo_patch_service":
-            context_failure = repo_patch_admission_failure(decision)
-            result = context_failure or self.repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
         else:
             result = {"status": "succeeded", "external_refs": {}}
 
@@ -210,7 +220,7 @@ class GooseCliAdapter(GooseAdapter):
         result = self._invoke(
             {
                 "mode": "execute",
-                "decision": decision.to_dict(),
+                "decision": _review_only_decision_payload(decision),
                 "idempotency_key": idempotency_key,
             }
         )
@@ -265,3 +275,32 @@ class GooseCliAdapter(GooseAdapter):
         if not self.command:
             raise OSError("goose command is not configured")
         return shlex.split(self.command)
+
+
+def _review_only_decision_payload(decision: Decision) -> dict[str, Any]:
+    payload = cast(dict[str, Any], decision.to_dict())
+    execution_plan = payload.get("execution_plan")
+    if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
+        return payload
+    parameters = execution_plan.get("parameters")
+    if isinstance(parameters, dict):
+        parameters.pop(HSAI_EXECUTION_CONTEXT_KEY, None)
+    return payload
+
+
+def _repo_patch_review_refs(review: dict[str, object]) -> dict[str, object]:
+    enriched_review = {
+        **review,
+        "repo_patch_review_only": True,
+        "final_parameters_unchanged": True,
+        "authority_invoked": False,
+        "authority_credentials_forwarded": False,
+    }
+    return {
+        "goose_review": enriched_review,
+        "repo_patch_review_only": True,
+        "repo_patch_final_parameters_unchanged": True,
+        "repo_patch_authority_invoked": False,
+        "repo_patch_authority_credentials_forwarded": False,
+        "repo_patch_review_state_slice": REPO_PATCH_REVIEW_ONLY_STATE_SLICE,
+    }

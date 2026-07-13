@@ -73,8 +73,9 @@ def _atomic_write(path: Path, serialized: str) -> None:
 
 
 class LockedJsonFile:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, recover_corrupt_input: bool = True):
         self.path = path
+        self.recover_corrupt_input = recover_corrupt_input
         self.lock_path = path.with_name(f".{path.name}.lock")
         self.handle = None
         self.payload: dict[str, Any] = {}
@@ -90,6 +91,11 @@ class LockedJsonFile:
         self._file_existed = self.path.exists()
         raw = self.path.read_text(encoding="utf-8") if self._file_existed else ""
         self.payload, self._recovered_corrupt_input = _load_payload(self.path, raw)
+        if self._recovered_corrupt_input and not self.recover_corrupt_input:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+            self.handle.close()
+            self.handle = None
+            raise ValueError(f"corrupt JSON state file: {self.path}")
         if raw.strip() and not self._recovered_corrupt_input:
             self._serialized_on_enter = raw
         else:

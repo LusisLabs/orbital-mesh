@@ -2,22 +2,24 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import Any
 
-from services.actuators.repo_patch import RepoPatchAdapter
 from services.actuators.service import AuditLogAdapter, FeatureFlagAdapter, IncidentAdapter, KubernetesAdapter
 from shared.mesh_runtime import Decision
-from shared.mesh_runtime.hsai_bridge import repo_patch_admission_failure
+
+
+HSAI_EXECUTION_CONTEXT_KEY = "_mesh_hsai_admission_context"
+REPO_PATCH_REVIEW_ONLY_STATE_SLICE = "mesh.repo_patch_review_only_boundary.v1"
 
 
 def main() -> None:
     payload = json.load(sys.stdin)
     mode = payload["mode"]
-    decision = Decision.from_dict(payload["decision"])
+    decision = Decision.from_dict(_review_only_decision_payload(payload["decision"]))
     feature_flags = FeatureFlagAdapter()
     incidents = IncidentAdapter()
     kubernetes = KubernetesAdapter()
     audit_logs = AuditLogAdapter()
-    repo_patch = RepoPatchAdapter()
 
     if mode == "incident":
         result = incidents.open_incident(
@@ -40,6 +42,37 @@ def main() -> None:
                         "next_action": "proceed",
                     },
                 }
+            },
+            sys.stdout,
+            indent=2,
+        )
+        sys.stdout.write("\n")
+        return
+
+    if decision.execution_plan["system"] == "repo_patch_service":
+        review = {
+            "mode": "cli_executor",
+            "approved": True,
+            "summary": "cli executor repo-patch review completed without actuation",
+            "risk_flags": [],
+            "next_action": "authority_service_review_required",
+            "repo_patch_review_only": True,
+            "final_parameters_unchanged": True,
+            "authority_invoked": False,
+            "authority_credentials_forwarded": False,
+        }
+        json.dump(
+            {
+                "status": "succeeded",
+                "external_refs": {
+                    "goose_review": review,
+                    "repo_patch_review_only": True,
+                    "repo_patch_final_parameters_unchanged": True,
+                    "repo_patch_authority_invoked": False,
+                    "repo_patch_authority_credentials_forwarded": False,
+                    "repo_patch_review_state_slice": REPO_PATCH_REVIEW_ONLY_STATE_SLICE,
+                },
+                "retryable": False,
             },
             sys.stdout,
             indent=2,
@@ -110,9 +143,6 @@ def main() -> None:
         else:
             result = {"status": "failed", "failure": {"reason": "unknown_argocd_action", "detail": action},
                       "external_refs": {}}
-    elif execution_plan["system"] == "repo_patch_service":
-        context_failure = repo_patch_admission_failure(decision)
-        result = context_failure or repo_patch.execute_patch(execution_plan["parameters"], idempotency_key)
     else:
         result = {"status": "succeeded", "external_refs": {}}
 
@@ -128,6 +158,21 @@ def main() -> None:
         indent=2,
     )
     sys.stdout.write("\n")
+
+
+def _review_only_decision_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(payload)
+    execution_plan = sanitized.get("execution_plan")
+    if not isinstance(execution_plan, dict) or execution_plan.get("system") != "repo_patch_service":
+        return sanitized
+    sanitized_plan = dict(execution_plan)
+    parameters = sanitized_plan.get("parameters")
+    if isinstance(parameters, dict):
+        sanitized_parameters = dict(parameters)
+        sanitized_parameters.pop(HSAI_EXECUTION_CONTEXT_KEY, None)
+        sanitized_plan["parameters"] = sanitized_parameters
+    sanitized["execution_plan"] = sanitized_plan
+    return sanitized
 
 if __name__ == "__main__":
     main()

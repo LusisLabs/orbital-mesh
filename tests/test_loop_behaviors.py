@@ -383,7 +383,7 @@ class LoopBehaviorTests(unittest.TestCase):
         self.assertGreater(result["run_metadata"]["stage_event_count"], 0)
         self.assertGreaterEqual(result["run_metadata"]["integration_artifact_count"], 2)
 
-    def test_goose_cli_can_apply_bounded_code_patch(self) -> None:
+    def test_goose_cli_default_metadata_admission_cannot_apply_code_patch(self) -> None:
         signal = base_signal()
         fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -409,29 +409,29 @@ class LoopBehaviorTests(unittest.TestCase):
                 state_directory=temp_dir,
                 promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
                 goose_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+                repo_patch_permit_signing_key="test-repo-patch-permit-signing-key",
             )
 
             result = FirstSlicePipeline(config=config).run(signal)
 
             self.assertEqual(result["decision"]["decision_type"], "investigate_and_patch")
-            self.assertEqual(result["execution"]["status"], "succeeded")
+            self.assertEqual(result["execution"]["status"], "rejected")
+            self.assertIn("authority-eligible HSAI adapter", result["execution"]["failure"]["reason"])
             self.assertEqual(
                 result["execution"]["applied_action"]["system"],
                 "repo_patch_service",
             )
             patched_file = repo_path / "app" / "search.py"
-            self.assertIn("PARSE_TIMEOUT_MS = 80", patched_file.read_text())
-            test_results = result["execution"]["external_refs"]["test_results"]
-            self.assertEqual(test_results[0]["returncode"], 0)
-            self.assertEqual(result["feedback"]["outcome"], "successful")
+            self.assertIn("PARSE_TIMEOUT_MS = 100", patched_file.read_text())
 
-    def test_repo_patch_accepts_absolute_target_inside_repo_scope(self) -> None:
+    def test_repo_patch_direct_call_without_permit_fails_closed(self) -> None:
         fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir) / "search_service"
             shutil.copytree(fixture_repo, repo_path)
             target_path = repo_path / "app" / "search.py"
 
+            original = target_path.read_text(encoding="utf-8")
             result = RepoPatchAdapter().execute_patch(
                 {
                     "repo_path": str(repo_path),
@@ -446,15 +446,19 @@ class LoopBehaviorTests(unittest.TestCase):
                 "absolute_target_test",
             )
 
-        self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(result["external_refs"]["patched_files"], ["app/search.py"])
+            self.assertEqual(target_path.read_text(encoding="utf-8"), original)
 
-    def test_repo_patch_supports_shell_form_test_commands(self) -> None:
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("requires a Decision carrying an execution permit", result["failure"]["reason"])
+
+    def test_repo_patch_direct_shell_form_call_cannot_mutate(self) -> None:
         fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_path = Path(temp_dir) / "search_service"
             shutil.copytree(fixture_repo, repo_path)
 
+            target_path = repo_path / "app" / "search.py"
+            original = target_path.read_text(encoding="utf-8")
             result = RepoPatchAdapter().execute_patch(
                 {
                     "repo_path": str(repo_path),
@@ -469,10 +473,12 @@ class LoopBehaviorTests(unittest.TestCase):
                 "shell_test_command",
             )
 
-        self.assertEqual(result["status"], "succeeded")
-        self.assertEqual(result["external_refs"]["test_results"][0]["returncode"], 0)
+            self.assertEqual(target_path.read_text(encoding="utf-8"), original)
 
-    def test_kubernetes_signal_can_drive_bounded_patch_flow(self) -> None:
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("requires a Decision carrying an execution permit", result["failure"]["reason"])
+
+    def test_kubernetes_signal_default_metadata_admission_cannot_apply_patch(self) -> None:
         signal = base_kubernetes_signal()
         fixture_repo = Path(__file__).resolve().parents[1] / "fixtures" / "codebases" / "search_service"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -485,16 +491,17 @@ class LoopBehaviorTests(unittest.TestCase):
                 state_directory=temp_dir,
                 promptfoo_command=f"{sys.executable} -m services.evaluation.cli_gate",
                 goose_command=f"{sys.executable} -m services.orchestrator.cli_executor",
+                repo_patch_permit_signing_key="test-repo-patch-permit-signing-key",
             )
 
             result = FirstSlicePipeline(config=config).run(signal)
 
             self.assertEqual(result["trigger"]["trigger_type"], "kubernetes_deployment_unhealthy")
             self.assertEqual(result["decision"]["decision_type"], "investigate_and_patch")
-            self.assertEqual(result["execution"]["status"], "succeeded")
+            self.assertEqual(result["execution"]["status"], "rejected")
+            self.assertIn("authority-eligible HSAI adapter", result["execution"]["failure"]["reason"])
             self.assertEqual(result["execution"]["applied_action"]["system"], "repo_patch_service")
-            self.assertEqual(result["feedback"]["outcome"], "successful")
-            self.assertIn("PARSE_TIMEOUT_MS = 80", (repo_path / "app" / "search.py").read_text())
+            self.assertIn("PARSE_TIMEOUT_MS = 100", (repo_path / "app" / "search.py").read_text())
 
     def test_kubernetes_image_pull_failure_prefers_rollback(self) -> None:
         signal = base_kubernetes_signal()

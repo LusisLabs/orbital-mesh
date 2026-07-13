@@ -152,6 +152,22 @@ class RuntimeConfig:
     on_call_drill_path: str | None = None
     policy_signing_key: str | None = None
     policy_signing_key_id: str = "policy-lifecycle-hmac"
+    hsai_admission_command: str | None = None
+    hsai_admission_timeout_seconds: int = 30
+    hsai_admission_authority_mode: str = "disabled"
+    hsai_admission_executable_sha256: str | None = None
+    repo_patch_permit_signing_key: str | None = None
+    repo_patch_permit_signing_key_id: str = "repo-patch-permit-hmac"
+    repo_patch_permit_issuer: str = "mesh.orchestrator"
+    repo_patch_permit_executor_audience: str = "mesh.repo_patch_actuator"
+    repo_patch_authority_socket_path: str | None = None
+    repo_patch_authority_client_private_key_path: str | None = None
+    repo_patch_authority_client_key_id: str = "mesh-orchestrator-client"
+    repo_patch_authority_public_key_path: str | None = None
+    repo_patch_authority_key_id: str = "mesh-repo-patch-authority"
+    repo_patch_authority_timeout_seconds: float = 30.0
+    repo_patch_authority_max_message_bytes: int = 1_048_576
+    repo_patch_authority_allowed_test_commands: tuple[str, ...] = ()
     darkharness_registry_path: str | None = None
     darkharness_packet_persistence_mode: str = "ephemeral"
     darkharness_signing_key: str | None = None
@@ -653,6 +669,73 @@ class RuntimeConfig:
                 os.getenv("MESH_POLICY_SIGNING_KEY_PATH"),
             ),
             policy_signing_key_id=os.getenv("MESH_POLICY_SIGNING_KEY_ID", "policy-lifecycle-hmac"),
+            hsai_admission_command=os.getenv("MESH_HSAI_ADMISSION_COMMAND", "").strip() or None,
+            hsai_admission_timeout_seconds=int(
+                os.getenv("MESH_HSAI_ADMISSION_TIMEOUT_SECONDS", "30")
+            ),
+            hsai_admission_authority_mode=os.getenv(
+                "MESH_HSAI_ADMISSION_AUTHORITY_MODE",
+                "disabled",
+            ),
+            hsai_admission_executable_sha256=(
+                os.getenv("MESH_HSAI_ADMISSION_EXECUTABLE_SHA256", "").strip() or None
+            ),
+            repo_patch_permit_signing_key=_read_env_or_file(
+                os.getenv("MESH_REPO_PATCH_PERMIT_SIGNING_KEY"),
+                os.getenv("MESH_REPO_PATCH_PERMIT_SIGNING_KEY_PATH"),
+            ),
+            repo_patch_permit_signing_key_id=os.getenv(
+                "MESH_REPO_PATCH_PERMIT_SIGNING_KEY_ID",
+                "repo-patch-permit-hmac",
+            ),
+            repo_patch_permit_issuer=os.getenv(
+                "MESH_REPO_PATCH_PERMIT_ISSUER",
+                "mesh.orchestrator",
+            ),
+            repo_patch_permit_executor_audience=os.getenv(
+                "MESH_REPO_PATCH_PERMIT_EXECUTOR_AUDIENCE",
+                "mesh.repo_patch_actuator",
+            ),
+            repo_patch_authority_socket_path=(
+                _env_path_anchored_to_repo(os.getenv("MESH_REPO_PATCH_AUTHORITY_SOCKET_PATH"), default="")
+                if os.getenv("MESH_REPO_PATCH_AUTHORITY_SOCKET_PATH")
+                else None
+            ),
+            repo_patch_authority_client_private_key_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_REPO_PATCH_AUTHORITY_CLIENT_PRIVATE_KEY_PATH"),
+                    default="",
+                )
+                if os.getenv("MESH_REPO_PATCH_AUTHORITY_CLIENT_PRIVATE_KEY_PATH")
+                else None
+            ),
+            repo_patch_authority_client_key_id=os.getenv(
+                "MESH_REPO_PATCH_AUTHORITY_CLIENT_KEY_ID",
+                "mesh-orchestrator-client",
+            ),
+            repo_patch_authority_public_key_path=(
+                _env_path_anchored_to_repo(
+                    os.getenv("MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_PATH"),
+                    default="",
+                )
+                if os.getenv("MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_PATH")
+                else None
+            ),
+            repo_patch_authority_key_id=os.getenv(
+                "MESH_REPO_PATCH_AUTHORITY_KEY_ID",
+                "mesh-repo-patch-authority",
+            ),
+            repo_patch_authority_timeout_seconds=max(
+                0.1,
+                float(os.getenv("MESH_REPO_PATCH_AUTHORITY_TIMEOUT_SECONDS", "30")),
+            ),
+            repo_patch_authority_max_message_bytes=max(
+                1024,
+                int(os.getenv("MESH_REPO_PATCH_AUTHORITY_MAX_MESSAGE_BYTES", "1048576")),
+            ),
+            repo_patch_authority_allowed_test_commands=_csv_env(
+                "MESH_REPO_PATCH_AUTHORITY_ALLOWED_TEST_COMMANDS"
+            ),
             darkharness_registry_path=(
                 _env_path_anchored_to_repo(os.getenv("MESH_DARKHARNESS_REGISTRY_PATH"), default="")
                 if os.getenv("MESH_DARKHARNESS_REGISTRY_PATH")

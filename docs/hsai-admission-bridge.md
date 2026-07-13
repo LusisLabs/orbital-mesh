@@ -20,12 +20,16 @@ end-to-end in its target environment.
 
 ## Contracts
 
-The bridge adds three schema-backed contracts under
+The bridge and local execution-authority layer add schema-backed contracts under
 `shared/mesh_runtime/schemas/`:
 
 - `mesh.hsai_admission_request.v1`
+- `mesh.hsai_admission_request.v2`
 - `mesh.hsai_admission_decision.v1`
 - `mesh.combined_proof_packet.v1`
+- `mesh.repo_patch_authority_request.v1`
+- `mesh.repo_patch_authority_response.v1`
+- `mesh.repo_patch_execution_permit.v1`
 
 Canonical bridge fixtures live under `fixtures/hsai_bridge/`:
 
@@ -61,7 +65,9 @@ and the execution context attached to an allowed repo-patch decision.
 
 ## Execution Rule
 
-`OrchestratorService` calls the bridge before any selected repo-patch execution.
+`OrchestratorService` performs an early fail-closed eligibility check, then asks
+the authority service for non-mutating preflight evidence. It invokes the HSAI
+bridge with a `mesh.hsai_admission_request.v2` candidate bound to that evidence.
 Execution proceeds only when:
 
 - HSAI decision is `allow`;
@@ -81,19 +87,38 @@ contains the packet with executor receipt digest and action result metadata.
 Existing run export packages include execution `external_refs`, so the combined
 packet is exportable through the current run export path.
 
-Allowed repo-patch decisions carry `_mesh_hsai_admission_context` in execution
-parameters before they are handed to native adapters, CLI executors, or Goose /
-Hermes bridge subprocesses. Those execution paths revalidate that context before
-calling the raw `RepoPatchAdapter`. This binds the execution attempt to the
-current `mesh_run_id`, `mesh_action_id`, policy id, action proposal digest,
-request digest, decision digest, candidate digest, and allowed HSAI decision.
-Repo-patch execution also uses the existing execution-attempt replay guard so a
-terminal outcome for the same idempotency key is reused instead of dispatching a
-second patch attempt.
+Goose and Hermes are protocol-level review-only for this action: their result
+cannot carry a permit or modify final parameters, and their adapters cannot
+construct or import `RepoPatchAdapter`. This does not isolate a same-UID CLI
+subprocess from the orchestrator client's mounted signing key. The closed-beta
+overlay therefore disables Goose, Hermes, and Evo subprocess commands and uses
+only the deterministic native review adapter. CLI-backed review is not beta
+eligible until it runs under a separate OS identity with no key or authority
+socket access.
 
-The raw `services.actuators.repo_patch.RepoPatchAdapter` remains a low-level
-actuator helper. Production orchestrator entry points for repo patching must go
-through the HSAI execution-context guard.
+The out-of-process authority independently authenticates the client signature
+and kernel peer credentials, recomputes disposable-worktree preflight, invokes
+an identity-pinned authority-eligible HSAI adapter, compares the substantive
+gate result, and only then creates its internal single-consumption
+`mesh.repo_patch_execution_permit.v1`. Shell-form verification is rejected;
+tests execute exact allowlisted argv vectors with executable-digest binding and
+without `/bin/sh`.
+
+`services.actuators.repo_patch.RepoPatchAdapter` remains self-enforcing, but the
+authority service is the only runtime module permitted to import or construct
+it. Its permit, ledger, backup, and target-promotion details stay inside the
+authority process. A terminal execution outcome is replayed for the same
+idempotency key. A dispatched lifecycle first reconciles a binding-validated
+committed or aborted permit result; only a dispatched request without a durable
+terminal permit outcome is recorded as unknown and not automatically repeated.
+
+The authority keeps the verified detached worktree open through authorization
+and atomically promotes those exact verified bytes; it does not ask the actuator
+to apply a second patch. Its append-only CAS lifecycle is issue, lease, dispatch,
+and terminal. An expired pre-dispatch lease can be reclaimed with a fresh fence.
+A crash after dispatch reconciles an exact terminal permit result when one
+exists. Otherwise it becomes `unknown/recovery-required` and cannot silently
+promote again.
 
 ## Proof Packet Invariants
 
@@ -116,6 +141,37 @@ MESH_HSAI_ADMISSION_TIMEOUT_SECONDS=30
 ```
 
 The subprocess must return `mesh.hsai_admission_decision.v1` JSON on stdout.
+The local metadata adapter and the shipped `scripts/hsai_admission_adapter.py`
+subprocess are not authority-eligible and cannot produce a mutable repo-patch
+permit. Ordinary subprocess adapters are permanently non-authoritative. The
+only subprocess authority mode is the pinned Rust evidence-v2 CLI identity:
+
+```bash
+MESH_HSAI_ADMISSION_COMMAND="/absolute/path/hsai-cli --current-policy-id mesh_policy://repo-patch/current"
+MESH_HSAI_ADMISSION_AUTHORITY_MODE="rust_evidence_v2"
+MESH_HSAI_ADMISSION_EXECUTABLE_SHA256="sha256:<64 lowercase hex>"
+MESH_HSAI_ADMISSION_TIMEOUT_SECONDS=30
+```
+
+Authority mode requires the exact CLI argument shape shown above, an absolute
+regular executable that is not a symlink, execute permission, and a
+caller-configured SHA-256 pin. Mesh hashes the executable at construction and
+again before every admission call. The stable adapter identity binds the
+evidence-v2 identity version, executable digest, and current policy id. Missing,
+partial, unknown-mode, relative-path, symlink, permission, or digest-drift
+configuration fails closed before launching the CLI.
+
+Mutable permit issuance additionally requires:
+
+```bash
+MESH_REPO_PATCH_PERMIT_SIGNING_KEY_PATH="/run/secrets/repo-patch-permit.key"
+MESH_REPO_PATCH_PERMIT_SIGNING_KEY_ID="repo-patch-permit-hmac"
+MESH_REPO_PATCH_PERMIT_ISSUER="mesh.orchestrator"
+MESH_REPO_PATCH_PERMIT_EXECUTOR_AUDIENCE="mesh.repo_patch_actuator"
+```
+
+`MESH_REPO_PATCH_PERMIT_SIGNING_KEY` is the inline alternative to the secret
+file path. Do not reuse `MESH_POLICY_SIGNING_KEY` for permit authority.
 
 Mesh also ships a narrow subprocess-compatible command:
 
@@ -127,6 +183,100 @@ That command reads a `mesh.hsai_admission_request.v1` object from stdin,
 validates it, optionally reads the formal-backend bundle environment variable
 below, and writes a `mesh.hsai_admission_decision.v1` object to stdout. It is a
 bridge adapter command, not a deep repository merge or HSAI crate import.
+
+## Out-of-Process Repo-Patch Authority
+
+State slice `mesh.repo_patch_authority_orchestration.v1` confines repo-patch
+actuation to the Unix-socket authority service. Goose and Hermes adapters are
+review-only for this action. The orchestrator requires their exact
+review-only, unchanged-parameters, no-authority, and no-credentials assertions
+before contacting the authority. It never issues a permit or imports the raw
+repo-patch actuator.
+
+The client requires all of the following configuration; absent, partial,
+relative, symlinked, unreadable, or permission-invalid key configuration fails
+the repo-patch action closed:
+
+```bash
+MESH_REPO_PATCH_AUTHORITY_SOCKET_PATH=/run/mesh/repo-patch-authority.sock
+MESH_REPO_PATCH_AUTHORITY_CLIENT_PRIVATE_KEY_PATH=/run/mesh/orchestrator-client.pem
+MESH_REPO_PATCH_AUTHORITY_CLIENT_KEY_ID=mesh-orchestrator-client
+MESH_REPO_PATCH_AUTHORITY_PUBLIC_KEY_PATH=/run/mesh/repo-patch-authority-public.pem
+MESH_REPO_PATCH_AUTHORITY_KEY_ID=mesh-repo-patch-authority
+```
+
+After Mesh policy approval and the authority-eligible-adapter check,
+orchestration performs a signed, non-mutating disposable-worktree preflight.
+The receipt feeds the HSAI v2 request. Only a matching HSAI allow decision and
+unchanged review result may feed the signed execution request. The authority
+reruns both preflight and the pinned HSAI gate before promotion. Once execution is marked dispatched, a
+transport error, malformed response, or lost response becomes
+`outcome_unknown_after_dispatch`; Mesh does not retry or fall back to local
+actuation. The verified authority signature, service receipt, and execution
+result are retained in execution references and covered by the combined proof
+packet receipt digest. Missing authority configuration is resolved lazily, so
+non-repo actions remain unchanged.
+
+### Closed-beta deployment overlay
+
+`docker-compose.repo-patch-beta.yml` runs Mesh as UID/GID 2000 with only the
+authority socket group, runs the authority as UID 3000, keeps Mesh on an
+internal network, publishes loopback through a credential-free fixed-upstream
+proxy, removes the writable host checkout and operator credential mounts,
+disables local model CLI commands, applies read-only roots, drops capabilities,
+sets no-new-privileges and resource bounds, gives only the authority target
+write access, and mounts the same pinned Linux HSAI binary in both processes.
+The beta fixes verification to the non-repository command `python3 -c pass`;
+general repository-controlled verification remains outside the beta until it is
+sandboxed in a separate no-secret worker. The production image retains Git for
+detached worktrees. Operators must provide every declared key, identity, target,
+state path, binary digest, and policy id. PostgreSQL migration 006 has a local
+Docker restart/concurrency rehearsal, not managed multi-host availability proof.
+
+This file is an overlay, not a standalone Compose project. Render or launch it
+with the base service definition first:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.repo-patch-beta.yml config
+docker compose -f docker-compose.yml -f docker-compose.repo-patch-beta.yml up -d
+```
+
+### Linux OS-identity proof with the real Phase 747 CLI
+
+Build the Phase 747 Rust binary for the same Linux container architecture. The
+proof harness computes its SHA-256 pin inside the container and passes the pin
+plus the exact `mesh_policy://repo-patch/os-boundary-proof` policy id to the
+pinned adapter. No fake authority-eligible HSAI adapter participates.
+
+```bash
+docker build \
+  -f docker/repo-patch-authority-proof.Dockerfile \
+  -t orbital-mesh-authority-proof:local \
+  .
+
+docker volume create hsai-linux-target
+
+docker run --rm \
+  --mount type=bind,src=/absolute/path/to/composed-zk-benchmark-os,dst=/src,readonly \
+  --mount type=volume,src=hsai-linux-target,dst=/target \
+  -e CARGO_PROFILE_DEV_DEBUG=0 \
+  rust:1.92-slim-bookworm \
+  cargo build --locked --manifest-path /src/Cargo.toml --target-dir /target \
+    -j 1 -p hsai-agent-admission --bin hsai-mesh-admission
+
+docker run --rm --network none \
+  --tmpfs /proof:rw,exec,mode=0755 \
+  --mount type=volume,src=hsai-linux-target,dst=/hsai-target,readonly \
+  -e MESH_OS_PROOF_HSAI_EXECUTABLE=/hsai-target/debug/hsai-mesh-admission \
+  orbital-mesh-authority-proof:local
+```
+
+Success is a JSON proof with `status=pass`, three distinct observed UIDs,
+denied agent and orchestrator direct writes, denied agent socket access, a real
+pinned evidence-v2 allow decision, and target mutation only after the signed
+orchestrator request. This remains disposable Linux-container evidence, not a
+production deployment or semantic-correctness proof. The captured passing
+result is `docs/evidence/repo-patch-authority-os-boundary-proof.json`.
 
 ## HSAI Formal Backend Metadata
 
@@ -175,3 +325,7 @@ Run the focused bridge tests:
 ```bash
 PYTHONPATH=. UV_CACHE_DIR=/tmp/uv-cache UV_TOOL_DIR=/tmp/uv-tools uv run --with-editable . python -m unittest tests.test_hsai_admission_bridge
 ```
+
+The deterministic evidence-carrying authority campaign is included in that
+module. Its current local result and claim ceiling are recorded in
+`docs/evidence-carrying-agent-actions-trial.md`.
