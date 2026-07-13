@@ -259,16 +259,21 @@ state. Once those preconditions pass, the workflow:
 
 1. checks out `github.sha`, requires the exact clean source state, installs the
    frozen pnpm workspace, and runs the heavy root lint gate;
-2. builds and locally scans every role before GHCR authentication, requiring
-   zero unaccepted high or critical findings while retaining the exact raw
-   Grype scan and digest-bound vulnerability-evidence file;
+2. builds every role with exact source commit and version arguments, requires
+   the OCI source, revision, and version labels to match that build request,
+   records `mesh.image_source_binding.v1`, and locally scans every role before
+   GHCR authentication, requiring zero unaccepted high or critical findings
+   while retaining the exact raw Grype scan and digest-bound
+   vulnerability-evidence file;
 3. requires the verifier sandbox digest, key id, and public key from repository
    variables, without receiving any private signing key;
 4. publishes commit-only tags, resolves registry manifest digests, pulls and
    rescans the immutable references, and rechecks zero unaccepted findings;
 5. creates GitHub OIDC provenance attestations with a full-SHA-pinned action,
-   generates exact-commit Mesh CI attestations, and generates the three-role
-   service-image bundle; and
+   generates exact-commit Mesh CI attestations whose build command binds the
+   Dockerfile, commit-only tag, source commit, source version, and required
+   source/scan/provenance checks, and generates the three-role service-image
+   bundle; and
 6. re-resolves every registry digest and verifies the bundle against the exact
    commit, role references, digests, raw and normalized scan chain, and external
    verifier policy.

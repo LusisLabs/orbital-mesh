@@ -26,6 +26,13 @@ FROM ${REPO_PATCH_PYTHON_BASE}
 
 WORKDIR /app
 
+ARG MESH_BUILD_VERSION=dev
+ARG MESH_BUILD_COMMIT=unknown
+
+LABEL org.opencontainers.image.source="https://github.com/LusisLabs/orbital-mesh" \
+      org.opencontainers.image.revision="${MESH_BUILD_COMMIT}" \
+      org.opencontainers.image.version="${MESH_BUILD_VERSION}"
+
 COPY --from=verifier-python-backport /usr/local/lib/python3.13/html/parser.py /usr/local/lib/python3.13/html/parser.py
 COPY --from=verifier-python-dependencies /opt/verifier-python /opt/verifier-python
 

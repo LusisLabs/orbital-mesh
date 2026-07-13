@@ -1401,6 +1401,9 @@ REQUIRED_MARKERS = {
         "repo_patch_verifier)",
         "generate_release_image_assurance.py",
         "unaccepted_blocking_finding_count == 0",
+        "mesh.image_source_binding.v1",
+        "org.opencontainers.image.revision",
+        "image-source-binding",
         "Authenticate to GHCR only after all scans pass",
         "actions/attest@a1948c3f048ba23858d222213b7c278aabede763",
         "generate_repo_patch_service_image_bundle.py",
@@ -1430,6 +1433,9 @@ REQUIRED_MARKERS = {
         "deno>=2.8.1,<3",
         "rm -f /usr/local/bin/uv /usr/local/bin/uvx",
         "apt-get purge -y --auto-remove curl git git-man",
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.revision",
+        "org.opencontainers.image.version",
     ),
     "docker/repo-patch-authority.Dockerfile": (
         "python:3.13.14-alpine3.24",
@@ -1440,6 +1446,9 @@ REQUIRED_MARKERS = {
         "cryptography==${CRYPTOGRAPHY_VERSION}",
         "repo-patch-verifier-response-v2.schema.json",
         "services.actuators.repo_patch_authority_service",
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.revision",
+        "org.opencontainers.image.version",
     ),
     "docker/repo-patch-verifier.Dockerfile": (
         "verifier-python-dependencies",
@@ -1449,6 +1458,9 @@ REQUIRED_MARKERS = {
         "cryptography==${CRYPTOGRAPHY_VERSION}",
         "repo-patch-verifier-response-v2.schema.json",
         "services.actuators.repo_patch_verifier_service",
+        "org.opencontainers.image.source",
+        "org.opencontainers.image.revision",
+        "org.opencontainers.image.version",
     ),
     "shared/mesh_runtime/repo_patch_service_image_bundle.py": (
         "mesh.repo_patch_service_image_bundle.v1",
@@ -1461,6 +1473,8 @@ REQUIRED_MARKERS = {
         "valid_verified_vex_summary",
         "unaccepted_blocking_finding_count",
         "provider\") == \"github-actions",
+        "REQUIRED_CI_ATTESTATION_CHECKS",
+        "MESH_BUILD_COMMIT",
     ),
     "docs/darkharness-operator-runbook.md": (
         "/api/runs/{run_id}/darkharness-packet",

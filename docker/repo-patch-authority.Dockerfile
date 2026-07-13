@@ -3,9 +3,15 @@ FROM ${REPO_PATCH_PYTHON_BASE}
 
 WORKDIR /app
 
+ARG MESH_BUILD_VERSION=dev
+ARG MESH_BUILD_COMMIT=unknown
 ARG CRYPTOGRAPHY_VERSION=48.0.1
 ARG PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced
 ARG PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae
+
+LABEL org.opencontainers.image.source="https://github.com/LusisLabs/orbital-mesh" \
+      org.opencontainers.image.revision="${MESH_BUILD_COMMIT}" \
+      org.opencontainers.image.version="${MESH_BUILD_VERSION}"
 
 RUN apk add --no-cache ca-certificates curl git \
     && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL \

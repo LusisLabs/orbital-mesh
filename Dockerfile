@@ -95,6 +95,10 @@ ARG UV_VERSION=0.11.6
 ARG PYTHON_HTML_PARSER_BACKPORT_COMMIT=7933f4bf7131aa4140750f9404f5de0aa2969ced
 ARG PYTHON_HTML_PARSER_BACKPORT_SHA256=4274e9112adf3fa57c7f9afa7c9b5c631456b18b7403cc627cc5027d02cdd2ae
 
+LABEL org.opencontainers.image.source="https://github.com/LusisLabs/orbital-mesh" \
+      org.opencontainers.image.revision="${MESH_BUILD_COMMIT}" \
+      org.opencontainers.image.version="${MESH_BUILD_VERSION}"
+
 RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \

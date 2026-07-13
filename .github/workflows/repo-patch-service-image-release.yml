@@ -109,6 +109,23 @@ jobs:
               --build-arg "MESH_BUILD_COMMIT=${GITHUB_SHA}" \
               .
             image_digest="$(docker image inspect "$image_tag" --format '{{.Id}}')"
+            image_source="$(docker image inspect "$image_tag" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')"
+            image_revision="$(docker image inspect "$image_tag" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+            image_version="$(docker image inspect "$image_tag" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')"
+            test "$image_source" = "https://github.com/${GITHUB_REPOSITORY}"
+            test "$image_revision" = "$GITHUB_SHA"
+            test "$image_version" = "sha-${GITHUB_SHA}"
+            jq -n \
+              --arg schema_version "mesh.image_source_binding.v1" \
+              --arg role "$role" \
+              --arg dockerfile "$dockerfile" \
+              --arg image_tag "$image_tag" \
+              --arg image_digest "$image_digest" \
+              --arg source "$image_source" \
+              --arg revision "$image_revision" \
+              --arg version "$image_version" \
+              '{schema_version: $schema_version, role: $role, dockerfile: $dockerfile, image: {tag: $image_tag, digest: $image_digest}, source: $source, revision: $revision, version: $version}' \
+              > "$role_root/image-source-binding.json"
             python3 scripts/generate_release_image_assurance.py \
               --image-tag "$image_tag" \
               --image-digest "$image_digest" \
@@ -158,6 +175,23 @@ jobs:
             docker pull "$immutable_ref"
             role_root="${RELEASE_ROOT}/published/${role}"
             mkdir -p "$role_root"
+            image_source="$(docker image inspect "$immutable_ref" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')"
+            image_revision="$(docker image inspect "$immutable_ref" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+            image_version="$(docker image inspect "$immutable_ref" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')"
+            test "$image_source" = "https://github.com/${GITHUB_REPOSITORY}"
+            test "$image_revision" = "$GITHUB_SHA"
+            test "$image_version" = "sha-${GITHUB_SHA}"
+            jq -n \
+              --arg schema_version "mesh.image_source_binding.v1" \
+              --arg role "$role" \
+              --arg dockerfile "$dockerfile" \
+              --arg image_tag "$immutable_ref" \
+              --arg image_digest "$image_digest" \
+              --arg source "$image_source" \
+              --arg revision "$image_revision" \
+              --arg version "$image_version" \
+              '{schema_version: $schema_version, role: $role, dockerfile: $dockerfile, image: {tag: $image_tag, digest: $image_digest}, source: $source, revision: $revision, version: $version}' \
+              > "$role_root/image-source-binding.json"
             python3 scripts/generate_release_image_assurance.py \
               --image-tag "$immutable_ref" \
               --image-digest "$image_digest" \
@@ -226,8 +260,9 @@ jobs:
               --source-sha "$GITHUB_SHA" \
               --image-tag "$immutable_ref" \
               --image-digest "$image_digest" \
-              --build-command "docker build --file ${dockerfile} --tag ${immutable_ref%@*}:sha-${GITHUB_SHA} ." \
+              --build-command "docker build --pull --file ${dockerfile} --tag ${immutable_ref%@*}:sha-${GITHUB_SHA} --build-arg MESH_BUILD_VERSION=sha-${GITHUB_SHA} --build-arg MESH_BUILD_COMMIT=${GITHUB_SHA} ." \
               --check pnpm-lint \
+              --check image-source-binding \
               --check prepublish-image-assurance \
               --check published-image-assurance \
               --check github-oidc-provenance \

@@ -7,6 +7,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = REPO_ROOT / ".github/workflows/repo-patch-service-image-release.yml"
+ROLE_DOCKERFILE_PATHS = (
+    REPO_ROOT / "Dockerfile",
+    REPO_ROOT / "docker/repo-patch-authority.Dockerfile",
+    REPO_ROOT / "docker/repo-patch-verifier.Dockerfile",
+)
 
 
 class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
@@ -71,6 +76,32 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/generate_release_image_assurance.py", scan_block)
         self.assertIn("config/release-vulnerability-exceptions.json", scan_block)
         self.assertNotIn("docker push", scan_block)
+
+    def test_all_role_images_bind_exact_source_identity_before_scan(self) -> None:
+        for path in ROLE_DOCKERFILE_PATHS:
+            with self.subTest(dockerfile=path.relative_to(REPO_ROOT).as_posix()):
+                dockerfile = path.read_text(encoding="utf-8")
+                self.assertIn("ARG MESH_BUILD_VERSION=dev", dockerfile)
+                self.assertIn("ARG MESH_BUILD_COMMIT=unknown", dockerfile)
+                self.assertIn("org.opencontainers.image.source", dockerfile)
+                self.assertIn("org.opencontainers.image.revision", dockerfile)
+                self.assertIn("org.opencontainers.image.version", dockerfile)
+
+        workflow = self.workflow
+        scan = workflow.index("scripts/generate_release_image_assurance.py")
+        for marker in (
+            "image-source-binding.json",
+            "mesh.image_source_binding.v1",
+            "org.opencontainers.image.source",
+            "org.opencontainers.image.revision",
+            "org.opencontainers.image.version",
+            'test "$image_source" = "https://github.com/${GITHUB_REPOSITORY}"',
+            'test "$image_revision" = "$GITHUB_SHA"',
+            'test "$image_version" = "sha-${GITHUB_SHA}"',
+        ):
+            self.assertIn(marker, workflow)
+            self.assertLess(workflow.index(marker), scan)
+        self.assertIn("--check image-source-binding", workflow)
 
     def test_permissions_and_actions_are_pinned(self) -> None:
         workflow = self.workflow

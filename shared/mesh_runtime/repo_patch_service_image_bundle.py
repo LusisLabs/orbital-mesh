@@ -30,6 +30,15 @@ REPO_PATCH_SERVICE_IMAGE_BUNDLE_VERSION = "mesh.repo_patch_service_image_bundle.
 REPO_PATCH_SERVICE_IMAGE_BUNDLE_STATE_SLICE = "mesh.repo_patch_service_image_bundle.v1"
 REPO_PATCH_SERVICE_IMAGE_BUNDLE_SCHEMA = "repo-patch-service-image-bundle.schema.json"
 REPO_PATCH_VERIFIER_RECEIPT_SIGNING_PROFILE = "mesh-repo-patch-verifier-receipt-ed25519-v2"
+REQUIRED_CI_ATTESTATION_CHECKS = frozenset(
+    {
+        "pnpm-lint",
+        "image-source-binding",
+        "prepublish-image-assurance",
+        "published-image-assurance",
+        "github-oidc-provenance",
+    }
+)
 
 ROLE_ORDER = (
     "mesh_control_plane",
@@ -617,25 +626,67 @@ def _ci_attestation_bound(
         and image.get("digest") == image_digest
         and _SHA256_HEX.fullmatch(attestation_sha256) is not None
         and _canonical_payload_sha256(unsigned) == attestation_sha256
-        and isinstance(checks, list)
-        and bool(checks)
-        and all(isinstance(item, dict) and item.get("status") == "passed" for item in checks)
-        and _build_command_mentions_dockerfile(str(build.get("command") or ""), dockerfile_path)
+        and _ci_checks_bound(checks)
+        and _build_command_binds_source(
+            str(build.get("command") or ""),
+            dockerfile_path=dockerfile_path,
+            image_tag=image_tag,
+            git_commit=git_commit,
+        )
     )
 
 
-def _build_command_mentions_dockerfile(command: str, dockerfile_path: str) -> bool:
+def _ci_checks_bound(value: Any) -> bool:
+    if not isinstance(value, list) or not value:
+        return False
+    statuses: dict[str, str] = {}
+    for item in value:
+        if not isinstance(item, dict):
+            return False
+        name = item.get("name")
+        status = item.get("status")
+        if not isinstance(name, str) or not name or name in statuses or status != "passed":
+            return False
+        statuses[name] = status
+    return REQUIRED_CI_ATTESTATION_CHECKS.issubset(statuses)
+
+
+def _build_command_binds_source(
+    command: str,
+    *,
+    dockerfile_path: str,
+    image_tag: str,
+    git_commit: str,
+) -> bool:
     try:
         arguments = shlex.split(command)
     except ValueError:
         return False
+    if arguments[:2] != ["docker", "build"] or "--pull" not in arguments:
+        return False
+    expected_build_tag = f"{image_tag.rsplit('@', 1)[0]}:sha-{git_commit}"
+    required_build_args = {
+        f"MESH_BUILD_VERSION=sha-{git_commit}",
+        f"MESH_BUILD_COMMIT={git_commit}",
+    }
+    observed_build_args: set[str] = set()
+    dockerfile_bound = False
+    tag_bound = False
     for index, argument in enumerate(arguments):
         if argument in {"-f", "--file"} and index + 1 < len(arguments):
             if arguments[index + 1] == dockerfile_path:
-                return True
+                dockerfile_bound = True
         if argument == f"--file={dockerfile_path}" or argument == f"-f{dockerfile_path}":
-            return True
-    return False
+            dockerfile_bound = True
+        if argument in {"-t", "--tag"} and index + 1 < len(arguments):
+            tag_bound = arguments[index + 1] == expected_build_tag
+        if argument == f"--tag={expected_build_tag}" or argument == f"-t{expected_build_tag}":
+            tag_bound = True
+        if argument == "--build-arg" and index + 1 < len(arguments):
+            observed_build_args.add(arguments[index + 1])
+        if argument.startswith("--build-arg="):
+            observed_build_args.add(argument.split("=", 1)[1])
+    return dockerfile_bound and tag_bound and required_build_args.issubset(observed_build_args)
 
 
 def _require_artifact_root(value: str | Path) -> Path:

@@ -271,6 +271,26 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
         self.assertNotIn(f"roles.{role}.ci_attestation.sha256", result["missing"])
         self.assertIn(f"roles.{role}.ci_attestation.binding", result["missing"])
 
+    def test_rejects_missing_required_ci_check_after_attestation_and_bundle_rehash(self) -> None:
+        role = "mesh_control_plane"
+        ci_path = self.artifact_paths[role]["ci_attestation"]
+        attestation = json.loads(ci_path.read_text(encoding="utf-8"))
+        attestation["checks"] = [
+            item for item in attestation["checks"] if item["name"] != "image-source-binding"
+        ]
+        attestation["attestation_sha256"] = _canonical_sha256(
+            {key: value for key, value in attestation.items() if key != "attestation_sha256"}
+        )
+        ci_path.write_text(json.dumps(attestation, sort_keys=True), encoding="utf-8")
+        tampered = deepcopy(self.bundle)
+        tampered["roles"][role]["ci_attestation"]["sha256"] = _file_sha256(ci_path)
+        _rehash(tampered)
+
+        result = self._verify(tampered)
+
+        self.assertNotIn(f"roles.{role}.ci_attestation.sha256", result["missing"])
+        self.assertIn(f"roles.{role}.ci_attestation.binding", result["missing"])
+
     def test_rejects_wrong_signer_policy(self) -> None:
         attacker_public_key = self.root / "attacker-public.pem"
         _write_ed25519_public_key(attacker_public_key)
@@ -450,10 +470,24 @@ def _write_ci_attestation(
         "run_sha": git_commit,
         "image": {"tag": image_tag, "digest": image_digest},
         "build": {
-            "command": f"docker build --file {dockerfile_path} --tag {image_tag} .",
+            "command": (
+                f"docker build --pull --file {dockerfile_path} "
+                f"--tag {image_tag.rsplit('@', 1)[0]}:sha-{git_commit} "
+                f"--build-arg MESH_BUILD_VERSION=sha-{git_commit} "
+                f"--build-arg MESH_BUILD_COMMIT={git_commit} ."
+            ),
             "base_images": [],
         },
-        "checks": [{"name": "docker-build", "status": "passed"}],
+        "checks": [
+            {"name": name, "status": "passed"}
+            for name in (
+                "pnpm-lint",
+                "image-source-binding",
+                "prepublish-image-assurance",
+                "published-image-assurance",
+                "github-oidc-provenance",
+            )
+        ],
     }
     packet["attestation_sha256"] = _canonical_sha256(packet)
     path.write_text(json.dumps(packet, sort_keys=True), encoding="utf-8")
