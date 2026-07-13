@@ -33,6 +33,7 @@ from shared.mesh_runtime.repo_patch_authority import (
     validate_authority_request_operation,
 )
 from shared.mesh_runtime.repo_patch_permits import write_immutable_backup
+from shared.mesh_runtime.repo_patch_test_policy import AuthorizedTestCommand
 
 
 CLIENT_KEY_ID = "mesh-preflight-test-client"
@@ -77,6 +78,29 @@ class _UnavailableHsaiAdapter(_EligibleHsaiAdapter):
     def admit(self, request: dict[str, Any]) -> dict[str, Any]:
         del request
         raise RuntimeError("injected authority-side HSAI outage")
+
+
+class _SuccessfulVerifier:
+    def verify(
+        self,
+        *,
+        commands: tuple[AuthorizedTestCommand, ...],
+        **_: object,
+    ) -> tuple[dict[str, object], ...]:
+        empty_digest = "sha256:" + ("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        return tuple(
+            {
+                "argv": [command.executable_path, *command.argv[1:]],
+                "returncode": 0,
+                "stdout_digest": empty_digest,
+                "stderr_digest": empty_digest,
+                "stdout_bytes": 0,
+                "stderr_bytes": 0,
+                "timed_out": False,
+                "output_limit_exceeded": False,
+            }
+            for command in commands
+        )
 
 
 class RepoPatchAuthorityPreflightTests(unittest.TestCase):
@@ -474,6 +498,7 @@ class RepoPatchAuthorityPreflightTests(unittest.TestCase):
             permit_signing_key=PERMIT_SIGNING_KEY,
             allowed_test_commands=(AUTHORIZED_COMMAND,),
             hsai_admission_adapter=resolved_adapter,
+            verifier_client=_SuccessfulVerifier(),  # type: ignore[arg-type]
         )
 
     def _dispatch_execution_lifecycle(

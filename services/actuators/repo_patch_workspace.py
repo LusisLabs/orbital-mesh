@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Iterator, Sequence
 
 
-MAX_COMMAND_OUTPUT_BYTES = 64 * 1024
 MAX_TARGET_FILE_BYTES = 1024 * 1024
 
 
@@ -98,36 +97,42 @@ class PreparedRepoPatch:
         self.promoted = False
         self.closed = False
 
-    def verify(self, commands: Sequence[Sequence[str]], *, timeout_seconds: int = 30) -> PreparedPatchReceipt:
+    def accept_verifier_results(
+        self,
+        commands: Sequence[Sequence[str]],
+        results: Sequence[dict[str, Any]],
+    ) -> PreparedPatchReceipt:
+        """Accept bound sidecar results, then independently verify the canonical worktree."""
+
         if self.closed:
             raise ValueError("repo patch workspace is closed")
         if self.verified:
             raise ValueError("repo patch workspace was already verified")
-        for command in commands:
+        if len(commands) != len(results):
+            raise ValueError("repo patch verifier result count mismatch")
+        for command, result in zip(commands, results, strict=True):
             arguments = [str(value) for value in command]
             if not arguments or any(not value for value in arguments):
                 raise ValueError("repo patch verification command contains an empty argument")
-            completed = subprocess.run(
-                arguments,
-                cwd=self.workspace,
-                capture_output=True,
-                check=False,
-                timeout=timeout_seconds,
-                env=_command_environment(),
-            )
-            stdout = completed.stdout[:MAX_COMMAND_OUTPUT_BYTES]
-            stderr = completed.stderr[:MAX_COMMAND_OUTPUT_BYTES]
-            if len(completed.stdout) > MAX_COMMAND_OUTPUT_BYTES or len(completed.stderr) > MAX_COMMAND_OUTPUT_BYTES:
-                raise ValueError("repo patch verification output exceeded the bounded limit")
-            result = {
-                "argv": arguments,
-                "returncode": completed.returncode,
-                "stdout": stdout.decode("utf-8", errors="replace"),
-                "stderr": stderr.decode("utf-8", errors="replace"),
-            }
-            self.test_results.append(result)
-            if completed.returncode != 0:
+            if result.get("argv") != arguments:
+                raise ValueError("repo patch verifier result argv mismatch")
+            returncode = result.get("returncode")
+            stdout_digest = result.get("stdout_digest")
+            stderr_digest = result.get("stderr_digest")
+            if not isinstance(returncode, int) or isinstance(returncode, bool):
+                raise ValueError("repo patch verifier result return code rejected")
+            if not _is_digest(stdout_digest) or not _is_digest(stderr_digest):
+                raise ValueError("repo patch verifier result output digest rejected")
+            if returncode != 0:
                 raise ValueError("repo patch verification command failed")
+            self.test_results.append(
+                {
+                    "argv": arguments,
+                    "returncode": returncode,
+                    "stdout_digest": stdout_digest,
+                    "stderr_digest": stderr_digest,
+                }
+            )
 
         self.changed_paths = self._changed_paths()
         undeclared = sorted(set(self.changed_paths) - self.allowed_paths)
@@ -286,7 +291,7 @@ class RepoPatchWorkspaceManager:
 
         base_commit = _run_git(source_repo, "rev-parse", "HEAD")
         base_tree = _run_git(source_repo, "rev-parse", "HEAD^{tree}")
-        safe_workspace_id = hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()
+        safe_workspace_id = "workspace_" + hashlib.sha256(workspace_id.encode("utf-8")).hexdigest()
         workspace = self.workspace_root / safe_workspace_id
         if workspace.exists() or workspace.is_symlink():
             raise ValueError("repo patch workspace already exists")
@@ -352,6 +357,15 @@ def _validate_git_index_regular_blob(repo: Path, relative_path: Path, label: str
         raise ValueError(f"{label} Git index path mismatch")
     if mode not in {b"100644", b"100755"} or stage != b"0":
         raise ValueError(f"{label} must be a stage-zero Git-indexed regular blob")
+
+
+def _is_digest(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
 
 
 @contextmanager

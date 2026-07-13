@@ -1,0 +1,51 @@
+{
+  "checks": {
+    "authority_assets_absent": true,
+    "deployed_image_digest_bound": true,
+    "escaped_descendant_removed": true,
+    "input_mount_read_only": true,
+    "memory_limit_256m": true,
+    "network_mode_none": true,
+    "output_limit_failed_closed": true,
+    "pids_limit_64": true,
+    "positive_adversarial_command_succeeded": true,
+    "root_filesystem_read_only": true,
+    "runner_uid_was_distinct": true,
+    "timeout_failed_closed": true
+  },
+  "claim_ceiling": "disposable Docker Linux-VM regression evidence for the keyless verifier sidecar; not production-host proof, not protection from host or container-runtime compromise, not arbitrary repository compatibility, and not semantic correctness",
+  "controller": {
+    "output_limit_rejected": true,
+    "positive_succeeded": true,
+    "runner_uid_observed": 6000,
+    "timeout_rejected": true
+  },
+  "image": "orbital-mesh:repo-patch-verifier-proof",
+  "image_digest": "sha256:58202136d98b4aa8a2c69f8fe198b35acfff807145aaf5bec36a4df843eb299b",
+  "platform": "docker-linux-vm",
+  "sandbox_profile": {
+    "cap_add": [
+      "CHOWN",
+      "DAC_OVERRIDE",
+      "FOWNER",
+      "KILL",
+      "SETGID",
+      "SETUID"
+    ],
+    "cap_drop": [
+      "ALL"
+    ],
+    "cpus": 0.5,
+    "memory_bytes": 268435456,
+    "network_mode": "none",
+    "no_new_privileges": true,
+    "pids_limit": 64,
+    "read_only_root": true,
+    "runner_gid": 6000,
+    "runner_uid": 6000
+  },
+  "sandbox_profile_digest": "sha256:150cc7c93501f51d4ffe7cd5f7ec2c5c83a2c73ab44dc1321892f37945935452",
+  "schema_version": "mesh.repo_patch_isolated_verifier_os_proof.v1",
+  "state_slice": "mesh.repo_patch_verifier_worker.v1",
+  "status": "pass"
+}

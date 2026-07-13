@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-patch-verifier-response.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "state_slice", "job_id", "request_digest", "status", "code",
+    "verifier_uid", "runner_uid", "verifier_image_digest", "sandbox_profile_digest",
+    "workspace_manifest_before", "workspace_manifest_after", "test_results"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.repo_patch_verifier_response.v1"]},
+    "state_slice": {"type": "string", "enum": ["mesh.repo_patch_verifier_receipt.v1"]},
+    "job_id": {"type": "string"},
+    "request_digest": {"type": "string"},
+    "status": {"type": "string", "enum": ["succeeded", "rejected"]},
+    "code": {"type": "string"},
+    "verifier_uid": {"type": "integer"},
+    "runner_uid": {"type": "integer"},
+    "verifier_image_digest": {"type": "string"},
+    "sandbox_profile_digest": {"type": "string"},
+    "workspace_manifest_before": {"type": "string"},
+    "workspace_manifest_after": {"type": "string"},
+    "test_results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["argv", "returncode", "stdout_digest", "stderr_digest", "stdout_bytes", "stderr_bytes", "timed_out", "output_limit_exceeded"],
+        "properties": {
+          "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "returncode": {"type": "integer"},
+          "stdout_digest": {"type": "string"},
+          "stderr_digest": {"type": "string"},
+          "stdout_bytes": {"type": "integer"},
+          "stderr_bytes": {"type": "integer"},
+          "timed_out": {"type": "boolean"},
+          "output_limit_exceeded": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

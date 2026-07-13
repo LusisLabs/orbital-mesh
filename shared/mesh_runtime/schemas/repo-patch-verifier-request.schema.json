@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "repo-patch-verifier-request.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "state_slice", "job_id", "workspace_id",
+    "workspace_manifest_digest", "candidate_binding", "commands",
+    "verifier_image_digest", "sandbox_profile_digest", "timeout_seconds",
+    "output_limit_bytes", "request_digest"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "enum": ["mesh.repo_patch_verifier_request.v1"]},
+    "state_slice": {"type": "string", "enum": ["mesh.repo_patch_verifier_protocol.v1"]},
+    "job_id": {"type": "string"},
+    "workspace_id": {"type": "string"},
+    "workspace_manifest_digest": {"type": "string"},
+    "candidate_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_commit", "base_tree", "target_path", "target_preimage_digest", "target_postimage_digest", "authorized_diff_digest"],
+      "properties": {
+        "base_commit": {"type": "string"},
+        "base_tree": {"type": "string"},
+        "target_path": {"type": "string"},
+        "target_preimage_digest": {"type": "string"},
+        "target_postimage_digest": {"type": "string"},
+        "authorized_diff_digest": {"type": "string"}
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["argv", "executable_path", "executable_digest", "command_digest"],
+        "properties": {
+          "argv": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "executable_path": {"type": "string"},
+          "executable_digest": {"type": "string"},
+          "command_digest": {"type": "string"}
+        }
+      }
+    },
+    "verifier_image_digest": {"type": "string"},
+    "sandbox_profile_digest": {"type": "string"},
+    "timeout_seconds": {"type": "integer"},
+    "output_limit_bytes": {"type": "integer"},
+    "request_digest": {"type": "string"}
+  }
+}

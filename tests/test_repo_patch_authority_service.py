@@ -51,6 +51,7 @@ from shared.mesh_runtime.repo_patch_authority import (
     receive_json_frame,
     send_json_frame,
 )
+from shared.mesh_runtime.repo_patch_test_policy import AuthorizedTestCommand
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,29 @@ class _EligibleHsaiAdapter:
 
     def admit(self, request: dict) -> dict:
         return local_hsai_allow_decision(request)
+
+
+class _SuccessfulVerifier:
+    def verify(
+        self,
+        *,
+        commands: tuple[AuthorizedTestCommand, ...],
+        **_: object,
+    ) -> tuple[dict[str, object], ...]:
+        empty_digest = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        return tuple(
+            {
+                "argv": [command.executable_path, *command.argv[1:]],
+                "returncode": 0,
+                "stdout_digest": empty_digest,
+                "stderr_digest": empty_digest,
+                "stdout_bytes": 0,
+                "stderr_bytes": 0,
+                "timed_out": False,
+                "output_limit_exceeded": False,
+            }
+            for command in commands
+        )
 
 
 class RepoPatchAuthorityServiceTests(unittest.TestCase):
@@ -466,6 +490,7 @@ class RepoPatchAuthorityServiceTests(unittest.TestCase):
                     "goose_subprocess_env",
                     "_command_env",
                     "_goose_env",
+                    "_verifier_command_environment",
                 }:
                     unsanitized.append(f"{source_path.relative_to(REPO_ROOT)}:{node.lineno}")
         self.assertGreater(subprocess_calls, 0)
@@ -486,6 +511,7 @@ class RepoPatchAuthorityServiceTests(unittest.TestCase):
             permit_signing_key=PERMIT_KEY,
             allowed_test_commands=allowed_test_commands,
             hsai_admission_adapter=_EligibleHsaiAdapter(),
+            verifier_client=_SuccessfulVerifier(),  # type: ignore[arg-type]
         )
 
     def _client(self) -> RepoPatchAuthorityClient:

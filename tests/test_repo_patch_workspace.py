@@ -27,9 +27,8 @@ class RepoPatchWorkspaceTests(unittest.TestCase):
                 replace_text="new",
                 workspace_id="permit-success",
             ) as prepared:
-                receipt = prepared.verify(
-                    [["python3", "-c", "from pathlib import Path; assert 'new' in Path('app.py').read_text()"]]
-                )
+                commands = [["/usr/bin/python3", "-c", "assert True"]]
+                receipt = prepared.accept_verifier_results(commands, _successful_results(commands))
                 self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 'old'\n")
                 self.assertEqual(receipt.changed_paths, ("app.py",))
                 promoted = prepared.promote()
@@ -54,7 +53,8 @@ class RepoPatchWorkspaceTests(unittest.TestCase):
                 workspace_id="permit-failed-check",
             ) as prepared:
                 with self.assertRaisesRegex(ValueError, "verification command failed"):
-                    prepared.verify([["python3", "-c", "raise SystemExit(4)"]])
+                    commands = [["/usr/bin/python3", "-c", "raise SystemExit(4)"]]
+                    prepared.accept_verifier_results(commands, _successful_results(commands, returncode=4))
 
             self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 'old'\n")
 
@@ -73,10 +73,10 @@ class RepoPatchWorkspaceTests(unittest.TestCase):
                 replace_text="new",
                 workspace_id="permit-side-effect",
             ) as prepared:
+                (prepared.workspace / "unexpected.txt").write_text("x", encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "undeclared changes"):
-                    prepared.verify(
-                        [["python3", "-c", "from pathlib import Path; Path('unexpected.txt').write_text('x')"]]
-                    )
+                    commands = [["/usr/bin/python3", "-c", "assert True"]]
+                    prepared.accept_verifier_results(commands, _successful_results(commands))
 
             self.assertEqual(target.read_text(encoding="utf-8"), "VALUE = 'old'\n")
             self.assertFalse((repo / "unexpected.txt").exists())
@@ -96,7 +96,7 @@ class RepoPatchWorkspaceTests(unittest.TestCase):
                 replace_text="new",
                 workspace_id="permit-drift",
             ) as prepared:
-                prepared.verify([])
+                prepared.accept_verifier_results([], [])
                 target.write_text("VALUE = 'external'\n", encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "preimage changed|became dirty"):
                     prepared.promote()
@@ -237,6 +237,23 @@ def _git_repo(path: Path) -> Path:
     subprocess.run(["git", "-C", str(path), "add", "app.py"], check=True)
     subprocess.run(["git", "-C", str(path), "commit", "-qm", "fixture"], check=True)
     return path.resolve()
+
+
+def _successful_results(
+    commands: list[list[str]],
+    *,
+    returncode: int = 0,
+) -> list[dict[str, object]]:
+    empty_digest = "sha256:" + sha256(b"").hexdigest()
+    return [
+        {
+            "argv": command,
+            "returncode": returncode,
+            "stdout_digest": empty_digest,
+            "stderr_digest": empty_digest,
+        }
+        for command in commands
+    ]
 
 
 if __name__ == "__main__":

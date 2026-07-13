@@ -30,6 +30,8 @@ The bridge and local execution-authority layer add schema-backed contracts under
 - `mesh.repo_patch_authority_request.v1`
 - `mesh.repo_patch_authority_response.v1`
 - `mesh.repo_patch_execution_permit.v1`
+- `mesh.repo_patch_verifier_request.v1`
+- `mesh.repo_patch_verifier_response.v1`
 
 Canonical bridge fixtures live under `fixtures/hsai_bridge/`:
 
@@ -100,9 +102,12 @@ The out-of-process authority independently authenticates the client signature
 and kernel peer credentials, recomputes disposable-worktree preflight, invokes
 an identity-pinned authority-eligible HSAI adapter, compares the substantive
 gate result, and only then creates its internal single-consumption
-`mesh.repo_patch_execution_permit.v1`. Shell-form verification is rejected;
-tests execute exact allowlisted argv vectors with executable-digest binding and
-without `/bin/sh`.
+`mesh.repo_patch_execution_permit.v1`. Shell-form verification is rejected.
+The authority sends exact allowlisted argv vectors, executable digests, the
+candidate, and a manifest-bound read-only handoff to a peer-pinned verifier
+sidecar. Commands execute there as keyless UID 6000 without `/bin/sh`, network,
+authority assets, the target mount, or the HSAI binary. The authority rechecks
+the canonical changed path and postimage after the verifier returns.
 
 `services.actuators.repo_patch.RepoPatchAdapter` remains self-enforcing, but the
 authority service is the only runtime module permitted to import or construct
@@ -225,13 +230,15 @@ internal network, publishes loopback through a credential-free fixed-upstream
 proxy, removes the writable host checkout and operator credential mounts,
 disables local model CLI commands, applies read-only roots, drops capabilities,
 sets no-new-privileges and resource bounds, gives only the authority target
-write access, and mounts the same pinned Linux HSAI binary in both processes.
-The beta fixes verification to the non-repository command `python3 -c pass`;
-general repository-controlled verification remains outside the beta until it is
-sandboxed in a separate no-secret worker. The production image retains Git for
-detached worktrees. Operators must provide every declared key, identity, target,
-state path, binary digest, and policy id. PostgreSQL migration 006 has a local
-Docker restart/concurrency rehearsal, not managed multi-host availability proof.
+write access, and mounts the pinned Linux HSAI binary only in the Mesh and
+authority processes. Verification is fixed to `python3 -c pass` and runs in a
+separate keyless, network-none verifier sidecar as UID 6000. The sidecar receives
+only a read-only manifest-bound handoff, has a read-only root, and cannot mount
+the target, keys, authority state/socket, HSAI binary, database URL, or Docker
+socket. The production image retains Git for detached worktrees. Operators must
+provide every declared key, identity, target, state path, binary digest, sandbox
+profile digest, and policy id. PostgreSQL migration 006 has a local Docker
+restart/concurrency rehearsal, not managed multi-host availability proof.
 
 This file is an overlay, not a standalone Compose project. Render or launch it
 with the base service definition first:
@@ -271,12 +278,13 @@ docker run --rm --network none \
   orbital-mesh-authority-proof:local
 ```
 
-Success is a JSON proof with `status=pass`, three distinct observed UIDs,
-denied agent and orchestrator direct writes, denied agent socket access, a real
-pinned evidence-v2 allow decision, and target mutation only after the signed
-orchestrator request. This remains disposable Linux-container evidence, not a
-production deployment or semantic-correctness proof. The captured passing
-result is `docs/evidence/repo-patch-authority-os-boundary-proof.json`.
+Success is a JSON proof with `status=pass`, five observed process identities,
+denied agent and orchestrator direct writes, denied agent socket access, command
+execution as keyless verifier UID 6000, a real pinned evidence-v2 allow
+decision, and target mutation only after the signed orchestrator request. This
+remains disposable Linux-container evidence, not a production deployment or
+semantic-correctness proof. The captured passing result is
+`docs/evidence/repo-patch-authority-os-boundary-proof.json`.
 
 ## HSAI Formal Backend Metadata
 

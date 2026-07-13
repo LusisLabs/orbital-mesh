@@ -60,6 +60,10 @@ from shared.mesh_runtime.repo_patch_permits import (
     write_immutable_backup,
 )
 from shared.mesh_runtime.repo_patch_test_policy import RepoPatchTestCommandPolicy
+from shared.mesh_runtime.repo_patch_verifier import (
+    RepoPatchVerifierClient,
+    workspace_manifest_digest,
+)
 from shared.mesh_runtime.schema_validation import SchemaValidationError, validate_payload
 
 
@@ -92,6 +96,8 @@ class RepoPatchAuthorityService:
         clock: Callable[[], datetime] | None = None,
         authority_store: RepoPatchAuthorityStore | None = None,
         hsai_admission_adapter: HsaiAdmissionAdapter | None = None,
+        verifier_client: RepoPatchVerifierClient | None = None,
+        verifier_input_root: str | Path | None = None,
     ) -> None:
         self.socket_path = Path(socket_path)
         self.state_directory = Path(state_directory)
@@ -113,6 +119,7 @@ class RepoPatchAuthorityService:
             clock=self.clock,
         )
         self.hsai_admission_adapter = hsai_admission_adapter
+        self.verifier_client = verifier_client
         self._listener: socket.socket | None = None
         if not self.authority_private_key_pem or not self.authority_key_id:
             raise ValueError("authority service requires explicit Ed25519 authority key material")
@@ -149,7 +156,14 @@ class RepoPatchAuthorityService:
             executor_audience=permit_executor_audience,
         )
         self.actuator = RepoPatchAdapter(config=config, allowed_test_commands=self.allowed_test_commands)
-        self.workspace_manager = RepoPatchWorkspaceManager(self.state_directory / "repo_patch_preflight_worktrees")
+        workspace_root = (
+            Path(verifier_input_root)
+            if verifier_input_root is not None
+            else self.state_directory / "repo_patch_preflight_worktrees"
+        )
+        if not workspace_root.is_absolute():
+            raise ValueError("repo patch verifier input root must be absolute")
+        self.workspace_manager = RepoPatchWorkspaceManager(workspace_root)
         self.test_command_policy = RepoPatchTestCommandPolicy(self.allowed_test_commands)
 
     def start(self) -> None:
@@ -959,6 +973,8 @@ class RepoPatchAuthorityService:
             not isinstance(path, str) for path in allowed_paths
         ):
             raise ValueError("repo patch preflight patch scope rejected")
+        if self.verifier_client is None:
+            raise ValueError("repo patch authority requires the isolated verifier client")
         executed_commands = [[command.executable_path, *command.argv[1:]] for command in authorized_commands]
         prepared = self.workspace_manager.prepare(
             repo_path=parameters["repo_path"],
@@ -969,7 +985,21 @@ class RepoPatchAuthorityService:
             workspace_id=f"{idempotency_key}:{request_id}",
         )
         try:
-            prepared.verify(executed_commands)
+            candidate_binding = {
+                "base_commit": prepared.base_commit,
+                "base_tree": prepared.base_tree,
+                "target_path": prepared.relative_target.as_posix(),
+                "target_preimage_digest": prepared.target_preimage_digest,
+                "target_postimage_digest": prepared.target_postimage_digest,
+                "authorized_diff_digest": prepared.authorized_diff_digest,
+            }
+            test_results = self.verifier_client.verify(
+                workspace_id=prepared.workspace.name,
+                workspace_manifest=workspace_manifest_digest(prepared.workspace),
+                candidate_binding=candidate_binding,
+                commands=authorized_commands,
+            )
+            prepared.accept_verifier_results(executed_commands, test_results)
             return prepared
         except BaseException:
             prepared.close()
@@ -1148,23 +1178,23 @@ def _preflight_receipt_payload(receipt: PreparedPatchReceipt) -> dict[str, Any]:
     for result in receipt.test_results:
         argv = result.get("argv")
         returncode = result.get("returncode")
-        stdout = result.get("stdout")
-        stderr = result.get("stderr")
+        stdout_digest = result.get("stdout_digest")
+        stderr_digest = result.get("stderr_digest")
         if (
             not isinstance(argv, list)
             or any(not isinstance(argument, str) for argument in argv)
             or not isinstance(returncode, int)
             or isinstance(returncode, bool)
-            or not isinstance(stdout, str)
-            or not isinstance(stderr, str)
+            or not _is_sha256_digest(stdout_digest)
+            or not _is_sha256_digest(stderr_digest)
         ):
             raise ValueError("repo patch preflight result contract rejected")
         test_results.append(
             {
                 "argv": argv,
                 "returncode": returncode,
-                "stdout_digest": _sha256_text(stdout),
-                "stderr_digest": _sha256_text(stderr),
+                "stdout_digest": stdout_digest,
+                "stderr_digest": stderr_digest,
             }
         )
     return {
@@ -1180,8 +1210,13 @@ def _preflight_receipt_payload(receipt: PreparedPatchReceipt) -> dict[str, Any]:
     }
 
 
-def _sha256_text(value: str) -> str:
-    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+def _is_sha256_digest(value: object) -> bool:
+    return bool(
+        isinstance(value, str)
+        and len(value) == 71
+        and value.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in value[7:])
+    )
 
 
 def _evaluation_from_payload(payload: Any) -> EvaluationResult:
@@ -1279,6 +1314,8 @@ def main() -> int:
     authority_key_path = _required_absolute_path("MESH_REPO_PATCH_AUTHORITY_PRIVATE_KEY_PATH")
     client_keys_path = _required_absolute_path("MESH_REPO_PATCH_AUTHORITY_CLIENT_KEYS_PATH")
     permit_key_path = _required_absolute_path("MESH_REPO_PATCH_AUTHORITY_PERMIT_KEY_PATH")
+    verifier_socket_path = _required_absolute_path("MESH_REPO_PATCH_VERIFIER_SOCKET_PATH")
+    verifier_input_root = _required_absolute_path("MESH_REPO_PATCH_VERIFIER_INPUT_ROOT")
     authority_key_id = os.environ.get("MESH_REPO_PATCH_AUTHORITY_KEY_ID", "").strip()
     allowed_uid_values = os.environ.get("MESH_REPO_PATCH_AUTHORITY_ALLOWED_UIDS", "").strip()
     if not authority_key_id or not allowed_uid_values:
@@ -1300,6 +1337,12 @@ def main() -> int:
         or not str(getattr(hsai_admission_adapter, "adapter_identity", "") or "")
     ):
         raise RuntimeError("authority service requires an identity-pinned authority-eligible HSAI adapter")
+    verifier_client = RepoPatchVerifierClient(
+        verifier_socket_path,
+        expected_verifier_uid=int(os.environ["MESH_REPO_PATCH_VERIFIER_UID"]),
+        verifier_image_digest=os.environ["MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST"].strip(),
+        sandbox_profile_digest=os.environ["MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST"].strip(),
+    )
     service = RepoPatchAuthorityService(
         socket_path,
         state_directory,
@@ -1320,6 +1363,8 @@ def main() -> int:
         ).strip(),
         authority_store=_authority_store_from_environment(state_directory, runtime_config),
         hsai_admission_adapter=hsai_admission_adapter,
+        verifier_client=verifier_client,
+        verifier_input_root=verifier_input_root,
     )
     try:
         service.start()

@@ -47,6 +47,7 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         services = cls.compose.split("services:\n", 1)[1].split("\nvolumes:\n", 1)[0]
         cls.mesh = _mapping_block(services, "mesh")
         cls.authority = _mapping_block(services, "repo_patch_authority")
+        cls.verifier = _mapping_block(services, "repo_patch_verifier")
         cls.volumes = cls.compose.split("\nvolumes:\n", 1)[1]
         environment = {
             **os.environ,
@@ -66,6 +67,8 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
             "MESH_REPO_PATCH_BETA_POLICY_ID": "beta-policy-v1",
             "MESH_HSAI_LINUX_CLI_SHA256": "a" * 64,
             "MESH_REPO_PATCH_TARGET_HOST_PATH": "/tmp/disposable-target",
+            "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": "sha256:" + ("b" * 64),
+            "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": "sha256:" + ("c" * 64),
         }
         rendered = subprocess.run(
             [
@@ -87,6 +90,7 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         cls.rendered = json.loads(rendered.stdout)
         cls.rendered_mesh = cls.rendered["services"]["mesh"]
         cls.rendered_authority = cls.rendered["services"]["repo_patch_authority"]
+        cls.rendered_verifier = cls.rendered["services"]["repo_patch_verifier"]
         cls.rendered_ingress = cls.rendered["services"]["repo_patch_beta_ingress"]
 
     def test_production_image_retains_git_for_authority_worktrees(self) -> None:
@@ -109,6 +113,54 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
             self.assertIn(marker, self.authority)
         self.assertNotIn("ports:", self.authority)
         self.assertNotIn("networks:", self.authority)
+
+    def test_verifier_sidecar_has_no_authority_assets_or_network(self) -> None:
+        self.assertEqual(self.rendered_verifier["user"], "0:0")
+        self.assertEqual(self.rendered_verifier["network_mode"], "none")
+        self.assertTrue(self.rendered_verifier["read_only"])
+        self.assertEqual(self.rendered_verifier["cap_drop"], ["ALL"])
+        self.assertEqual(
+            set(self.rendered_verifier["cap_add"]),
+            {"CHOWN", "DAC_OVERRIDE", "FOWNER", "KILL", "SETGID", "SETUID"},
+        )
+        self.assertIn("no-new-privileges:true", self.rendered_verifier["security_opt"])
+        self.assertEqual(self.rendered_verifier["pids_limit"], 64)
+        self.assertEqual(self.rendered_verifier["mem_limit"], "268435456")
+        mounts = {mount["target"]: mount for mount in self.rendered_verifier["volumes"]}
+        self.assertEqual(set(mounts), {
+            "/run/mesh-verifier",
+            "/var/lib/mesh-verifier/input",
+            "/var/lib/mesh-verifier/ledger",
+        })
+        self.assertTrue(mounts["/var/lib/mesh-verifier/input"]["read_only"])
+        verifier_text = json.dumps(self.rendered_verifier, sort_keys=True)
+        for forbidden in (
+            "/workspace/target",
+            "/run/mesh-authority",
+            "/run/secrets",
+            "/var/lib/mesh-authority",
+            "/opt/hsai",
+            "/var/run/docker.sock",
+            "MESH_DATABASE_URL",
+        ):
+            self.assertNotIn(forbidden, verifier_text)
+
+    def test_authority_delegates_verification_through_separate_handoff(self) -> None:
+        authority_mounts = {mount["target"]: mount for mount in self.rendered_authority["volumes"]}
+        self.assertEqual(
+            authority_mounts["/var/lib/mesh-verifier/input"]["source"],
+            "mesh_repo_patch_verifier_handoff",
+        )
+        self.assertFalse(authority_mounts["/var/lib/mesh-verifier/input"].get("read_only", False))
+        self.assertTrue(authority_mounts["/run/mesh-verifier"]["read_only"])
+        self.assertEqual(
+            self.rendered_authority["environment"]["MESH_REPO_PATCH_VERIFIER_UID"],
+            "0",
+        )
+        self.assertEqual(
+            self.rendered_authority["depends_on"]["repo_patch_verifier"]["condition"],
+            "service_healthy",
+        )
 
     def test_merged_mesh_identity_and_hardening_are_explicit(self) -> None:
         self.assertEqual(self.rendered_mesh["user"], "2000:2000")
@@ -193,7 +245,7 @@ class RepoPatchBetaComposeContractTests(unittest.TestCase):
         self.assertIn("gid=4000", options)
         self.assertIn("mode=0750", options)
 
-    def test_beta_verifier_policy_is_fixed_to_non_repo_code(self) -> None:
+    def test_beta_verifier_policy_remains_fixed_during_isolation_rollout(self) -> None:
         self.assertEqual(
             self.rendered_authority["environment"]["MESH_REPO_PATCH_ALLOWED_TEST_COMMANDS_JSON"],
             '[["python3","-c","pass"]]',

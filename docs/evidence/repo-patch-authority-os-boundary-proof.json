@@ -2,7 +2,7 @@
   "authority_receipt": {
     "authenticated_client_key_id": "mesh-os-proof-client",
     "authority_key_id": "mesh-os-proof-authority",
-    "execution_result_digest": "sha256:f90f5d81de0d59f1a88c4f8ea7c48ae51b9fbb0775a8637865959961b398a227",
+    "execution_result_digest": "sha256:287d0f5160ef4b19a3bf86d4da171785287c5debf8cf9163f98fcc7af5a04c93",
     "hsai_adapter_identity": "mesh.hsai.rust_evidence_v2_cli_identity.v1:sha256:bf3ced1a2ab941df5198be0a6370c1691bc744330f39c27f4bc4a6283d36a790:mesh_policy://repo-patch/os-boundary-proof",
     "hsai_authority_eligible": true,
     "hsai_executable_sha256": "sha256:bf3ced1a2ab941df5198be0a6370c1691bc744330f39c27f4bc4a6283d36a790",
@@ -12,7 +12,7 @@
     "peer_uid": 2000,
     "preflight_receipt": {
       "authorized_diff_digest": "sha256:cdd12c661338df1d4a7b00f6f80e4d82de14c509631edfdd6d8551041456b518",
-      "base_commit": "466b4f9381c9062e6e537329255a0457f7fe14c2",
+      "base_commit": "8fad3ffbc17ad27d5da74394951e353d58234595",
       "base_tree": "b5a3e3976003b8abebd13d408ee0ad7902a11174",
       "changed_paths": [
         "app/search.py"
@@ -26,7 +26,7 @@
           "argv": [
             "/usr/local/bin/python3.13",
             "-c",
-            "pass"
+            "raise SystemExit(__import__('os').geteuid() != 6000)"
           ],
           "returncode": 0,
           "stderr_digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -34,7 +34,7 @@
         }
       ]
     },
-    "request_digest": "sha256:ba517102515a48346c72d7294a82476b1271ccd1a67f6bea766cdca3e5eaf0dd",
+    "request_digest": "sha256:539fc30885fc1c28e15559b269bb02d5eac3549fb3b4d930abdc8a1d19a29448",
     "status": "succeeded"
   },
   "checks": {
@@ -42,6 +42,7 @@
     "agent_socket_connect_denied": true,
     "authority_observed_orchestrator_peer_uid": true,
     "authority_process_has_distinct_uid": true,
+    "isolated_verifier_command_succeeded": true,
     "orchestrator_direct_write_denied": true,
     "real_pinned_hsai_evidence_v2_allowed": true,
     "signed_orchestrator_request_succeeded": true,
@@ -53,7 +54,9 @@
     "authority_service_observed_uid": 3000,
     "authority_socket_gid": 4000,
     "authority_uid": 3000,
-    "orchestrator_uid": 2000
+    "orchestrator_uid": 2000,
+    "verifier_runner_uid": 6000,
+    "verifier_uid": 0
   },
   "platform": "linux-container",
   "schema_version": "mesh.repo_patch_authority_os_boundary_proof.v1",

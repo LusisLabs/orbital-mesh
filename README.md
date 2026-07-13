@@ -53,10 +53,13 @@ These are the dimensions this codebase is built to support; they match a discipl
 - Gates the `repo_patch_service` / `investigate_and_patch` path through the
   narrow HSAI admission bridge, with schema-backed golden fixtures and local
   single-consumption `mesh.repo_patch_execution_permit.v1` enforcement at the
-  actuator boundary; see `docs/evidence-carrying-agent-actions-trial.md` for the
-  deterministic local trial, combined proof-packet verification, and exact
-  claim ceiling, and `docs/evidence-carrying-agent-actions-threat-model.md` for
-  the repository-grounded security boundaries and residual risks.
+  actuator boundary. Repository verification is delegated to a keyless,
+  network-none sidecar that runs commands under a distinct UID and returns a
+  manifest-bound receipt; the authority independently rechecks the canonical
+  worktree before promotion. See `docs/evidence-carrying-agent-actions-trial.md`
+  for the deterministic local trial, Docker adversarial proof, and exact claim
+  ceiling, and `docs/evidence-carrying-agent-actions-threat-model.md` for the
+  repository-grounded security boundaries and residual risks.
 - Includes `mesh_brain`, the post-training and model-lifecycle plane extracted from Mesh, with data refinery, training job, eval, serving, model-management, and hardware-routing primitives.
 
 ## Runtime Model
@@ -1094,6 +1097,7 @@ The stable local path is:
 - [docs/evidence-carrying-agent-actions-threat-model.md](./docs/evidence-carrying-agent-actions-threat-model.md)
 - [docs/evidence/repo-patch-authority-beta-campaign.json](./docs/evidence/repo-patch-authority-beta-campaign.json)
 - [docs/evidence/repo-patch-authority-os-boundary-proof.json](./docs/evidence/repo-patch-authority-os-boundary-proof.json)
+- [docs/evidence/repo-patch-isolated-verifier-os-proof.json](./docs/evidence/repo-patch-isolated-verifier-os-proof.json)
 - [docs/ui-auto-canvas-workspace.md](./docs/ui-auto-canvas-workspace.md)
 - [docs/small-business-thesis.md](./docs/small-business-thesis.md)
 - [first-closed-loop-contract.md](./first-closed-loop-contract.md)

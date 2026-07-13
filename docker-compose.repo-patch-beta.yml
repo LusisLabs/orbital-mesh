@@ -122,6 +122,9 @@ services:
   repo_patch_authority:
     image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
     init: true
+    depends_on:
+      repo_patch_verifier:
+        condition: service_healthy
     user: "${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID}:${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"
     network_mode: none
     command: ["python3", "-m", "services.actuators.repo_patch_authority_service"]
@@ -140,6 +143,11 @@ services:
       MESH_REPO_PATCH_AUTHORITY_ALLOWED_UIDS: "${MESH_REPO_PATCH_CLIENT_UID:?set Mesh client UID visible through SO_PEERCRED}"
       MESH_REPO_PATCH_AUTHORITY_SOCKET_GID: "${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID}"
       MESH_REPO_PATCH_ALLOWED_TEST_COMMANDS_JSON: '[["python3","-c","pass"]]'
+      MESH_REPO_PATCH_VERIFIER_SOCKET_PATH: /run/mesh-verifier/repo-patch-verifier.sock
+      MESH_REPO_PATCH_VERIFIER_INPUT_ROOT: /var/lib/mesh-verifier/input
+      MESH_REPO_PATCH_VERIFIER_UID: "0"
+      MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST:?set immutable verifier image digest}"
+      MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST:?set reviewed verifier sandbox profile digest}"
       MESH_HSAI_ADMISSION_COMMAND: "/opt/hsai/bin/hsai-mesh-admission --current-policy-id ${MESH_REPO_PATCH_BETA_POLICY_ID:?set beta repo-patch policy id}"
       MESH_HSAI_ADMISSION_AUTHORITY_MODE: "rust_evidence_v2"
       MESH_HSAI_ADMISSION_EXECUTABLE_SHA256: "${MESH_HSAI_LINUX_CLI_SHA256:?set pinned Linux HSAI CLI SHA-256}"
@@ -152,6 +160,13 @@ services:
       - type: volume
         source: mesh_repo_patch_authority_socket
         target: /run/mesh-authority
+      - type: volume
+        source: mesh_repo_patch_verifier_socket
+        target: /run/mesh-verifier
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_verifier_handoff
+        target: /var/lib/mesh-verifier/input
       - type: bind
         source: "${MESH_REPO_PATCH_TARGET_HOST_PATH:?set authority-owned beta target repository host path}"
         target: /workspace/target
@@ -193,6 +208,62 @@ services:
       retries: 6
       start_period: 10s
 
+  repo_patch_verifier:
+    image: "${MESH_IMAGE:-orbital-mesh:${MESH_BUILD_VERSION:-dev}}"
+    init: true
+    user: "0:0"
+    network_mode: none
+    command: ["python3", "-m", "services.actuators.repo_patch_verifier_service"]
+    environment:
+      HOME: /var/empty
+      MESH_REPO_PATCH_VERIFIER_SOCKET_PATH: /run/mesh-verifier/repo-patch-verifier.sock
+      MESH_REPO_PATCH_VERIFIER_INPUT_ROOT: /var/lib/mesh-verifier/input
+      MESH_REPO_PATCH_VERIFIER_SCRATCH_ROOT: /var/lib/mesh-verifier/scratch
+      MESH_REPO_PATCH_VERIFIER_LEDGER_DIRECTORY: /var/lib/mesh-verifier/ledger
+      MESH_REPO_PATCH_VERIFIER_ALLOWED_AUTHORITY_UIDS: "${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID}"
+      MESH_REPO_PATCH_VERIFIER_SOCKET_GID: "${MESH_REPO_PATCH_AUTHORITY_GID:?set authority socket group GID}"
+      MESH_REPO_PATCH_VERIFIER_RUNNER_UID: "${MESH_REPO_PATCH_VERIFIER_RUNNER_UID:-6000}"
+      MESH_REPO_PATCH_VERIFIER_RUNNER_GID: "${MESH_REPO_PATCH_VERIFIER_RUNNER_GID:-6000}"
+      MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST:?set immutable verifier image digest}"
+      MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST: "${MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST:?set reviewed verifier sandbox profile digest}"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: volume
+        source: mesh_repo_patch_verifier_socket
+        target: /run/mesh-verifier
+      - type: volume
+        source: mesh_repo_patch_verifier_handoff
+        target: /var/lib/mesh-verifier/input
+        read_only: true
+      - type: volume
+        source: mesh_repo_patch_verifier_ledger
+        target: /var/lib/mesh-verifier/ledger
+    read_only: true
+    tmpfs:
+      - /var/lib/mesh-verifier/scratch:rw,nosuid,nodev,size=128m,uid=0,gid=0,mode=0700
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,stat; assert stat.S_ISSOCK(os.stat('/run/mesh-verifier/repo-patch-verifier.sock').st_mode)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
 volumes:
   mesh_repo_patch_runtime_state:
     driver: local
@@ -212,6 +283,19 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: "uid=${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID},gid=${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID},mode=0750"
+  mesh_repo_patch_verifier_socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=0,gid=${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID},mode=0750"
+  mesh_repo_patch_verifier_handoff:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=${MESH_REPO_PATCH_AUTHORITY_UID:?set distinct authority UID},gid=${MESH_REPO_PATCH_AUTHORITY_GID:?set distinct authority GID},mode=0700,size=128m"
+  mesh_repo_patch_verifier_ledger:
   mesh_repo_patch_empty_workspace:
   mesh_repo_patch_empty_hermes_home:
   mesh_repo_patch_empty_goose_config:

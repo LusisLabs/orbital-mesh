@@ -31,10 +31,18 @@ AGENT_UID = 1000
 ORCHESTRATOR_UID = 2000
 AUTHORITY_UID = 3000
 AUTHORITY_GID = 4000
+VERIFIER_UID = 0
+VERIFIER_RUNNER_UID = 6000
+VERIFIER_RUNNER_GID = 6000
 CLIENT_KEY_ID = "mesh-os-proof-client"
 AUTHORITY_KEY_ID = "mesh-os-proof-authority"
 HSAI_EXECUTABLE_PATH = Path("/opt/hsai/bin/hsai-mesh-admission")
 POLICY_ID = "mesh_policy://repo-patch/os-boundary-proof"
+VERIFIER_TEST_COMMAND = (
+    "python3",
+    "-c",
+    "raise SystemExit(__import__('os').geteuid() != 6000)",
+)
 
 
 def main() -> int:
@@ -56,6 +64,11 @@ def _root_mode() -> int:
     state = root / "authority-state"
     socket_dir = root / "authority-socket"
     socket_path = socket_dir / "repo-patch-authority.sock"
+    verifier_socket_dir = root / "verifier-socket"
+    verifier_socket_path = verifier_socket_dir / "repo-patch-verifier.sock"
+    verifier_input_root = root / "verifier-input"
+    verifier_scratch_root = root / "verifier-scratch"
+    verifier_ledger = root / "verifier-ledger"
     keys = root / "keys"
     hsai_executable = Path(
         os.environ.get("MESH_OS_PROOF_HSAI_EXECUTABLE", str(HSAI_EXECUTABLE_PATH))
@@ -64,7 +77,17 @@ def _root_mode() -> int:
     hsai_policy_id = os.environ.get("MESH_OS_PROOF_HSAI_POLICY_ID", POLICY_ID).strip()
     if hsai_policy_id != POLICY_ID:
         raise ValueError("OS-boundary proof HSAI policy id must match the decision policy")
-    for directory in (root, repo, state, socket_dir, keys):
+    for directory in (
+        root,
+        repo,
+        state,
+        socket_dir,
+        verifier_socket_dir,
+        verifier_input_root,
+        verifier_scratch_root,
+        verifier_ledger,
+        keys,
+    ):
         directory.mkdir(parents=True, exist_ok=True)
 
     target = repo / "app/search.py"
@@ -86,7 +109,9 @@ def _root_mode() -> int:
     _chown_tree(repo, AUTHORITY_UID, AUTHORITY_GID)
     _chown_tree(state, AUTHORITY_UID, AUTHORITY_GID)
     _chown_tree(socket_dir, AUTHORITY_UID, AUTHORITY_GID)
+    _chown_tree(verifier_input_root, AUTHORITY_UID, AUTHORITY_GID)
     _chown_tree(keys, AUTHORITY_UID, AUTHORITY_GID)
+    os.chown(verifier_socket_dir, VERIFIER_UID, AUTHORITY_GID)
     os.chown(client_private, ORCHESTRATOR_UID, AUTHORITY_GID)
     client_private.chmod(0o600)
     authority_private.chmod(0o600)
@@ -96,6 +121,19 @@ def _root_mode() -> int:
     authority_public.chmod(0o644)
     state.chmod(0o700)
     socket_dir.chmod(0o750)
+    verifier_socket_dir.chmod(0o750)
+    verifier_input_root.chmod(0o700)
+    verifier_scratch_root.chmod(0o711)
+    verifier_ledger.chmod(0o700)
+
+    verifier_image_digest = _canonical_digest({"proof_image": "repo-patch-authority-proof"})
+    verifier_sandbox_digest = _canonical_digest(
+        {
+            "proof_scope": "single-container-linux-uid",
+            "verifier_uid": VERIFIER_UID,
+            "runner_uid": VERIFIER_RUNNER_UID,
+        }
+    )
 
     common_environment = {
         **os.environ,
@@ -121,6 +159,29 @@ def _root_mode() -> int:
         environment={**common_environment, "MESH_OS_PROOF_MODE": "write_probe"},
     )
 
+    verifier_environment = {
+        **common_environment,
+        "MESH_REPO_PATCH_VERIFIER_SOCKET_PATH": str(verifier_socket_path),
+        "MESH_REPO_PATCH_VERIFIER_INPUT_ROOT": str(verifier_input_root),
+        "MESH_REPO_PATCH_VERIFIER_SCRATCH_ROOT": str(verifier_scratch_root),
+        "MESH_REPO_PATCH_VERIFIER_LEDGER_DIRECTORY": str(verifier_ledger),
+        "MESH_REPO_PATCH_VERIFIER_ALLOWED_AUTHORITY_UIDS": str(AUTHORITY_UID),
+        "MESH_REPO_PATCH_VERIFIER_SOCKET_GID": str(AUTHORITY_GID),
+        "MESH_REPO_PATCH_VERIFIER_RUNNER_UID": str(VERIFIER_RUNNER_UID),
+        "MESH_REPO_PATCH_VERIFIER_RUNNER_GID": str(VERIFIER_RUNNER_GID),
+        "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": verifier_image_digest,
+        "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": verifier_sandbox_digest,
+    }
+    verifier_service = subprocess.Popen(
+        [sys.executable, "-m", "services.actuators.repo_patch_verifier_service"],
+        cwd="/workspace",
+        env=verifier_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for_socket(verifier_socket_path, verifier_service, label="verifier")
+
     service_environment = {
         **common_environment,
         "MESH_REPO_PATCH_AUTHORITY_STORE_BACKEND": "file",
@@ -131,7 +192,12 @@ def _root_mode() -> int:
         "MESH_REPO_PATCH_AUTHORITY_KEY_ID": AUTHORITY_KEY_ID,
         "MESH_REPO_PATCH_AUTHORITY_ALLOWED_UIDS": str(ORCHESTRATOR_UID),
         "MESH_REPO_PATCH_AUTHORITY_SOCKET_GID": str(AUTHORITY_GID),
-        "MESH_REPO_PATCH_ALLOWED_TEST_COMMANDS_JSON": json.dumps([["python3", "-c", "pass"]]),
+        "MESH_REPO_PATCH_ALLOWED_TEST_COMMANDS_JSON": json.dumps([list(VERIFIER_TEST_COMMAND)]),
+        "MESH_REPO_PATCH_VERIFIER_SOCKET_PATH": str(verifier_socket_path),
+        "MESH_REPO_PATCH_VERIFIER_INPUT_ROOT": str(verifier_input_root),
+        "MESH_REPO_PATCH_VERIFIER_UID": str(VERIFIER_UID),
+        "MESH_REPO_PATCH_VERIFIER_IMAGE_DIGEST": verifier_image_digest,
+        "MESH_REPO_PATCH_VERIFIER_SANDBOX_PROFILE_DIGEST": verifier_sandbox_digest,
         "MESH_HSAI_ADMISSION_COMMAND": (
             f"{shlex.quote(str(hsai_executable))} "
             f"--current-policy-id {shlex.quote(hsai_policy_id)}"
@@ -149,7 +215,7 @@ def _root_mode() -> int:
         preexec_fn=_identity_preexec(AUTHORITY_UID, AUTHORITY_GID, (AUTHORITY_GID,)),
     )
     try:
-        _wait_for_socket(socket_path, service)
+        _wait_for_socket(socket_path, service, label="authority")
         agent_socket = _run_as(
             [sys.executable, __file__],
             uid=AGENT_UID,
@@ -195,6 +261,8 @@ def _root_mode() -> int:
                 "authority_uid": AUTHORITY_UID,
                 "authority_service_observed_uid": service_uid,
                 "authority_socket_gid": AUTHORITY_GID,
+                "verifier_uid": VERIFIER_UID,
+                "verifier_runner_uid": VERIFIER_RUNNER_UID,
             },
             "checks": {
                 "agent_direct_write_denied": agent_write.returncode == 0,
@@ -203,6 +271,9 @@ def _root_mode() -> int:
                 "signed_orchestrator_request_succeeded": client_result["status"] == "succeeded",
                 "authority_observed_orchestrator_peer_uid": client_result["peer_uid"] == ORCHESTRATOR_UID,
                 "authority_process_has_distinct_uid": service_uid == AUTHORITY_UID,
+                "isolated_verifier_command_succeeded": (
+                    client_result["preflight_receipt"]["test_results"][0]["returncode"] == 0
+                ),
                 "real_pinned_hsai_evidence_v2_allowed": (
                     client_result["hsai_gate_allowed"] is True
                     and client_result["hsai_authority_eligible"] is True
@@ -226,6 +297,12 @@ def _root_mode() -> int:
         except subprocess.TimeoutExpired:
             service.kill()
             service.wait(timeout=5)
+        verifier_service.terminate()
+        try:
+            verifier_service.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            verifier_service.kill()
+            verifier_service.wait(timeout=5)
 
 
 def _client_mode() -> int:
@@ -338,7 +415,7 @@ def _decision(repo: Path) -> Decision:
                     "find": "old",
                     "replace": "new",
                 },
-                "test_commands": ["python3 -c pass"],
+                "test_commands": [shlex.join(VERIFIER_TEST_COMMAND)],
                 "mesh_run_id": "run-os-boundary-proof",
                 "mesh_policy_id": POLICY_ID,
                 "actor_ref": {"actor_id": "orchestrator.uid.2000", "team_id": "mesh.proof"},
@@ -421,16 +498,26 @@ def _chown_tree(root: Path, uid: int, gid: int) -> None:
         os.chown(path, uid, gid, follow_symlinks=False)
 
 
-def _wait_for_socket(socket_path: Path, service: subprocess.Popen[str]) -> None:
+def _wait_for_socket(
+    socket_path: Path,
+    service: subprocess.Popen[str],
+    *,
+    label: str,
+) -> None:
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
         if socket_path.exists():
             return
         if service.poll() is not None:
             _, stderr = service.communicate()
-            raise RuntimeError(f"authority service exited before socket creation: {stderr}")
+            raise RuntimeError(f"{label} service exited before socket creation: {stderr}")
         time.sleep(0.05)
-    raise TimeoutError("authority service socket was not created")
+    raise TimeoutError(f"{label} service socket was not created")
+
+
+def _canonical_digest(payload: Any) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
 
 
 def _process_uid(pid: int) -> int:
