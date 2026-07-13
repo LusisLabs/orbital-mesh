@@ -116,6 +116,7 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
             "--check image-materials-binding",
         ):
             self.assertIn(marker, workflow)
+        self.assertNotIn("--skip-pull", workflow)
         self.assertLess(workflow.index("scripts/collect_release_image_metadata.py"), authenticate)
 
     def test_permissions_and_actions_are_pinned(self) -> None:

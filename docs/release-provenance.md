@@ -263,10 +263,10 @@ state. Once those preconditions pass, the workflow:
    the OCI source, revision, and version labels to match that build request,
    records `mesh.image_source_binding.v1`, records a hash-bound
    `mesh.release_image_metadata.v1` packet whose Dockerfile-derived external
-   base images all resolve to registry digests, and locally scans every role
-   before GHCR authentication, requiring zero unaccepted high or critical
-   findings while retaining the exact raw Grype scan and digest-bound
-   vulnerability-evidence file;
+   base images are explicitly pulled and resolve to registry digests, and
+   locally scans every role before GHCR authentication, requiring zero
+   unaccepted high or critical findings while retaining the exact raw Grype
+   scan and digest-bound vulnerability-evidence file;
 3. requires the verifier sandbox digest, key id, and public key from repository
    variables, without receiving any private signing key;
 4. publishes commit-only tags, resolves registry manifest digests, pulls and

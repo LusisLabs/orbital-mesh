@@ -135,7 +135,6 @@ jobs:
               --expected-revision "$GITHUB_SHA" \
               --expected-version "sha-${GITHUB_SHA}" \
               --require-complete-base-images \
-              --skip-pull \
               > "$role_root/image-metadata-result.json"
             python3 scripts/generate_release_image_assurance.py \
               --image-tag "$image_tag" \
@@ -212,7 +211,6 @@ jobs:
               --expected-revision "$GITHUB_SHA" \
               --expected-version "sha-${GITHUB_SHA}" \
               --require-complete-base-images \
-              --skip-pull \
               > "$role_root/image-metadata-result.json"
             python3 scripts/generate_release_image_assurance.py \
               --image-tag "$immutable_ref" \
