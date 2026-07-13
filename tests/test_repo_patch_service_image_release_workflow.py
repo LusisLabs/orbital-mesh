@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+import re
+import unittest
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW_PATH = REPO_ROOT / ".github/workflows/repo-patch-service-image-release.yml"
+
+
+class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+
+    def test_is_main_or_manual_release_only(self) -> None:
+        workflow = self.workflow
+        self.assertIn("push:\n    branches:\n      - main", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertIn("github.ref == 'refs/heads/main'", workflow)
+
+    def test_checks_out_exact_sha_and_requires_clean_tree(self) -> None:
+        workflow = self.workflow
+        self.assertIn("ref: ${{ github.sha }}", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertIn('test "$(git rev-parse HEAD)" = "$GITHUB_SHA"', workflow)
+        self.assertGreaterEqual(workflow.count('test -z "$(git status --porcelain)"'), 2)
+        self.assertIn("pnpm install --frozen-lockfile", workflow)
+        self.assertIn("pnpm run lint", workflow)
+
+    def test_maps_exactly_three_roles_to_exact_dockerfiles(self) -> None:
+        workflow = self.workflow
+        mapping = {
+            "mesh_control_plane": "Dockerfile",
+            "repo_patch_authority": "docker/repo-patch-authority.Dockerfile",
+            "repo_patch_verifier": "docker/repo-patch-verifier.Dockerfile",
+        }
+        for role, dockerfile in mapping.items():
+            self.assertIn(f"{role})", workflow)
+            self.assertIn(f'dockerfile="{dockerfile}"', workflow)
+        self.assertIn("for role in mesh_control_plane repo_patch_authority repo_patch_verifier", workflow)
+        self.assertNotIn(":latest", workflow)
+        self.assertIn(":sha-${GITHUB_SHA}", workflow)
+
+    def test_all_local_scans_precede_registry_authentication_and_push(self) -> None:
+        workflow = self.workflow
+        scan = workflow.index("Build and scan all three local role images before publication")
+        authenticate = workflow.index("Authenticate to GHCR only after all scans pass")
+        publish = workflow.index("Publish immutable tags, resolve digests, and rescan published subjects")
+        self.assertLess(scan, authenticate)
+        self.assertLess(authenticate, publish)
+        scan_block = workflow[scan:authenticate]
+        self.assertIn("scripts/generate_release_image_assurance.py", scan_block)
+        self.assertIn("config/release-vulnerability-exceptions.json", scan_block)
+        self.assertNotIn("docker push", scan_block)
+
+    def test_permissions_and_actions_are_pinned(self) -> None:
+        workflow = self.workflow
+        for permission in (
+            "contents: read",
+            "packages: write",
+            "id-token: write",
+            "attestations: write",
+            "artifact-metadata: write",
+        ):
+            self.assertIn(permission, workflow)
+        uses = re.findall(r"^[ ]+uses: ([^\s]+)$", workflow, flags=re.MULTILINE)
+        self.assertGreaterEqual(len(uses), 5)
+        for action in uses:
+            self.assertRegex(action, r"^[^@]+@[0-9a-f]{40}$")
+        self.assertEqual(workflow.count("actions/attest@a1948c3f048ba23858d222213b7c278aabede763"), 3)
+
+    def test_generates_and_verifies_exact_commit_three_role_bundle(self) -> None:
+        workflow = self.workflow
+        self.assertIn("scripts/generate_repo_patch_service_image_bundle.py", workflow)
+        self.assertIn("scripts/verify_repo_patch_service_image_bundle.py", workflow)
+        self.assertIn("--git-commit \"$GITHUB_SHA\"", workflow)
+        self.assertIn("--expected-git-commit \"$GITHUB_SHA\"", workflow)
+        for role_flag in (
+            "mesh-control-plane",
+            "repo-patch-authority",
+            "repo-patch-verifier",
+        ):
+            self.assertIn(f"--{role_flag}-image-tag", workflow)
+            self.assertIn(f"--{role_flag}-image-digest", workflow)
+            self.assertIn(f"--{role_flag}-sbom", workflow)
+            self.assertIn(f"--{role_flag}-vulnerability-scan", workflow)
+            self.assertIn(f"--{role_flag}-ci-attestation", workflow)
+            self.assertIn(f"--expected-{role_flag}-image-tag", workflow)
+            self.assertIn(f"--expected-{role_flag}-image-digest", workflow)
+        self.assertIn("Re-resolve registry digests", workflow)
+        self.assertGreaterEqual(workflow.count("docker buildx imagetools inspect"), 2)
+
+    def test_uses_only_public_policy_inputs_and_has_no_deployment_authority(self) -> None:
+        workflow = self.workflow
+        lowered = workflow.lower()
+        self.assertNotIn("secrets.", workflow)
+        self.assertNotIn("verifier_private", lowered)
+        self.assertNotIn("private-key", lowered)
+        self.assertNotIn("hsai", lowered)
+        self.assertNotIn("kubectl", lowered)
+        self.assertNotIn("docker compose", lowered)
+        self.assertNotIn("deploy", lowered)
+        self.assertIn("vars.REPO_PATCH_VERIFIER_PUBLIC_KEY_PEM", workflow)
+        self.assertIn("${{ github.token }}", workflow)
+
+
+if __name__ == "__main__":
+    unittest.main()

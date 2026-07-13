@@ -59,7 +59,12 @@ These are the dimensions this codebase is built to support; they match a discipl
   The authority pins the verifier public key, exports the verified receipt, and
   independently rechecks the canonical worktree before promotion. The control
   plane, authority, and verifier use distinct images; only the authority image
-  retains Git. See `docs/evidence-carrying-agent-actions-trial.md`
+  retains Git. The exact-commit release workflow scans all three roles before
+  authentication or publication, requires zero unaccepted findings, then
+  publishes immutable commit tags, rescans resolved registry digests, creates
+  GitHub OIDC provenance, and verifies the three-role bundle. It performs no
+  deployment and receives no HSAI signing key or private verifier key. See
+  `docs/evidence-carrying-agent-actions-trial.md`
   for the deterministic local trial, Docker adversarial proof, and exact claim
   ceiling, and `docs/evidence-carrying-agent-actions-threat-model.md` for the
   repository-grounded security boundaries and residual risks.

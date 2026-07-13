@@ -154,11 +154,7 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             raw_dir = tmp_path / "raw"
             output_dir = tmp_path / "dist"
             image_digest = f"sha256:{'b' * 64}"
-            syft_bin.write_text(
-                "#!/usr/bin/env python3\n"
-                "print('{\"bomFormat\":\"CycloneDX\",\"components\":[]}')\n",
-                encoding="utf-8",
-            )
+            _write_fake_syft(syft_bin)
             grype_bin.write_text(
                 "#!/usr/bin/env python3\n"
                 "print('{\"matches\":[{\"vulnerability\":{\"id\":\"CVE-LOW\",\"severity\":\"Low\"},\"artifact\":{\"name\":\"pkg\",\"version\":\"1.0\"}}]}')\n",
@@ -194,6 +190,9 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             payload = json.loads(result.stdout)
             self.assertEqual(payload["schema_version"], "mesh.release_image_assurance.v1")
             self.assertEqual(payload["blocking_finding_count"], 0)
+            self.assertTrue((raw_dir / "raw-sbom.syft.json").exists())
+            self.assertTrue((raw_dir / "scanner-sbom.syft.json").exists())
+            self.assertTrue((raw_dir / "binary-identity-corrections.json").exists())
             self.assertTrue((raw_dir / "raw-sbom.cdx.json").exists())
             self.assertTrue((raw_dir / "raw-vulnerability-scan.grype.json").exists())
             normalized_scan = json.loads((output_dir / "vulnerability-scan.json").read_text(encoding="utf-8"))
@@ -229,11 +228,7 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
             syft_bin = tmp_path / "syft"
             grype_bin = tmp_path / "grype"
             image_digest = f"sha256:{'c' * 64}"
-            syft_bin.write_text(
-                "#!/usr/bin/env python3\n"
-                "print('{\"bomFormat\":\"CycloneDX\",\"components\":[]}')\n",
-                encoding="utf-8",
-            )
+            _write_fake_syft(syft_bin)
             grype_bin.write_text(
                 "#!/usr/bin/env python3\n"
                 "print('{\"matches\":[{\"vulnerability\":{\"id\":\"CVE-HIGH\",\"severity\":\"High\"},\"artifact\":{\"name\":\"openssl\",\"version\":\"3.0\"}}]}')\n",
@@ -566,6 +561,24 @@ class ReleaseAssuranceArtifactTests(unittest.TestCase):
 
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("must use bomFormat CycloneDX", result.stderr + result.stdout)
+
+
+def _write_fake_syft(path: Path) -> None:
+    path.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "args = sys.argv[1:]\n"
+        "if args and args[0] == 'version':\n"
+        "    print(json.dumps({'version': '1.44.0'}))\n"
+        "elif args and args[0] == 'convert':\n"
+        "    output = args[args.index('-o') + 1]\n"
+        "    destination = output.split('=', 1)[1]\n"
+        "    Path(destination).write_text(json.dumps({'bomFormat': 'CycloneDX', 'components': []}) + '\\n', encoding='utf-8')\n"
+        "else:\n"
+        "    print(json.dumps({'artifacts': [], 'artifactRelationships': []}))\n",
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

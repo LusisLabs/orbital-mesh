@@ -39,7 +39,29 @@ RUN apt-get update \
   && rm -f /tmp/goose /tmp/goose.tar.bz2 \
   && rm -rf /var/lib/apt/lists/*
 
-FROM golang:1.26.4-bookworm AS kubectl-builder
+FROM golang:1.26.5-bookworm AS docker-cli-builder
+ARG DOCKER_CLI_VERSION=29.6.1
+ARG DOCKER_CLI_GIT_COMMIT=8900f1d330cb39e93e16d780a26bff1d7e07ba03
+ARG DOCKER_CLI_SOURCE_SHA256=74d14dd212b07cd3328989dc6a029dde2ebbe6a878199eaaafad54916f456194
+ARG DOCKER_CLI_SOURCE_DATE_EPOCH=1782418104
+WORKDIR /go/src/github.com/docker/cli
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/docker-cli.tar.gz "https://github.com/docker/cli/archive/refs/tags/v${DOCKER_CLI_VERSION}.tar.gz" \
+  && echo "${DOCKER_CLI_SOURCE_SHA256}  /tmp/docker-cli.tar.gz" | sha256sum -c - \
+  && tar -xzf /tmp/docker-cli.tar.gz -C /go/src/github.com/docker/cli --strip-components=1 \
+  && rm -f /tmp/docker-cli.tar.gz \
+  && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /out \
+  && CGO_ENABLED=0 \
+    VERSION="${DOCKER_CLI_VERSION}" \
+    GITCOMMIT="${DOCKER_CLI_GIT_COMMIT}" \
+    SOURCE_DATE_EPOCH="${DOCKER_CLI_SOURCE_DATE_EPOCH}" \
+    TARGET=/out \
+    ./scripts/build/binary \
+  && /out/docker --version
+
+FROM golang:1.26.5-bookworm AS kubectl-builder
 ARG KUBECTL_VERSION=v1.36.2
 ARG KUBERNETES_SRC_SHA512=fad7f78605f87a93199316f7fb3f586e4531c41476c53fedee92fdd5bd641a9128c5cde45b6859e07eb2ab254873f1845236c0a33934cba918ff5b97d0cf571d
 WORKDIR /src
@@ -70,24 +92,14 @@ ARG MESH_BUILD_COMMIT=unknown
 ARG MESH_BUILD_IMAGE_DIGEST=
 ARG HERMES_AGENT_REF=7c1a029553d87c43ecff8a3821336bc95872213b
 ARG UV_VERSION=0.11.6
-ARG DOCKER_CLI_VERSION=29.6.1
 
 RUN apt-get update \
   && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends ca-certificates curl git libgomp1 \
-  && arch="$(dpkg --print-architecture)" \
-  && case "$arch" in \
-    amd64) docker_arch="x86_64"; docker_sha="b0df4a43a98d7ecb708acbdb5a34a3416e13b6e39bcbbdf296f51f0f3442b29f" ;; \
-    arm64) docker_arch="aarch64"; docker_sha="917a4bb83565bcacb38c430f08daae8b59db3256331ac23f22394f0542509881" ;; \
-    *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \
-  esac \
-  && curl --http1.1 --retry 5 --retry-delay 3 --retry-all-errors --connect-timeout 15 --max-time 300 -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${docker_arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
-  && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
-  && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
-  && install -m 755 /tmp/docker/docker /usr/local/bin/docker \
   && python3 -m pip install --no-cache-dir --upgrade pip \
-  && rm -rf /tmp/docker /tmp/docker.tgz /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/*
 
+COPY --from=docker-cli-builder /out/docker /usr/local/bin/docker
 COPY --from=kubectl-builder /out/kubectl /usr/local/bin/kubectl
 COPY --from=promptfoo /usr/local/bin/node /usr/local/bin/node
 COPY --from=promptfoo /usr/local/lib/node_modules/promptfoo /usr/local/lib/node_modules/promptfoo

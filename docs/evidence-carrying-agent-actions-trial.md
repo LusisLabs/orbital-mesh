@@ -186,6 +186,24 @@ activity produces attributable audit evidence. The NIST publication is a draft
 concept paper and an active project input, not a normative certification target.
 This trial therefore makes no NIST-compliance claim.
 
+## Three-Role Release Boundary
+
+State slice: `mesh.repo_patch_service_image_bundle.v1`.
+
+The exact-commit release workflow builds the control-plane, authority, and
+verifier images separately. It scans all three before registry authentication,
+requires zero unaccepted high or critical findings, publishes only commit-bound
+GHCR tags, resolves immutable registry digests, rescans the published subjects,
+creates GitHub OIDC provenance attestations, then generates and independently
+verifies the three-role bundle. Verifier sandbox and public-key policy enter
+through repository variables; neither the private receipt-signing key nor an
+HSAI evidence-signing key enters the build or publication job.
+
+This boundary is implemented and statically tested, but current role scans fail
+closed before publication. It is not live registry evidence until one clean
+committed SHA completes the workflow and the generated bundle verifies against
+the externally resolved digests and pinned verifier policy.
+
 ## Claim Ceiling
 
 This is local regression evidence plus disposable Docker Linux-VM kernel-UID

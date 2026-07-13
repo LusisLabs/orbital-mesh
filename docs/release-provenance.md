@@ -204,7 +204,53 @@ python3 scripts/generate_release_image_assurance.py \
   --exception-policy config/release-vulnerability-exceptions.json
 ```
 
-The script runs Syft for a CycloneDX SBOM, runs Grype as the real release-image scanner for vulnerability findings, normalizes both artifacts, binds them to `MESH_IMAGE_DIGEST`, and fails on unaccepted high or critical findings. It must run after image metadata collection so the SBOM, vulnerability scan, and CI attestation match the same image digest. `scripts/generate_release_assurance_rehearsal_inputs.py` remains only a local contract fixture; release provenance marks those rehearsal artifacts incomplete with `real_release_image_sbom` and `real_release_image_vulnerability_scan`.
+The script first retains complete raw Syft JSON, collects evidence from the
+known Deno binary paths inside an isolated container, and passes both through
+`scripts/normalize_syft_binary_identity.py`. That derivation applies only to the
+exact Syft `1.44.0` identity defect in [issue 5057](https://github.com/anchore/syft/issues/5057): it requires the classifier artifact, paths, installed Python
+packages, executed versions, binary SHA-256 values, sizes, and Python `RECORD`
+entries to match the reviewed profile. It then removes exactly the synthetic
+`deno@0.76.0` binary-classifier artifact and its relationships, preserves all
+other Syft artifacts, and emits a hash-bound
+`mesh.syft_binary_identity_correction.v1` proof. Any mismatch fails closed. The
+raw Syft file remains an artifact; the evidence-derived Syft file is converted
+to CycloneDX and scanned by Grype. This is a scanner-identity correction, not a
+VEX statement or vulnerability exception.
+
+The generator uses Grype as the real release-image scanner, normalizes the
+resulting CycloneDX and Grype artifacts, binds them to `MESH_IMAGE_DIGEST`, and
+fails on unaccepted high or critical findings.
+It must run after image metadata collection so the SBOM, vulnerability scan,
+and CI attestation match the same image digest.
+`scripts/generate_release_assurance_rehearsal_inputs.py` remains only a local
+contract fixture; release provenance marks those rehearsal artifacts incomplete
+with `real_release_image_sbom` and `real_release_image_vulnerability_scan`.
+
+## Repo-Patch Three-Role Image Release
+
+State slice: `mesh.repo_patch_service_image_bundle.v1`.
+
+`.github/workflows/repo-patch-service-image-release.yml` is the only automated
+publication path for the repo-patch control-plane, authority, and verifier role
+bundle. On `main` push or explicit dispatch it:
+
+1. checks out `github.sha`, requires the exact clean source state, installs the
+   frozen pnpm workspace, and runs the heavy root lint gate;
+2. builds and locally scans every role before GHCR authentication, requiring
+   zero unaccepted high or critical findings;
+3. requires the verifier sandbox digest, key id, and public key from repository
+   variables, without receiving any private signing key;
+4. publishes commit-only tags, resolves registry manifest digests, pulls and
+   rescans the immutable references, and rechecks zero unaccepted findings;
+5. creates GitHub OIDC provenance attestations with a full-SHA-pinned action,
+   generates exact-commit Mesh CI attestations, and generates the three-role
+   service-image bundle; and
+6. re-resolves every registry digest and verifies the bundle against the exact
+   commit, role references, digests, and external verifier policy.
+
+The job uploads bounded evidence even after a failure. It does not deploy a
+runtime. A failed prepublication scan is evidence that the release was blocked,
+not a releasable or attested image bundle.
 
 `scripts/generate_release_provenance.py` requires the `mesh.ci_attestation.v1` image digest to match the release packet image digest. A packet that supplies a local or explicit image digest while reusing a CI attestation for a different image remains incomplete with `ci_attestation` missing.
 
