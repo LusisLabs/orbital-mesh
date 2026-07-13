@@ -103,6 +103,21 @@ class RepoPatchServiceImageReleaseWorkflowTests(unittest.TestCase):
             self.assertLess(workflow.index(marker), scan)
         self.assertIn("--check image-source-binding", workflow)
 
+    def test_all_role_attestations_bind_complete_base_image_materials(self) -> None:
+        workflow = self.workflow
+        authenticate = workflow.index("Authenticate to GHCR only after all scans pass")
+        for marker in (
+            "scripts/collect_release_image_metadata.py",
+            '--dockerfile "$dockerfile"',
+            "--require-complete-base-images",
+            "base-image-digest.args",
+            'mapfile -t base_image_args',
+            '"${base_image_args[@]}"',
+            "--check image-materials-binding",
+        ):
+            self.assertIn(marker, workflow)
+        self.assertLess(workflow.index("scripts/collect_release_image_metadata.py"), authenticate)
+
     def test_permissions_and_actions_are_pinned(self) -> None:
         workflow = self.workflow
         for permission in (

@@ -261,9 +261,11 @@ state. Once those preconditions pass, the workflow:
    frozen pnpm workspace, and runs the heavy root lint gate;
 2. builds every role with exact source commit and version arguments, requires
    the OCI source, revision, and version labels to match that build request,
-   records `mesh.image_source_binding.v1`, and locally scans every role before
-   GHCR authentication, requiring zero unaccepted high or critical findings
-   while retaining the exact raw Grype scan and digest-bound
+   records `mesh.image_source_binding.v1`, records a hash-bound
+   `mesh.release_image_metadata.v1` packet whose Dockerfile-derived external
+   base images all resolve to registry digests, and locally scans every role
+   before GHCR authentication, requiring zero unaccepted high or critical
+   findings while retaining the exact raw Grype scan and digest-bound
    vulnerability-evidence file;
 3. requires the verifier sandbox digest, key id, and public key from repository
    variables, without receiving any private signing key;
@@ -272,11 +274,12 @@ state. Once those preconditions pass, the workflow:
 5. creates GitHub OIDC provenance attestations with a full-SHA-pinned action,
    generates exact-commit Mesh CI attestations whose build command binds the
    Dockerfile, commit-only tag, source commit, source version, and required
-   source/scan/provenance checks, and generates the three-role service-image
-   bundle; and
+   source/material/scan/provenance checks and whose base-image materials exactly
+   match the release-image metadata packet, and generates the three-role
+   service-image bundle; and
 6. re-resolves every registry digest and verifies the bundle against the exact
-   commit, role references, digests, raw and normalized scan chain, and external
-   verifier policy.
+   commit, role references, digests, OCI source labels, Dockerfile-derived base
+   materials, raw and normalized scan chain, and external verifier policy.
 
 The job uploads bounded evidence even after a failure. It does not deploy a
 runtime. A failed platform preflight or prepublication scan is evidence that the

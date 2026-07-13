@@ -76,6 +76,12 @@ def main() -> int:
             required=True,
             help="Portable GitHub Actions CI-attestation path under --artifact-root.",
         )
+        parser.add_argument(
+            f"--{flag}-image-metadata",
+            dest=f"{destination}_image_metadata",
+            required=True,
+            help="Portable mesh.release_image_metadata.v1 path under --artifact-root.",
+        )
     parser.add_argument(
         "--verifier-sandbox-profile-digest",
         required=True,
@@ -97,6 +103,7 @@ def main() -> int:
             "raw_vulnerability_scan_path": getattr(args, f"{role}_raw_vulnerability_scan"),
             "vulnerability_scan_path": getattr(args, f"{role}_vulnerability_scan"),
             "vulnerability_evidence_path": getattr(args, f"{role}_vulnerability_evidence"),
+            "image_metadata_path": getattr(args, f"{role}_image_metadata"),
             "ci_attestation_path": getattr(args, f"{role}_ci_attestation"),
         }
         for role in ROLE_ORDER

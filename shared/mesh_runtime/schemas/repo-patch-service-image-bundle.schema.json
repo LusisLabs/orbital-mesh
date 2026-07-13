@@ -38,6 +38,7 @@
             "role",
             "dockerfile",
             "image",
+            "image_metadata",
             "sbom",
             "raw_vulnerability_scan",
             "vulnerability_scan",
@@ -62,6 +63,15 @@
               "properties": {
                 "tag": {"type": "string"},
                 "digest": {"type": "string"}
+              }
+            },
+            "image_metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "sbom": {
@@ -119,6 +129,7 @@
             "role",
             "dockerfile",
             "image",
+            "image_metadata",
             "sbom",
             "raw_vulnerability_scan",
             "vulnerability_scan",
@@ -146,6 +157,15 @@
               "properties": {
                 "tag": {"type": "string"},
                 "digest": {"type": "string"}
+              }
+            },
+            "image_metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "sbom": {
@@ -203,6 +223,7 @@
             "role",
             "dockerfile",
             "image",
+            "image_metadata",
             "sbom",
             "raw_vulnerability_scan",
             "vulnerability_scan",
@@ -231,6 +252,15 @@
               "properties": {
                 "tag": {"type": "string"},
                 "digest": {"type": "string"}
+              }
+            },
+            "image_metadata": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": {"type": "string"},
+                "sha256": {"type": "string"}
               }
             },
             "sbom": {

@@ -39,7 +39,10 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
         for role, dockerfile_path in ROLE_DOCKERFILES.items():
             path = self.root / dockerfile_path
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"FROM scratch\nLABEL mesh.role={role}\n", encoding="utf-8")
+            path.write_text(
+                f"FROM python:3.13.14-alpine3.24\nLABEL mesh.role={role}\n",
+                encoding="utf-8",
+            )
 
         self.role_inputs: dict[str, dict[str, str]] = {}
         self.artifact_paths: dict[str, dict[str, Path]] = {}
@@ -52,6 +55,7 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
             raw_scan = directory / "raw-vulnerability-scan.grype.json"
             scan = directory / "vulnerability-scan.json"
             vulnerability_evidence = directory / "release-vulnerability-evidence.json"
+            image_metadata = directory / "image-metadata.json"
             ci_attestation = directory / "ci-attestation.json"
             sbom.write_text(
                 json.dumps(
@@ -105,6 +109,35 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            image_metadata.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "mesh.release_image_metadata.v1",
+                        "generated_at": "2026-07-13T12:00:00Z",
+                        "image": {
+                            "tag": image_tag,
+                            "digest": digest,
+                            "digest_source": "repo_digest",
+                            "repo_digest": image_tag,
+                            "image_id": digest,
+                            "source": "https://github.com/LusisLabs/orbital-mesh",
+                            "revision": self.git_commit,
+                            "version": f"sha-{self.git_commit}",
+                        },
+                        "base_images": [
+                            {
+                                "image": "python:3.13.14-alpine3.24",
+                                "source": ROLE_DOCKERFILES[role],
+                                "line": 1,
+                                "digest": f"sha256:{'e' * 64}",
+                                "pinned": True,
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
             _write_ci_attestation(
                 ci_attestation,
                 git_commit=self.git_commit,
@@ -119,6 +152,7 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                 "raw_vulnerability_scan_path": raw_scan.relative_to(self.root).as_posix(),
                 "vulnerability_scan_path": scan.relative_to(self.root).as_posix(),
                 "vulnerability_evidence_path": vulnerability_evidence.relative_to(self.root).as_posix(),
+                "image_metadata_path": image_metadata.relative_to(self.root).as_posix(),
                 "ci_attestation_path": ci_attestation.relative_to(self.root).as_posix(),
             }
             self.artifact_paths[role] = {
@@ -126,6 +160,7 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                 "raw_scan": raw_scan,
                 "scan": scan,
                 "vulnerability_evidence": vulnerability_evidence,
+                "image_metadata": image_metadata,
                 "ci_attestation": ci_attestation,
             }
 
@@ -240,6 +275,21 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
 
         self.assertNotIn(f"roles.{role}.vulnerability_evidence.sha256", result["missing"])
         self.assertIn(f"roles.{role}.vulnerability_evidence.binding", result["missing"])
+
+    def test_rejects_missing_base_material_after_metadata_and_bundle_rehash(self) -> None:
+        role = "repo_patch_authority"
+        metadata_path = self.artifact_paths[role]["image_metadata"]
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["base_images"] = []
+        metadata_path.write_text(json.dumps(metadata, sort_keys=True), encoding="utf-8")
+        tampered = deepcopy(self.bundle)
+        tampered["roles"][role]["image_metadata"]["sha256"] = _file_sha256(metadata_path)
+        _rehash(tampered)
+
+        result = self._verify(tampered)
+
+        self.assertNotIn(f"roles.{role}.image_metadata.sha256", result["missing"])
+        self.assertIn(f"roles.{role}.image_metadata.binding", result["missing"])
 
     def test_rejects_wrong_commit_even_when_bundle_hash_is_current(self) -> None:
         tampered = deepcopy(self.bundle)
@@ -387,6 +437,8 @@ class RepoPatchServiceImageBundleTests(unittest.TestCase):
                     values["vulnerability_scan_path"],
                     f"--{flag}-vulnerability-evidence",
                     values["vulnerability_evidence_path"],
+                    f"--{flag}-image-metadata",
+                    values["image_metadata_path"],
                     f"--{flag}-ci-attestation",
                     values["ci_attestation_path"],
                 ]
@@ -476,13 +528,19 @@ def _write_ci_attestation(
                 f"--build-arg MESH_BUILD_VERSION=sha-{git_commit} "
                 f"--build-arg MESH_BUILD_COMMIT={git_commit} ."
             ),
-            "base_images": [],
+            "base_images": [
+                {
+                    "image": "python:3.13.14-alpine3.24",
+                    "digest": f"sha256:{'e' * 64}",
+                }
+            ],
         },
         "checks": [
             {"name": name, "status": "passed"}
             for name in (
                 "pnpm-lint",
                 "image-source-binding",
+                "image-materials-binding",
                 "prepublish-image-assurance",
                 "published-image-assurance",
                 "github-oidc-provenance",

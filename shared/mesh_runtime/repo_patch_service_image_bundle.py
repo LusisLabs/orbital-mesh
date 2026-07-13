@@ -30,10 +30,12 @@ REPO_PATCH_SERVICE_IMAGE_BUNDLE_VERSION = "mesh.repo_patch_service_image_bundle.
 REPO_PATCH_SERVICE_IMAGE_BUNDLE_STATE_SLICE = "mesh.repo_patch_service_image_bundle.v1"
 REPO_PATCH_SERVICE_IMAGE_BUNDLE_SCHEMA = "repo-patch-service-image-bundle.schema.json"
 REPO_PATCH_VERIFIER_RECEIPT_SIGNING_PROFILE = "mesh-repo-patch-verifier-receipt-ed25519-v2"
+REPO_SOURCE_URL = "https://github.com/LusisLabs/orbital-mesh"
 REQUIRED_CI_ATTESTATION_CHECKS = frozenset(
     {
         "pnpm-lint",
         "image-source-binding",
+        "image-materials-binding",
         "prepublish-image-assurance",
         "published-image-assurance",
         "github-oidc-provenance",
@@ -58,6 +60,7 @@ ROLE_INPUT_FIELDS = frozenset(
         "raw_vulnerability_scan_path",
         "vulnerability_scan_path",
         "vulnerability_evidence_path",
+        "image_metadata_path",
         "ci_attestation_path",
     }
 )
@@ -118,11 +121,13 @@ def build_repo_patch_service_image_bundle(
         raw_scan_path = _require_portable_path(str(role_input["raw_vulnerability_scan_path"]))
         scan_path = _require_portable_path(str(role_input["vulnerability_scan_path"]))
         evidence_path = _require_portable_path(str(role_input["vulnerability_evidence_path"]))
+        metadata_path = _require_portable_path(str(role_input["image_metadata_path"]))
         ci_path = _require_portable_path(str(role_input["ci_attestation_path"]))
         sbom = _resolve_recorded_file(root, sbom_path)
         raw_scan = _resolve_recorded_file(root, raw_scan_path)
         scan = _resolve_recorded_file(root, scan_path)
         evidence = _resolve_recorded_file(root, evidence_path)
+        image_metadata = _resolve_recorded_file(root, metadata_path)
         ci_attestation = _resolve_recorded_file(root, ci_path)
 
         record: dict[str, Any] = {
@@ -142,6 +147,10 @@ def build_repo_patch_service_image_bundle(
             "vulnerability_evidence": {
                 "path": evidence_path,
                 "sha256": _file_sha256(evidence),
+            },
+            "image_metadata": {
+                "path": metadata_path,
+                "sha256": _file_sha256(image_metadata),
             },
             "ci_attestation": {"path": ci_path, "sha256": _file_sha256(ci_attestation)},
         }
@@ -303,6 +312,15 @@ def verify_repo_patch_service_image_bundle(
                 root,
                 evidence_record,
             )
+            metadata_value = record.get("image_metadata")
+            metadata_record = metadata_value if isinstance(metadata_value, dict) else {}
+            image_metadata_path = _verify_recorded_file(
+                checks,
+                errors,
+                f"{prefix}.image_metadata",
+                root,
+                metadata_record,
+            )
             ci_value = record.get("ci_attestation")
             ci_record = ci_value if isinstance(ci_value, dict) else {}
             ci_path = _verify_recorded_file(
@@ -315,6 +333,21 @@ def verify_repo_patch_service_image_bundle(
             checks[f"{prefix}.dockerfile.bound"] = bool(
                 dockerfile_path and dockerfile_path.is_file() and dockerfile.get("path") == ROLE_DOCKERFILES[role]
             )
+            if dockerfile_path is None:
+                checks[f"{prefix}.image_metadata.binding"] = False
+            else:
+                check_path_binding(
+                    f"{prefix}.image_metadata.binding",
+                    image_metadata_path,
+                    lambda path: _image_metadata_bound(
+                        path,
+                        dockerfile=dockerfile_path,
+                        dockerfile_recorded_path=ROLE_DOCKERFILES[role],
+                        git_commit=str(raw_packet.get("git_commit") or ""),
+                        image_tag=image_tag,
+                        image_digest=image_digest,
+                    ),
+                )
             check_path_binding(
                 f"{prefix}.sbom.binding",
                 sbom_path,
@@ -347,6 +380,7 @@ def verify_repo_patch_service_image_bundle(
                     image_tag,
                     image_digest,
                     ROLE_DOCKERFILES[role],
+                    image_metadata_path,
                 ),
             )
 
@@ -588,6 +622,120 @@ def _valid_accepted_exception(finding: Mapping[str, Any]) -> bool:
     return expires_at >= today
 
 
+def _image_metadata_bound(
+    path: Path,
+    *,
+    dockerfile: Path,
+    dockerfile_recorded_path: str,
+    git_commit: str,
+    image_tag: str,
+    image_digest: str,
+) -> bool:
+    payload = _load_json_object(path)
+    image_value = payload.get("image")
+    image = image_value if isinstance(image_value, dict) else {}
+    base_images = payload.get("base_images")
+    if not isinstance(base_images, list) or not base_images:
+        return False
+    observed_materials: list[tuple[str, str, int]] = []
+    for item in base_images:
+        if not isinstance(item, dict):
+            return False
+        material_image = item.get("image")
+        material_source = item.get("source")
+        material_line = item.get("line")
+        material_digest = item.get("digest")
+        if (
+            not isinstance(material_image, str)
+            or not material_image
+            or material_source != dockerfile_recorded_path
+            or not isinstance(material_line, int)
+            or isinstance(material_line, bool)
+            or material_line < 1
+            or not isinstance(material_digest, str)
+            or _SHA256_DIGEST.fullmatch(material_digest) is None
+            or item.get("pinned") is not True
+        ):
+            return False
+        observed_materials.append((material_image, material_source, material_line))
+    return (
+        payload.get("schema_version") == "mesh.release_image_metadata.v1"
+        and image.get("tag") == image_tag
+        and image.get("digest") == image_digest
+        and image.get("source") == REPO_SOURCE_URL
+        and image.get("revision") == git_commit
+        and image.get("version") == f"sha-{git_commit}"
+        and observed_materials == _dockerfile_base_materials(dockerfile, dockerfile_recorded_path)
+    )
+
+
+def _dockerfile_base_materials(path: Path, recorded_path: str) -> list[tuple[str, str, int]]:
+    global_args: dict[str, str] = {}
+    known_stages: set[str] = set()
+    materials: list[tuple[str, str, int]] = []
+    seen_from = False
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        parts = raw.strip().split()
+        if not parts:
+            continue
+        directive = parts[0].upper()
+        if directive == "ARG" and not seen_from and len(parts) >= 2:
+            name, separator, default = parts[1].partition("=")
+            if name and separator:
+                global_args[name] = default
+            continue
+        if directive != "FROM":
+            continue
+        seen_from = True
+        image_index = 1
+        while image_index < len(parts) and parts[image_index].startswith("--"):
+            image_index += 1
+        if image_index >= len(parts):
+            raise ValueError(f"invalid FROM instruction in {recorded_path}:{line_number}")
+        image_ref = _resolve_dockerfile_arg_references(
+            parts[image_index],
+            global_args,
+            recorded_path,
+            line_number,
+        )
+        alias = _dockerfile_from_alias(parts)
+        if image_ref in known_stages:
+            if alias:
+                known_stages.add(alias)
+            continue
+        image = image_ref.split("@", 1)[0]
+        materials.append((image, recorded_path, line_number))
+        if alias:
+            known_stages.add(alias)
+    return materials
+
+
+def _resolve_dockerfile_arg_references(
+    value: str,
+    args: Mapping[str, str],
+    source: str,
+    line: int,
+) -> str:
+    pattern = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2) or ""
+        replacement = args.get(name)
+        if not replacement:
+            raise ValueError(f"unresolved Dockerfile ARG {name!r} in {source}:{line}")
+        return replacement
+
+    return pattern.sub(replace, value)
+
+
+def _dockerfile_from_alias(parts: list[str]) -> str | None:
+    lowered = [part.lower() for part in parts]
+    if "as" not in lowered:
+        return None
+    index = lowered.index("as")
+    return parts[index + 1] if index + 1 < len(parts) else None
+
+
 def _severity_rank(severity: str) -> int:
     normalized = severity.strip().lower()
     if normalized in {"critical", "crit"}:
@@ -607,6 +755,7 @@ def _ci_attestation_bound(
     image_tag: str,
     image_digest: str,
     dockerfile_path: str,
+    image_metadata_path: Path | None,
 ) -> bool:
     payload = _load_json_object(path)
     image_value = payload.get("image")
@@ -627,6 +776,8 @@ def _ci_attestation_bound(
         and _SHA256_HEX.fullmatch(attestation_sha256) is not None
         and _canonical_payload_sha256(unsigned) == attestation_sha256
         and _ci_checks_bound(checks)
+        and image_metadata_path is not None
+        and build.get("base_images") == _metadata_attestation_materials(image_metadata_path)
         and _build_command_binds_source(
             str(build.get("command") or ""),
             dockerfile_path=dockerfile_path,
@@ -634,6 +785,23 @@ def _ci_attestation_bound(
             git_commit=git_commit,
         )
     )
+
+
+def _metadata_attestation_materials(path: Path) -> list[dict[str, str]]:
+    payload = _load_json_object(path)
+    value = payload.get("base_images")
+    if not isinstance(value, list):
+        return []
+    records: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return []
+        image = item.get("image")
+        digest = item.get("digest")
+        if not isinstance(image, str) or not isinstance(digest, str):
+            return []
+        records.append({"image": image, "digest": digest})
+    return records
 
 
 def _ci_checks_bound(value: Any) -> bool:
