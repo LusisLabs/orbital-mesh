@@ -4,7 +4,7 @@ State slice: `lusislabs-preview-deployment`.
 
 `app.lusislabs.com` is served by nginx on the Hetzner host and proxied to the Mesh product preview service on `127.0.0.1:8788`. The old service on `127.0.0.1:8787` is intentionally separate.
 
-The static operator UI also has a GitHub Pages deployment path in `.github/workflows/deploy-lusislabs-pages.yml`. Its planned UI hostname is `mesh.lusislabs.com`; it calls the control-plane API at `https://app.lusislabs.com`. GitHub Pages hosts only the exported frontend, so the API origin remains a separately deployed Mesh service.
+The static marketing landing page also has a GitHub Pages deployment path in `.github/workflows/deploy-lusislabs-pages.yml`. Its canonical hostname is `lusislabs.com` with `www.lusislabs.com` as the alias; the operator app and control-plane API remain on `https://app.lusislabs.com`. GitHub Pages hosts only the exported frontend, so the API origin remains a separately deployed Mesh service.
 
 ## Server Layout
 
