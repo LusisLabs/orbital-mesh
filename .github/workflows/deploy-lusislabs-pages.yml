@@ -20,9 +20,7 @@ env:
 
 jobs:
   build:
-    # State slice: github-pages-operator-ui. Manual runs are allowed on the
-    # setup branch so Pages can receive its first deployment before merge.
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -62,9 +60,7 @@ jobs:
           path: meshapp/frontend/out
 
   deploy:
-    # State slice: github-pages-operator-ui. Manual runs are allowed on the
-    # setup branch so Pages can receive its first deployment before merge.
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
