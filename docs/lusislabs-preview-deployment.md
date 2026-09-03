@@ -4,6 +4,8 @@ State slice: `lusislabs-preview-deployment`.
 
 `app.lusislabs.com` is served by nginx on the Hetzner host and proxied to the Mesh product preview service on `127.0.0.1:8788`. The old service on `127.0.0.1:8787` is intentionally separate.
 
+The static operator UI also has a GitHub Pages deployment path in `.github/workflows/deploy-lusislabs-pages.yml`. Its planned UI hostname is `mesh.lusislabs.com`; it calls the control-plane API at `https://app.lusislabs.com`. GitHub Pages hosts only the exported frontend, so the API origin remains a separately deployed Mesh service.
+
 ## Server Layout
 
 - `/opt/lusis-mesh-webapp/incoming/source`: optional source tree for manual server deploys; the self-hosted GitHub runner passes its checkout workspace directly.
@@ -11,6 +13,7 @@ State slice: `lusislabs-preview-deployment`.
 - `/opt/lusis-mesh-webapp/current`: symlink used by the systemd service.
 - `/opt/lusis-mesh-webapp/shared/state`: persistent app-session state.
 - `/etc/lusis-mesh-webapp-preview.env`: root-only OAuth provider secrets and callback URLs.
+- `/etc/systemd/system/lusis-mesh-preview.service.d/20-lusis-product-domain.conf`: deployment-managed public product origin and API CORS override.
 - `/usr/local/bin/deploy-lusis-mesh-webapp`: deployment entrypoint.
 - `lusis-mesh-preview.service`: systemd unit that runs the preview API/web server.
 - `lusis-mesh-release`: Docker container name used only for verified release-image deployments.
@@ -29,12 +32,13 @@ The source-preview workflow:
 The server script:
 
 1. Copies the incoming source into a new release directory.
-2. Runs `pnpm --dir meshapp/frontend install --frozen-lockfile`.
-3. Runs `NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com pnpm --dir meshapp/frontend run build`.
-4. Switches `/opt/lusis-mesh-webapp/current` atomically.
-5. Restarts `lusis-mesh-preview.service`.
-6. Verifies `http://127.0.0.1:8788/api/health`.
-7. Rolls back the symlink and restarts the previous release if the restart or healthcheck fails.
+2. Installs the product-domain systemd override and reloads systemd.
+3. Runs `pnpm --dir meshapp/frontend install --frozen-lockfile`.
+4. Runs `NEXT_PUBLIC_MESH_API_URL=https://app.lusislabs.com pnpm --dir meshapp/frontend run build`.
+5. Switches `/opt/lusis-mesh-webapp/current` atomically.
+6. Restarts `lusis-mesh-preview.service`.
+7. Verifies `http://127.0.0.1:8788/api/health`.
+8. Rolls back the symlink and restarts the previous release if the restart or healthcheck fails.
 
 ## Release-Image Deployment
 
@@ -53,7 +57,7 @@ The release-image path:
 4. Loads `release-image-handoff/orbital-mesh-handoff-image.tar.gz` with Docker.
 5. Runs `scripts/verify_release_image_handoff.py` with `--require-artifacts`, `--image-ref`, the signed complete provenance packet, and `--env-output`.
 6. Copies the signed `release-provenance-draft.json` to `/opt/lusis-mesh-webapp/shared/state/release-provenance.json`.
-7. Starts the actual verified image as Docker container `lusis-mesh-release`, bound to `127.0.0.1:8788:8787`, with app-session auth enabled for `app.lusislabs.com`, `MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` from the verifier-generated env.
+7. Starts the actual verified image as Docker container `lusis-mesh-release`, bound to `127.0.0.1:8788:8787`, with app-session auth enabled for `mesh.lusislabs.com` and `app.lusislabs.com`, `MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` from the verifier-generated env.
 8. Healthchecks `http://127.0.0.1:8788/api/health`.
 9. Rolls back to the previous release container or the source preview service if startup or healthcheck fails.
 

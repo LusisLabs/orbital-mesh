@@ -105,9 +105,23 @@ rollback_to() {
   fi
 }
 
+install_product_domain_override() {
+  local override_dir override_file
+  override_dir="/etc/systemd/system/${SERVICE_NAME}.d"
+  override_file="${override_dir}/20-lusis-product-domain.conf"
+  install -d -m 755 "$override_dir"
+  cat >"$override_file" <<'EOF'
+[Service]
+Environment="MESH_AUTH_PRODUCT_REDIRECT_URL=https://mesh.lusislabs.com/"
+Environment="MESH_AUTH_ALLOWED_ORIGINS=https://mesh.lusislabs.com,https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788"
+EOF
+  systemctl daemon-reload
+}
+
 deploy_release_image() {
   require_path "$RELEASE_ARTIFACT_ROOT"
   require_path "$ENV_FILE"
+  install_product_domain_override
   require_command python3
   require_command docker
   require_command curl
@@ -180,8 +194,8 @@ deploy_release_image() {
     -e MESH_SERVER_PORT=8787 \
     -e MESH_AUTH_MODE=app_session \
     -e MESH_CAPTCHA_DEV_BYPASS=1 \
-    -e MESH_AUTH_PRODUCT_REDIRECT_URL=https://app.lusislabs.com/ \
-    -e MESH_AUTH_ALLOWED_ORIGINS=https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788 \
+    -e MESH_AUTH_PRODUCT_REDIRECT_URL=https://mesh.lusislabs.com/ \
+    -e MESH_AUTH_ALLOWED_ORIGINS=https://mesh.lusislabs.com,https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788 \
     -e MESH_ENVIRONMENT=pilot \
     -e MESH_READINESS_PROFILE=pilot \
     -e MESH_STATE_DIRECTORY=/app/.mesh-runtime-state \
@@ -297,6 +311,7 @@ main() {
 
   require_path "$SOURCE_DIR"
   require_path "$ENV_FILE"
+  install_product_domain_override
   export PATH="${NODE_HOME}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
   require_path "${NODE_HOME}/bin/node"
   require_command pnpm
