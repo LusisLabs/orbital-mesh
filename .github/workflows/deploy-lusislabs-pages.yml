@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  MESH_PAGES_HOST: mesh.lusislabs.com
+  MESH_PAGES_HOST: lusislabs.com
   NEXT_PUBLIC_MESH_API_URL: https://app.lusislabs.com
 
 jobs:
