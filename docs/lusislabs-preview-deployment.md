@@ -57,7 +57,7 @@ The release-image path:
 4. Loads `release-image-handoff/orbital-mesh-handoff-image.tar.gz` with Docker.
 5. Runs `scripts/verify_release_image_handoff.py` with `--require-artifacts`, `--image-ref`, the signed complete provenance packet, and `--env-output`.
 6. Copies the signed `release-provenance-draft.json` to `/opt/lusis-mesh-webapp/shared/state/release-provenance.json`.
-7. Starts the actual verified image as Docker container `lusis-mesh-release`, bound to `127.0.0.1:8788:8787`, with app-session auth enabled for `mesh.lusislabs.com` and `app.lusislabs.com`, `MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` from the verifier-generated env.
+7. Starts the actual verified image as Docker container `lusis-mesh-release`, bound to `127.0.0.1:8788:8787`, with app-session auth enabled for `lusislabs.com`, `www.lusislabs.com`, and `app.lusislabs.com`, `MESH_RELEASE_PROVENANCE_PATH=/app/.mesh-runtime-state/release-provenance.json`, `MESH_BUILD_COMMIT`, and `MESH_BUILD_IMAGE_DIGEST` from the verifier-generated env.
 8. Healthchecks `http://127.0.0.1:8788/api/health`.
 9. Rolls back to the previous release container or the source preview service if startup or healthcheck fails.
 

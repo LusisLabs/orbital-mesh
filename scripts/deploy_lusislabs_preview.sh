@@ -112,8 +112,8 @@ install_product_domain_override() {
   install -d -m 755 "$override_dir"
   cat >"$override_file" <<'EOF'
 [Service]
-Environment="MESH_AUTH_PRODUCT_REDIRECT_URL=https://mesh.lusislabs.com/"
-Environment="MESH_AUTH_ALLOWED_ORIGINS=https://mesh.lusislabs.com,https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788"
+Environment="MESH_AUTH_PRODUCT_REDIRECT_URL=https://lusislabs.com/"
+Environment="MESH_AUTH_ALLOWED_ORIGINS=https://lusislabs.com,https://www.lusislabs.com,https://app.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788"
 EOF
   systemctl daemon-reload
 }
@@ -194,8 +194,8 @@ deploy_release_image() {
     -e MESH_SERVER_PORT=8787 \
     -e MESH_AUTH_MODE=app_session \
     -e MESH_CAPTCHA_DEV_BYPASS=1 \
-    -e MESH_AUTH_PRODUCT_REDIRECT_URL=https://mesh.lusislabs.com/ \
-    -e MESH_AUTH_ALLOWED_ORIGINS=https://mesh.lusislabs.com,https://app.lusislabs.com,https://lusislabs.com,https://www.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788 \
+    -e MESH_AUTH_PRODUCT_REDIRECT_URL=https://lusislabs.com/ \
+    -e MESH_AUTH_ALLOWED_ORIGINS=https://lusislabs.com,https://www.lusislabs.com,https://app.lusislabs.com,http://127.0.0.1:8788,http://localhost:8788 \
     -e MESH_ENVIRONMENT=pilot \
     -e MESH_READINESS_PROFILE=pilot \
     -e MESH_STATE_DIRECTORY=/app/.mesh-runtime-state \
